@@ -204,6 +204,8 @@ const TENANT_TABLES = new Set([
   // PROP-030: Manufacturing BOM + product families (migration 0019)
   "product_families", "product_family_members",
   "component_routing_steps", "work_orders", "work_order_steps", "work_order_components",
+  // PROP-031: Component metadata (migration 0020)
+  "component_metadata",
 ]);
 function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)
@@ -3606,6 +3608,9 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const { data: snapMats } = await tdb("component_materials")
       .select("substance_name, cas_number, percentage_w_w, reach_svhc, rohs_restricted")
       .eq("component_id", component_id);
+    const { data: snapMeta } = await tdb("component_metadata")
+      .select("weight_g,length_mm,width_mm,height_mm,base_material,surface_treatment,color_specification,incoming_inspection_method,country_of_origin,hs_code,recycled_content_pct,carbon_footprint_kgco2e,carbon_footprint_source,weee_category,conflict_minerals_free,recycled_content_pct")
+      .eq("component_id", component_id).maybeSingle();
     const version_snapshot = comp ? {
       description:      comp.description      || null,
       notes:            comp.notes            || null,
@@ -3624,6 +3629,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
         reach_svhc:      m.reach_svhc,
         rohs_restricted: m.rohs_restricted,
       })),
+      metadata: snapMeta || null,
     } : null;
 
     const { data: ver, error } = await tdb("bom_component_versions").insert({
@@ -3831,6 +3837,11 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       if (paths.length) await db.storage.from(DOC_BUCKET).remove(paths);
       await tdb("component_images").delete().eq("component_id", component_id);
     }
+
+    // Delete manufacturing routing: work_order_components and routing steps referencing this component
+    await tdb("work_order_components").delete().eq("component_id", component_id);
+    await tdb("component_routing_steps").delete().eq("component_id", component_id);
+    await tdb("product_family_members").delete().eq("component_id", component_id);
 
     // Delete all BOM edges where this component is parent or child (both directions)
     await tdb("bom_edges").delete().eq("parent_id", component_id);
@@ -4228,6 +4239,42 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       await db.storage.from(DOC_BUCKET).remove([img.storage_path]);
     }
     const { error } = await tdb("component_images").delete().eq("id", image_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  // --- Component metadata (PROP-031) ---------------------------------------
+  if (action === "getComponentMetadata") {
+    const { component_id } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
+    const { data, error } = await tdb("component_metadata")
+      .select("*").eq("component_id", component_id).maybeSingle();
+    if (error) return json({ error: error.message }, 500);
+    return json({ metadata: data || null });
+  }
+
+  if (action === "upsertComponentMetadata") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { component_id, ...fields } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
+    // Verify component belongs to this org
+    const { data: comp } = await tdb("bom_components")
+      .select("id").eq("id", component_id).maybeSingle();
+    if (!comp) return json({ error: "Component not found" }, 404);
+    const allowed = [
+      "weight_g","length_mm","width_mm","height_mm",
+      "base_material","surface_treatment","color_specification","flame_retardant_class",
+      "preferred_supplier_name","supplier_part_number","lead_time_days","moq",
+      "country_of_origin","hs_code",
+      "incoming_inspection_method","inspection_sample_size","critical_to_quality","has_cpk_requirement",
+      "weee_category","battery_regulation_applicable","conflict_minerals_free",
+      "recycled_content_pct","carbon_footprint_kgco2e","carbon_footprint_source",
+      "end_of_life_instruction","repair_spare_part_available","custom_specs",
+    ];
+    const payload: Record<string, any> = { component_id, organization_id: orgId, updated_at: new Date().toISOString() };
+    for (const k of allowed) { if (k in fields) payload[k] = fields[k]; }
+    const { error } = await tdb("component_metadata")
+      .upsert(payload, { onConflict: "component_id" });
     if (error) return json({ error: error.message }, 400);
     return json({ ok: true });
   }

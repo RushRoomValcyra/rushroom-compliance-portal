@@ -4165,12 +4165,13 @@
         API.post(token, "getComponentChangelog", { component_id: componentId }),
         API.post(token, "listParentsOf",         { component_id: componentId }),
         API.post(token, "listComponentImages",   { component_id: componentId }),
+        API.post(token, "getComponentMetadata",  { component_id: componentId }),
       ];
       const familyPromises = isFamily ? [
         API.post(token, "listFamilyAttributes", { family_id: componentId }),
         API.post(token, "listConfigurations",    { family_id: componentId }),
       ] : [null, null];
-      const [hist, docs, mats, cl, usedIn, imgData, familyAttrs, familyConfigs, compFamiliesR, allFamiliesR] = await Promise.all([
+      const [hist, docs, mats, cl, usedIn, imgData, metaR, familyAttrs, familyConfigs, compFamiliesR, allFamiliesR] = await Promise.all([
         ...basePromises, ...familyPromises,
         API.post(token, "listComponentFamilies", { component_id: componentId }),
         API.post(token, "listProductFamilies", {}),
@@ -4893,16 +4894,293 @@
         familyChips,
       ]);
 
+      // --- Component metadata sections (PROP-031) ----------------------------
+      const meta = metaR?.metadata || {};
+      function metaFld(v) { return v != null && v !== "" ? String(v) : "—"; }
+      function metaBool(v) { return v === true ? "Yes" : v === false ? "No" : "—"; }
+      function metaRow(label, value) {
+        return el("div", { style: "display:contents" }, [
+          el("span", { style: "font-size:0.8rem;color:var(--muted,#64748b);font-weight:500" }, label),
+          el("span", { style: "font-size:0.82rem" }, value),
+        ]);
+      }
+      function metaGrid(...rows) {
+        return el("div", { style: "display:grid;grid-template-columns:auto 1fr;gap:0.3rem 1rem;margin-bottom:0.75rem" }, rows);
+      }
+      async function saveMeta(fields, btn, errEl, onDone) {
+        btn.disabled = true; btn.textContent = "Saving…"; errEl.textContent = "";
+        try {
+          await API.post(token, "upsertComponentMetadata", { component_id: componentId, ...fields });
+          onDone();
+        } catch (ex) { errEl.textContent = ex.message; btn.disabled = false; btn.textContent = "Save"; }
+      }
+      function metaFldRow(label, inp) {
+        return el("div", { style: "margin-bottom:0.45rem" }, [
+          el("div", { class: "form-label", style: "font-size:0.75rem;margin-bottom:2px" }, label), inp,
+        ]);
+      }
+      function metaInp(val, placeholder, type) {
+        return el("input", { class: "up-text", type: type || "text", placeholder,
+          style: "padding:0.25rem 0.4rem;font-size:0.82rem", value: val != null ? String(val) : "" });
+      }
+
+      // Specifications (Physical + Material + Procurement)
+      const specsContainer = el("div", {});
+      function renderSpecsRead() {
+        const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderSpecsEdit }, "Edit") : null;
+        const dimsStr = (meta.length_mm != null || meta.width_mm != null || meta.height_mm != null)
+          ? `${meta.length_mm ?? "—"} × ${meta.width_mm ?? "—"} × ${meta.height_mm ?? "—"} mm` : "—";
+        specsContainer.replaceChildren(
+          el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
+            [el("strong", { style: "font-size:0.88rem" }, "Physical"), editBtn].filter(Boolean)),
+          metaGrid(
+            metaRow("Weight", meta.weight_g != null ? meta.weight_g + " g" : "—"),
+            metaRow("L × W × H", dimsStr),
+          ),
+          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Material & Finish"),
+          metaGrid(
+            metaRow("Base material",     metaFld(meta.base_material)),
+            metaRow("Surface treatment", metaFld(meta.surface_treatment)),
+            metaRow("Color / finish",    metaFld(meta.color_specification)),
+            metaRow("Flame retardant",   metaFld(meta.flame_retardant_class)),
+          ),
+          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Procurement"),
+          metaGrid(
+            metaRow("Preferred supplier", metaFld(meta.preferred_supplier_name)),
+            metaRow("Supplier part no.",  metaFld(meta.supplier_part_number)),
+            metaRow("Lead time",          meta.lead_time_days != null ? meta.lead_time_days + " days" : "—"),
+            metaRow("MOQ",                meta.moq != null ? String(meta.moq) : "—"),
+          ),
+        );
+      }
+      function renderSpecsEdit() {
+        const wt  = metaInp(meta.weight_g,               "g",                         "number");
+        const lmm = metaInp(meta.length_mm,              "mm",                        "number");
+        const wmm = metaInp(meta.width_mm,               "mm",                        "number");
+        const hmm = metaInp(meta.height_mm,              "mm",                        "number");
+        const bm  = metaInp(meta.base_material,          "e.g. 6061-T6 aluminium");
+        const st  = metaInp(meta.surface_treatment,      "e.g. anodized class II natural");
+        const cs  = metaInp(meta.color_specification,    "e.g. RAL 9003 signal white");
+        const fr  = metaInp(meta.flame_retardant_class,  "e.g. V-0");
+        const ps  = metaInp(meta.preferred_supplier_name,"Supplier name");
+        const spn = metaInp(meta.supplier_part_number,   "Supplier's part number");
+        const ltd = metaInp(meta.lead_time_days,         "calendar days",             "number");
+        const moqI= metaInp(meta.moq,                   "units",                     "number");
+        const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
+        const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
+        saveBtn.onclick = () => saveMeta({
+          weight_g:                wt.value  !== "" ? parseFloat(wt.value)  : null,
+          length_mm:               lmm.value !== "" ? parseFloat(lmm.value) : null,
+          width_mm:                wmm.value !== "" ? parseFloat(wmm.value) : null,
+          height_mm:               hmm.value !== "" ? parseFloat(hmm.value) : null,
+          base_material:           bm.value.trim()  || null,
+          surface_treatment:       st.value.trim()  || null,
+          color_specification:     cs.value.trim()  || null,
+          flame_retardant_class:   fr.value.trim()  || null,
+          preferred_supplier_name: ps.value.trim()  || null,
+          supplier_part_number:    spn.value.trim() || null,
+          lead_time_days:          ltd.value !== "" ? parseInt(ltd.value)  : null,
+          moq:                     moqI.value !== "" ? parseInt(moqI.value): null,
+        }, saveBtn, errEl, () => openComponentDetail(componentId, token, panel, nodeData, role));
+        specsContainer.replaceChildren(
+          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Physical"),
+          el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
+            metaFldRow("Weight (g)", wt), metaFldRow("Length (mm)", lmm),
+            metaFldRow("Width (mm)", wmm), metaFldRow("Height (mm)", hmm),
+          ]),
+          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Material & Finish"),
+          el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
+            metaFldRow("Base material", bm), metaFldRow("Surface treatment", st),
+            metaFldRow("Color / finish", cs), metaFldRow("Flame retardant class", fr),
+          ]),
+          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Procurement"),
+          el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
+            metaFldRow("Preferred supplier", ps), metaFldRow("Supplier part no.", spn),
+            metaFldRow("Lead time (days)", ltd), metaFldRow("MOQ (units)", moqI),
+          ]),
+          errEl,
+          el("div", { style: "display:flex;gap:0.5rem" }, [
+            saveBtn, el("button", { class: "btn btn-sm", type: "button", onclick: renderSpecsRead }, "Cancel"),
+          ]),
+        );
+      }
+      renderSpecsRead();
+      const specsSection = el("div", {}, [specsContainer]);
+
+      // Quality & Incoming Inspection
+      const qualContainer = el("div", {});
+      const INSP_METHODS = ["none","visual","dimensional","functional","chemical","destructive","certificate_only"];
+      function renderQualRead() {
+        const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderQualEdit }, "Edit") : null;
+        qualContainer.replaceChildren(
+          el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
+            [el("strong", { style: "font-size:0.88rem" }, "Quality & Incoming Inspection"), editBtn].filter(Boolean)),
+          metaGrid(
+            metaRow("Inspection method",   metaFld(meta.incoming_inspection_method)),
+            metaRow("Sample size / AQL",   metaFld(meta.inspection_sample_size)),
+            metaRow("Critical-to-quality", metaFld(meta.critical_to_quality)),
+            metaRow("CPK required",        metaBool(meta.has_cpk_requirement)),
+          ),
+        );
+      }
+      function renderQualEdit() {
+        const methodSel = el("select", { class: "up-text", style: "font-size:0.82rem;padding:0.25rem 0.4rem" },
+          ["", ...INSP_METHODS].map((v) => el("option", { value: v,
+            selected: v === (meta.incoming_inspection_method || "") ? "selected" : null }, v || "— select —")));
+        const sampleInp = metaInp(meta.inspection_sample_size, 'e.g. "AQL 2.5" or "100%"');
+        const ctqInp = el("textarea", { class: "up-text", rows: "2",
+          placeholder: "Key CTQ characteristics", style: "font-size:0.82rem;padding:0.25rem 0.4rem;resize:vertical" });
+        ctqInp.value = meta.critical_to_quality || "";
+        const cpkChk = el("input", { type: "checkbox" }); if (meta.has_cpk_requirement) cpkChk.checked = true;
+        const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
+        const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
+        saveBtn.onclick = () => saveMeta({
+          incoming_inspection_method: methodSel.value || null,
+          inspection_sample_size:     sampleInp.value.trim() || null,
+          critical_to_quality:        ctqInp.value.trim() || null,
+          has_cpk_requirement:        cpkChk.checked,
+        }, saveBtn, errEl, () => openComponentDetail(componentId, token, panel, nodeData, role));
+        qualContainer.replaceChildren(
+          metaFldRow("Inspection method", methodSel),
+          metaFldRow("Sample size / AQL", sampleInp),
+          metaFldRow("Critical-to-quality characteristics", ctqInp),
+          el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.45rem" },
+            [cpkChk, el("span", { style: "font-size:0.82rem" }, "CPK required from supplier")]),
+          errEl,
+          el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [
+            saveBtn, el("button", { class: "btn btn-sm", type: "button", onclick: renderQualRead }, "Cancel"),
+          ]),
+        );
+      }
+      renderQualRead();
+      const qualSection = el("div", {}, [qualContainer]);
+
+      // Regulatory / DPP
+      const regContainer = el("div", {});
+      function renderRegRead() {
+        const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderRegEdit }, "Edit") : null;
+        regContainer.replaceChildren(
+          el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
+            [el("strong", { style: "font-size:0.88rem" }, "Regulatory & DPP (ESPR Article 7)"), editBtn].filter(Boolean)),
+          metaGrid(
+            metaRow("Country of origin",      metaFld(meta.country_of_origin)),
+            metaRow("HS code",                metaFld(meta.hs_code)),
+            metaRow("WEEE category",          metaFld(meta.weee_category)),
+            metaRow("Recycled content",       meta.recycled_content_pct != null ? meta.recycled_content_pct + " %" : "—"),
+            metaRow("Carbon footprint",       meta.carbon_footprint_kgco2e != null ? meta.carbon_footprint_kgco2e + " kg CO₂e" : "—"),
+            metaRow("PCF source",             metaFld(meta.carbon_footprint_source)),
+            metaRow("Battery regulation",     metaBool(meta.battery_regulation_applicable)),
+            metaRow("Conflict minerals free", metaBool(meta.conflict_minerals_free)),
+            metaRow("Spare part available",   metaBool(meta.repair_spare_part_available)),
+            metaRow("End-of-life instruction",metaFld(meta.end_of_life_instruction)),
+          ),
+        );
+      }
+      function renderRegEdit() {
+        const co  = metaInp(meta.country_of_origin,       "ISO alpha-2 e.g. SE");
+        const hsc = metaInp(meta.hs_code,                 "e.g. 940350");
+        const wee = metaInp(meta.weee_category,           "WEEE category");
+        const rcp = metaInp(meta.recycled_content_pct,   "%",        "number");
+        const cfp = metaInp(meta.carbon_footprint_kgco2e,"kg CO₂e",  "number");
+        const cfs = metaInp(meta.carbon_footprint_source, "e.g. EPD, Ecoinvent 3.9");
+        const eol = el("textarea", { class: "up-text", rows: "2",
+          placeholder: "Disassembly / recycling instruction", style: "font-size:0.82rem;padding:0.25rem 0.4rem;resize:vertical" });
+        eol.value = meta.end_of_life_instruction || "";
+        const batChk = el("input", { type: "checkbox" }); if (meta.battery_regulation_applicable) batChk.checked = true;
+        const cmfChk = el("input", { type: "checkbox" }); if (meta.conflict_minerals_free)        cmfChk.checked = true;
+        const spaChk = el("input", { type: "checkbox" }); spaChk.checked = meta.repair_spare_part_available !== false;
+        const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
+        const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
+        saveBtn.onclick = () => saveMeta({
+          country_of_origin:             co.value.trim().toUpperCase() || null,
+          hs_code:                       hsc.value.trim() || null,
+          weee_category:                 wee.value.trim() || null,
+          recycled_content_pct:          rcp.value !== "" ? parseFloat(rcp.value) : null,
+          carbon_footprint_kgco2e:       cfp.value !== "" ? parseFloat(cfp.value) : null,
+          carbon_footprint_source:       cfs.value.trim() || null,
+          end_of_life_instruction:       eol.value.trim() || null,
+          battery_regulation_applicable: batChk.checked,
+          conflict_minerals_free:        cmfChk.checked || null,
+          repair_spare_part_available:   spaChk.checked,
+        }, saveBtn, errEl, () => openComponentDetail(componentId, token, panel, nodeData, role));
+        function chkRow(label, chkEl) {
+          return el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.45rem" },
+            [chkEl, el("span", { style: "font-size:0.82rem" }, label)]);
+        }
+        regContainer.replaceChildren(
+          el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
+            metaFldRow("Country of origin (ISO)", co), metaFldRow("HS code", hsc),
+            metaFldRow("WEEE category", wee),          metaFldRow("Recycled content (%)", rcp),
+            metaFldRow("Carbon footprint (kg CO₂e)", cfp), metaFldRow("PCF source / method", cfs),
+          ]),
+          metaFldRow("End-of-life instruction", eol),
+          chkRow("Battery Regulation 2023/1542 applicable", batChk),
+          chkRow("Conflict minerals free (3TG)", cmfChk),
+          chkRow("Spare part available", spaChk),
+          errEl,
+          el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [
+            saveBtn, el("button", { class: "btn btn-sm", type: "button", onclick: renderRegRead }, "Cancel"),
+          ]),
+        );
+      }
+      renderRegRead();
+      const regulatorySection = el("div", {}, [regContainer]);
+
+      // --- Tab bar -----------------------------------------------------------
+      const TAB_DEFS = [
+        { id: "overview",    label: "Overview" },
+        { id: "specs",       label: "Specifications" },
+        { id: "quality",     label: "Quality" },
+        { id: "regulatory",  label: "Regulatory" },
+        { id: "materials",   label: "Materials" },
+        { id: "documents",   label: "Documents" },
+        { id: "images",      label: "Images" },
+        { id: "versions",    label: "Versions" },
+        { id: "changelog",   label: "Change Log" },
+      ];
+      const tabPanels = {};
+      const tabButtons = [];
+      function activateDetailTab(id) {
+        for (const [k, p] of Object.entries(tabPanels)) p.style.display = k === id ? "" : "none";
+        for (const b of tabButtons) {
+          b.style.fontWeight   = b.dataset.tab === id ? "700" : "400";
+          b.style.borderBottom = b.dataset.tab === id ? "2px solid var(--accent,#2fa564)" : "2px solid transparent";
+        }
+      }
+      const tabBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:2px;margin-bottom:1rem;border-bottom:1px solid var(--border,#e2e8f0)" });
+      TAB_DEFS.forEach(({ id, label }) => {
+        const btn = el("button", {
+          class: "btn btn-sm", type: "button", "data-tab": id,
+          style: "font-size:0.76rem;padding:0.22rem 0.55rem;border-radius:4px 4px 0 0;margin-bottom:-1px;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer",
+          onclick: () => activateDetailTab(id),
+        }, label);
+        tabButtons.push(btn);
+        tabBar.append(btn);
+      });
+      tabPanels["overview"]   = el("div", { style: "display:none" }, [
+        ...(statusSection  ? [statusSection]  : []),
+        ...(typeSection    ? [typeSection]    : []),
+        ...(configSection  ? [configSection]  : []),
+        productFamiliesSection,
+        usedInSection,
+      ]);
+      tabPanels["specs"]      = el("div", { style: "display:none" }, [specsSection]);
+      tabPanels["quality"]    = el("div", { style: "display:none" }, [qualSection]);
+      tabPanels["regulatory"] = el("div", { style: "display:none" }, [regulatorySection]);
+      tabPanels["materials"]  = el("div", { style: "display:none" }, [matsSection]);
+      tabPanels["documents"]  = el("div", { style: "display:none" }, [docsSection]);
+      tabPanels["images"]     = el("div", { style: "display:none;padding-top:0.5rem" }, [imagesSection]);
+      tabPanels["versions"]   = el("div", { style: "display:none" }, [versionsSection]);
+      tabPanels["changelog"]  = el("div", { style: "display:none" }, [changelogSection]);
+      activateDetailTab("overview");
+
       panel.replaceChildren(
-        el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem" }, [
+        el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem" }, [
           el("strong", {}, `Component: ${componentId.slice(0, 8)}…`),
           el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.style.display = "none"; } }, "Close"),
         ]),
-        ...(statusSection ? [statusSection] : []),
-        ...(typeSection ? [typeSection] : []),
-        ...(configSection ? [configSection] : []),
-        productFamiliesSection,
-        versionsSection, usedInSection, docsSection, matsSection, imagesSection, changelogSection,
+        tabBar,
+        ...Object.values(tabPanels),
       );
     } catch (ex) {
       panel.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`));

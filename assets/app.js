@@ -5005,10 +5005,12 @@
           ),
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Procurement"),
           metaGrid(
-            metaRow("Preferred supplier", metaFld(meta.preferred_supplier_name)),
-            metaRow("Supplier part no.",  metaFld(meta.supplier_part_number)),
-            metaRow("Lead time",          meta.lead_time_days != null ? meta.lead_time_days + " days" : "—"),
-            metaRow("MOQ",                meta.moq != null ? String(meta.moq) : "—"),
+            metaRow("Manufacturer",          metaFld(meta.manufacturer_name)),
+            metaRow("Manufacturer part no.", metaFld(meta.manufacturer_part_number)),
+            metaRow("Supplier",              metaFld(meta.preferred_supplier_name)),
+            metaRow("Supplier part no.",     metaFld(meta.supplier_part_number)),
+            metaRow("Lead time",             meta.lead_time_days != null ? meta.lead_time_days + " days" : "—"),
+            metaRow("MOQ",                   meta.moq != null ? String(meta.moq) : "—"),
           ),
         );
       }
@@ -5021,25 +5023,29 @@
         const st  = metaInp(meta.surface_treatment,      "e.g. anodized class II natural");
         const cs  = metaInp(meta.color_specification,    "e.g. RAL 9003 signal white");
         const fr  = metaInp(meta.flame_retardant_class,  "e.g. V-0");
-        const ps  = metaInp(meta.preferred_supplier_name,"Supplier name");
-        const spn = metaInp(meta.supplier_part_number,   "Supplier's part number");
-        const ltd = metaInp(meta.lead_time_days,         "calendar days",             "number");
-        const moqI= metaInp(meta.moq,                   "units",                     "number");
+        const mfr = metaInp(meta.manufacturer_name,        "Manufacturer name");
+        const mfp = metaInp(meta.manufacturer_part_number, "Manufacturer's part number");
+        const ps  = metaInp(meta.preferred_supplier_name,  "Supplier / distributor name");
+        const spn = metaInp(meta.supplier_part_number,     "Supplier's order number");
+        const ltd = metaInp(meta.lead_time_days,           "calendar days",             "number");
+        const moqI= metaInp(meta.moq,                     "units",                     "number");
         const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
         const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
         saveBtn.onclick = () => saveMeta({
-          weight_g:                wt.value  !== "" ? parseFloat(wt.value)  : null,
-          length_mm:               lmm.value !== "" ? parseFloat(lmm.value) : null,
-          width_mm:                wmm.value !== "" ? parseFloat(wmm.value) : null,
-          height_mm:               hmm.value !== "" ? parseFloat(hmm.value) : null,
-          base_material:           bm.value.trim()  || null,
-          surface_treatment:       st.value.trim()  || null,
-          color_specification:     cs.value.trim()  || null,
-          flame_retardant_class:   fr.value.trim()  || null,
-          preferred_supplier_name: ps.value.trim()  || null,
-          supplier_part_number:    spn.value.trim() || null,
-          lead_time_days:          ltd.value !== "" ? parseInt(ltd.value)  : null,
-          moq:                     moqI.value !== "" ? parseInt(moqI.value): null,
+          weight_g:                   wt.value  !== "" ? parseFloat(wt.value)  : null,
+          length_mm:                  lmm.value !== "" ? parseFloat(lmm.value) : null,
+          width_mm:                   wmm.value !== "" ? parseFloat(wmm.value) : null,
+          height_mm:                  hmm.value !== "" ? parseFloat(hmm.value) : null,
+          base_material:              bm.value.trim()  || null,
+          surface_treatment:          st.value.trim()  || null,
+          color_specification:        cs.value.trim()  || null,
+          flame_retardant_class:      fr.value.trim()  || null,
+          manufacturer_name:          mfr.value.trim() || null,
+          manufacturer_part_number:   mfp.value.trim() || null,
+          preferred_supplier_name:    ps.value.trim()  || null,
+          supplier_part_number:       spn.value.trim() || null,
+          lead_time_days:             ltd.value !== "" ? parseInt(ltd.value)  : null,
+          moq:                        moqI.value !== "" ? parseInt(moqI.value): null,
         }, saveBtn, errEl, () => openComponentDetail(componentId, token, panel, nodeData, role));
         specsContainer.replaceChildren(
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Physical"),
@@ -5054,7 +5060,8 @@
           ]),
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Procurement"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
-            metaFldRow("Preferred supplier", ps), metaFldRow("Supplier part no.", spn),
+            metaFldRow("Manufacturer", mfr), metaFldRow("Manufacturer part no.", mfp),
+            metaFldRow("Supplier", ps), metaFldRow("Supplier part no.", spn),
             metaFldRow("Lead time (days)", ltd), metaFldRow("MOQ (units)", moqI),
           ]),
           errEl,

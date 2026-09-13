@@ -5006,7 +5006,7 @@
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Procurement"),
           metaGrid(
             metaRow("Manufacturer",          metaFld(meta.manufacturer_name)),
-            metaRow("Manufacturer part no.", metaFld(meta.manufacturer_part_number)),
+            metaRow("OEM number",            metaFld(meta.manufacturer_part_number)),
             metaRow("Supplier",              metaFld(meta.preferred_supplier_name)),
             metaRow("Supplier part no.",     metaFld(meta.supplier_part_number)),
             metaRow("Lead time",             meta.lead_time_days != null ? meta.lead_time_days + " days" : "—"),
@@ -5024,7 +5024,7 @@
         const cs  = metaInp(meta.color_specification,    "e.g. RAL 9003 signal white");
         const fr  = metaInp(meta.flame_retardant_class,  "e.g. V-0");
         const mfr = metaInp(meta.manufacturer_name,        "Manufacturer name");
-        const mfp = metaInp(meta.manufacturer_part_number, "Manufacturer's part number");
+        const mfp = metaInp(meta.manufacturer_part_number, "OEM number");
         const ps  = metaInp(meta.preferred_supplier_name,  "Supplier / distributor name");
         const spn = metaInp(meta.supplier_part_number,     "Supplier's order number");
         const ltd = metaInp(meta.lead_time_days,           "calendar days",             "number");
@@ -5060,7 +5060,7 @@
           ]),
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Procurement"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
-            metaFldRow("Manufacturer", mfr), metaFldRow("Manufacturer part no.", mfp),
+            metaFldRow("Manufacturer", mfr), metaFldRow("OEM number", mfp),
             metaFldRow("Supplier", ps), metaFldRow("Supplier part no.", spn),
             metaFldRow("Lead time (days)", ltd), metaFldRow("MOQ (units)", moqI),
           ]),

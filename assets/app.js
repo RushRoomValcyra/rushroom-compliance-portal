@@ -5281,7 +5281,10 @@
 
       panel.replaceChildren(
         el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem" }, [
-          el("strong", {}, `Component: ${componentId.slice(0, 8)}…`),
+          el("div", {}, [
+            el("strong", { style: "font-size:0.97rem" }, nodeData?.name || componentId.slice(0, 8) + "…"),
+            nodeData?.part_number ? el("span", { style: "margin-left:0.5rem;font-family:monospace;font-size:0.78rem;color:var(--muted,#8b93a1)" }, nodeData.part_number) : null,
+          ].filter(Boolean)),
           el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.style.display = "none"; } }, "Close"),
         ]),
         tabBar,

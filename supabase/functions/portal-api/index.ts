@@ -3448,7 +3448,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const parentIdSet = new Set((parentRows || []).map((r: any) => r.parent_id));
     const search = body.search ? String(body.search).trim() : null;
     let q = tdb("bom_components")
-      .select("id, part_number, oem_number, name, type, lifecycle_status, replacement_note, flag_reason")
+      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason")
       .order("name");
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
     const { data: comps, error: ce } = await q;
@@ -3511,7 +3511,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
   // --- BOM: update component metadata (never part_number or type) -----------
   if (action === "updateComponent") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { component_id, name, description, notes, oem_number, part_number, type: newType } = body;
+    const { component_id, name, description, notes, oem_number, part_number, type: newType, make_or_buy } = body;
     if (!component_id) return json({ error: "component_id required" }, 400);
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: session.uid || null };
     if (name        !== undefined) patch.name        = String(name);
@@ -3523,6 +3523,11 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       const validTypes = ["part", "raw_material", "sub_assembly", "finished_good", "spare_part", "product_family"];
       if (!validTypes.includes(newType)) return json({ error: "Invalid type" }, 400);
       patch.type = newType;
+    }
+    if (make_or_buy !== undefined) {
+      const validMOB = ["purchased", "manufactured", "assembled", "subcontracted"];
+      if (!validMOB.includes(make_or_buy)) return json({ error: "Invalid make_or_buy" }, 400);
+      patch.make_or_buy = make_or_buy;
     }
     const { error } = await tdb("bom_components").update(patch).eq("id", component_id);
     if (error) return json({ error: error.message }, 400);
@@ -3587,7 +3592,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
 
     // Fetch component fields for snapshot + audit trail
     const { data: comp } = await tdb("bom_components")
-      .select("organization_id, part_number, oem_number, name, description, notes, type, lifecycle_status, replacement_note, flag_reason")
+      .select("organization_id, part_number, oem_number, name, description, notes, type, make_or_buy, lifecycle_status, replacement_note, flag_reason")
       .eq("id", component_id).maybeSingle();
 
     // Build version snapshot: capture documents + materials as they exist right now
@@ -3615,6 +3620,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       description:      comp.description      || null,
       notes:            comp.notes            || null,
       lifecycle_status: comp.lifecycle_status,
+      make_or_buy:      comp.make_or_buy      || "purchased",
       replacement_note: comp.replacement_note || null,
       flag_reason:      comp.flag_reason      || null,
       documents: (snapDocs || []).map((d: any) => ({

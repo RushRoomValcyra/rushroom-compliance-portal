@@ -3661,6 +3661,7 @@
           }, `↗ ${parentCountMap[comp.id]}`) : null,
         ].filter(Boolean)),
         el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, comp.type || ""),
+        (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
         role === "rushroom" && allowExpand ? el("button", {
           class: "btn btn-sm", type: "button",
@@ -5157,10 +5158,36 @@
         tabButtons.push(btn);
         tabBar.append(btn);
       });
+      // Make-or-Buy editor (rushroom only)
+      let makeOrBuySection = null;
+      if (role === "rushroom") {
+        const MOB_OPTS = [["purchased","Purchased (bought-in)"],["manufactured","Manufactured (made in-house)"],["assembled","Assembled (in-house from bought parts)"],["subcontracted","Subcontracted (outsourced)"]];
+        const currentMOB = nodeData?.make_or_buy || "purchased";
+        const mobDropdown = el("select", { class: "up-text", style: "padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
+          MOB_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentMOB ? "selected" : null }, l))
+        );
+        const mobErr = el("span", { style: "font-size:0.78rem;color:#e05454" }, "");
+        const mobBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
+        mobBtn.onclick = async () => {
+          mobBtn.disabled = true; mobBtn.textContent = "Saving…"; mobErr.textContent = "";
+          try {
+            await API.post(token, "updateComponent", { component_id: componentId, make_or_buy: mobDropdown.value });
+            openComponentDetail(componentId, token, panel, { ...nodeData, make_or_buy: mobDropdown.value }, role);
+          } catch (ex) { mobErr.textContent = ex.message; mobBtn.disabled = false; mobBtn.textContent = "Save"; }
+        };
+        makeOrBuySection = el("div", { style: "margin-bottom:1rem;padding:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
+          el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem" }, [
+            el("span", { style: "font-size:0.82rem;font-weight:600;white-space:nowrap" }, "Sourcing"),
+            mobDropdown, mobBtn, mobErr,
+          ]),
+        ]);
+      }
+
       tabPanels["overview"]   = el("div", { style: "display:none" }, [
-        ...(statusSection  ? [statusSection]  : []),
-        ...(typeSection    ? [typeSection]    : []),
-        ...(configSection  ? [configSection]  : []),
+        ...(statusSection     ? [statusSection]     : []),
+        ...(typeSection       ? [typeSection]       : []),
+        ...(makeOrBuySection  ? [makeOrBuySection]  : []),
+        ...(configSection     ? [configSection]     : []),
         productFamiliesSection,
         usedInSection,
       ]);

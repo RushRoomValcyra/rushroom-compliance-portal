@@ -4821,6 +4821,43 @@
       ]);
 
       // --- Status edit block (rushroom only) -----------------------------------
+      // --- Name + part number edit block (rushroom only) -----------------------
+      let nameSection = null;
+      if (role === "rushroom") {
+        const nameInp = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "flex:1;min-width:140px;font-size:0.82rem" });
+        const pnInp   = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:11rem;font-size:0.82rem;font-family:monospace" });
+        const oemInp  = el("input", { class: "up-text", type: "text", value: nodeData?.oem_number || "", placeholder: "OEM number", style: "width:11rem;font-size:0.82rem;font-family:monospace" });
+        const nameSaveErr = el("span", { style: "font-size:0.78rem;color:#e05454" }, "");
+        const nameSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
+        nameSaveBtn.onclick = async () => {
+          const newName = nameInp.value.trim();
+          if (!newName) { nameSaveErr.textContent = "Name cannot be empty."; return; }
+          nameSaveBtn.disabled = true; nameSaveBtn.textContent = "Saving…"; nameSaveErr.textContent = "";
+          try {
+            await API.post(token, "updateComponent", {
+              component_id: componentId,
+              name: newName,
+              part_number: pnInp.value.trim() || undefined,
+              oem_number: oemInp.value.trim() || null,
+            });
+            openComponentDetail(componentId, token, panel, { ...nodeData, name: newName, part_number: pnInp.value.trim() || nodeData?.part_number, oem_number: oemInp.value.trim() || null }, role);
+          } catch (ex) {
+            nameSaveErr.textContent = ex.message;
+            nameSaveBtn.disabled = false; nameSaveBtn.textContent = "Save";
+          }
+        };
+        nameSection = el("div", { style: "margin-bottom:1rem;padding:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
+          el("div", { style: "display:grid;grid-template-columns:1fr auto;gap:0.4rem 0.5rem;align-items:center;margin-bottom:0.3rem" }, [
+            el("div", {}, [el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:2px" }, "Name"), nameInp]),
+            el("div", { style: "grid-row:1/3;align-self:end;display:flex;flex-direction:column;gap:0.25rem" }, [nameSaveBtn, nameSaveErr]),
+            el("div", { style: "display:flex;gap:0.35rem" }, [
+              el("div", {}, [el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:2px" }, "Part no."), pnInp]),
+              el("div", {}, [el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:2px" }, "OEM no."), oemInp]),
+            ]),
+          ]),
+        ]);
+      }
+
       let statusSection = null;
       if (role === "rushroom") {
         const VALID_STATUSES = ["active", "inactive", "replaced", "flagged"];
@@ -5409,6 +5446,7 @@
 
       tabPanels["overview"]   = el("div", { style: "display:none" }, [
         ...(sourceCallout     ? [sourceCallout]     : []),
+        ...(nameSection       ? [nameSection]       : []),
         ...(statusSection     ? [statusSection]     : []),
         ...(typeSection       ? [typeSection]       : []),
         ...(makeOrBuySection  ? [makeOrBuySection]  : []),

@@ -4277,7 +4277,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       "recycled_content_pct","carbon_footprint_kgco2e","carbon_footprint_source",
       "end_of_life_instruction","repair_spare_part_available","custom_specs",
     ];
-    const payload: Record<string, any> = { component_id, organization_id: orgId, updated_at: new Date().toISOString() };
+    const payload: Record<string, any> = { component_id, organization_id: organizationId, updated_at: new Date().toISOString() };
     for (const k of allowed) { if (k in fields) payload[k] = fields[k]; }
     const { error } = await tdb("component_metadata")
       .upsert(payload, { onConflict: "component_id" });

@@ -3500,10 +3500,8 @@
       const grouped = { components: [], assemblies: [], dynamic: [] };
       filtered.forEach((c) => {
         if (c.type === "product_family") grouped.dynamic.push(c);
-        else {
-          grouped.components.push(c);          // every component is in the Parts catalog
-          if (c.has_children || c.type === "sub_assembly") grouped.assemblies.push(c); // sub_assembly always in Assemblies; others when they have children
-        }
+        else if (c.type === "sub_assembly") grouped.assemblies.push(c);
+        else grouped.components.push(c);
       });
       return grouped;
     }

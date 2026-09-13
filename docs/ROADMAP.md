@@ -1,5 +1,5 @@
 # Rushroom Compliance Portal — Roadmap
-_Last updated: 2026-09-02 · Auto-maintained by /ship_
+_Last updated: 2026-09-13 · Auto-maintained by /ship_
 
 ## Now — In Progress
 - PROP-021 Component Document Lifecycle — Layer 1 shipped (upload & link from component panel); Layers 2–4 (new revision, AI diff, data extraction) pending; PROP-014 must be reviewed before Layer 2 design
@@ -15,6 +15,11 @@ _Last updated: 2026-09-02 · Auto-maintained by /ship_
 - PROP-007 Multi-language support EN/DE/SV
 
 ## Shipped
+- **PROP-033 Stocked Assembly Variants** (materialiseConfiguration + listVariantsByFamily; source_family_id + source_config_id columns on bom_components; bom_edges partial unique index; "Stock" button on saved configs; Stocked Variants section in Dynamic BOM panel; stale-source callout on materialised components; migration 0022; cache v195) — 2026-09-13
+- **PROP-032 make_or_buy — Sourcing Classification** (purchased/manufactured/assembled/subcontracted column on bom_components; color-coded badge on BOM list rows; inline editor in Overview tab; migration 0021; cache v192) — 2026-09-13
+- **PROP-031 Rich Part Data Record — Structured Component Metadata** (component_metadata table, 28 columns, 5 sections; 9-tab component detail panel; version-snapshotted via bumpComponentVersion; getComponentMetadata + upsertComponentMetadata API actions; migration 0020; cache v191) — 2026-09-13
+- **Fix — deleteComponent FK cleanup** (work_order_components, component_routing_steps, product_family_members deleted before final component delete; prevents FK violations from PROP-030 tables) — 2026-09-13
+- **Fix — type-only tab routing in groupFiltered()** (sub_assembly → Assemblies tab exclusively; part → Parts tab; has_children no longer drives tab placement; cache v192) — 2026-09-13
 - **PROP-030 Manufacturing BOM — Postponement Routing & Work Orders** (product_families + product_family_members tables; 8 product family API actions; component detail panel family tagging with multi-family chips; Manufacturing Steps loads from listFamilyMembers; work order creation from product_family_members pull list; migrations 0017+0018+0019; cache v190) — 2026-09-02
 - **Fix — Parts tab catalog-only; +child removed; sub_assembly always in Assemblies tab** (+child gated on allowExpand so Parts tab has no structural actions; sub_assembly type routes to Assemblies tab regardless of has_children; cache v183) — 2026-09-01
 - **Fix — Parts tab tree-state restore guard** (allowExpand guard added to expandedTrees restore block in renderRootRow; cached Assemblies-tab expansion no longer leaks into Parts tab on re-render; cache v182) — 2026-09-01

@@ -4169,8 +4169,9 @@
       const familyPromises = isFamily ? [
         API.post(token, "listFamilyAttributes", { family_id: componentId }),
         API.post(token, "listConfigurations",    { family_id: componentId }),
-      ] : [null, null];
-      const [hist, docs, mats, cl, usedIn, imgData, metaR, familyAttrs, familyConfigs, compFamiliesR, allFamiliesR] = await Promise.all([
+        API.post(token, "listVariantsByFamily",  { family_id: componentId }),
+      ] : [null, null, null];
+      const [hist, docs, mats, cl, usedIn, imgData, metaR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR] = await Promise.all([
         ...basePromises, ...familyPromises,
         API.post(token, "listComponentFamilies", { component_id: componentId }),
         API.post(token, "listProductFamilies", {}),
@@ -4600,18 +4601,76 @@
           } catch (ex) { alert(ex.message); }
         } }, "+ Add attribute");
 
+        function openMaterialiseModal(cfg, tkn, onRefresh) {
+          const pnInput  = el("input", { class: "up-text", type: "text", placeholder: "Part number (auto-generated if blank)", style: "width:100%;box-sizing:border-box", value: cfg.part_number || "" });
+          const nmInput  = el("input", { class: "up-text", type: "text", placeholder: "Name", style: "width:100%;box-sizing:border-box", value: cfg.name || "" });
+          const notesInput = el("textarea", { class: "up-text", rows: "2", placeholder: "Notes (optional)", style: "width:100%;box-sizing:border-box;resize:vertical" });
+          const errSpan  = el("span", { style: "color:#e05454;font-size:0.8rem;min-height:1.1em;display:block" }, "");
+          const submitBtn = el("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+            submitBtn.disabled = true; errSpan.textContent = "";
+            try {
+              await API.post(tkn, "materialiseConfiguration", {
+                saved_configuration_id: cfg.id,
+                part_number: pnInput.value.trim() || null,
+                name: nmInput.value.trim() || null,
+                notes: notesInput.value.trim() || null,
+              });
+              overlay.remove();
+              onRefresh();
+            } catch (ex) { errSpan.textContent = ex.message; submitBtn.disabled = false; }
+          } }, "Create Stocked Variant");
+          const overlay = el("div", { style: "position:fixed;inset:0;background:#0007;z-index:2000;display:flex;align-items:center;justify-content:center", onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, [
+            el("div", { style: "background:var(--surface,#fff);border-radius:8px;padding:1.25rem;width:min(440px,95vw);display:flex;flex-direction:column;gap:0.6rem", onclick: (ev) => ev.stopPropagation() }, [
+              el("h4", { style: "margin:0;font-size:1rem" }, `Materialise "${cfg.name}" as Stocked Variant`),
+              el("div", { style: "font-size:0.8rem;color:var(--muted,#8b93a1)" }, Object.entries(cfg.selections || {}).map(([k, v]) => `${k}: ${v}`).join("  ·  ")),
+              el("label", { style: "font-size:0.82rem;font-weight:600" }, ["Part number", pnInput]),
+              el("label", { style: "font-size:0.82rem;font-weight:600" }, ["Name", nmInput]),
+              el("label", { style: "font-size:0.82rem;font-weight:600" }, ["Notes", notesInput]),
+              errSpan,
+              el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end" }, [
+                el("button", { class: "btn", type: "button", onclick: () => overlay.remove() }, "Cancel"),
+                submitBtn,
+              ]),
+            ]),
+          ]);
+          document.body.appendChild(overlay);
+        }
+
         const cfgs = familyConfigs?.configurations || [];
+        const refresh = () => openComponentDetail(componentId, token, panel, nodeData, role);
         const cfgList = cfgs.length
           ? el("div", {}, cfgs.map((cfg) => el("div", { style: "display:flex;align-items:center;justify-content:space-between;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:5px;margin-bottom:3px;font-size:0.82rem" }, [
               el("span", {}, [el("strong", {}, cfg.name), cfg.part_number ? el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-family:monospace;font-size:0.76rem" }, cfg.part_number) : null,
                 el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-size:0.73rem" }, Object.entries(cfg.selections).map(([k, v]) => `${k}:${v}`).join(", ")),
               ].filter(Boolean)),
-              el("button", { class: "btn btn-sm", type: "button", style: "padding:1px 5px;font-size:0.7rem;color:#e05454;border-color:#e0545440", onclick: async () => {
-                if (!confirm(`Delete configuration "${cfg.name}"?`)) return;
-                try { await API.post(token, "deleteConfiguration", { configuration_id: cfg.id }); openComponentDetail(componentId, token, panel, nodeData, role); } catch (ex) { alert(ex.message); }
-              } }, "Delete"),
+              el("div", { style: "display:flex;gap:0.3rem;flex-shrink:0" }, [
+                el("button", { class: "btn btn-sm btn-primary", type: "button", style: "padding:1px 7px;font-size:0.7rem", onclick: () => openMaterialiseModal(cfg, token, refresh) }, "Stock"),
+                el("button", { class: "btn btn-sm", type: "button", style: "padding:1px 5px;font-size:0.7rem;color:#e05454;border-color:#e0545440", onclick: async () => {
+                  if (!confirm(`Delete configuration "${cfg.name}"?`)) return;
+                  try { await API.post(token, "deleteConfiguration", { configuration_id: cfg.id }); refresh(); } catch (ex) { alert(ex.message); }
+                } }, "Delete"),
+              ]),
             ])))
           : el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1)" }, "No saved configurations yet. Configurations will be imported from the order system (PROP-018).");
+
+        const stockedVariants = variantsR?.variants || [];
+        const LIFECYCLE_COLORS = { active: "#2fa564", inactive: "#8b93a1", replaced: "#d97706", flagged: "#e05454" };
+        const variantsList = stockedVariants.length
+          ? el("div", {}, stockedVariants.map((v) => {
+              const lcColor = LIFECYCLE_COLORS[v.lifecycle_status] || "#8b93a1";
+              return el("div", { style: "display:flex;align-items:center;justify-content:space-between;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:5px;margin-bottom:3px;font-size:0.82rem" }, [
+                el("span", {}, [
+                  el("strong", {}, v.name),
+                  el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);margin-left:0.4rem" }, v.part_number),
+                  v.config_selections ? el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-size:0.73rem" }, Object.entries(v.config_selections).map(([k, vv]) => `${k}:${vv}`).join(", ")) : null,
+                ].filter(Boolean)),
+                el("div", { style: "display:flex;align-items:center;gap:0.35rem;flex-shrink:0" }, [
+                  el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:10px;background:${lcColor}22;color:${lcColor};font-weight:600;text-transform:capitalize` }, v.lifecycle_status || "inactive"),
+                  el("button", { class: "btn btn-sm", type: "button", style: "padding:1px 7px;font-size:0.7rem", onclick: () => openComponentDetail(v.id, token, panel, v, role) }, "Open →"),
+                ]),
+              ]);
+            }))
+          : el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1)" }, "No stocked variants yet. Click Stock on a configuration above to materialise one.");
 
         configSection = el("div", { style: "margin-bottom:1rem;border:1px solid #2fa56440;border-radius:6px;padding:0.75rem" }, [
           el("h4", { style: "margin:0 0 0.5rem;color:#2fa564" }, "Dynamic BOM — Variant Setup"),
@@ -4621,7 +4680,8 @@
             el("label", { style: "display:flex;align-items:center;gap:0.2rem;font-size:0.78rem;white-space:nowrap" }, [newAttrReq, "Required"]),
             addAttrBtn,
           ]),
-          el("div", {}, [el("label", { style: LBL }, "Saved Configurations"), cfgList]),
+          el("div", { style: "margin-bottom:0.75rem" }, [el("label", { style: LBL }, "Saved Configurations"), cfgList]),
+          el("div", {}, [el("label", { style: LBL }, "Stocked Variants (PROP-033)"), variantsList]),
         ]);
       }
 
@@ -5181,7 +5241,20 @@
         ]);
       }
 
+      // Stale-source callout for materialised stocked variants (PROP-033)
+      let sourceCallout = null;
+      if (nodeData?.source_family_id) {
+        sourceCallout = el("div", { style: "margin-bottom:1rem;padding:0.65rem 0.85rem;border:1px solid #d9770680;border-radius:6px;background:#d9770610;font-size:0.82rem;color:#92400e" }, [
+          el("strong", {}, "Stocked variant"),
+          el("span", {}, " — materialised from "),
+          el("button", { type: "button", style: "background:none;border:none;padding:0;color:#2fa564;font-size:0.82rem;cursor:pointer;font-weight:600;text-decoration:underline",
+            onclick: () => openComponentDetail(nodeData.source_family_id, token, panel, { id: nodeData.source_family_id, type: "product_family" }, role) }, "the source Dynamic BOM family"),
+          el("span", {}, ". If the family BOM has changed, re-materialise to pick up updates."),
+        ]);
+      }
+
       tabPanels["overview"]   = el("div", { style: "display:none" }, [
+        ...(sourceCallout     ? [sourceCallout]     : []),
         ...(statusSection     ? [statusSection]     : []),
         ...(typeSection       ? [typeSection]       : []),
         ...(makeOrBuySection  ? [makeOrBuySection]  : []),

@@ -553,3 +553,38 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Decision:** Completed the architecture correction: `product_families` and `product_family_members` tables are live. `component_routing_steps.family_id` now references `product_families` (not `bom_components`). `work_orders.family_id` references `product_families`; `selections JSONB` column removed from `work_orders`. Work order pull list sourced directly from `product_family_members` — no BFS BOM resolution needed. Component detail panel gains a product family tagging section (multi-family chips with × remove + assign picker). Manufacturing Steps tab loads component card grid from `listFamilyMembers` instead of a BOM tree walk. Eight new API actions for product family CRUD and membership management.
 **Why:** Finalises the PROP-030 schema so that (a) routing steps are correctly scoped to (component, product_family) where product_family is a first-class entity rather than a BOM node type, and (b) users can tag any part or assembly to one or more product families directly from the component detail panel — supporting Rushroom's postponement model where the same purchased SKU participates in multiple product families with different in-house processing. Removing `selections` simplifies the work order model — the pull list is deterministic from family membership, so variant configuration at work-order creation time is not needed.
 **Files changed:** supabase/migrations/0019_product_families.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, CLAUDE.md, docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md
+
+---
+**Date:** 2026-09-13
+**Feature:** PROP-031 — Rich Part Data Record (component_metadata)
+**Decision:** One dedicated `component_metadata` table (UNIQUE on component_id) holding 28 nullable columns across 5 sections. Metadata is version-snapshotted into `bom_component_versions.version_snapshot` at every `bumpComponentVersion` call — no separate `component_metadata_versions` table needed. All future AI-extracted spec data (drawings, datasheets) writes to this same table, not a parallel structure. Overflow goes to a `custom_specs JSONB` column rather than schema additions.
+**Why:** A single row per component avoids the fan-out query complexity of a key-value metadata store and keeps the 5-section schema explicit for DPP/ESPR Article 7 compliance. Snapshotting into the existing version_snapshot JSONB is zero-migration version control: the bump mechanism already runs; augmenting its payload adds no new tables. Separating compliance fields (WEEE, conflict minerals, recycled content, carbon footprint) as first-class columns — not freeform text — means DPP generation can be purely a query, not an NLP parse.
+**Files changed:** supabase/migrations/0020_component_metadata.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, CLAUDE.md
+
+---
+**Date:** 2026-09-13
+**Feature:** PROP-032 — make_or_buy sourcing field
+**Decision:** `make_or_buy TEXT NOT NULL DEFAULT 'purchased' CHECK (…)` column on `bom_components` with four values: purchased / manufactured / assembled / subcontracted. Field is informational only — it does not gate BOM inclusion, MBOM membership, or manufacturing routing scope. Validated in `updateComponent` at the edge function (not a DB CHECK alone) so the error message is user-readable.
+**Why:** Rushroom needs to see at a glance which parts arrive from suppliers vs which are built in-house. The four values map to Rushroom's actual procurement patterns (buy finished, make from raw, assemble sub-assemblies, subcontract to third party). Keeping it informational avoids gating logic that would need constant updating as sourcing decisions change; the field is the data, not the policy.
+**Files changed:** supabase/migrations/0021_make_or_buy.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, CLAUDE.md
+
+---
+**Date:** 2026-09-13
+**Feature:** Fix — deleteComponent FK cascade cleanup
+**Decision:** `deleteComponent` now explicitly deletes rows in `work_order_components`, `component_routing_steps`, and `product_family_members` before the final `bom_components` delete. No ON DELETE CASCADE was added to the migration-defined FKs.
+**Why:** ON DELETE CASCADE on manufacturing tables would silently wipe work order history when a component is deleted — an audit-trail concern. Explicit cleanup in application code makes the deletion sequence visible and auditable, and allows future hardening (e.g. blocking delete if an active work order references the component).
+**Files changed:** supabase/functions/portal-api/index.ts
+
+---
+**Date:** 2026-09-13
+**Feature:** Fix — type-only tab routing in groupFiltered()
+**Decision:** `sub_assembly` typed components route exclusively to the Assemblies tab; all other types route to the Parts tab. `has_children` is no longer used as a tab-routing signal anywhere in `groupFiltered()`.
+**Why:** The original `has_children`-based routing caused two bugs simultaneously: a freshly created `sub_assembly` with no children yet would appear in Parts (because has_children=false), and a `part`-typed component that happened to have children (gained via +child in the Assemblies tree) would spill into Assemblies. Type is a stable, user-assigned classification; `has_children` is derived structural state that changes as the tree is edited. Routing on type alone makes tab placement deterministic and immune to tree edits.
+**Files changed:** assets/app.js, index.html, CLAUDE.md
+
+---
+**Date:** 2026-09-13
+**Feature:** PROP-033 — Stocked Assembly Variants
+**Decision:** Materialised stocked variants are first-class `bom_components` (type=sub_assembly), not a separate entity. Back-references (`source_family_id`, `source_config_id`) on `bom_components` link each variant to its origin. The `bom_edges` unique constraint is relaxed to a partial index (unconditional edges only) so variant-conditional edge pairs can coexist.
+**Why:** Saved configurations are ephemeral records of attribute selections — they have no part number, lifecycle status, or orderable identity. Manufacturing, procurement, and order management all need a real component SKU. Making the materialised variant a standard `sub_assembly` means it participates in all existing workflows (BOM trees, work orders, product family membership) with zero special-casing. The partial unique index preserves the duplicate-edge guard for the common case (unconditional edges) while unlocking variant-conditional multiplicity needed for PROP-015-style multi-quantity scenarios.
+**Files changed:** supabase/migrations/0022_stocked_variants.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, CLAUDE.md

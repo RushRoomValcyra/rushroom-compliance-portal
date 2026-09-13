@@ -686,3 +686,323 @@ Rushroom operates a postponement (hedging) model. Semi-finished panels are bough
 - PROP-012 (Multi-tenancy — `organization_id NOT NULL` on all four new tables)
 
 **Status:** Raw idea — supersedes the earlier "manufactured part number" framing; correct model is variant-conditional routing on the product family, not routing on individual manufactured components
+
+---
+### Engineering Drawing Intelligence — Drawing-Driven Component Specs & Revision Signals — 2026-09-02
+
+**One sentence:** When a technical drawing (PDF export) is uploaded for a component, AI extracts the title block, general tolerances, primary dimensions, and material callout into structured fields — and when a new drawing revision is uploaded, automatically surfaces what changed and whether compliance re-testing is likely needed.
+
+**Problem it solves:**
+Engineering drawings carry the authoritative specification for a component — dimensions, tolerances, material callouts, revision history. Right now they exist only as dead PDF attachments in `component_documents`. When a drawing changes:
+- No system signals that the component's compliance test reports may no longer apply
+- No system bumps the component revision automatically
+- No system surfaces what actually changed between Rev A and Rev B
+- The Technical File audit trail (CE marking) has no machine-readable link between "drawing says ±0.2mm on this hole" and "EN 60598 clause 8.3 requires this tolerance"
+
+The result is that a compliance or engineering team member must manually read every changed drawing and decide whether re-testing is needed. At scale (30+ components × 5 standards) this is hours of work per ECO (Engineering Change Order). A CE marking consultant charges €2–5k per product to do exactly this mapping manually.
+
+This is not a CAD integration. CAD files (SolidWorks .sldprt, CATIA .CATPart, Fusion 360 .f3d) are binary, proprietary, and expensive to parse reliably. The practical path is PDF drawing exports — Claude Vision reads these with high accuracy for text content. The extraction is a structured Claude API call, not a CAD file parser.
+
+**What this makes possible:**
+"You upload a PDF drawing. We tell you what revision it is, what tolerances it declares, and what material it calls out. When you upload a new revision, we tell you exactly what changed and whether that change is likely to require re-testing under your active compliance standards."
+
+This positions the platform as an **Engineering and Compliance Portal** — genuinely connecting the engineering record (drawings, specs, revisions) to the compliance record (standards, clauses, test reports, declarations). That link is currently in someone's head or in a consultant's invoice.
+
+**Architecture intent:**
+Drawing intelligence is NOT a new tab or module. It is intelligence layered onto the existing component record. A component can already have `component_documents` with any category. Add `drawing` to the category enum. When a drawing is uploaded:
+1. AI extracts structured fields → stored in `component_specs` (new table, see PROP-021 Layer 4)
+2. Extracted revision letter is compared to current `bom_component_versions.revision` — if newer, surface a "Bump component revision to match drawing" prompt
+3. If this is a second drawing upload for the same document, AI diffs the two and returns a structured change summary (what changed, what is unchanged, compliance risk flag)
+4. Change summary is stored on the new `document_versions` row as `ai_diff_summary` (PROP-021 Layer 3 pattern) — no new table needed
+
+The ECO (Engineering Change Order) flow is implicit: upload new drawing revision → diff fires → compliance re-test signals fire (PROP-014 `pending_retest` pattern) → component revision bump is suggested. This is not a formal ECO workflow (no approval gates, no state machine) — MVP is the signal, not the process.
+
+**MVP scope:**
+1. **Add `drawing` to `component_documents.category` enum** (migration — 1 line)
+2. **New table `component_specs`**: `{id, organization_id NOT NULL FK→organizations, component_id FK→bom_components, source_document_version_id FK→document_versions, spec_name TEXT, spec_value TEXT, spec_unit TEXT NULLABLE, extraction_confidence TEXT (high|medium|low), created_at}` — one row per extracted field. The same table proposed in PROP-021 Layer 4; this is the trigger to build it.
+3. **New API action `extractDrawingSpecs(document_version_id, component_id)`** — calls Claude claude-haiku-4-5-20251001 (cheap, fast) with the drawing PDF (base64) and a structured schema: `{revision: str, revision_date: str, drawn_by: str, material_callout: str, general_tolerance: str, surface_finish: str, primary_dimensions: [{label, value, unit}], notes: str}`. Stores results as `component_specs` rows. Returns extracted data for user review — never auto-commits.
+4. **Frontend — component detail panel**: When a document with `category = drawing` is linked, a "Read drawing" button appears. Clicking it calls `extractDrawingSpecs` and shows a review panel: structured table of extracted fields, each with a confidence badge (high/medium/low), all pre-ticked for save, user can untick fields they don't trust. On confirm: saves to `component_specs`. The specs section in the component panel shows these rows as a neat key-value table.
+5. **Revision diff**: When uploading a new version of a document that is already linked as `category = drawing` to this component, the upload modal auto-triggers `diffDrawingRevisions(old_document_version_id, new_document_version_id)` — calls Claude claude-haiku-4-5-20251001 with both PDFs and returns `{changed: [{field, old_value, new_value}], unchanged: [field], compliance_risk: "likely"|"unlikely"|"uncertain", risk_reason: str}`. Shown inline before the user confirms the new link. Stored as `ai_diff_summary` on the new `document_versions` row.
+6. **Component revision prompt**: If the extracted drawing revision letter differs from the current component revision, show a yellow inline callout: "Drawing says Rev B — component is currently Rev A. Bump component revision?" One-click bump using existing `bumpComponentVersion`.
+
+**Tables involved:**
+- New: `component_specs` (organization_id NOT NULL FK→organizations, component_id, source_document_version_id, spec_name, spec_value, spec_unit, extraction_confidence)
+- Extended: `component_documents.category` enum (add `drawing`); `document_versions.ai_diff_summary` (PROP-021 Layer 3 — add this column in the same migration)
+- Read: `bom_component_versions` (current revision for comparison), `document_versions` (for diff), `component_documents` (to find linked drawings)
+- All new tables: `organization_id NOT NULL FK → organizations`
+
+**Effort estimate:** 14–20 hours
+- Migration (1 table, 1 column, 1 enum value): 1 h
+- Backend `extractDrawingSpecs` (Claude Haiku call + component_specs upsert): 3 h
+- Backend `diffDrawingRevisions` (Claude Haiku call + store ai_diff_summary): 2 h
+- Frontend — "Read drawing" button + review panel in component detail: 4–6 h
+- Frontend — diff modal in upload flow: 3 h
+- Frontend — component specs display table in component panel: 1–2 h
+- Frontend — revision prompt callout: 1 h
+
+**Risks:**
+- **PDF text quality**: Digitally created PDFs from modern CAD tools (Fusion 360, SolidWorks PDF export) are fully text-readable — extraction is reliable. Scanned drawings or rasterised PDFs fail text extraction. Claude Vision handles scanned drawings better than pure OCR but accuracy drops. Surface this clearly: "Low confidence" badge means AI couldn't read the field — user must fill in manually.
+- **Title block format variation**: Every company has a different title block layout. AI extraction does not depend on layout — it reads semantic meaning, not field position — but unusual formats (e.g. all-caps German DIN blocks, Japanese-style title blocks) may produce lower confidence on some fields.
+- **GD&T symbols**: Geometric Dimensioning and Tolerancing (position, flatness, perpendicularity, circularity) requires interpreting symbols and datum references. MVP scope is limited to general tolerances (the tolerance block) and primary dimensions (LxWxH). Full GD&T parsing is out of scope — mark GD&T callouts as "not extracted, see drawing" in the specs table.
+- **User trust in AI extraction**: Engineers are rightly skeptical of AI-extracted specs for parts where a wrong tolerance causes a safety incident. The review-before-save gate is non-negotiable. Never auto-commit. Add a clear disclaimer: "Extracted by AI — verify against drawing before use."
+- **Compliance risk flag accuracy**: The `compliance_risk` field on the revision diff is an AI judgment call, not a regulatory ruling. It surfaces likely candidates for re-testing — it does not replace engineering judgment. Label it clearly as a prompt, not a decision.
+- **`ai_diff_summary` column timing**: PROP-021 Layer 3 proposes this column. If PROP-021 Layer 3 ships before this, the column already exists. If this ships first, the migration adds it. Either order is safe — no conflict.
+
+**Related PROPs:**
+- PROP-021 Layer 3 (AI diff pattern — same two-PDF comparison approach; this extends it to drawings) and Layer 4 (component_specs table — this is the trigger to build it)
+- PROP-014 (Compliance–BOM Integration — the revision diff's compliance_risk flag is the prompt to run the PROP-014 pending_retest flow; they work together)
+- PROP-024 (Component Version History — drawing revision → component revision bump produces a version snapshot; the snapshot should include current specs)
+- PROP-013 (PIS — component_documents, bom_component_versions, component_materials are the foundation)
+- PROP-012 (Multi-tenancy — component_specs carries organization_id NOT NULL; drawings are highly confidential per-tenant IP)
+
+**The bigger picture — Engineering and Compliance Portal:**
+The platform already has: component registry (EBOM), BOM structure, manufacturing routing (MBOM lite), work orders (MES lite), compliance standards, and regulatory declarations. Adding drawing intelligence closes the last gap: the engineering record. The system becomes a single thread from "engineer uploads drawing" → "specs extracted" → "component record updated" → "compliance certificates checked" → "manufacturing steps verified" → "work order issued" → "declaration generated." No other SaaS product under €10k/year does this end-to-end for hardware startups. The positioning "Engineering and Compliance Portal" is accurate and defensible.
+
+**Status:** Raw idea
+
+---
+### Portal UI Localisation — EN / SV / DE Language Settings — 2026-09-06
+
+**One sentence:** A per-user language preference (English, Swedish, German) that switches all UI strings — navigation, button labels, status badges, error messages, field labels — while leaving compliance document content in its authored language.
+
+**Problem it solves:**
+Rushroom is a Swedish company likely to have Swedish and German-speaking staff, shop floor operators, and partners. The entire UI is currently hardcoded in English. Two distinct friction points:
+
+1. **Shop floor and operations:** Work orders, manufacturing steps, and incoming inspection checklists are read and acted on by operators on the shop floor. English UI for Swedish-speaking operators is unnecessary cognitive overhead — especially under time pressure at the bench.
+2. **Compliance and engineering:** Engineers navigating standards, deviation scans, and component records benefit from UI labels that match their natural language, even if the underlying compliance documents stay in English (EN is the standard language for EU regulatory content and that does not change).
+
+**The two problems that must stay separated:**
+- **UI language** (this idea) — button labels, navigation tabs, status strings, field names, error messages, modal titles. These are strings authored by us, stored in a catalog, swapped on language change. Clearly tractable.
+- **Content language** — the actual text of standards, compliance documents, interpretations, and AI-generated analysis. These are authored documents, not UI strings. They stay in their authored language (typically English). This idea does NOT translate compliance content.
+
+**MVP scope:**
+1. **`language_preference` column on `users` table** — `TEXT NOT NULL DEFAULT 'en'` CHECK IN ('en','sv','de'). Migration only — one column.
+2. **Org-level default: `default_language` on `organizations`** — `TEXT NOT NULL DEFAULT 'en'`. Fallback when user has not set a preference.
+3. **New API action `updateUserLanguage(language)`** — updates `users.language_preference` for the current user. Simple single-column patch.
+4. **String catalog: `assets/locales.js`** — a JS module exporting `const STRINGS = {en:{...}, sv:{...}, de:{...}}`. No library, no dependency. Approximately 200–300 keys covering: all navigation tabs and sub-tabs, all action button labels, all status badge strings (active/inactive/replaced/flagged, planned/in_progress/completed/shipped, etc.), all modal titles and field labels, all error messages. EN is the source; SV is the first translation (founders/team translate); DE second.
+5. **`t(key)` helper in `assets/app.js`** — `const t = k => STRINGS[currentLang]?.[k] ?? STRINGS.en[k] ?? k`. Falls back to EN, then to the key itself — so missing translations are visible but never broken.
+6. **Language initialisation on load** — on startup, fetch the user's `language_preference` from the session; set `currentLang` globally; re-render the UI. A `<select>` in the user settings area (or header) lets the user change language with immediate effect (no reload — re-render current view).
+7. **Locale-aware number and date formatting** — replace all `toFixed()` and manual date strings with `Intl.NumberFormat(currentLocale)` and `Intl.DateTimeFormat(currentLocale)`. SV uses comma as decimal separator; this is the most visible formatting difference.
+
+**What is deliberately out of scope:**
+- Translating compliance document content, standard clause text, or AI-generated analysis
+- RTL language support
+- Server-side rendering of locale (all client-side)
+- Machine translation of the string catalog (human translation by the team for SV; professional or human-reviewed for DE)
+
+**AI output language gap (known issue, addressed incrementally):**
+Claude currently generates all output in English — deviation scans, interpretation drafts, drawing extraction summaries, document diffs. If the UI is in Swedish, AI-generated text will still appear in English inline with a Swedish UI. This is jarring but not a blocker. The fix: pass `language_preference` to Claude prompts ("Respond in Swedish") when the user's language is not EN. Implement this as a Layer 2 enhancement after the string catalog is live — it requires updating every Claude call site in `portal-api/index.ts` to include the language instruction.
+
+**Tables involved:**
+- Extended: `users` (add `language_preference TEXT NOT NULL DEFAULT 'en'`), `organizations` (add `default_language TEXT NOT NULL DEFAULT 'en'`)
+- New asset: `assets/locales.js` (string catalog — not a DB table)
+- No new tables
+
+**Effort estimate:** 14–20 hours
+- Migration (2 columns): 0.5 h
+- `updateUserLanguage` API action: 0.5 h
+- String catalog — EN source + SV translation (~250 strings): 5–7 h
+- `t()` helper + language initialisation in `assets/app.js`: 2 h
+- Language picker UI (settings panel or header): 1 h
+- `Intl.NumberFormat` / `Intl.DateTimeFormat` replacements throughout: 2 h
+- DE translation (~250 strings, by team or reviewed MT): 3–5 h
+
+**Risks:**
+- **String catalog maintenance burden:** Every new UI element added to `app.js` must be added to all locale files. If a developer adds a string in English and forgets to add it to SV/DE, the fallback to EN is acceptable but inconsistent. Mitigation: a simple CI check that counts keys per locale and warns on mismatch.
+- **Context-dependent strings:** Some strings change based on count ("1 component" vs "3 components") or gender (German grammatical gender on nouns). The simple `t(key)` approach handles neither. Mitigation: for plurals, add explicit keys (`component.count_one`, `component.count_other`); avoid grammatical gender in German by rephrasing to gender-neutral constructions.
+- **AI output language gap:** Already described above. It is the most visible user-facing inconsistency in the MVP — set expectations with the team.
+- **`currentLang` global state:** A global language variable works for a single-page vanilla JS app, but must be initialised before any UI renders. Load order matters — `locales.js` must load before `app.js` in `index.html`.
+- **PROP-012 multi-tenancy:** Language preference is per-user, org-scoped naturally through the `users` table. No additional isolation logic needed.
+
+**Related PROPs:**
+- PROP-007 (this idea replaces the thin PROP-007 draft in SYSTEM_OVERVIEW — same PROP number should be used)
+- PROP-012 (multi-tenancy — `users` and `organizations` tables already exist; these are the two tables being extended)
+- PROP-021 / AI actions generally (Layer 2: pass language preference to Claude prompts to align AI output language with UI language)
+
+**Status:** Raw idea
+
+---
+### Rich Part Data Record — Structured Component Metadata for PLM & DPP — 2026-09-13
+
+**One sentence:** A dedicated `component_metadata` table captures structured physical, material, procurement, quality, and regulatory specs per component — version-snapshotted alongside revisions — so that the DPP generator can pull structured data directly without parsing documents.
+
+**Problem it solves:**
+Today a BOM node holds only name, part number, type, lifecycle status, and a description text field. Everything else — weight, dimensions, substrate material, surface treatment, incoming inspection method, country of origin — either does not exist in the system or lives as unstructured text in notes or attached PDF documents. This creates two compounding problems:
+
+1. **PLM gap:** Engineers and buyers cannot answer basic questions from the system — "what does this part weigh?", "what's the surface treatment on this extrusion?", "what inspection method do we apply on incoming delivery?". They look it up in a PDF or ask someone.
+2. **DPP rebuild risk:** ESPR Article 7 (Digital Product Passport, effective 2027) requires structured data at the component level — recycled content, carbon footprint, substances of concern, country of origin, HS code. If we store these as freeform document text now, we will need to re-enter every field manually when DPP reporting becomes mandatory. Building the structured fields now means the DPP generator reads from the database, not from PDFs.
+
+**What already exists that overlaps:**
+- `component_materials` already holds REACH/RoHS substance data at row level — this is one of the most important DPP data sets and it already structured. DO NOT duplicate substance declarations here.
+- `bom_component_versions.version_snapshot JSONB` already captures a snapshot of component state at revision bump. This idea extends what gets snapshotted — metadata fields are included in the snapshot automatically.
+- `component_specs` is proposed in two earlier ideas (Engineering Drawing Intelligence — dimension extraction from PDF drawings; PROP-021 Layer 4 — datasheet key-spec extraction). Both ideas write to a `component_specs` table. This idea consolidates: structured metadata lives in `component_metadata`, and AI extraction targets the same table. No separate `component_specs` table is needed.
+
+**Metadata taxonomy — 5 sections:**
+
+*1. Physical*
+`weight_g NUMERIC` — net weight in grams (DPP, logistics)
+`length_mm, width_mm, height_mm NUMERIC` — bounding box; LED furniture parts are well-described by L×W×H
+`volume_cm3 NUMERIC` — computed or entered; relevant for packaging and material declarations
+`unit_of_measure TEXT` — already on `bom_components`; move here or keep there (keep on `bom_components`, reference only)
+
+*2. Material & finish*
+`base_material TEXT` — substrate description ("6061-T6 aluminium", "HDPE", "304 stainless steel")
+`surface_treatment TEXT` — ("anodized class II natural", "powder coated RAL 9003", "electrolytic zinc-nickel")
+`color_specification TEXT` — RAL / NCS code or descriptive ("RAL 9003 signal white, gloss 60%")
+`flame_retardant_class TEXT` — fire classification code where applicable (V-0, E30, etc.)
+
+*3. Procurement & logistics*
+`preferred_supplier_name TEXT` — informational; not a FK (suppliers not in DB yet)
+`supplier_part_number TEXT` — supplier's own part number (distinct from `oem_number` on `bom_components`)
+`lead_time_days INTEGER` — standard lead time in calendar days
+`moq INTEGER` — minimum order quantity
+`country_of_origin TEXT` — ISO 3166-1 alpha-2 ("SE", "DE", "CN"); required for DPP and customs declarations
+`hs_code TEXT` — harmonised system commodity code (6 digits minimum, up to 10); required for CE/customs
+
+*4. Quality & inspection*
+`incoming_inspection_method TEXT CHECK IN ('none','visual','dimensional','functional','chemical','destructive','certificate_only')` — the method applied when this part arrives from a supplier. Drives the incoming inspection checklist (connects to the goods-receive / statistical control concept discussed separately).
+`inspection_sample_size TEXT` — AQL level or fixed count ("AQL 2.5", "100%", "5 pcs")
+`critical_to_quality TEXT` — free text; key CTQ characteristics stated by the engineer (e.g. "hole Ø6.0±0.05 — tolerance chain critical")
+`has_cpk_requirement BOOLEAN DEFAULT false` — flag: this part requires a process capability study from supplier
+
+*5. Regulatory & DPP*
+`weee_category TEXT` — WEEE category code/name; required for WEEE reporting
+`battery_regulation_applicable BOOLEAN DEFAULT false` — EU Battery Regulation 2023/1542 scope flag
+`conflict_minerals_free BOOLEAN` — 3TG declaration (tantalum, tin, tungsten, gold)
+`recycled_content_pct NUMERIC` — % recycled material by weight; ESPR data point
+`carbon_footprint_kgco2e NUMERIC` — product carbon footprint per unit, kg CO₂ equivalent; ESPR data point
+`carbon_footprint_source TEXT` — method or data source ("EPD", "supplier declaration", "Ecoinvent 3.9 estimate")
+`end_of_life_instruction TEXT` — disassembly/recycling instruction text; feeds DPP Article 7(2)(h)
+`repair_spare_part_available BOOLEAN DEFAULT true` — DPP repairability indicator
+
+**Version control:**
+`component_metadata` is a one-row-per-component table (keyed by `component_id UNIQUE`). It is NOT versioned independently. Instead, `bumpComponentVersion` already writes a `version_snapshot JSONB` on the new `bom_component_versions` row. That snapshot is extended to include a `metadata` key containing all `component_metadata` fields as they existed at bump time. Result: zero new tables for versioning, full history via the existing snapshot mechanism. The same approach used for documents and materials in PROP-024 applies here.
+
+**MVP scope — what to build first:**
+1. Migration: `component_metadata` table with all columns above, `component_id UUID UNIQUE NOT NULL FK→bom_components`, `organization_id NOT NULL FK→organizations`, RLS deny-all.
+2. Two API actions: `getComponentMetadata(component_id)` → returns the row or nulls; `upsertComponentMetadata(component_id, fields...)` → inserts or updates the row.
+3. Extend `bumpComponentVersion` to read `component_metadata` and fold it into `version_snapshot.metadata`.
+4. Frontend — component detail panel: add three new tabs — **Specifications** (Physical + Material), **Quality**, **Regulatory**. Each tab shows read-only values with an Edit button that enables inline editing of the section. Save calls `upsertComponentMetadata`. A tab with no data shows a placeholder "No data entered yet" with an Add button instead.
+5. Creation modal stays minimal (name + part number + type only). Engineers fill in metadata after creation in the detail panel.
+
+**What deliberately stays out:**
+- Substance declarations (REACH/RoHS) — these remain in `component_materials`, not duplicated here. The DPP generator reads both tables.
+- Dimensional tolerances per feature — that is the Engineering Drawing Intelligence idea (drawing-extracted per-feature specs with tolerance_plus/minus). This idea captures the bounding-box dimensions only; feature-level tolerances are a Layer 2 extension.
+- Supplier pricing — PROP-019 removed financial analysis from the portal. Procurement metadata (lead time, MOQ, preferred supplier) is logistics, not financial.
+- Automatic DPP generation — this idea is the data layer; the DPP generator that reads and renders it is a separate PROP (referenced below).
+
+**Tables involved:**
+- New: `component_metadata` (one row per component; all structured fields)
+- Extended (no schema change): `bom_component_versions.version_snapshot` (existing JSONB — just include metadata in the snapshot at bump time)
+- API: two new actions (`getComponentMetadata`, `upsertComponentMetadata`), one extended action (`bumpComponentVersion`)
+- Frontend: component detail panel (new tabs); no new pages
+
+**Effort estimate:** 14–18 hours
+- Migration (component_metadata, ~25 columns): 1 h
+- `getComponentMetadata` + `upsertComponentMetadata` API actions: 2 h
+- Extend `bumpComponentVersion` to snapshot metadata: 1 h
+- Frontend — Specifications tab (Physical + Material sections, read/edit): 3 h
+- Frontend — Quality tab (read/edit): 2 h
+- Frontend — Regulatory tab (read/edit, boolean toggles + numeric fields): 3 h
+- Frontend — tab navigation refactor in component detail panel: 1 h
+- Testing + edge cases (null row, partial saves, version snapshot check): 2 h
+
+**Risks:**
+- **Column count:** 25+ columns on one table looks wide but is correct — structured columns are what makes DPP generation queryable. Resist the temptation to collapse into JSONB sections (loses type safety and queryability). Use `custom_specs JSONB` as the overflow valve.
+- **Field ownership creep:** Without discipline, every team member will want to add one more column. Define a change process: new columns require a migration + a DPP justification.
+- **Partial saves:** Users may fill in Physical but leave Regulatory blank for months. The system must tolerate a mix of NULL values gracefully — show "—" for empty fields, never block saves or creation on missing optional metadata.
+- **`incoming_inspection_method` and the goods-receive feature:** This field is a property of the component (set by the engineer/quality manager), not a result of an inspection. It seeds the incoming inspection checklist (a future feature). The two must stay clearly separated in the UI.
+- **DPP field accuracy:** `recycled_content_pct` and `carbon_footprint_kgco2e` will be supplier-declared or estimated. The system should store a `carbon_footprint_source` string to document the basis. Never present these as audited values.
+- **PROP-012 multi-tenancy:** `component_metadata` carries `organization_id NOT NULL` like every other table. `upsertComponentMetadata` must verify the component belongs to the org before writing.
+
+**Related PROPs:**
+- PROP-013 (BOM tree foundation — `bom_components` is the parent table)
+- PROP-024 (Component Version History — `version_snapshot` mechanism that metadata plugs into)
+- PROP-021 Layer 4 (Datasheet AI extraction — writes `spec_name/value/unit` to `component_metadata` rather than a separate `component_specs` table; this idea defines where that data lands)
+- Engineering Drawing Intelligence (IDEAS.md) — feature-level dimensional extraction from PDF drawings; complementary to the bounding-box dims here; both write to `component_metadata`
+- PROP-005 (Generate DPP from compliance matrix — this idea is the component data source that DPP generation reads)
+- PROP-014 (Compliance–BOM Integration — component evidence; the `component_metadata.incoming_inspection_method` feeds inspection checklists that generate evidence)
+- PROP-012 (Multi-tenancy — `organization_id NOT NULL` on `component_metadata`)
+
+**Status:** Raw idea
+
+---
+### Stocked Assembly Variants — Materialising Dynamic BOM Configurations as SKUs — 2026-09-13
+
+**One sentence:** A "Materialise" action that converts a saved Dynamic BOM configuration into a first-class `bom_component` SKU — with its own part number, its own resolved BOM, and a back-reference to the source family — so pre-built assemblies can be stocked, pulled in work orders, and linked into other Dynamic BOMs.
+
+**Problem it solves:**
+Two distinct but related gaps prevent Rushroom from representing stocked assembly variants:
+
+1. **Resolved configurations can't be pulled.** `saved_configurations` stores a resolved variant (e.g. "Side Panel - Design A"), but these are not `bom_components`. They have no part number, no `make_or_buy` flag, no lifecycle status, no lead time. They cannot be linked as a child in another Dynamic BOM, added to a `product_family_members` pull list, or referenced in a work order. A stocked variant IS a part number — it needs a full component record.
+
+2. **No variant grouping.** If 50 side panel variants each become their own `bom_component`, they are 50 unrelated entries in the parts catalog. There is no machine-readable relationship between them — no "these are all generated from the same Dynamic BOM family with Design A through Design Z". When the source family BOM changes (a new screw type, a design dimension update), none of the 50 materialised SKUs receives any signal.
+
+**What already exists that can be extended:**
+- `saved_configurations` — named resolved configurations; serves as the source from which a materialised SKU is derived
+- `bom_components` — the target; a materialised variant is a first-class row here
+- `bom_edges.variant_condition` — already supports conditional edges; the resolved BOM for a configuration is the edges that pass `resolveVariant(family_id, selections)`
+- `product_family_members` — pull list mechanism; a materialised SKU can be added as a family member once it has a `bom_components` id
+- `make_or_buy` — a materialised assembled variant is `make_or_buy = 'assembled'` by default; a purchased one is `'purchased'`
+
+**The key gap — no bridge from configuration to component:**
+`resolveVariant` resolves the BOM tree for a given configuration, but there is no action that takes that resolved tree and creates a permanent `bom_component` record from it. That bridge — the "materialise" action — is the core thing missing.
+
+**Design: two new nullable columns on `bom_components`:**
+```
+source_family_id  UUID FK→product_families  NULLABLE
+source_config_id  UUID FK→saved_configurations  NULLABLE
+```
+These back-references let the Dynamic BOM family panel list all materialised variants. They also enable a "this SKU was generated from family X with config Y" audit trail — when the source family changes, a query immediately shows which SKUs were derived from it.
+
+**MVP scope:**
+1. **Migration:** Add `source_family_id` and `source_config_id` nullable columns to `bom_components`. No backfill needed — existing rows leave both null.
+2. **New API action `materialiseConfiguration(saved_configuration_id, part_number, name, notes?)`** — server-side:
+   - Validates: `saved_configuration_id` belongs to org; `part_number` is unique in org
+   - Creates a new `bom_component` row with `make_or_buy = 'assembled'`, `lifecycle_status = 'inactive'` (user promotes to active when ready to stock), `source_family_id` and `source_config_id` set
+   - Calls `resolveVariant(family_id, selections)` internally and copies the resolved `bom_edges` (with quantities) to the new component as its own BOM children
+   - Returns the new `component_id`
+3. **Variant group view on the Dynamic BOM family panel** — new "Stocked Variants" sub-section (below the BOM tree). Lists all `bom_components` where `source_family_id = this_family`. Shows part number, name, lifecycle status, `make_or_buy` badge, and a "Go to component" link. If the source config still exists in `saved_configurations`, shows the configuration summary.
+4. **"Make Stocked Variant" button on saved_configurations rows** — opens a small modal: part number (pre-filled from family name + config summary, editable), name, notes. On confirm: calls `materialiseConfiguration`, redirects to the new component in the Parts catalog.
+5. **New API action `listVariantsByFamily(family_id)`** — returns all `bom_components` with `source_family_id = family_id`. Used by the variant group view.
+6. **Stale-source indicator:** When a Dynamic BOM family's BOM is edited AFTER a configuration was materialised, the materialised SKU's BOM may no longer match the source. Surface this as a soft warning on the stocked variant's Overview tab: "Source family was updated after this variant was materialised. Review BOM for changes." No automatic sync — user decides whether to manually update the copied edges or re-materialise.
+
+**For variant-conditional quantities (same component, different qty per variant):**
+This is the screw example (20 for Design A, 10 for Design B). The data model already supports it via multiple `bom_edges` for the same parent→child pair with different `variant_condition` values. The current blocker is the UI duplicate-child guard. Fix: allow multiple edges between the same parent and child when they have different `variant_condition` values. `resolveVariant` already filters correctly — only the edge whose condition matches is selected, yielding the right quantity. This is a small frontend + API guard change, no migration needed.
+
+**How a stocked variant flows into work orders and Dynamic BOMs:**
+- Once materialised, the SKU is a normal `bom_component` — it can be linked as a child in any BOM tree via `+child` / `addBomEdge`
+- If the SKU is stocked and pulled ready-made for a larger assembly, it can be added to a `product_family_members` pull list for the parent product family
+- Work orders for the parent family pull it from stock (Pull & pack — straight pick, no routing steps) rather than resolving its internal BOM on demand
+- If it is assembled in-house for the order, its own `component_routing_steps` (per manufacturing family) define the operations
+
+**Tables involved:**
+- Extended: `bom_components` (add `source_family_id`, `source_config_id` nullable columns — migration)
+- Read: `saved_configurations`, `product_families` (for back-reference and variant listing)
+- Used: `bom_edges` (copied by materialise), `product_family_members` (if added to a family pull list)
+- New actions: `materialiseConfiguration`, `listVariantsByFamily`
+
+**Effort estimate:** ~6–8 hours
+- Migration (2 nullable columns): 0.5 h
+- `materialiseConfiguration` API action (resolve + copy edges + create component): 2 h
+- `listVariantsByFamily` API action: 0.5 h
+- Frontend — Stocked Variants sub-section on Dynamic BOM family panel: 2 h
+- Frontend — "Make Stocked Variant" button + modal on saved_configurations: 1 h
+- Frontend — stale-source indicator on Overview tab: 0.5–1 h
+- Bonus: allow duplicate edges with different variant_conditions (frontend guard + API guard fix): 1 h
+
+**Risks:**
+- **Copied BOM divergence:** The materialised SKU's BOM is a copy — once copied, it is independent. If the source family BOM changes (new screw type, updated quantities), the SKU does not update automatically. The stale-source indicator is a soft prompt, not enforcement. For teams with many materialised variants and frequent BOM changes, this creates ongoing review overhead. A stricter design — "re-materialise always, never edit the copy" — is cleaner but removes the flexibility to maintain the stocked variant's BOM independently. MVP: soft indicator; enforce policy via process, not code.
+- **Part number generation for 50 variants:** Manually typing a part number for each of 50 side panel variants is tedious. Auto-suggestion from family name + configuration axis values helps ("SP-A" for Side Panel Design A) but still requires human review. A naming template defined on the family ("SP-{Design}") could auto-generate part numbers — out of MVP scope.
+- **Lifecycle status after materialise:** A fresh materialised SKU defaults to `inactive` (not yet in production). Someone must explicitly mark it `active` before it can be pulled in a work order. This is the right behaviour — but the user needs a clear callout ("newly created, currently inactive — activate when ready to stock").
+- **source_config_id may become stale:** If the `saved_configuration` referenced by `source_config_id` is deleted, the back-reference goes nowhere. Use `ON DELETE SET NULL` on the FK — the SKU survives, just without the config link. `source_family_id` (FK to `product_families`) is the more durable reference.
+- **`resolveVariant` scope:** If the Dynamic BOM family has hundreds of components in its BOM, copying all the resolved edges into the materialised SKU could create a large tree. This is correct behaviour (the materialised SKU IS that full assembly) but the user should be aware that editing 50 copies independently is maintenance overhead.
+
+**Related PROPs:**
+- PROP-015 (Configure-to-Order Variant BOM — `saved_configurations`, `resolveVariant`, `variant_condition` on edges; this idea depends on PROP-015 primitives)
+- PROP-030 (Manufacturing BOM / Product Families — materialised SKUs participate in `product_family_members` pull lists for work orders)
+- PROP-031 (Rich Part Data Record — materialised SKUs benefit from `component_metadata` for DPP and procurement; lead_time_days and make_or_buy are particularly relevant)
+- PROP-032 (make_or_buy — materialised assembled variants default to `assembled`; purchased sub-assemblies use `purchased`)
+- Ideas: "Dynamic BOM — Order-Driven Configuration Import" (complementary — that idea imports per-order configurations from the external system; this idea creates pre-stocked generic variants from the internal Dynamic BOM authoring flow)
+
+**Status:** Raw idea

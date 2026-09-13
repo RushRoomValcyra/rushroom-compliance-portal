@@ -3448,7 +3448,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const parentIdSet = new Set((parentRows || []).map((r: any) => r.parent_id));
     const search = body.search ? String(body.search).trim() : null;
     let q = tdb("bom_components")
-      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason")
+      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id")
       .order("name");
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
     const { data: comps, error: ce } = await q;
@@ -4189,6 +4189,158 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const { error } = await tdb("saved_configurations").delete().eq("id", configuration_id);
     if (error) return json({ error: error.message }, 400);
     return json({ ok: true });
+  }
+
+  // --- PROP-033: Materialise a saved configuration as a stocked SKU ---------
+  if (action === "materialiseConfiguration") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { saved_configuration_id, part_number: requestedPN, name: requestedName, notes } = body;
+    if (!saved_configuration_id) return json({ error: "saved_configuration_id required" }, 400);
+
+    // Fetch the saved configuration (validates org ownership via tdb)
+    const { data: cfg, error: cfgErr } = await tdb("saved_configurations")
+      .select("id, family_id, name, selections, part_number, description")
+      .eq("id", saved_configuration_id).maybeSingle();
+    if (cfgErr || !cfg) return json({ error: cfgErr?.message ?? "Configuration not found" }, 404);
+
+    // Derive part number and name from the request or fall back to config defaults
+    let part_number = requestedPN ? String(requestedPN).trim() : (cfg.part_number ? String(cfg.part_number).trim() : null);
+    if (!part_number) {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const rand = new Uint8Array(8);
+      crypto.getRandomValues(rand);
+      const suffix = Array.from(rand).map((b: number) => chars[b % chars.length]).join("");
+      const d = new Date();
+      const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
+      part_number = `RR-${ym}-${suffix}`;
+    }
+    const name = requestedName ? String(requestedName).trim() : String(cfg.name).trim();
+
+    // Create the stocked variant as a sub_assembly bom_component
+    const { data: comp, error: ce } = await tdb("bom_components").insert({
+      part_number,
+      name,
+      type: "sub_assembly",
+      make_or_buy: "assembled",
+      lifecycle_status: "inactive",
+      description: cfg.description || null,
+      notes: notes ? String(notes).trim() : null,
+      source_family_id: cfg.family_id,
+      source_config_id: cfg.id,
+      created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (ce || !comp) return json({ error: ce?.message ?? "Component insert returned no data" }, 400);
+
+    // Create Rev A version
+    const { data: ver, error: ve } = await tdb("bom_component_versions").insert({
+      component_id: comp.id, revision: "A",
+      spec_summary: `Materialised from configuration "${cfg.name}"`,
+      is_current: true, created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (ve || !ver) return json({ error: ve?.message ?? "Version insert returned no data" }, 400);
+
+    // Write history row
+    try {
+      await tdb("bom_component_history").insert({
+        component_id: comp.id,
+        changed_at: new Date().toISOString(),
+        changed_by: session.uid || null,
+        change_type: "version_bumped",
+        part_number,
+        name,
+        type: "sub_assembly",
+        lifecycle_status: "inactive",
+        notes: `Revision A: Materialised from Dynamic BOM configuration "${cfg.name}"`,
+      });
+    } catch { /* non-fatal */ }
+
+    // Resolve the BOM for this configuration using the same BFS logic as resolveVariant
+    const selections = cfg.selections as Record<string, string>;
+    const nodeMap: Record<string, any> = {};
+    const resultEdges: any[] = [];
+    const queue: Array<{ id: string; depth: number }> = [{ id: cfg.family_id, depth: 0 }];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const batch = queue.splice(0, queue.length);
+      const ids = batch.map((n: any) => n.id).filter((id: string) => !visited.has(id));
+      if (!ids.length) break;
+      ids.forEach((id: string) => visited.add(id));
+      const { data: comps } = await tdb("bom_components")
+        .select("id, part_number, name, type, lifecycle_status").in("id", ids);
+      (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
+      const currentDepth = batch[0].depth;
+      if (currentDepth >= 10) continue;
+      const { data: childEdges } = await db.from("bom_edges")
+        .select("id, parent_id, child_id, quantity, reference_designator, variant_condition")
+        .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId);
+      (childEdges || []).forEach((e: any) => {
+        const cond = e.variant_condition;
+        const included = !cond || Object.entries(cond as Record<string, string>).every(([k, v]) => selections[k] === v);
+        if (included) {
+          resultEdges.push(e);
+          if (!visited.has(e.child_id)) queue.push({ id: e.child_id, depth: currentDepth + 1 });
+        }
+      });
+    }
+
+    // Remove edges whose parent is the family root — the materialised SKU is the new root
+    const directChildEdges = resultEdges.filter((e: any) => e.parent_id === cfg.family_id);
+    // Remap direct children to point to the new materialised component; copy all other edges
+    const today = new Date().toISOString().slice(0, 10);
+    const edgesForInsert: any[] = directChildEdges.map((e: any) => ({
+      parent_id: comp.id,
+      child_id: e.child_id,
+      quantity: e.quantity,
+      reference_designator: e.reference_designator || null,
+      effective_from: today,
+      variant_condition: null,
+    }));
+    // Copy deeper edges (non-root parents) as-is, unconditional
+    const deeperEdges = resultEdges.filter((e: any) => e.parent_id !== cfg.family_id);
+    for (const e of deeperEdges) {
+      // Only insert if we haven't already copied this edge (dedup by parent+child)
+      if (!edgesForInsert.find((x: any) => x.parent_id === e.parent_id && x.child_id === e.child_id)) {
+        edgesForInsert.push({
+          parent_id: e.parent_id,
+          child_id: e.child_id,
+          quantity: e.quantity,
+          reference_designator: e.reference_designator || null,
+          effective_from: today,
+          variant_condition: null,
+        });
+      }
+    }
+    if (edgesForInsert.length) {
+      await tdb("bom_edges").insert(edgesForInsert);
+    }
+
+    return json({ id: comp.id, part_number, version_id: ver.id });
+  }
+
+  // --- PROP-033: List all materialised variants for a Dynamic BOM family -----
+  if (action === "listVariantsByFamily") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { family_id } = body;
+    if (!family_id) return json({ error: "family_id required" }, 400);
+    const { data, error } = await tdb("bom_components")
+      .select("id, part_number, name, type, make_or_buy, lifecycle_status, source_family_id, source_config_id, created_at")
+      .eq("source_family_id", family_id)
+      .order("created_at");
+    if (error) return json({ error: error.message }, 400);
+    // Enrich with config selections by joining saved_configurations
+    const configIds = (data || []).map((c: any) => c.source_config_id).filter(Boolean);
+    let configMap: Record<string, any> = {};
+    if (configIds.length) {
+      const { data: cfgs } = await tdb("saved_configurations")
+        .select("id, name, selections").in("id", configIds);
+      (cfgs || []).forEach((c: any) => { configMap[c.id] = c; });
+    }
+    const variants = (data || []).map((c: any) => ({
+      ...c,
+      config_name: configMap[c.source_config_id]?.name ?? null,
+      config_selections: configMap[c.source_config_id]?.selections ?? null,
+    }));
+    return json({ variants });
   }
 
   // ==========================================================================

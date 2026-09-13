@@ -4822,116 +4822,98 @@
 
       // --- Status edit block (rushroom only) -----------------------------------
       // --- Name + part number edit block (rushroom only) -----------------------
-      let nameSection = null;
+      // --- Unified Properties card (rushroom only) — replaces separate name/status/type/sourcing cards ---
+      let propertiesSection = null;
       if (role === "rushroom") {
-        const nameInp = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "flex:1;min-width:140px;font-size:0.82rem" });
-        const pnInp   = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:11rem;font-size:0.82rem;font-family:monospace" });
-        const oemInp  = el("input", { class: "up-text", type: "text", value: nodeData?.oem_number || "", placeholder: "OEM number", style: "width:11rem;font-size:0.82rem;font-family:monospace" });
-        const nameSaveErr = el("span", { style: "font-size:0.78rem;color:#e05454" }, "");
-        const nameSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
-        nameSaveBtn.onclick = async () => {
-          const newName = nameInp.value.trim();
-          if (!newName) { nameSaveErr.textContent = "Name cannot be empty."; return; }
-          nameSaveBtn.disabled = true; nameSaveBtn.textContent = "Saving…"; nameSaveErr.textContent = "";
-          try {
-            await API.post(token, "updateComponent", {
-              component_id: componentId,
-              name: newName,
-              part_number: pnInp.value.trim() || undefined,
-              oem_number: oemInp.value.trim() || null,
-            });
-            openComponentDetail(componentId, token, panel, { ...nodeData, name: newName, part_number: pnInp.value.trim() || nodeData?.part_number, oem_number: oemInp.value.trim() || null }, role);
-          } catch (ex) {
-            nameSaveErr.textContent = ex.message;
-            nameSaveBtn.disabled = false; nameSaveBtn.textContent = "Save";
-          }
-        };
-        nameSection = el("div", { style: "margin-bottom:1rem;padding:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
-          el("div", { style: "display:grid;grid-template-columns:1fr auto;gap:0.4rem 0.5rem;align-items:center;margin-bottom:0.3rem" }, [
-            el("div", {}, [el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:2px" }, "Name"), nameInp]),
-            el("div", { style: "grid-row:1/3;align-self:end;display:flex;flex-direction:column;gap:0.25rem" }, [nameSaveBtn, nameSaveErr]),
-            el("div", { style: "display:flex;gap:0.35rem" }, [
-              el("div", {}, [el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:2px" }, "Part no."), pnInp]),
-              el("div", {}, [el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:2px" }, "OEM no."), oemInp]),
-            ]),
-          ]),
-        ]);
-      }
+        const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.82rem" });
+        const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.82rem;font-family:monospace" });
+        const oemInp    = el("input", { class: "up-text", type: "text", value: nodeData?.oem_number || "", placeholder: "OEM number", style: "width:100%;font-size:0.82rem;font-family:monospace" });
 
-      let statusSection = null;
-      if (role === "rushroom") {
         const VALID_STATUSES = ["active", "inactive", "replaced", "flagged"];
         const currentStatus = nodeData?.lifecycle_status || "inactive";
-        const statusDropdown = el("select", { class: "up-text", style: "padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0);min-width:9rem" },
+        const statusSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
           VALID_STATUSES.map((s) => el("option", { value: s, selected: s === currentStatus ? "selected" : null }, s))
         );
-        const replNoteArea = el("textarea", { class: "up-text", rows: "2", placeholder: "What replaced this, and why?", style: "display:none;resize:vertical;font-size:0.82rem;margin-top:0.4rem;width:100%" });
+        const replNoteArea = el("textarea", { class: "up-text", rows: "2", placeholder: "What replaced this, and why?", style: "display:none;resize:vertical;font-size:0.82rem;margin-top:0.3rem;width:100%" });
         replNoteArea.value = nodeData?.replacement_note || "";
-        const flagReasonArea = el("textarea", { class: "up-text", rows: "2", placeholder: "Describe the flag reason or concern", style: "display:none;resize:vertical;font-size:0.82rem;margin-top:0.4rem;width:100%" });
+        const flagReasonArea = el("textarea", { class: "up-text", rows: "2", placeholder: "Describe the flag reason or concern", style: "display:none;resize:vertical;font-size:0.82rem;margin-top:0.3rem;width:100%" });
         flagReasonArea.value = nodeData?.flag_reason || "";
         function syncConditionalFields() {
-          const v = statusDropdown.value;
+          const v = statusSel.value;
           replNoteArea.style.display  = v === "replaced" ? "" : "none";
           flagReasonArea.style.display = v === "flagged"  ? "" : "none";
         }
         syncConditionalFields();
-        statusDropdown.addEventListener("change", syncConditionalFields);
-        const statusSaveErr = el("span", { class: "form-error", style: "font-size:0.78rem" }, "");
-        const statusSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save status");
-        statusSaveBtn.onclick = async () => {
-          statusSaveBtn.disabled = true; statusSaveBtn.textContent = "Saving…"; statusSaveErr.textContent = "";
-          try {
-            await API.post(token, "setComponentStatus", {
-              component_id: componentId,
-              lifecycle_status: statusDropdown.value,
-              replacement_note: statusDropdown.value === "replaced" ? replNoteArea.value.trim() || null : null,
-              flag_reason:      statusDropdown.value === "flagged"  ? flagReasonArea.value.trim() || null : null,
-            });
-            openComponentDetail(componentId, token, panel, {
-              ...nodeData,
-              lifecycle_status: statusDropdown.value,
-              replacement_note: statusDropdown.value === "replaced" ? replNoteArea.value.trim() || null : null,
-              flag_reason:      statusDropdown.value === "flagged"  ? flagReasonArea.value.trim() || null : null,
-            }, role);
-          } catch (ex) {
-            statusSaveErr.textContent = ex.message;
-            statusSaveBtn.disabled = false; statusSaveBtn.textContent = "Save status";
-          }
-        };
-        statusSection = el("div", { style: "margin-bottom:1rem;padding:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
-          el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem" }, [
-            el("span", { style: "font-size:0.82rem;font-weight:600;white-space:nowrap" }, "Lifecycle status"),
-            statusDropdown, statusSaveBtn, statusSaveErr,
-          ]),
-          replNoteArea, flagReasonArea,
-        ]);
-      }
+        statusSel.addEventListener("change", syncConditionalFields);
 
-      // --- Type edit block (rushroom only) -------------------------------------
-      let typeSection = null;
-      if (role === "rushroom") {
         const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["finished_good", "Finished Good"]];
         const currentType = nodeData?.type || "part";
-        const typeDropdown = el("select", { class: "up-text", style: "padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0);min-width:9rem" },
+        const typeSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
           TYPE_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentType ? "selected" : null }, l))
         );
-        const typeSaveErr = el("span", { style: "font-size:0.78rem;color:#e05454" }, "");
-        const typeSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save type");
-        typeSaveBtn.onclick = async () => {
-          typeSaveBtn.disabled = true; typeSaveBtn.textContent = "Saving…"; typeSaveErr.textContent = "";
+
+        const MOB_OPTS = [["purchased","Purchased (bought-in)"],["manufactured","Manufactured (made in-house)"],["assembled","Assembled (in-house from bought parts)"],["subcontracted","Subcontracted (outsourced)"]];
+        const currentMOB = nodeData?.make_or_buy || "purchased";
+        const mobSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
+          MOB_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentMOB ? "selected" : null }, l))
+        );
+
+        const propSaveErr = el("span", { style: "font-size:0.78rem;color:#e05454;flex:1" }, "");
+        const propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save changes");
+        propSaveBtn.onclick = async () => {
+          const newName = nameInp.value.trim();
+          if (!newName) { propSaveErr.textContent = "Name cannot be empty."; return; }
+          propSaveBtn.disabled = true; propSaveBtn.textContent = "Saving…"; propSaveErr.textContent = "";
           try {
-            await API.post(token, "updateComponent", { component_id: componentId, type: typeDropdown.value });
-            openComponentDetail(componentId, token, panel, { ...nodeData, type: typeDropdown.value }, role);
+            await Promise.all([
+              API.post(token, "updateComponent", {
+                component_id: componentId,
+                name: newName,
+                part_number: pnInp.value.trim() || undefined,
+                oem_number: oemInp.value.trim() || null,
+                type: typeSel.value,
+                make_or_buy: mobSel.value,
+              }),
+              API.post(token, "setComponentStatus", {
+                component_id: componentId,
+                lifecycle_status: statusSel.value,
+                replacement_note: statusSel.value === "replaced" ? replNoteArea.value.trim() || null : null,
+                flag_reason:      statusSel.value === "flagged"  ? flagReasonArea.value.trim() || null : null,
+              }),
+            ]);
+            propSaveBtn.textContent = "Saved ✓";
+            setTimeout(() => {
+              openComponentDetail(componentId, token, panel, {
+                ...nodeData,
+                name: newName,
+                part_number: pnInp.value.trim() || nodeData?.part_number,
+                oem_number: oemInp.value.trim() || null,
+                type: typeSel.value,
+                make_or_buy: mobSel.value,
+                lifecycle_status: statusSel.value,
+                replacement_note: statusSel.value === "replaced" ? replNoteArea.value.trim() || null : null,
+                flag_reason:      statusSel.value === "flagged"  ? flagReasonArea.value.trim() || null : null,
+              }, role);
+            }, 600);
           } catch (ex) {
-            typeSaveErr.textContent = ex.message;
-            typeSaveBtn.disabled = false; typeSaveBtn.textContent = "Save type";
+            propSaveErr.textContent = ex.message;
+            propSaveBtn.disabled = false; propSaveBtn.textContent = "Save changes";
           }
         };
-        typeSection = el("div", { style: "margin-bottom:1rem;padding:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
-          el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem" }, [
-            el("span", { style: "font-size:0.82rem;font-weight:600;white-space:nowrap" }, "Type"),
-            typeDropdown, typeSaveBtn, typeSaveErr,
+
+        const lbl = (text) => el("span", { style: "font-size:0.72rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em" }, text);
+        const statusColWrapper = el("div", {}, [lbl("Lifecycle status"), statusSel, replNoteArea, flagReasonArea]);
+
+        propertiesSection = el("div", { style: "margin-bottom:1rem;padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
+          el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.6rem 0.75rem;margin-bottom:0.6rem" }, [
+            el("div", { style: "grid-column:1/3" }, [lbl("Name"), nameInp]),
+            el("div", {}, [lbl("Part no."), pnInp]),
+            el("div", {}, [lbl("OEM no."), oemInp]),
+            el("div", {}, [lbl("Type"), typeSel]),
+            statusColWrapper,
+            el("div", { style: "grid-column:1/3" }, [lbl("Sourcing"), mobSel]),
           ]),
+          el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
         ]);
       }
 
@@ -5261,30 +5243,6 @@
         tabButtons.push(btn);
         tabBar.append(btn);
       });
-      // Make-or-Buy editor (rushroom only)
-      let makeOrBuySection = null;
-      if (role === "rushroom") {
-        const MOB_OPTS = [["purchased","Purchased (bought-in)"],["manufactured","Manufactured (made in-house)"],["assembled","Assembled (in-house from bought parts)"],["subcontracted","Subcontracted (outsourced)"]];
-        const currentMOB = nodeData?.make_or_buy || "purchased";
-        const mobDropdown = el("select", { class: "up-text", style: "padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
-          MOB_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentMOB ? "selected" : null }, l))
-        );
-        const mobErr = el("span", { style: "font-size:0.78rem;color:#e05454" }, "");
-        const mobBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
-        mobBtn.onclick = async () => {
-          mobBtn.disabled = true; mobBtn.textContent = "Saving…"; mobErr.textContent = "";
-          try {
-            await API.post(token, "updateComponent", { component_id: componentId, make_or_buy: mobDropdown.value });
-            openComponentDetail(componentId, token, panel, { ...nodeData, make_or_buy: mobDropdown.value }, role);
-          } catch (ex) { mobErr.textContent = ex.message; mobBtn.disabled = false; mobBtn.textContent = "Save"; }
-        };
-        makeOrBuySection = el("div", { style: "margin-bottom:1rem;padding:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
-          el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem" }, [
-            el("span", { style: "font-size:0.82rem;font-weight:600;white-space:nowrap" }, "Sourcing"),
-            mobDropdown, mobBtn, mobErr,
-          ]),
-        ]);
-      }
 
       // Stale-source callout for materialised stocked variants (PROP-033)
       let sourceCallout = null;
@@ -5445,11 +5403,8 @@
       ]);
 
       tabPanels["overview"]   = el("div", { style: "display:none" }, [
-        ...(sourceCallout     ? [sourceCallout]     : []),
-        ...(nameSection       ? [nameSection]       : []),
-        ...(statusSection     ? [statusSection]     : []),
-        ...(typeSection       ? [typeSection]       : []),
-        ...(makeOrBuySection  ? [makeOrBuySection]  : []),
+        ...(sourceCallout      ? [sourceCallout]      : []),
+        ...(propertiesSection  ? [propertiesSection]  : []),
         variantGroupSection,
         ...(configSection     ? [configSection]     : []),
         productFamiliesSection,

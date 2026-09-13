@@ -588,3 +588,24 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Decision:** Materialised stocked variants are first-class `bom_components` (type=sub_assembly), not a separate entity. Back-references (`source_family_id`, `source_config_id`) on `bom_components` link each variant to its origin. The `bom_edges` unique constraint is relaxed to a partial index (unconditional edges only) so variant-conditional edge pairs can coexist.
 **Why:** Saved configurations are ephemeral records of attribute selections — they have no part number, lifecycle status, or orderable identity. Manufacturing, procurement, and order management all need a real component SKU. Making the materialised variant a standard `sub_assembly` means it participates in all existing workflows (BOM trees, work orders, product family membership) with zero special-casing. The partial unique index preserves the duplicate-edge guard for the common case (unconditional edges) while unlocking variant-conditional multiplicity needed for PROP-015-style multi-quantity scenarios.
 **Files changed:** supabase/migrations/0022_stocked_variants.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, CLAUDE.md
+
+---
+**Date:** 2026-09-13
+**Feature:** PROP-034 — Manufacturer vs Supplier
+**Decision:** Added two columns (`manufacturer_name`, `manufacturer_part_number`) to `component_metadata` rather than creating a separate manufacturers table or a generic contacts table.
+**Why:** The Rushroom use-case is a BOM-line-level annotation ("this part is made by X, bought from Y"), not a CRM-style company registry. A dedicated join table would add 2–3 extra queries per component load with no benefit at this scale. The simple column approach keeps `upsertComponentMetadata` as the single write surface for all procurement metadata and requires only one migration file (0023).
+**Files changed:** supabase/migrations/0023_manufacturer_fields.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, CLAUDE.md
+
+---
+**Date:** 2026-09-13
+**Feature:** PROP-035 — Component Variant Groups + Inline Name Editor
+**Decision:** Each colour/finish/size variant is a distinct `bom_component` SKU; variant groups link siblings via a new many-to-many join (`component_variant_groups` + `component_variant_members`) without modifying the BOM tree structure.
+**Why:** Alternatives considered: (a) a single abstract "panel" component with a colour attribute — rejected because it conflates the BOM tree node with a product catalogue concept and makes part numbers ambiguous; (b) an attribute column on `bom_components` — rejected because a single attribute can't express multi-dimensional variation (colour × size). The join-table approach keeps every variant as a first-class, stockable, orderable component while making sibling relationships navigable from the Overview tab. Stock/reorder tracking intentionally deferred to a future PROP — the group structure is the prerequisite, not the inventory numbers.
+**Files changed:** supabase/migrations/0024_component_variant_groups.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, CLAUDE.md
+
+---
+**Date:** 2026-09-13
+**Feature:** Inline Name / Part no. / OEM no. editor (UX fix)
+**Decision:** Exposed `name`, `part_number`, and `oem_number` as editable fields in the Overview tab of the component detail panel, calling the existing `updateComponent` action.
+**Why:** The BOM history trigger on `bom_components` already records every field change; renaming a node was previously impossible without delete-and-recreate, which would orphan all history, edge references, and document links. Surfacing the editor in the Overview tab (Rushroom-only) gives operators a safe in-place correction path. No new API action or migration needed.
+**Files changed:** assets/app.js, index.html

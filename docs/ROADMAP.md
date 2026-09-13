@@ -15,6 +15,8 @@ _Last updated: 2026-09-13 · Auto-maintained by /ship_
 - PROP-007 Multi-language support EN/DE/SV
 
 ## Shipped
+- **PROP-035 Component Variant Groups** (component_variant_groups + component_variant_members tables; 6 API actions: createVariantGroup, listVariantGroups, deleteVariantGroup, addVariantMember, removeVariantMember, listComponentVariants; sibling chip navigation in Overview tab; migration 0024; cache v199) + **Inline name editor** (name/part_number/oem_number editable in Overview tab without delete-and-recreate; cache v200) — 2026-09-13
+- **PROP-034 Manufacturer vs Supplier** (manufacturer_name + manufacturer_part_number columns on component_metadata; Procurement section shows 4 fields in 2×2 grid; OEM number label consistent with Create modal; UUID header replaced with name + part number; migration 0023; cache v196–v198) — 2026-09-13
 - **PROP-033 Stocked Assembly Variants** (materialiseConfiguration + listVariantsByFamily; source_family_id + source_config_id columns on bom_components; bom_edges partial unique index; "Stock" button on saved configs; Stocked Variants section in Dynamic BOM panel; stale-source callout on materialised components; migration 0022; cache v195) — 2026-09-13
 - **PROP-032 make_or_buy — Sourcing Classification** (purchased/manufactured/assembled/subcontracted column on bom_components; color-coded badge on BOM list rows; inline editor in Overview tab; migration 0021; cache v192) — 2026-09-13
 - **PROP-031 Rich Part Data Record — Structured Component Metadata** (component_metadata table, 28 columns, 5 sections; 9-tab component detail panel; version-snapshotted via bumpComponentVersion; getComponentMetadata + upsertComponentMetadata API actions; migration 0020; cache v191) — 2026-09-13

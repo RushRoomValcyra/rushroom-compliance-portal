@@ -206,6 +206,8 @@ const TENANT_TABLES = new Set([
   "component_routing_steps", "work_orders", "work_order_steps", "work_order_components",
   // PROP-031: Component metadata (migration 0020)
   "component_metadata",
+  // PROP-035: Component variant groups (migration 0024)
+  "component_variant_groups", "component_variant_members",
 ]);
 function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)
@@ -4341,6 +4343,109 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       config_selections: configMap[c.source_config_id]?.selections ?? null,
     }));
     return json({ variants });
+  }
+
+  // ==========================================================================
+  // PROP-035: Component Variant Groups — colour/finish/size siblings
+  // ==========================================================================
+
+  if (action === "createVariantGroup") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { name, variant_attribute, notes } = body;
+    if (!name) return json({ error: "name required" }, 400);
+    const { data, error } = await tdb("component_variant_groups").insert({
+      name: String(name).trim(),
+      variant_attribute: variant_attribute ? String(variant_attribute).trim() : "Color",
+      notes: notes ? String(notes).trim() : null,
+      created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (error) return json({ error: error.message }, 400);
+    return json({ id: data.id });
+  }
+
+  if (action === "listVariantGroups") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { data: groups, error } = await tdb("component_variant_groups")
+      .select("id, name, variant_attribute, notes, created_at").order("name");
+    if (error) return json({ error: error.message }, 400);
+    const groupIds = (groups || []).map((g: any) => g.id);
+    let memberCounts: Record<string, number> = {};
+    if (groupIds.length) {
+      const { data: members } = await tdb("component_variant_members")
+        .select("group_id").in("group_id", groupIds);
+      (members || []).forEach((m: any) => { memberCounts[m.group_id] = (memberCounts[m.group_id] || 0) + 1; });
+    }
+    return json({ groups: (groups || []).map((g: any) => ({ ...g, member_count: memberCounts[g.id] || 0 })) });
+  }
+
+  if (action === "deleteVariantGroup") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { group_id } = body;
+    if (!group_id) return json({ error: "group_id required" }, 400);
+    const { error } = await tdb("component_variant_groups").delete().eq("id", group_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  if (action === "addVariantMember") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { group_id, component_id, variant_value, sort_order } = body;
+    if (!group_id || !component_id || !variant_value) return json({ error: "group_id, component_id and variant_value required" }, 400);
+    // Validate group belongs to this org
+    const { data: grp } = await tdb("component_variant_groups").select("id").eq("id", group_id).maybeSingle();
+    if (!grp) return json({ error: "Group not found" }, 404);
+    const { error } = await tdb("component_variant_members").insert({
+      group_id, component_id,
+      variant_value: String(variant_value).trim(),
+      sort_order: sort_order != null ? Number(sort_order) : 0,
+    });
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  if (action === "removeVariantMember") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { group_id, component_id } = body;
+    if (!group_id || !component_id) return json({ error: "group_id and component_id required" }, 400);
+    const { error } = await tdb("component_variant_members").delete()
+      .eq("group_id", group_id).eq("component_id", component_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  if (action === "listComponentVariants") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { component_id } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
+    // Find all groups this component belongs to
+    const { data: myMemberships, error: me } = await tdb("component_variant_members")
+      .select("group_id, variant_value").eq("component_id", component_id);
+    if (me) return json({ error: me.message }, 400);
+    if (!myMemberships || myMemberships.length === 0) return json({ memberships: [] });
+    const groupIds = myMemberships.map((m: any) => m.group_id);
+    // Fetch group metadata
+    const { data: groups } = await tdb("component_variant_groups")
+      .select("id, name, variant_attribute").in("id", groupIds);
+    const groupMap: Record<string, any> = {};
+    (groups || []).forEach((g: any) => { groupMap[g.id] = g; });
+    // Fetch all siblings for each group
+    const { data: allMembers } = await tdb("component_variant_members")
+      .select("group_id, component_id, variant_value, sort_order")
+      .in("group_id", groupIds).order("sort_order");
+    const siblingIds = [...new Set((allMembers || []).map((m: any) => m.component_id))];
+    const { data: siblingComps } = await tdb("bom_components")
+      .select("id, part_number, name, lifecycle_status").in("id", siblingIds);
+    const compMap: Record<string, any> = {};
+    (siblingComps || []).forEach((c: any) => { compMap[c.id] = c; });
+    const memberships = myMemberships.map((mm: any) => ({
+      group: groupMap[mm.group_id],
+      my_variant_value: mm.variant_value,
+      siblings: (allMembers || [])
+        .filter((m: any) => m.group_id === mm.group_id)
+        .map((m: any) => ({ ...compMap[m.component_id], variant_value: m.variant_value, sort_order: m.sort_order }))
+        .filter((m: any) => m.id),
+    }));
+    return json({ memberships });
   }
 
   // ==========================================================================

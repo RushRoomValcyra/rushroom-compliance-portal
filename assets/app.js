@@ -4158,20 +4158,21 @@
     const isFamily = nodeData?.type === "product_family";
     try {
       const basePromises = [
-        API.post(token, "getComponentHistory",  { component_id: componentId }),
-        API.post(token, "getComponentDocuments", { component_id: componentId }),
-        API.post(token, "getComponentMaterials", { component_id: componentId }),
-        API.post(token, "getComponentChangelog", { component_id: componentId }),
-        API.post(token, "listParentsOf",         { component_id: componentId }),
-        API.post(token, "listComponentImages",   { component_id: componentId }),
-        API.post(token, "getComponentMetadata",  { component_id: componentId }),
+        API.post(token, "getComponentHistory",    { component_id: componentId }),
+        API.post(token, "getComponentDocuments",  { component_id: componentId }),
+        API.post(token, "getComponentMaterials",  { component_id: componentId }),
+        API.post(token, "getComponentChangelog",  { component_id: componentId }),
+        API.post(token, "listParentsOf",          { component_id: componentId }),
+        API.post(token, "listComponentImages",    { component_id: componentId }),
+        API.post(token, "getComponentMetadata",   { component_id: componentId }),
+        API.post(token, "listComponentVariants",  { component_id: componentId }),
       ];
       const familyPromises = isFamily ? [
         API.post(token, "listFamilyAttributes", { family_id: componentId }),
         API.post(token, "listConfigurations",    { family_id: componentId }),
         API.post(token, "listVariantsByFamily",  { family_id: componentId }),
       ] : [null, null, null];
-      const [hist, docs, mats, cl, usedIn, imgData, metaR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR] = await Promise.all([
+      const [hist, docs, mats, cl, usedIn, imgData, metaR, variantMembershipsR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR] = await Promise.all([
         ...basePromises, ...familyPromises,
         API.post(token, "listComponentFamilies", { component_id: componentId }),
         API.post(token, "listProductFamilies", {}),
@@ -5260,11 +5261,158 @@
         ]);
       }
 
+      // --- Variant Groups section (PROP-035) ------------------------------------
+      const variantMemberships = variantMembershipsR?.memberships || [];
+      const variantGroupContainer = el("div", {});
+
+      async function renderVariantGroups() {
+        // Refetch so the section refreshes after mutations without reopening the panel
+        let memberships = variantMemberships;
+        try {
+          const fresh = await API.post(token, "listComponentVariants", { component_id: componentId });
+          memberships = fresh.memberships || [];
+        } catch { /* use stale */ }
+
+        if (!memberships.length) {
+          // Not in any group — show assign UI
+          let allGroups = [];
+          try { allGroups = (await API.post(token, "listVariantGroups", {})).groups || []; } catch { /**/ }
+          const VA_COMMON = ["Color", "Finish", "Size", "Material", "Pattern"];
+          const modeNew = el("div", {});
+          const modeJoin = el("div", { style: "display:none" });
+
+          // Create-new-group flow
+          const newGrpName  = el("input",  { class: "up-text", type: "text", placeholder: "Group name, e.g. Left Side Panel", style: "flex:1;min-width:120px" });
+          const newGrpAttr  = el("input",  { class: "up-text", type: "text", placeholder: "Attribute (Color, Finish…)", style: "width:130px", value: "Color" });
+          const newGrpVal   = el("input",  { class: "up-text", type: "text", placeholder: "Value for this component, e.g. Arctic White", style: "flex:1;min-width:140px" });
+          const newGrpErr   = el("span",   { style: "color:#e05454;font-size:0.78rem;display:block;min-height:1em" }, "");
+          const newGrpBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
+            if (!newGrpName.value.trim() || !newGrpVal.value.trim()) { newGrpErr.textContent = "Group name and variant value are required."; return; }
+            newGrpBtn.disabled = true; newGrpErr.textContent = "";
+            try {
+              const r = await API.post(token, "createVariantGroup", { name: newGrpName.value.trim(), variant_attribute: newGrpAttr.value.trim() || "Color" });
+              await API.post(token, "addVariantMember", { group_id: r.id, component_id: componentId, variant_value: newGrpVal.value.trim() });
+              renderVariantGroups();
+            } catch (ex) { newGrpErr.textContent = ex.message; newGrpBtn.disabled = false; }
+          } }, "Create & assign");
+          VA_COMMON.forEach((a) => {
+            const chip = el("button", { type: "button", style: "font-size:0.72rem;padding:1px 6px;border:1px solid var(--border,#e2e8f0);border-radius:10px;cursor:pointer;background:none", onclick: () => { newGrpAttr.value = a; } }, a);
+            modeNew.append(chip);
+          });
+          modeNew.append(
+            el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.4rem;margin-top:0.3rem" }, VA_COMMON.map((a) =>
+              el("button", { type: "button", style: "font-size:0.72rem;padding:1px 8px;border:1px solid var(--border,#e2e8f0);border-radius:10px;cursor:pointer;background:none", onclick: () => { newGrpAttr.value = a; } }, a)
+            )),
+            el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.3rem" }, [newGrpName, newGrpAttr]),
+            el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.3rem" }, [newGrpVal]),
+            newGrpErr,
+            newGrpBtn,
+          );
+
+          // Join-existing-group flow
+          const joinSel = el("select", { class: "up-text", style: "flex:1;font-size:0.82rem" },
+            allGroups.length
+              ? allGroups.map((g) => el("option", { value: g.id }, `${g.name} (${g.variant_attribute})`))
+              : [el("option", {}, "No groups yet")]
+          );
+          const joinVal  = el("input",  { class: "up-text", type: "text", placeholder: "Value for this component, e.g. Arctic White", style: "flex:1;min-width:140px" });
+          const joinErr  = el("span",   { style: "color:#e05454;font-size:0.78rem;display:block;min-height:1em" }, "");
+          const joinBtn  = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
+            if (!allGroups.length || !joinVal.value.trim()) { joinErr.textContent = "Select a group and enter a variant value."; return; }
+            joinBtn.disabled = true; joinErr.textContent = "";
+            try {
+              await API.post(token, "addVariantMember", { group_id: joinSel.value, component_id: componentId, variant_value: joinVal.value.trim() });
+              renderVariantGroups();
+            } catch (ex) { joinErr.textContent = ex.message; joinBtn.disabled = false; }
+          } }, "Join group");
+          modeJoin.append(
+            el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.3rem" }, [joinSel, joinVal]),
+            joinErr,
+            joinBtn,
+          );
+
+          const tabNew  = el("button", { type: "button", style: "font-size:0.78rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border,#e2e8f0);cursor:pointer;font-weight:600", onclick: () => { modeNew.style.display=""; modeJoin.style.display="none"; tabNew.style.fontWeight="700"; tabJoin.style.fontWeight="400"; } }, "New group");
+          const tabJoin = el("button", { type: "button", style: "font-size:0.78rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border,#e2e8f0);cursor:pointer", onclick: () => { modeJoin.style.display=""; modeNew.style.display="none"; tabJoin.style.fontWeight="700"; tabNew.style.fontWeight="400"; } }, "Join existing");
+
+          variantGroupContainer.replaceChildren(
+            el("div", { style: "margin-bottom:1rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.75rem" }, [
+              el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem" }, [
+                el("label", { style: "font-size:0.82rem;font-weight:600;color:var(--muted,#8b93a1)" }, "Variant Group"),
+              ]),
+              el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem" }, "Not assigned to a variant group."),
+              el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.6rem" }, [tabNew, tabJoin]),
+              modeNew, modeJoin,
+            ]),
+          );
+          return;
+        }
+
+        // In one or more groups — render each
+        const cards = memberships.map((mem) => {
+          const { group, my_variant_value, siblings } = mem;
+          const chips = siblings.map((s) => {
+            const isSelf = s.id === componentId;
+            const chip = el("button", { type: "button", style: `display:inline-flex;align-items:center;gap:0.25rem;padding:3px 10px;border-radius:12px;border:1.5px solid ${isSelf ? "#2fa564" : "var(--border,#e2e8f0)"};font-size:0.78rem;cursor:${isSelf?"default":"pointer"};font-weight:${isSelf?"700":"400"};background:${isSelf?"#2fa56412":"none"}` }, [
+              el("span", {}, s.variant_value),
+            ]);
+            if (!isSelf) chip.onclick = () => openComponentDetail(s.id, token, panel, s, role);
+            return chip;
+          });
+
+          const addValInp = el("input", { class: "up-text", type: "text", placeholder: `Add another ${group.variant_attribute} value…`, style: "flex:1;font-size:0.8rem;min-width:160px" });
+          const addCompSel = el("select", { class: "up-text", style: "flex:1;font-size:0.8rem" });
+          // Populate with components not already in this group
+          (async () => {
+            try {
+              const all = (await API.post(token, "listComponents", {})).components || [];
+              const inGroup = new Set(siblings.map((s) => s.id));
+              all.filter((c) => !inGroup.has(c.id)).forEach((c) => {
+                addCompSel.append(el("option", { value: c.id }, `${c.name}  (${c.part_number})`));
+              });
+            } catch { /**/ }
+          })();
+          const addErr = el("span", { style: "color:#e05454;font-size:0.76rem;min-height:1em;display:block" }, "");
+          const addBtn = el("button", { class: "btn btn-sm", type: "button", onclick: async () => {
+            if (!addValInp.value.trim()) { addErr.textContent = "Enter a variant value."; return; }
+            addBtn.disabled = true; addErr.textContent = "";
+            try {
+              await API.post(token, "addVariantMember", { group_id: group.id, component_id: addCompSel.value, variant_value: addValInp.value.trim() });
+              renderVariantGroups();
+            } catch (ex) { addErr.textContent = ex.message; addBtn.disabled = false; }
+          } }, "+ Add sibling");
+          const removeBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;color:#e05454;border-color:#e0545440", onclick: async () => {
+            if (!confirm(`Remove this component from group "${group.name}"?`)) return;
+            try { await API.post(token, "removeVariantMember", { group_id: group.id, component_id: componentId }); renderVariantGroups(); }
+            catch (ex) { alert(ex.message); }
+          } }, "Remove from group") : null;
+
+          return el("div", { style: "margin-bottom:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.75rem" }, [
+            el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem" }, [
+              el("div", {}, [
+                el("span", { style: "font-size:0.82rem;font-weight:600" }, group.name),
+                el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-left:0.4rem" }, `· varies by ${group.variant_attribute}`),
+              ]),
+              removeBtn,
+            ].filter(Boolean)),
+            el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.5rem" }, chips),
+            role === "rushroom" ? el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.4rem;align-items:center" }, [addCompSel, addValInp, addBtn]) : null,
+            addErr,
+          ].filter(Boolean));
+        });
+        variantGroupContainer.replaceChildren(...cards);
+      }
+      renderVariantGroups();
+      const variantGroupSection = el("div", { style: "margin-bottom:0.5rem" }, [
+        el("label", { style: "font-size:0.82rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:0.25rem" }, "Variant Group"),
+        variantGroupContainer,
+      ]);
+
       tabPanels["overview"]   = el("div", { style: "display:none" }, [
         ...(sourceCallout     ? [sourceCallout]     : []),
         ...(statusSection     ? [statusSection]     : []),
         ...(typeSection       ? [typeSection]       : []),
         ...(makeOrBuySection  ? [makeOrBuySection]  : []),
+        variantGroupSection,
         ...(configSection     ? [configSection]     : []),
         productFamiliesSection,
         usedInSection,

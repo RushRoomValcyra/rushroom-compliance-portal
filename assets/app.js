@@ -3783,7 +3783,7 @@
       }
       // Root is already shown as the list-row header — start from its children
       (childrenOf[rootId] || []).forEach((e, i) => {
-        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId]);
+        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId });
       });
       return rows;
     }
@@ -3867,12 +3867,12 @@
             el("button", {
               class: "btn btn-sm", type: "button",
               style: "padding:1px 6px;font-size:0.85rem;font-weight:700;color:#e05454;border-color:#e0545440;line-height:1",
-              title: depth > 0 ? "Remove from this assembly" : "Delete from registry",
+              title: parentNode ? "Remove from this assembly" : "Delete from registry",
               onclick: async (ev) => {
                 ev.stopPropagation();
                 ev.target.disabled = true; ev.target.textContent = "…";
                 try {
-                  if (depth > 0) {
+                  if (parentNode) {
                     // Child row: unlink from this assembly only — component stays in registry
                     if (!confirm(`Remove "${n.name}" from this assembly?\n\nThe component stays in the registry and can be re-linked. This cannot be undone.`)) {
                       ev.target.disabled = false; ev.target.textContent = "×";

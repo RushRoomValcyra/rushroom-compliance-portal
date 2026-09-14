@@ -3756,6 +3756,18 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
   }
 
   // --- BOM: add an edge (child under parent) --------------------------------
+  // Turn Postgres constraint noise into something a user can act on.
+  function bomEdgeError(raw: string): string {
+    if (raw.includes("bom_edges_unconditional_unique")) {
+      return "That component is already a child of this assembly. Remove the existing link first, or add it with a variant condition.";
+    }
+    if (raw.includes("BOM cycle detected")) {
+      return "That would create a loop: the component is already an ancestor of this assembly.";
+    }
+    if (raw.includes("no_self_loop")) return "A component cannot be its own child.";
+    return raw;
+  }
+
   if (action === "addBomEdge") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { parent_id, child_id, quantity, reference_designator, effective_from, variant_condition } = body;
@@ -3773,12 +3785,10 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
         variant_condition: variant_condition ?? null,
         sort_order: nextOrder,
       }).select("id").maybeSingle();
-      if (error) return json({ error: error.message }, 400);
+      if (error) return json({ error: bomEdgeError(error.message) }, 400);
       return json({ id: data.id });
     } catch (e: any) {
-      const msg = String(e?.message || "");
-      if (msg.includes("BOM cycle detected")) return json({ error: msg }, 400);
-      return json({ error: msg }, 400);
+      return json({ error: bomEdgeError(String(e?.message || "")) }, 400);
     }
   }
 
@@ -3947,8 +3957,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       // Never leave the child detached: re-open the edge we just closed.
       await tdb("bom_edges").update({ effective_to: null }).eq("id", edge.id);
       const msg = String(e?.message || "");
-      if (msg.includes("BOM cycle detected")) return json({ error: msg }, 400);
-      return json({ error: msg || "Move failed" }, 400);
+      return json({ error: msg ? bomEdgeError(msg) : "Move failed" }, 400);
     }
   }
 

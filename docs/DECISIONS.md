@@ -609,3 +609,17 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Decision:** Exposed `name`, `part_number`, and `oem_number` as editable fields in the Overview tab of the component detail panel, calling the existing `updateComponent` action.
 **Why:** The BOM history trigger on `bom_components` already records every field change; renaming a node was previously impossible without delete-and-recreate, which would orphan all history, edge references, and document links. Surfacing the editor in the Overview tab (Rushroom-only) gives operators a safe in-place correction path. No new API action or migration needed.
 **Files changed:** assets/app.js, index.html
+
+---
+**Date:** 2026-09-14
+**Feature:** Bug fix — BOM tree `×` destroyed components instead of unlinking
+**Decision:** The unlink-vs-delete branch keys on `parentNode`, not on `depth`. Registry deletion is reachable only from the card-header `×` (with its danger modal); the `×` inside a tree always unlinks.
+**Why:** The tree deliberately does not render its own root — the root is the list-row header — so `buildRows()` seeds the root's direct children at `depth 0`. Branching on `depth > 0` therefore sent every *direct* child of an assembly down the destroy path, calling `deleteComponent` and cascading through `component_documents`, `component_materials`, `bom_component_versions`, component images (storage objects included) and routing rows; only grandchildren unlinked correctly. Re-indexing the walk to start at depth 1 was rejected: `depth` also drives the ASCII connector maths and the Dynamic BOM button rules, so shifting it would have moved a destructive bug into two cosmetic/behavioural ones. `parentNode` is the semantically correct discriminator — a row inside a tree has a parent by construction, so it can never be a registry root — and it is already computed and passed for every row. Seeded with an `{ id: rootId }` fallback so a missing root node cannot silently re-open the destructive path. `removeBomEdge` was never at fault: it soft-closes the edge via `effective_to` and does not touch `bom_components`.
+**Files changed:** assets/app.js
+
+---
+**Date:** 2026-09-14
+**Feature:** Cache-bust location correction + page version sync
+**Decision:** `?v=N` is documented as living on the asset tags in `index.html`. CLAUDE.md and `.claude/commands/ship.md` corrected, and /ship Step 5 now enumerates the six asset tags. supplier.html, reset.html and verify.html synced to the current version.
+**Why:** Both CLAUDE.md and the /ship command said the cache bust lived in `assets/config.js`, which carries no version string at all — a /ship run following that instruction would have bumped nothing and shipped stale assets. Enumerating the tags prevents the follow-on failure of bumping one tag and missing five. The three secondary pages had drifted to v105 and v72 while index.html was at v201, all loading the same shared `config.js` / `api.js` / `app.js`; since `?v` is only a browser cache key (Pages serves current assets at any `?v`), this stranded returning visitors on old cached copies rather than withholding code from new ones. Syncing converges them. Verified before bumping that supplier.js's `window.Portal` contract (`apiEnabled`, `renderApi`, `setupApiGate`, `wireTabs`) is still satisfied by app.js.
+**Files changed:** CLAUDE.md, .claude/commands/ship.md, supplier.html, reset.html, verify.html

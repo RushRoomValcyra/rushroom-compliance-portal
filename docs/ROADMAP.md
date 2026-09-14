@@ -1,5 +1,5 @@
 # Rushroom Compliance Portal — Roadmap
-_Last updated: 2026-09-13 · Auto-maintained by /ship_
+_Last updated: 2026-09-14 · Auto-maintained by /ship_
 
 ## Now — In Progress
 - PROP-021 Component Document Lifecycle — Layer 1 shipped (upload & link from component panel); Layers 2–4 (new revision, AI diff, data extraction) pending; PROP-014 must be reviewed before Layer 2 design
@@ -15,6 +15,7 @@ _Last updated: 2026-09-13 · Auto-maintained by /ship_
 - PROP-007 Multi-language support EN/DE/SV
 
 ## Shipped
+- **Bug fix — BOM tree delete unlinks instead of destroying** (tree `×` on a direct child of an assembly called `deleteComponent` and wiped the component from the registry; handler now branches on `parentNode` not `depth`, since the tree seeds the root's children at depth 0; registry delete stays on the card-header `×`) + **Cache-bust doc correction** (`?v=N` lives in index.html, not assets/config.js — CLAUDE.md and /ship command corrected; supplier.html v105 / reset.html + verify.html v72 synced to v201) — cache v202 — 2026-09-14
 - **PROP-035 Component Variant Groups** (component_variant_groups + component_variant_members tables; 6 API actions: createVariantGroup, listVariantGroups, deleteVariantGroup, addVariantMember, removeVariantMember, listComponentVariants; sibling chip navigation in Overview tab; migration 0024; cache v199) + **Inline name editor** (name/part_number/oem_number editable in Overview tab without delete-and-recreate; cache v200) — 2026-09-13
 - **PROP-034 Manufacturer vs Supplier** (manufacturer_name + manufacturer_part_number columns on component_metadata; Procurement section shows 4 fields in 2×2 grid; OEM number label consistent with Create modal; UUID header replaced with name + part number; migration 0023; cache v196–v198) — 2026-09-13
 - **PROP-033 Stocked Assembly Variants** (materialiseConfiguration + listVariantsByFamily; source_family_id + source_config_id columns on bom_components; bom_edges partial unique index; "Stock" button on saved configs; Stocked Variants section in Dynamic BOM panel; stale-source callout on materialised components; migration 0022; cache v195) — 2026-09-13

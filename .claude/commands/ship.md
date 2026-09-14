@@ -11,7 +11,7 @@ Open docs/SYSTEM_OVERVIEW.html and make exactly these updates:
 
 Section 0 (As-Built Status):
 - Change the audit date to today
-- Update ?v=N to the current value in assets/config.js
+- Update ?v=N to the current value in index.html
 - Update the paragraph to describe the new capability
 
 Section 2 (Table Inventory):
@@ -46,7 +46,7 @@ Add this block at the bottom of docs/DECISIONS.md:
 **Files changed:** [list the files]
 
 ## Step 5 — Bump cache version
-In assets/config.js, find ?v=N and increment N by 1.
+In index.html, increment N by 1 in every ?v=N asset reference (styles.css, config.js, api.js, gdocs.js, viewer.js, app.js). Do the same in supplier.html if it carries versioned assets.
 Also update the ?v=N line in CLAUDE.md to match.
 
 ## Step 6 — Stage everything

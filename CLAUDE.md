@@ -2,7 +2,7 @@
 
 ## What this is
 Compliance portal for Rushroom AB's LED furniture product.
-- Frontend: GitHub Pages (static, cache-busted via ?v=N in assets/config.js)
+- Frontend: GitHub Pages (static, cache-busted via ?v=N on the asset tags in index.html)
 - Backend: Single Supabase Edge Function `portal-api` (Deno, --no-verify-jwt)
 - DB: Supabase Postgres (29 tables). Schema in supabase/migrations/*.sql
 - AI: ALL calls use `claude-opus-4-8` via api.anthropic.com/v1/messages
@@ -11,7 +11,7 @@ Compliance portal for Rushroom AB's LED furniture product.
 Deploy edge function:  supabase functions deploy portal-api --no-verify-jwt
 Apply DB migration:    supabase db push
 Deploy frontend:       git push origin main (GitHub Actions → Pages)
-Bump cache:            increment ?v=N in assets/config.js
+Bump cache:            increment ?v=N on every asset tag in index.html (and supplier.html if present)
 
 ## Architecture rules — always follow these
 - ALL business logic goes through portal-api edge function. Browser never touches DB directly.
@@ -26,7 +26,8 @@ Bump cache:            increment ?v=N in assets/config.js
 - portal-api/index.ts       — edge function (all API actions dispatched here)
 - portal-api/cellar-service.ts — EU CELLAR SPARQL integration
 - assets/app.js             — all frontend logic (no framework, vanilla JS)
-- assets/config.js          — API URL + Google OAuth client ID + cache bust ?v=N
+- assets/config.js          — API URL + Google OAuth client ID (no ?v= here)
+- index.html                — page shell + the ?v=N cache-bust on all asset tags
 - docs/SYSTEM_OVERVIEW.html — living system documentation (always update with /ship)
 - docs/IDEAS.md             — raw feature ideas (Claude reads this before /build)
 - docs/DECISIONS.md         — architectural decisions log (Claude appends after /ship)

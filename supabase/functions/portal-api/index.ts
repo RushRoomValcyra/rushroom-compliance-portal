@@ -3732,7 +3732,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const depthLimit = Math.min(Number(max_depth) || 4, 10);
     // BFS: fetch children level by level
     const nodeMap: Record<string, any> = {};
-    const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null }> = [];
+    const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null; sort_order?: number }> = [];
     const queue: Array<{ id: string; depth: number }> = [{ id: root_component_id, depth: 0 }];
     const visited = new Set<string>();
     while (queue.length > 0) {
@@ -3744,8 +3744,9 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const currentDepth = batch[0].depth;
       if (currentDepth >= depthLimit) continue;
-      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition")
-        .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId);
+      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order")
+        .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId)
+        .order("sort_order", { ascending: true }).order("id", { ascending: true });
       (childEdges || []).forEach((e: any) => {
         edges.push(e);
         if (!visited.has(e.child_id)) queue.push({ id: e.child_id, depth: currentDepth + 1 });
@@ -3760,11 +3761,17 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const { parent_id, child_id, quantity, reference_designator, effective_from, variant_condition } = body;
     if (!parent_id || !child_id || !quantity) return json({ error: "parent_id, child_id and quantity required" }, 400);
     try {
+      // PROP-036: new children land at the end of the sibling list.
+      const { data: sibs } = await tdb("bom_edges").select("sort_order")
+        .eq("parent_id", parent_id).is("effective_to", null)
+        .order("sort_order", { ascending: false }).limit(1);
+      const nextOrder = ((sibs && sibs[0]?.sort_order) ?? 0) + 10;
       const { data, error } = await tdb("bom_edges").insert({
         parent_id, child_id, quantity: Number(quantity),
         reference_designator: reference_designator || null,
         effective_from: effective_from || new Date().toISOString().slice(0, 10),
         variant_condition: variant_condition ?? null,
+        sort_order: nextOrder,
       }).select("id").maybeSingle();
       if (error) return json({ error: error.message }, 400);
       return json({ id: data.id });
@@ -3778,13 +3785,171 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
   // --- BOM: close an edge (soft-delete, sets effective_to = today) ----------
   if (action === "removeBomEdge") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { parent_id, child_id } = body;
-    if (!parent_id || !child_id) return json({ error: "parent_id and child_id required" }, 400);
-    const { error } = await db.from("bom_edges").update({ effective_to: new Date().toISOString().slice(0, 10) })
+    const { edge_id, parent_id, child_id } = body;
+    const today = new Date().toISOString().slice(0, 10);
+    // PROP-036: prefer edge_id. PROP-033 relaxed the unique constraint so several
+    // variant-conditional edges may exist between the same (parent, child) pair —
+    // a pair-keyed close would shut all of them, not the one the user clicked.
+    if (edge_id) {
+      const { data, error } = await db.from("bom_edges").update({ effective_to: today })
+        .eq("id", edge_id).is("effective_to", null)
+        .eq("organization_id", organizationId).select("id");
+      if (error) return json({ error: error.message }, 400);
+      if (!data?.length) return json({ error: "Edge not found or already removed" }, 404);
+      return json({ ok: true, closed: data.length });
+    }
+    // Deprecated pair form, kept for older callers. Closes every active edge
+    // between the pair — see the note above before relying on it.
+    if (!parent_id || !child_id) return json({ error: "edge_id (preferred) or parent_id and child_id required" }, 400);
+    const { data, error } = await db.from("bom_edges").update({ effective_to: today })
       .eq("parent_id", parent_id).eq("child_id", child_id).is("effective_to", null)
-      .eq("organization_id", organizationId);
+      .eq("organization_id", organizationId).select("id");
     if (error) return json({ error: error.message }, 400);
-    return json({ ok: true });
+    return json({ ok: true, closed: data?.length ?? 0 });
+  }
+
+  // --- BOM: swap a child with its neighbour in the sibling order (PROP-036) --
+  if (action === "reorderBomEdge") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { edge_id, direction } = body;
+    if (!edge_id || (direction !== "up" && direction !== "down")) {
+      return json({ error: "edge_id and direction ('up'|'down') required" }, 400);
+    }
+    const { data: edge } = await tdb("bom_edges")
+      .select("id, parent_id, sort_order").eq("id", edge_id).is("effective_to", null).maybeSingle();
+    if (!edge) return json({ error: "Edge not found" }, 404);
+    // Nearest active sibling on the chosen side, ordered so the first row wins.
+    const q = tdb("bom_edges").select("id, sort_order")
+      .eq("parent_id", edge.parent_id).is("effective_to", null).neq("id", edge_id);
+    const { data: neighbours } = direction === "up"
+      ? await q.lte("sort_order", edge.sort_order ?? 0).order("sort_order", { ascending: false }).limit(1)
+      : await q.gte("sort_order", edge.sort_order ?? 0).order("sort_order", { ascending: true }).limit(1);
+    const neighbour = neighbours?.[0];
+    if (!neighbour) return json({ ok: true, moved: false });  // already at the end
+    // Straight swap. Equal values (possible after a backfill) are nudged apart
+    // so the swap is still a real reorder rather than a no-op.
+    let a = edge.sort_order ?? 0, b = neighbour.sort_order ?? 0;
+    if (a === b) { if (direction === "up") a = b + 1; else b = a + 1; }
+    await tdb("bom_edges").update({ sort_order: b }).eq("id", edge.id);
+    await tdb("bom_edges").update({ sort_order: a }).eq("id", neighbour.id);
+    return json({ ok: true, moved: true });
+  }
+
+  // --- BOM: legal destinations for moving a child (PROP-036) ----------------
+  // Walks the moving node's descendants so a move can never create a cycle,
+  // mirroring what trg_check_bom_cycle enforces at INSERT time.
+  async function bomDescendantIds(rootId: string): Promise<Set<string>> {
+    const seen = new Set<string>([rootId]);
+    let frontier = [rootId];
+    while (frontier.length) {
+      const { data: rows } = await db.from("bom_edges").select("child_id")
+        .in("parent_id", frontier).is("effective_to", null)
+        .eq("organization_id", organizationId);
+      const next = (rows || []).map((r: any) => r.child_id).filter((id: string) => !seen.has(id));
+      next.forEach((id: string) => seen.add(id));
+      frontier = next;
+    }
+    return seen;
+  }
+
+  if (action === "listMoveTargets") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { edge_id } = body;
+    if (!edge_id) return json({ error: "edge_id required" }, 400);
+    const { data: edge } = await tdb("bom_edges")
+      .select("id, parent_id, child_id, variant_condition").eq("id", edge_id).is("effective_to", null).maybeSingle();
+    if (!edge) return json({ error: "Edge not found" }, 404);
+
+    // (1) never itself, never one of its own descendants — that is the cycle rule
+    const blocked = await bomDescendantIds(edge.child_id);
+    // (4) a parent that already holds this child unconditionally would be
+    //     rejected by PROP-033's partial unique index, so hide it up front
+    if (!edge.variant_condition) {
+      const { data: existing } = await db.from("bom_edges").select("parent_id")
+        .eq("child_id", edge.child_id).is("effective_to", null).is("variant_condition", null)
+        .eq("organization_id", organizationId);
+      (existing || []).forEach((e: any) => blocked.add(e.parent_id));
+    }
+    const { data: comps } = await tdb("bom_components")
+      .select("id, part_number, name, type, lifecycle_status").order("name");
+    const targets = (comps || []).filter((c: any) =>
+      !blocked.has(c.id) &&
+      c.type !== "finished_good" &&      // (2) PROP-029 leaf rule
+      c.id !== edge.parent_id            // already its parent — nothing to do
+    );
+    return json({ targets, current_parent_id: edge.parent_id });
+  }
+
+  // --- BOM: move a child to a different parent (PROP-036) -------------------
+  // Edge-scoped by design: a component used in several assemblies moves only in
+  // the assembly being viewed. Every other parent link is left untouched.
+  if (action === "moveComponentToParent") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { edge_id, new_parent_id } = body;
+    if (!edge_id || !new_parent_id) return json({ error: "edge_id and new_parent_id required" }, 400);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const { data: edge } = await tdb("bom_edges")
+      .select("id, parent_id, child_id, quantity, reference_designator, variant_condition")
+      .eq("id", edge_id).is("effective_to", null).maybeSingle();
+    if (!edge) return json({ error: "Edge not found" }, 404);
+    if (new_parent_id === edge.parent_id) return json({ ok: true, new_edge_id: edge.id, moved: false });
+
+    // Re-validate server-side: a filtered picker is a suggestion, not a permission.
+    const blocked = await bomDescendantIds(edge.child_id);
+    if (blocked.has(new_parent_id)) {
+      return json({ error: "That destination is the component itself or one of its own descendants — the move would create a cycle." }, 400);
+    }
+    const { data: target } = await tdb("bom_components")
+      .select("id, type, name").eq("id", new_parent_id).maybeSingle();
+    if (!target) return json({ error: "Destination not found" }, 404);
+    if (target.type === "finished_good") {
+      return json({ error: "A finished good is a leaf and cannot hold children." }, 400);
+    }
+
+    // Close first, insert second. trg_check_bom_cycle is BEFORE INSERT, so it
+    // must see the post-move ancestor set — inserting first can reject a
+    // legitimate re-parent inside the same branch.
+    const { error: closeErr } = await tdb("bom_edges").update({ effective_to: today }).eq("id", edge.id);
+    if (closeErr) return json({ error: closeErr.message }, 400);
+
+    try {
+      const { data: sibs } = await tdb("bom_edges").select("sort_order")
+        .eq("parent_id", new_parent_id).is("effective_to", null)
+        .order("sort_order", { ascending: false }).limit(1);
+      const nextOrder = ((sibs && sibs[0]?.sort_order) ?? 0) + 10;
+      const { data: created, error: insErr } = await tdb("bom_edges").insert({
+        parent_id: new_parent_id, child_id: edge.child_id,
+        quantity: edge.quantity, reference_designator: edge.reference_designator,
+        variant_condition: edge.variant_condition ?? null,
+        effective_from: today, sort_order: nextOrder,
+      }).select("id").maybeSingle();
+      if (insErr || !created) throw new Error(insErr?.message || "Edge insert returned no data");
+
+      // Audit: snapshot the moved component so the Change Log records the move.
+      const { data: comp } = await tdb("bom_components")
+        .select("part_number, oem_number, name, description, type, lifecycle_status")
+        .eq("id", edge.child_id).maybeSingle();
+      if (comp) {
+        try {
+          await tdb("bom_component_history").insert({
+            component_id: edge.child_id, changed_at: new Date().toISOString(),
+            changed_by: session.uid || null, change_type: "updated",
+            part_number: comp.part_number, oem_number: comp.oem_number,
+            name: comp.name, description: comp.description,
+            type: comp.type, lifecycle_status: comp.lifecycle_status,
+            notes: `Moved to assembly "${target.name}"`,
+          });
+        } catch { /* non-fatal — the move itself already succeeded */ }
+      }
+      return json({ ok: true, new_edge_id: created.id, moved: true });
+    } catch (e: any) {
+      // Never leave the child detached: re-open the edge we just closed.
+      await tdb("bom_edges").update({ effective_to: null }).eq("id", edge.id);
+      const msg = String(e?.message || "");
+      if (msg.includes("BOM cycle detected")) return json({ error: msg }, 400);
+      return json({ error: msg || "Move failed" }, 400);
+    }
   }
 
   // --- BOM: list all parent assemblies that include a given component --------
@@ -4313,6 +4478,13 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       }
     }
     if (edgesForInsert.length) {
+      // PROP-036: give materialised edges a real position per parent, otherwise
+      // they all land on the DEFAULT 0 and sibling order falls back to id.
+      const nextByParent: Record<string, number> = {};
+      edgesForInsert.forEach((e: any) => {
+        nextByParent[e.parent_id] = (nextByParent[e.parent_id] ?? 0) + 10;
+        e.sort_order = nextByParent[e.parent_id];
+      });
       await tdb("bom_edges").insert(edgesForInsert);
     }
 

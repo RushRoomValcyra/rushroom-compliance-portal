@@ -3436,6 +3436,11 @@
   }
 
   // --- BOM tree view ---------------------------------------------------------
+  // component_id → number of OTHER parent assemblies (entries with count > 1 only).
+  // Module-scoped on purpose: bomTreeView fills it, but openAddChildModal — a
+  // sibling function, not a nested one — reads it to warn about shared edits.
+  let parentCountMap = {};
+
   async function bomTreeView(token, role) {
     const wrap = el("div", { class: "pis-tree-wrap" });
     const detailPanel = el("div", { class: "pis-detail-panel", style: "display:none;margin-top:1rem;padding:1rem;background:var(--bg-2,#f5f5f5);border-radius:6px" });
@@ -3449,7 +3454,6 @@
     let activeTab = "components";
     let allComponents = [];
     let thumbMap = {}; // component_id → signed thumbnail URL
-    let parentCountMap = {}; // component_id → number of distinct parent assemblies (only entries with count > 1)
     let searchQuery = "";
     const PAGE_SIZE = 50;
     const tabPageShown = { components: PAGE_SIZE, assemblies: PAGE_SIZE, dynamic: PAGE_SIZE };
@@ -3771,19 +3775,22 @@
     // ancestor-last flags (used to draw ├─ / └─ / │ connectors correctly at any depth)
     function buildRows() {
       const rows = [];
-      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode) {
+      // edgeId / sibIndex / sibCount are carried so a row can reorder and move
+      // itself: PROP-036 keys both on the EDGE, never on the (parent, child) pair.
+      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount) {
         const n = nodeMap[nodeId];
         if (!n) return;
         const children = childrenOf[nodeId] || [];
-        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null });
+        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount });
         if (collapsed.has(posNum)) return;
         children.forEach((e, i) => {
-          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n);
+          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length);
         });
       }
       // Root is already shown as the list-row header — start from its children
-      (childrenOf[rootId] || []).forEach((e, i) => {
-        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId });
+      const topEdges = childrenOf[rootId] || [];
+      topEdges.forEach((e, i) => {
+        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length);
       });
       return rows;
     }
@@ -3809,12 +3816,20 @@
     ]));
 
     wrap.append(el("div", {
-        style: "display:grid;grid-template-columns:6rem 1fr 4rem 7rem 12rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.71rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
+        style: "display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.71rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
       }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 3 ? "text-align:center" : "" }, t))));
 
-      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode }) => {
+      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount }) => {
         const isCollapsed = collapsed.has(posNum);
         const isFamily = n.type === "product_family";
+        // PROP-036 — guards say what they MEAN. `depth` is positional only (it
+        // feeds connector()); because the tree never renders its own root, the
+        // root's children sit at depth 0, so any permission written as
+        // `depth > 0` is one level off. That mismatch caused the v202 data loss.
+        const isTreeRow  = !!parentNode;                    // every row inside a tree has a parent
+        const canUnlink  = isTreeRow;                       // unlink the edge, never delete the component
+        const canAddChild = n.type !== "finished_good";     // PROP-029: a finished good is a leaf
+        const canReorder = isTreeRow && sibCount > 1;
 
         // Toggle button (only for nodes with children)
         const tog = hasChildren
@@ -3850,7 +3865,7 @@
         ]);
 
         const row = el("div", {
-          style: `display:grid;grid-template-columns:6rem 1fr 4rem 7rem 12rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
+          style: `display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
           onmouseenter: (ev) => { ev.currentTarget.style.background = "var(--bg-2,rgba(0,0,0,0.03))"; },
           onmouseleave: (ev) => { ev.currentTarget.style.background = ""; },
           ondblclick: (ev) => { ev.stopPropagation(); openComponentDetail(n.id, token, detailPanel, n, role); },
@@ -3862,23 +3877,48 @@
           el("div", { style: "display:flex;gap:0.2rem;flex-shrink:0;flex-wrap:nowrap" }, [
             // ⚙ variant-configure button hidden until import integration is built (PROP-018)
 
-            parentNode && !isDynamicBom ? el("button", { class: "btn btn-sm", type: "button", title: "Add sibling", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId) }, "+sib") : null,
-            (isDynamicBom ? depth === 0 : true) ? el("button", { class: "btn btn-sm", type: "button", title: "Add child", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+child") : null,
+            canReorder ? el("button", {
+              class: "btn btn-sm", type: "button", title: "Move up in this assembly",
+              style: "padding:1px 4px;font-size:0.7rem", disabled: sibIndex === 0,
+              onclick: async (ev) => {
+                ev.stopPropagation(); ev.target.disabled = true;
+                try { await API.post(token, "reorderBomEdge", { edge_id: edgeId, direction: "up" }); onRefresh(); }
+                catch (ex) { ev.target.disabled = false; alert(`Failed: ${ex.message}`); }
+              },
+            }, "↑") : null,
+            canReorder ? el("button", {
+              class: "btn btn-sm", type: "button", title: "Move down in this assembly",
+              style: "padding:1px 4px;font-size:0.7rem", disabled: sibIndex === sibCount - 1,
+              onclick: async (ev) => {
+                ev.stopPropagation(); ev.target.disabled = true;
+                try { await API.post(token, "reorderBomEdge", { edge_id: edgeId, direction: "down" }); onRefresh(); }
+                catch (ex) { ev.target.disabled = false; alert(`Failed: ${ex.message}`); }
+              },
+            }, "↓") : null,
+            isTreeRow ? el("button", { class: "btn btn-sm", type: "button", title: "Add sibling", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+sib") : null,
+            canAddChild ? el("button", { class: "btn btn-sm", type: "button", title: "Add child", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+child") : null,
+            isTreeRow ? el("button", {
+              class: "btn btn-sm", type: "button", title: "Move to another assembly",
+              style: "padding:1px 5px;font-size:0.7rem",
+              onclick: (ev) => { ev.stopPropagation(); openMoveModal(n, edgeId, parentNode, token, onRefresh); },
+            }, "⇄") : null,
             el("button", {
               class: "btn btn-sm", type: "button",
               style: "padding:1px 6px;font-size:0.85rem;font-weight:700;color:#e05454;border-color:#e0545440;line-height:1",
-              title: parentNode ? "Remove from this assembly" : "Delete from registry",
+              title: canUnlink ? "Remove from this assembly" : "Delete from registry",
               onclick: async (ev) => {
                 ev.stopPropagation();
                 ev.target.disabled = true; ev.target.textContent = "…";
                 try {
-                  if (parentNode) {
+                  if (canUnlink) {
                     // Child row: unlink from this assembly only — component stays in registry
                     if (!confirm(`Remove "${n.name}" from this assembly?\n\nThe component stays in the registry and can be re-linked. This cannot be undone.`)) {
                       ev.target.disabled = false; ev.target.textContent = "×";
                       return;
                     }
-                    await API.post(token, "removeBomEdge", { parent_id: parentNode.id, child_id: n.id });
+                    // Key on the edge: PROP-033 allows several conditional edges
+                    // between one pair, and a pair-keyed close would shut them all.
+                    await API.post(token, "removeBomEdge", { edge_id: edgeId, parent_id: parentNode.id, child_id: n.id });
                   } else {
                     // Root row: delete from registry — show custom danger modal
                     const { parents } = await API.post(token, "listParentsOf", { component_id: n.id });
@@ -3929,6 +3969,88 @@
     }
 
     render();
+  }
+
+  // --- Move modal: re-parent a child (PROP-036) -----------------------------
+  // Edge-scoped on purpose: a component used in several assemblies moves ONLY in
+  // the assembly on screen. Every other parent link is left exactly as it was.
+  function openMoveModal(node, edgeId, currentParent, token, onRefresh) {
+    const overlay = el("div", { style: "position:fixed;inset:0;background:#0009;z-index:1001;display:flex;align-items:center;justify-content:center" });
+    const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
+    const listEl = el("div", { style: "max-height:260px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
+    const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search destination by part # or name…", style: "width:100%;margin-bottom:0.5rem" });
+    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.2rem" }, "");
+    const selectedLabel = el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;min-height:1.2rem" }, "");
+    let targets = [], selectedId = null;
+
+    const submitBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true }, "Move");
+
+    function buildList(filter) {
+      const f = (filter || "").toLowerCase();
+      const shown = f ? targets.filter((c) => (c.part_number + " " + c.name).toLowerCase().includes(f)) : targets;
+      if (!shown.length) {
+        listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:var(--muted,#8b93a1);font-size:0.85rem" },
+          targets.length ? "No destinations match." : "No legal destination for this component."));
+        return;
+      }
+      listEl.replaceChildren(...shown.map((c) => el("div", {
+        style: `padding:0.35rem 0.6rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.5rem;align-items:center;${selectedId === c.id ? "background:var(--accent,#2fa564)22;" : ""}`,
+        onclick: () => {
+          selectedId = c.id;
+          selectedLabel.textContent = `Move into: ${c.part_number} — ${c.name}`;
+          submitBtn.disabled = false;
+          buildList(searchInput.value);
+        },
+      }, [
+        el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
+        el("span", { style: "flex:1" }, c.name),
+        el("span", { style: "font-size:0.7rem;color:var(--muted,#8b93a1)" }, c.type || ""),
+      ])));
+    }
+    searchInput.oninput = () => buildList(searchInput.value);
+
+    submitBtn.onclick = async () => {
+      if (!selectedId) return;
+      submitBtn.disabled = true; submitBtn.textContent = "Moving…"; errEl.textContent = "";
+      try {
+        await API.post(token, "moveComponentToParent", { edge_id: edgeId, new_parent_id: selectedId });
+        overlay.remove();
+        onRefresh();
+      } catch (ex) {
+        errEl.textContent = ex.message;
+        submitBtn.disabled = false; submitBtn.textContent = "Move";
+      }
+    };
+
+    dialog.append(
+      el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
+        el("h3", { style: "margin:0;font-size:1rem" }, "Move to another assembly"),
+        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 8px", onclick: () => overlay.remove() }, "✕"),
+      ]),
+      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.2rem" }, `Moving: ${node.part_number} — ${node.name}`),
+      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.6rem" }, `Out of: ${currentParent && currentParent.name ? currentParent.name : "this assembly"}`),
+      el("div", { style: "background:#2fa56412;border:1px solid #2fa56440;border-radius:6px;padding:0.5rem 0.7rem;margin-bottom:0.75rem;font-size:0.8rem" },
+        "Only this assembly changes. If this component is used elsewhere, those assemblies keep it exactly as they have it."),
+      searchInput, listEl, selectedLabel, errEl,
+      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
+        submitBtn,
+      ]),
+    );
+    overlay.append(dialog);
+    document.body.append(overlay);
+
+    listEl.replaceChildren(el("div", { class: "loading", style: "padding:0.5rem" }, "Loading destinations…"));
+    (async () => {
+      try {
+        const res = await API.post(token, "listMoveTargets", { edge_id: edgeId });
+        targets = res.targets || [];
+        buildList("");
+        searchInput.focus();
+      } catch (ex) {
+        listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:#e05454;font-size:0.85rem" }, ex.message));
+      }
+    })();
   }
 
   // --- Add-child modal: link existing OR create new and link ---------------
@@ -4125,12 +4247,38 @@
       },
     });
 
+    // PROP-036 option 3 — "allow + warn". Sub-tree edits inside a Dynamic BOM are
+    // permitted, but there is no per-Dynamic-BOM copy of a sub-assembly: this writes
+    // an edge on the SHARED component, so the new child lands in every assembly that
+    // uses this parent. Name them before the user commits, not after.
+    const blastPanel = el("div", { style: "display:none;background:#d9770615;border:1px solid #d9770650;border-radius:6px;padding:0.55rem 0.7rem;margin-bottom:0.75rem" });
+    (async () => {
+      const known = parentCountMap[parentNode.id];
+      if (!known) return;  // not shared — nothing to warn about
+      blastPanel.style.display = "";
+      blastPanel.replaceChildren(el("div", { style: "font-size:0.82rem;font-weight:700;color:#d97706" },
+        `⚠ This also changes ${known} other assembl${known === 1 ? "y" : "ies"}`));
+      try {
+        const { parents } = await API.post(token, "listParentsOf", { component_id: parentNode.id });
+        if (!parents || !parents.length) return;
+        blastPanel.replaceChildren(
+          el("div", { style: "font-size:0.82rem;font-weight:700;color:#d97706;margin-bottom:0.25rem" },
+            `⚠ "${parentNode.name}" is used in ${parents.length} other assembl${parents.length === 1 ? "y" : "ies"} — the new child appears in all of them:`),
+          el("ul", { style: "margin:0.15rem 0 0.35rem;padding-left:1.2rem;font-size:0.8rem" },
+            parents.map((pp) => el("li", {}, pp.parent ? `${pp.parent.name} (${pp.parent.part_number})` : pp.parent_id))),
+          el("div", { style: "font-size:0.76rem;color:var(--muted,#8b93a1)" },
+            "Wanted it in one configuration only? Add it with a variant condition instead, or stock the configuration as its own SKU."),
+        );
+      } catch { /* the count above is still shown; names are a nicety */ }
+    })();
+
     form.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
         el("h3", { style: "margin:0;font-size:1rem" }, "Add child component"),
         el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 8px", onclick: () => overlay.remove() }, "✕"),
       ]),
       el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),
+      blastPanel,
       tabBar,
       existingSection,
       newSection,

@@ -5064,6 +5064,19 @@
     if (panel.__imgPasteOff) { panel.__imgPasteOff(); delete panel.__imgPasteOff; }
     if (activeImgPasteOff) { activeImgPasteOff(); activeImgPasteOff = null; }
     openDetailComponentId = componentId;
+    // Section editors put their Save button up here beside AI fill / Close,
+    // rather than at the bottom of a long form where it has to be scrolled to.
+    // Cancel is gone: Close does the same thing and sat right next to it.
+    const headerActions = el("div", { style: "display:flex;gap:0.4rem;align-items:center" });
+    let cancelActiveEdit = null;
+    function setHeaderSave(btn, cancelFn) {
+      cancelActiveEdit = cancelFn || null;
+      headerActions.replaceChildren(btn);
+    }
+    function clearHeaderSave() {
+      cancelActiveEdit = null;
+      headerActions.replaceChildren();
+    }
     const isFamily = nodeData?.type === "product_family";
     try {
       const basePromises = [
@@ -5957,6 +5970,7 @@
       // Specifications (Physical + Material + Procurement)
       const specsContainer = el("div", {});
       function renderSpecsRead() {
+        clearHeaderSave();
         const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderSpecsEdit }, "Edit") : null;
         const dimsStr = (meta.length_mm != null || meta.width_mm != null || meta.height_mm != null)
           ? `${meta.length_mm ?? "—"} × ${meta.width_mm ?? "—"} × ${meta.height_mm ?? "—"} mm` : "—";
@@ -6209,10 +6223,8 @@
             ...(looseRows.length ? [el("div", { style: "grid-column:1/3;font-size:0.8rem;font-weight:700;color:var(--muted,#8b93a1);margin-top:0.4rem" }, "Custom specs — clear a value to remove it"), ...looseRows] : []),
           ]),
           errEl,
-          el("div", { style: "display:flex;gap:0.5rem" }, [
-            saveBtn, el("button", { class: "btn btn-sm", type: "button", onclick: renderSpecsRead }, "Cancel"),
-          ]),
         );
+        setHeaderSave(saveBtn, renderSpecsRead);
       }
       renderSpecsRead();
       const specsSection = el("div", {}, [specsContainer]);
@@ -6221,6 +6233,7 @@
       const qualContainer = el("div", {});
       const INSP_METHODS = ["none","visual","dimensional","functional","chemical","destructive","certificate_only"];
       function renderQualRead() {
+        clearHeaderSave();
         const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderQualEdit }, "Edit") : null;
         qualContainer.replaceChildren(
           el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
@@ -6250,6 +6263,7 @@
           critical_to_quality:        ctqInp.value.trim() || null,
           has_cpk_requirement:        cpkChk.checked,
         }, saveBtn, errEl, () => openComponentDetail(componentId, token, panel, nodeData, role));
+        setHeaderSave(saveBtn, renderQualRead);
         qualContainer.replaceChildren(
           metaFldRow("Inspection method", methodSel),
           metaFldRow("Sample size / AQL", sampleInp),
@@ -6257,9 +6271,7 @@
           el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.45rem" },
             [cpkChk, el("span", { style: "font-size:0.82rem" }, "CPK required from supplier")]),
           errEl,
-          el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [
-            saveBtn, el("button", { class: "btn btn-sm", type: "button", onclick: renderQualRead }, "Cancel"),
-          ]),
+
         );
       }
       renderQualRead();
@@ -6268,6 +6280,7 @@
       // Regulatory / DPP
       const regContainer = el("div", {});
       function renderRegRead() {
+        clearHeaderSave();
         const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderRegEdit }, "Edit") : null;
         regContainer.replaceChildren(
           el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
@@ -6317,6 +6330,7 @@
           return el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.45rem" },
             [chkEl, el("span", { style: "font-size:0.82rem" }, label)]);
         }
+        setHeaderSave(saveBtn, renderRegRead);
         regContainer.replaceChildren(
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Country of origin (ISO)", co), metaFldRow("HS code", hsc),
@@ -6328,9 +6342,7 @@
           chkRow("Conflict minerals free (3TG)", cmfChk),
           chkRow("Spare part available", spaChk),
           errEl,
-          el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [
-            saveBtn, el("button", { class: "btn btn-sm", type: "button", onclick: renderRegRead }, "Cancel"),
-          ]),
+
         );
       }
       renderRegRead();
@@ -6355,6 +6367,9 @@
       const tabPanels = {};
       const tabButtons = [];
       function activateDetailTab(id) {
+        // An editor left open on another tab would otherwise keep its Save in
+        // the header, pointing at a section no longer on screen.
+        if (cancelActiveEdit) { const c = cancelActiveEdit; cancelActiveEdit = null; c(); }
         for (const [k, p] of Object.entries(tabPanels)) p.style.display = k === id ? "" : "none";
         for (const b of tabButtons) {
           b.style.fontWeight   = b.dataset.tab === id ? "700" : "400";
@@ -6555,6 +6570,7 @@
             nodeData?.part_number ? el("span", { style: "margin-left:0.5rem;font-family:monospace;font-size:0.78rem;color:var(--muted,#8b93a1)" }, nodeData.part_number) : null,
           ].filter(Boolean)),
           el("div", { style: "display:flex;gap:0.4rem;align-items:center" }, [
+            headerActions,
             el("button", {
               class: "btn btn-sm btn-primary", type: "button",
               title: "Read a datasheet, drawing or screenshot and fill these fields",

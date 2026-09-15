@@ -12,6 +12,7 @@ state where something looks done and silently is not.
 
 ## Built — Awaiting Deploy or Verification
 _Code is committed but not yet live, or live but not yet exercised. Each line states what is still required._
+- **OEM number unification** — needs `supabase db push` (migration 0029) and a frontend push. Verify: the number shown in Procurement also appears in Overview's OEM NO. box, and editing either updates both.
 - **PROP-040 Promote custom spec to standard field** — needs `supabase db push` (migration 0028) then the function deploy below. Verify: a key on 3+ parts offers ＋ Make standard; promoting shows it as a labelled field on other components.
 - **PROP-039 AI field extraction** — needs `supabase functions deploy portal-api --no-verify-jwt` (new `extractComponentSpecs`, `fileBlock` image support, manufacturer whitelist fix) then `git push origin main`. No migration. Verify: paste a datasheet screenshot into ✨ AI fill and check a known value — especially a weight quoted in kg, which must arrive as grams.
 

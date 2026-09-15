@@ -680,3 +680,11 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** supabase/migrations/0028_custom_spec_fields.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
 **Status note:** built and statically checked; migration 0028 unapplied and `portal-api` not redeployed.
 
+---
+**Date:** 2026-09-15
+**Feature:** Fix — two columns, one "OEM number" label
+**Decision:** `component_metadata.manufacturer_part_number` is the single OEM number. The Overview tab, the Create BOM Node modal and AI fill all read and write it. `bom_components.oem_number` is retired from the UI, and its column is kept.
+**Why:** Both columns were labelled "OEM number" on different tabs of the same panel, so a number entered in one place was invisible in the other and neither screen was wrong. AI fill made it visible by writing the metadata column while the Overview box stayed empty, but the divergence predated it — anything typed into Overview had been landing somewhere Procurement never showed. The metadata column wins because it preserves PROP-034's pairing: Manufacturer with their part number, Supplier with theirs. Making the component column canonical would have been less plumbing — it is older, and appears in `listComponents` — but it would leave "Manufacturer" sitting beside a number stored on a different table, which is the confusion that caused this. Keeping both with distinct labels was rejected: one identifier per part is the truth, and two boxes would go on diverging quietly. **The column is kept rather than dropped.** It holds what was entered before the reconciliation, and a migration that destroys the only record of a divergence removes the evidence of what happened. Migration 0029 backfills the metadata column from it, inserting a metadata row where none existed, and never overwrites a metadata value that is already set — where the two disagreed, the value shown in Procurement is the one that survives.
+**Files changed:** supabase/migrations/0029_unify_oem_number.sql, assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+**Status note:** built and statically checked; migration 0029 unapplied.
+

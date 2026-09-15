@@ -5651,7 +5651,11 @@
       if (role === "rushroom") {
         const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.82rem" });
         const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.82rem;font-family:monospace" });
-        const oemInp    = el("input", { class: "up-text", type: "text", value: nodeData?.oem_number || "", placeholder: "OEM number", style: "width:100%;font-size:0.82rem;font-family:monospace" });
+        // One OEM number (migration 0029): component_metadata.manufacturer_part_number.
+        // bom_components.oem_number is legacy and no longer read or written here —
+        // two columns behind one label meant a value entered on one tab was
+        // invisible on the other, which is how AI fill exposed the split.
+        const oemInp    = el("input", { class: "up-text", type: "text", value: meta.manufacturer_part_number || "", placeholder: "OEM number", style: "width:100%;font-size:0.82rem;font-family:monospace" });
 
         const VALID_STATUSES = ["active", "inactive", "replaced", "flagged"];
         const currentStatus = nodeData?.lifecycle_status || "inactive";
@@ -5708,9 +5712,12 @@
                 component_id: componentId,
                 name: newName,
                 part_number: pnInp.value.trim() || undefined,
-                oem_number: oemInp.value.trim() || null,
                 type: typeSel.value,
                 make_or_buy: mobSel.value,
+              }),
+              API.post(token, "upsertComponentMetadata", {
+                component_id: componentId,
+                manufacturer_part_number: oemInp.value.trim() || null,
               }),
               API.post(token, "setComponentStatus", {
                 component_id: componentId,
@@ -5729,7 +5736,6 @@
                 category_id: catSel.value || null,
                 name: newName,
                 part_number: pnInp.value.trim() || nodeData?.part_number,
-                oem_number: oemInp.value.trim() || null,
                 type: typeSel.value,
                 make_or_buy: mobSel.value,
                 lifecycle_status: statusSel.value,
@@ -6438,7 +6444,7 @@
       try {
         const meta = await API.post(token, "suggestComponentMetadata", { path: up.path, fileName: up.fileName });
         if (meta.part_number) pn.value  = meta.part_number;
-        if (meta.oem_number)  oem.value = meta.oem_number;
+        if (meta.oem_number)  oem.value = meta.oem_number;   // AI suggestion; stored as manufacturer_part_number on save
         if (meta.name)        nm.value  = meta.name;
         if (meta.type && TYPE_OPTS.some(([v]) => v === meta.type)) typ.value = meta.type;
         if (meta.description) desc.value = meta.description;
@@ -6532,12 +6538,21 @@
         }
         const r = await API.post(token, "addComponent", {
           part_number: pn.value.trim() || null,
-          oem_number:  oem.value.trim() || null,
           name:        nm.value.trim(),
           type:        typ.value,
           category_id: cat.value || null,
           description: desc.value.trim() || null,
         });
+        // OEM number lives on component_metadata (migration 0029), so it is a
+        // second call — non-fatal, the component already exists either way.
+        if (r.id && oem.value.trim()) {
+          try {
+            await API.post(token, "upsertComponentMetadata", {
+              component_id: r.id, manufacturer_part_number: oem.value.trim(),
+            });
+          } catch { /* the component is created; the number can be added later */ }
+        }
+
         // Upload any queued photos — non-blocking (component creation already succeeded)
         if (pendingImgs.length && r.id) {
           submitBtn.textContent = `Uploading ${pendingImgs.length} photo${pendingImgs.length > 1 ? "s" : ""}…`;

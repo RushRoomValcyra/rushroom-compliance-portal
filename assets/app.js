@@ -6258,10 +6258,8 @@
               renderVariantGroups();
             } catch (ex) { newGrpErr.textContent = ex.message; newGrpBtn.disabled = false; }
           } }, "Create & assign");
-          VA_COMMON.forEach((a) => {
-            const chip = el("button", { type: "button", style: "font-size:0.72rem;padding:1px 6px;border:1px solid var(--border,#e2e8f0);border-radius:10px;cursor:pointer;background:none", onclick: () => { newGrpAttr.value = a; } }, a);
-            modeNew.append(chip);
-          });
+          // The attribute chips are rendered once, in the flex row below. An
+          // earlier loose forEach append rendered a second, unwrapped copy.
           modeNew.append(
             el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.4rem;margin-top:0.3rem" }, VA_COMMON.map((a) =>
               el("button", { type: "button", style: "font-size:0.72rem;padding:1px 8px;border:1px solid var(--border,#e2e8f0);border-radius:10px;cursor:pointer;background:none", onclick: () => { newGrpAttr.value = a; } }, a)

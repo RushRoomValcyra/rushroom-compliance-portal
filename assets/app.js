@@ -3452,6 +3452,15 @@
   // (name, part no., type, status, category, sourcing). Without this the row
   // and the category chip counts stay stale until Refresh is pressed by hand.
   let refreshBomList = null;
+
+  // Exactly one image-paste listener may be live, and it must belong to the
+  // component currently on screen. A per-panel slot (panel.__imgPasteOff) held
+  // only the most recent unregister function, so a second registration orphaned
+  // the first: one Cmd+V then uploaded the same image to two different
+  // components. Observed 2026-09-15 — a screw photo landed on "Adjustable Legs"
+  // three seconds before landing on "Confirmat Screw".
+  let activeImgPasteOff = null;
+  let openDetailComponentId = null;
   const categoryNameOf = (id) => (partCategories.find((c) => c.id === id) || {}).name || null;
 
   async function bomTreeView(token, role) {
@@ -4631,6 +4640,8 @@
     panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     panel.replaceChildren(el("div", { class: "loading" }, "Loading…"));
     if (panel.__imgPasteOff) { panel.__imgPasteOff(); delete panel.__imgPasteOff; }
+    if (activeImgPasteOff) { activeImgPasteOff(); activeImgPasteOff = null; }
+    openDetailComponentId = componentId;
     const isFamily = nodeData?.type === "product_family";
     try {
       const basePromises = [
@@ -5279,6 +5290,9 @@
 
       function handleImgPaste(ev) {
         if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA") return;
+        // Belt and braces: even if a listener somehow outlives its panel, it must
+        // not upload to a component the user is no longer looking at.
+        if (openDetailComponentId !== componentId) return;
         const items = ev.clipboardData?.items || [];
         for (const item of items) {
           if (item.type.startsWith("image/")) {
@@ -5288,8 +5302,10 @@
           }
         }
       }
+      if (activeImgPasteOff) { activeImgPasteOff(); activeImgPasteOff = null; }
       document.addEventListener("paste", handleImgPaste);
-      panel.__imgPasteOff = () => document.removeEventListener("paste", handleImgPaste);
+      activeImgPasteOff = () => document.removeEventListener("paste", handleImgPaste);
+      panel.__imgPasteOff = activeImgPasteOff;
 
       const imagesSection = el("div", { style: "margin-top:1rem" }, [
         el("h4", {}, "Images"),

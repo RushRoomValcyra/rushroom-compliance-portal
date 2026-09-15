@@ -696,3 +696,11 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
 **Status note:** built and statically checked; not yet exercised.
 
+---
+**Date:** 2026-09-15
+**Feature:** Component detail panel opens as a centred overlay
+**Decision:** The panel is mounted in a fixed, centred overlay appended to `document.body` rather than inline beneath the component list. Backdrop click and Escape close it. The overlay is deliberately **not** tagged `data-modal-overlay`, and Escape is ignored while any element carrying that attribute is present.
+**Why:** Mounted inline, the panel sat below the list, so opening a component meant scrolling past every row — and the distance grew with the list, which is heading for thousands of parts. This is the second attempt at the problem: the Relations tab (v220) reorganised what was *inside* the panel, which helped, but the panel's position was the actual cause and no amount of internal tidying could reach it. **The two guards are the load-bearing part.** `data-modal-overlay` means "a modal is stacked above the detail panel, so the panel must not consume the paste" (v213); tagging the panel itself would have satisfied the letter of the pattern while silently breaking pasting into its own Images tab, because the panel would have been treated as a modal above itself. Escape is ignored while a real modal is open for the same reason in reverse — AI fill, Move and the category manager all sit above the panel, and a single Escape should dismiss the thing on top, not the surface beneath it. `openComponentDetail` retains the previous inline behaviour when a caller passes a panel without the overlay hooks, so the other mount points keep working unchanged rather than being migrated in the same commit.
+**Files changed:** assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+**Status note:** built and statically checked; not yet exercised.
+

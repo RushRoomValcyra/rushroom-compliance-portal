@@ -2320,6 +2320,38 @@
             <div class="proposal-card doc-section-new">
                 <div class="proposal-header">
                     <div style="display: flex; align-items: center;">
+                        <div class="proposal-id">PROP-039</div>
+                        <div class="proposal-title">AI Field Extraction — Fill the Spec Fields from a Datasheet, Drawing or Screenshot <span class="doc-new-badge">Built 2026-09-15</span></div>
+                    </div>
+                    <span class="proposal-status status-implemented">IMPLEMENTED</span>
+                </div>
+                <div class="proposal-meta">
+                    <span>Priority: <span class="priority-high">HIGH</span></span>
+                    <span>Effort: ~8 hours</span>
+                    <span>Completion: 100% (built, pending deploy)</span>
+                    <span>Proposed: 2026-09-15</span>
+                    <span>Completed: 2026-09-15</span>
+                </div>
+                <div class="effect-box">
+                    <strong>What it builds:</strong> The spec record is ~28 fields per part, every one retyped from a datasheet that already stated it — slow, and exactly where transcription errors enter compliance data. An <strong>✨ AI fill</strong> button in the detail panel header reads a datasheet, drawing or pasted screenshot and proposes values for review. Paste, glance, apply.
+                </div>
+                <div>
+                    <ul class="proposal-list" style="margin-top: 5px;">
+                        <li><strong>API:</strong> <code>extractComponentSpecs</code> returns per field the value coerced to the column type, the value <em>as printed</em> with its unit, a verbatim evidence quote and a confidence, plus <code>unmapped</code>, <code>matched_part</code> and <code>confident_part_match</code>. Structured output against a JSON schema. Metered through <code>ai_usage_events</code>. No migration.</li>
+                        <li><strong>It never writes.</strong> Auto-apply was rejected: a wrong flame-retardant class or WEEE category is worse than an empty one, because it looks authoritative and is exported into a DPP, and an extraction that is right nine times in ten silently corrupts one field in ten. Confident readings of <em>empty</em> fields are pre-ticked; a field already filled by a human is never pre-selected. If the document appears to describe a different part, the panel warns before anything can be applied.</li>
+                        <li><strong>Units are the highest-risk error.</strong> A sheet quoting 1.2 kg against a <code>weight_g</code> column is a factor-of-1000 mistake that passes review unnoticed, so the printed form is shown beside the converted one and coercion happens server-side — what is approved is exactly what is written.</li>
+                        <li><strong>Unmapped values</strong> — things the document states that no column can hold — are stored in <code>custom_specs</code> and rendered as a <em>Custom specs</em> section in the Specifications tab (v215). Writing them to a JSONB column nothing displayed would have been a silent drop; recurring keys across parts are the signal for which columns the schema is still missing.</li>
+                        <li><strong>Prerequisite fixed:</strong> <code>fileBlock()</code> routed anything that was not pdf/docx/xlsx through <code>TextDecoder</code>, so a PNG was decoded as raw bytes and the model was asked to read garbage — no error, just nothing useful. A <code>type:"image"</code> block for png/jpeg/webp/gif is what makes screenshots work at all.</li>
+                        <li><strong>Bug found in passing:</strong> <code>upsertComponentMetadata</code>'s whitelist never included <code>manufacturer_name</code> or <code>manufacturer_part_number</code>, so both PROP-034 fields had been silently discarded on every save since they shipped — the form accepted them, the columns existed, nothing was written.</li>
+                        <li><strong>Sources (v215):</strong> a pasted or dropped file is uploaded, read and deleted within the same request — evidence for one extraction is not a product photo, and keeping it cluttered the gallery and the component's version history. Images already attached remain listed as one-click sources.</li>
+                        <li><strong>Status:</strong> built and statically checked. <code>portal-api</code> not yet redeployed; not exercised against a real datasheet.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="proposal-card doc-section-new">
+                <div class="proposal-header">
+                    <div style="display: flex; align-items: center;">
                         <div class="proposal-id">PROP-038</div>
                         <div class="proposal-title">Part Categories — Clickable Sub-Navigation for the Parts Tab <span class="doc-new-badge">Built 2026-09-15</span></div>
                     </div>

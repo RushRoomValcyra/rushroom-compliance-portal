@@ -568,7 +568,7 @@
                 <tr><td><span class="doc-changed"><code>organizations</code></span></td><td>SaaS (PROP-012)</td><td>Tenant. Root of all tenant data; carries plan + status + settings</td><td>id, name, slug (unique), status, plan, settings</td></tr>
                 <tr><td><span class="doc-changed"><code>memberships</code></span></td><td>SaaS (PROP-012)</td><td>User × organization + role (the seat unit)</td><td>organization_id (FK), user_id (FK), role (org_admin|manager|reviewer|collaborator), status · unique pair</td></tr>
                 <tr><td><span class="doc-changed"><code>invitations</code></span></td><td>SaaS (PROP-012)</td><td>Pending email invitation to join an org at a role</td><td>organization_id (FK), email, role, status, invited_by · unique(org, email)</td></tr>
-                <tr><td><span class="doc-changed"><code>custom_spec_fields</code></span></td><td>PIS (PROP-040)</td><td>Catalogue of promoted custom spec fields — turns a recurring custom_specs key into a labelled field on every component</td><td>organization_id, field_key (unique per org), label, unit, data_type (text|number|boolean), section, sort_order · migration 0028</td></tr>
+                <tr><td><span class="doc-changed"><code>custom_spec_fields</code></span></td><td>PIS (PROP-040)</td><td>Catalogue of promoted custom spec fields — turns a recurring custom_specs key into a labelled field on every component</td><td>organization_id, field_key (unique per org), label, unit, data_type (text|number|boolean|<span class="doc-changed">choice</span>), section, sort_order · migration 0028 · <span class="doc-changed">category_id (NULL = all categories) + options JSONB · migration 0030</span></td></tr>
                 <tr><td><span class="doc-changed"><code>part_categories</code></span></td><td>PIS (PROP-038)</td><td>Managed list of part groupings driving the clickable Parts sub-tabs</td><td>organization_id, name (unique per org), sort_order, created_by · <code>bom_components.category_id</code> FK · migration 0027</td></tr>
                 <tr><td><span class="doc-changed"><code>platform_audit</code></span></td><td>SaaS (PROP-012)</td><td>Append-only operator/platform log (impersonation, tenant status/plan changes)</td><td>actor_email, action, target_organization_id, detail (jsonb)</td></tr>
                 <tr><td><span class="doc-changed"><code>ai_usage_events</code></span></td><td>SaaS (PROP-012)</td><td>Append-only AI-token ledger; monthly usage = sum per (org, period)</td><td>organization_id, period (YYYY-MM), action, input_tokens, output_tokens</td></tr>
@@ -1229,8 +1229,8 @@
                 <tr><td><span class="doc-changed"><code>deleteFamilyAttribute</code></span></td><td>attribute_id</td><td>{ok} — also deletes all values for this attribute</td><td>Rushroom</td></tr>
                 <tr><td><span class="doc-changed"><code>listCustomSpecFields</code></span></td><td>—</td><td><span class="doc-changed">{fields:[{id,field_key,label,unit,data_type,section,sort_order}]}</span></td><td>Rushroom</td></tr>
                 <tr><td><span class="doc-changed"><code>listCustomSpecUsage</code></span></td><td>—</td><td><span class="doc-changed">{usage:[{field_key,count}]} — how many components carry each custom key; drives the 3+ promotion prompt</span></td><td>Rushroom</td></tr>
-                <tr><td><span class="doc-changed"><code>createCustomSpecField</code></span></td><td>field_key, label, unit?, data_type, section</td><td><span class="doc-changed">{id,…} — promotes a key; values stay in custom_specs, nothing is migrated</span></td><td>Rushroom</td></tr>
-                <tr><td><span class="doc-changed"><code>updateCustomSpecField</code></span></td><td>field_id, label?, unit?, data_type?, section?, sort_order?</td><td><span class="doc-changed">{ok}</span></td><td>Rushroom</td></tr>
+                <tr><td><span class="doc-changed"><code>createCustomSpecField</code></span></td><td>field_key, label, unit?, data_type, section, <span class="doc-changed">category_id?, options[]</span></td><td><span class="doc-changed">{id,…} — promotes a key; values stay in custom_specs, nothing is migrated</span></td><td>Rushroom</td></tr>
+                <tr><td><span class="doc-changed"><code>updateCustomSpecField</code></span></td><td>field_id, label?, unit?, data_type?, section?, sort_order?, <span class="doc-changed">category_id?, options[]?</span></td><td><span class="doc-changed">{ok}</span></td><td>Rushroom</td></tr>
                 <tr><td><span class="doc-changed"><code>deleteCustomSpecField</code></span></td><td>field_id</td><td><span class="doc-changed">{ok} — demotes only the catalogue entry; captured values are untouched and render as custom specs again</span></td><td>Rushroom</td></tr>
                 <tr><td><span class="doc-changed"><code>extractComponentSpecs</code></span></td><td>component_id, image_id | storage_path + file_name</td><td><span class="doc-changed">{fields:[{key,value,as_printed,confidence,evidence}], unmapped:[{label,value,suggested_key}], matched_part, confident_part_match, summary} — extraction only, writes nothing; values coerced to column types server-side; metered via ai_usage_events</span></td><td>Rushroom</td></tr>
                 <tr><td><span class="doc-changed"><code>listPartCategories</code></span></td><td>—</td><td><span class="doc-changed">{categories:[{id,name,sort_order}]} — ordered by sort_order then name</span></td><td>Rushroom</td></tr>
@@ -2319,6 +2319,36 @@
                         <li><strong>Schema:</strong> Two new columns on <code>component_metadata</code>: <code>manufacturer_name TEXT</code> and <code>manufacturer_part_number TEXT</code>. Migration 0023.</li>
                         <li><strong>API:</strong> <code>upsertComponentMetadata</code> now accepts and stores the two new columns (30 metadata columns total).</li>
                         <li><strong>Frontend:</strong> Procurement section in Specifications tab shows four fields — Manufacturer / OEM number / Supplier / Supplier part no. — in a 2×2 grid. Label "OEM number" made consistent between Create modal and Specifications edit form. Cache v196–v198.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="proposal-card doc-section-new">
+                <div class="proposal-header">
+                    <div style="display: flex; align-items: center;">
+                        <div class="proposal-id">PROP-041</div>
+                        <div class="proposal-title">Category-Specific Spec Fields <span class="doc-new-badge">Built 2026-09-15</span></div>
+                    </div>
+                    <span class="proposal-status status-implemented">IMPLEMENTED</span>
+                </div>
+                <div class="proposal-meta">
+                    <span>Priority: <span class="priority-medium">MEDIUM</span></span>
+                    <span>Effort: ~3 hours</span>
+                    <span>Completion: 100% (built, pending deploy)</span>
+                    <span>Proposed: 2026-09-15</span>
+                    <span>Completed: 2026-09-15</span>
+                </div>
+                <div class="effect-box">
+                    <strong>What it builds:</strong> A screw needs Head diameter, Thread / tube diameter, Head slot type and Head type. A furniture panel does not, and showing every category's fields on every part would turn the Specifications tab into a page of dashes — the same dilution the category chips prevent in the list.
+                </div>
+                <div>
+                    <ul class="proposal-list" style="margin-top: 5px;">
+                        <li><strong>Schema (migration 0030):</strong> <code>custom_spec_fields</code> gains <code>category_id</code> (NULL = every category, the existing behaviour) and <code>options JSONB</code>, plus a fourth data type <code>choice</code>. Seeds the four fastener fields against Fittings &amp; Fasteners.</li>
+                        <li><strong>Extends PROP-040 rather than adding a mechanism:</strong> two columns instead of a second system with its own promotion, rendering and editing paths.</li>
+                        <li><strong><code>choice</code> matters more than it looks:</strong> Head slot type is exactly the field where free text degrades into PZ2, Pz2 and "pozi 2" as separate values, making the data useless for filtering — the same argument that rejected free-text tags in PROP-038.</li>
+                        <li><strong>Category controls display, never storage.</strong> Values persist in <code>custom_specs</code> regardless, so re-categorising a part hides the rows without discarding what was recorded and moving it back restores them — a mis-categorisation is never destructive.</li>
+                        <li><strong>Falls out of PROP-039 for free:</strong> an AI-extracted <code>head_diameter_mm</code> arrives as <em>unmapped</em>, is accepted into <code>custom_specs</code>, and then renders as the labelled Head diameter field with no further work.</li>
+                        <li><strong>Status:</strong> built and statically checked. Migration 0030 unapplied, <code>portal-api</code> not redeployed.</li>
                     </ul>
                 </div>
             </div>

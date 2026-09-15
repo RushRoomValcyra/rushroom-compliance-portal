@@ -12,6 +12,7 @@ state where something looks done and silently is not.
 
 ## Built — Awaiting Deploy or Verification
 _Code is committed but not yet live, or live but not yet exercised. Each line states what is still required._
+- **PROP-040 Promote custom spec to standard field** — needs `supabase db push` (migration 0028) then the function deploy below. Verify: a key on 3+ parts offers ＋ Make standard; promoting shows it as a labelled field on other components.
 - **PROP-039 AI field extraction** — needs `supabase functions deploy portal-api --no-verify-jwt` (new `extractComponentSpecs`, `fileBlock` image support, manufacturer whitelist fix) then `git push origin main`. No migration. Verify: paste a datasheet screenshot into ✨ AI fill and check a known value — especially a weight quoted in kg, which must arrive as grams.
 
 - **PROP-036 Move rollback branch** — shipped and in use, but the failure path (re-opening the closed edge when the insert is rejected) has never run, because no move has failed. Not provable without forcing a failure; left recorded rather than claimed.

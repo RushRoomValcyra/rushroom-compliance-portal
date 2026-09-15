@@ -4634,6 +4634,90 @@
     searchInput.focus();
   }
 
+  // --- PROP-040: promote a recurring custom spec to a standard field --------
+  // Offered once a key appears on 3+ components. Creating the catalogue entry
+  // makes it a labelled field on every component's Specifications tab; the
+  // values already captured stay exactly where they are, in custom_specs.
+  function openPromoteFieldModal(fieldKey, suggestedLabel, sampleValue, token, onDone) {
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1003;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(520px,96vw);display:flex;flex-direction:column;gap:0.7rem" });
+    const close = () => overlay.remove();
+    const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
+
+    const label = el("input", { class: "up-text", type: "text", value: suggestedLabel });
+    const unit  = el("input", { class: "up-text", type: "text", placeholder: "e.g. mm — optional" });
+    const type  = el("select", { class: "up-text" }, [
+      el("option", { value: "text" }, "Text"),
+      el("option", { value: "number" }, "Number"),
+      el("option", { value: "boolean" }, "Yes / No"),
+    ]);
+    const section = el("select", { class: "up-text" }, [
+      el("option", { value: "physical" }, "Physical"),
+      el("option", { value: "material" }, "Material & Finish"),
+      el("option", { value: "procurement" }, "Procurement"),
+      el("option", { value: "quality" }, "Quality"),
+      el("option", { value: "regulatory" }, "Regulatory / DPP"),
+    ]);
+    [label, unit].forEach((e) => e.style.cssText = F);
+    [type, section].forEach((e) => e.style.cssText = F + ";appearance:none;-webkit-appearance:none;cursor:pointer");
+
+    // A value like "Ø12mm" is almost certainly a measurement; save a click.
+    if (/^[\s~<>=]*[-+]?\d/.test(String(sampleValue || "").replace(/^[^\d-+]*/, "x")) || /\d/.test(String(sampleValue || ""))) {
+      const m = String(sampleValue || "").match(/([a-zA-Z%]+)\s*$/);
+      if (/^\s*[^0-9]{0,2}[-+]?\d+([.,]\d+)?\s*[a-zA-Z%]*\s*$/.test(String(sampleValue || ""))) {
+        type.value = "number";
+        if (m) unit.value = m[1];
+      }
+    }
+
+    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;min-height:1.1rem" }, "");
+    const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Make standard field");
+    saveBtn.onclick = async () => {
+      if (!label.value.trim()) { errEl.textContent = "Give the field a label."; return; }
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…"; errEl.textContent = "";
+      try {
+        await API.post(token, "createCustomSpecField", {
+          field_key: fieldKey, label: label.value.trim(),
+          unit: unit.value.trim() || null, data_type: type.value, section: section.value,
+        });
+        close();
+        onDone && onDone();
+      } catch (ex) {
+        errEl.textContent = ex.message;
+        saveBtn.disabled = false; saveBtn.textContent = "Make standard field";
+      }
+    };
+
+    const row = (lbl, ctrl, hint) => el("div", {}, [
+      el("label", { style: "display:block;font-size:0.8rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem" }, lbl),
+      ctrl,
+      hint ? el("div", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);margin-top:0.15rem" }, hint) : null,
+    ].filter(Boolean));
+
+    dialog.append(
+      el("div", { style: "display:flex;align-items:center;justify-content:space-between" }, [
+        el("h3", { style: "margin:0;font-size:1.05rem" }, "Make this a standard field"),
+        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: close }, "✕"),
+      ]),
+      el("p", { style: "margin:0;font-size:0.82rem;color:var(--muted,#8b93a1)" },
+        `"${fieldKey}" becomes a labelled field on every component's Specifications tab. Values already captured stay where they are — nothing is migrated or lost, and you can undo it later.`),
+      row("Label", label, "What the tab shows"),
+      el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.75rem" }, [
+        row("Type", type), row("Unit", unit),
+      ]),
+      row("Section", section, "Which group it appears under"),
+      el("div", { style: "font-size:0.78rem;color:var(--muted,#8b93a1)" }, `Example value on this part: ${sampleValue || "—"}`),
+      errEl,
+      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end" }, [
+        el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"),
+        saveBtn,
+      ]),
+    );
+    overlay.append(dialog);
+    document.body.append(overlay);
+    label.focus(); label.select();
+  }
+
   // --- AI fill (PROP-039) ----------------------------------------------------
   // Reads a datasheet, drawing or pasted screenshot and proposes values for the
   // spec fields. It never writes on its own: a wrong flame-retardant class is
@@ -4898,10 +4982,12 @@
         API.post(token, "listConfigurations",    { family_id: componentId }),
         API.post(token, "listVariantsByFamily",  { family_id: componentId }),
       ] : [null, null, null];
-      const [hist, docs, mats, cl, usedIn, imgData, metaR, variantMembershipsR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR] = await Promise.all([
+      const [hist, docs, mats, cl, usedIn, imgData, metaR, variantMembershipsR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR, csFieldsR, csUsageR] = await Promise.all([
         ...basePromises, ...familyPromises,
         API.post(token, "listComponentFamilies", { component_id: componentId }),
         API.post(token, "listProductFamilies", {}),
+        API.post(token, "listCustomSpecFields", {}).catch(() => ({ fields: [] })),
+        API.post(token, "listCustomSpecUsage", {}).catch(() => ({ usage: [] })),
       ]);
       const history = hist.history || [];
       const current = history.find((v) => v.is_current) || history[0];
@@ -5773,6 +5859,7 @@
           metaGrid(
             metaRow("Weight", meta.weight_g != null ? meta.weight_g + " g" : "—"),
             metaRow("L × W × H", dimsStr),
+            ...catalogueRows("physical"),
           ),
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Material & Finish"),
           metaGrid(
@@ -5780,6 +5867,7 @@
             metaRow("Surface treatment", metaFld(meta.surface_treatment)),
             metaRow("Color / finish",    metaFld(meta.color_specification)),
             metaRow("Flame retardant",   metaFld(meta.flame_retardant_class)),
+            ...catalogueRows("material"),
           ),
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Procurement"),
           metaGrid(
@@ -5789,43 +5877,120 @@
             metaRow("Supplier part no.",     metaFld(meta.supplier_part_number)),
             metaRow("Lead time",             meta.lead_time_days != null ? meta.lead_time_days + " days" : "—"),
             metaRow("MOQ",                   meta.moq != null ? String(meta.moq) : "—"),
+            ...catalogueRows("procurement"),
           ),
           ...customSpecsBlock(),
         );
       }
 
-      // PROP-039: values a document stated that no column can hold. They live in
-      // component_metadata.custom_specs and are shown here rather than written to
-      // a JSONB column nothing renders — an invisible store is a silent drop.
-      // Recurring keys across parts are the signal for which columns are missing.
+      // PROP-039/040 — values a document stated that no column can hold. They
+      // live in component_metadata.custom_specs. Promoted keys (PROP-040) are
+      // rendered by catalogueRows() inside their own section instead, so this
+      // section only ever shows the not-yet-standard remainder.
+      const csFields = (csFieldsR && csFieldsR.fields) || [];
+      const csUsage  = Object.fromEntries(((csUsageR && csUsageR.usage) || []).map((u) => [u.field_key, u.count]));
+      const promotedKeys = new Set(csFields.map((f) => f.field_key));
+
+      function csValue(key) {
+        const cs = meta.custom_specs;
+        return cs && typeof cs === "object" ? cs[key] : undefined;
+      }
+      async function saveCustomSpec(key, value) {
+        const next = { ...(meta.custom_specs || {}) };
+        if (value === "" || value === null || value === undefined) delete next[key];
+        else next[key] = value;
+        await API.post(token, "upsertComponentMetadata", { component_id: componentId, custom_specs: next });
+        meta.custom_specs = next;
+      }
+
+      // A promoted field behaves like any other spec row, but is editable in
+      // place so adding one does not mean opening the whole section editor.
+      function catalogueRows(section) {
+        return csFields.filter((f) => f.section === section).map((f) => {
+          const box = el("span", { style: "font-size:0.82rem" });
+          const draw = () => {
+            const v = csValue(f.field_key);
+            const shown = (v === undefined || v === null || v === "") ? "—" : String(v) + (f.unit ? " " + f.unit : "");
+            box.replaceChildren(el("span", {
+              style: role === "rushroom" ? "cursor:pointer;border-bottom:1px dashed var(--border,#e2e8f0)" : "",
+              title: role === "rushroom" ? "Click to edit" : "",
+              onclick: role === "rushroom" ? edit : null,
+            }, shown));
+          };
+          const edit = () => {
+            const inp = f.data_type === "boolean"
+              ? el("select", { class: "up-text", style: "font-size:0.82rem;padding:1px 4px" },
+                  [el("option", { value: "" }, "—"), el("option", { value: "true" }, "Yes"), el("option", { value: "false" }, "No")])
+              : el("input", { class: "up-text", type: f.data_type === "number" ? "number" : "text", step: "any",
+                  style: "font-size:0.82rem;padding:1px 4px;width:11rem" });
+            const cur = csValue(f.field_key);
+            inp.value = cur === undefined || cur === null ? "" : String(cur);
+            let settled = false;
+            const commit = async () => {
+              if (settled) return; settled = true;
+              let v = inp.value.trim();
+              if (f.data_type === "number" && v !== "") { const n = Number(v); if (!Number.isFinite(n)) { settled = false; inp.focus(); return; } v = n; }
+              if (f.data_type === "boolean" && v !== "") v = v === "true";
+              try { await saveCustomSpec(f.field_key, v); } catch (ex) { alert(ex.message); }
+              draw();
+            };
+            inp.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); commit(); } else if (ev.key === "Escape") { settled = true; draw(); } };
+            inp.onblur = commit;
+            box.replaceChildren(inp);
+            inp.focus();
+          };
+          draw();
+          return el("div", { style: "display:contents" }, [
+            el("span", { style: "font-size:0.8rem;color:var(--muted,#64748b);font-weight:500" }, f.label),
+            box,
+          ]);
+        });
+      }
+
       function customSpecsBlock() {
         const cs = meta.custom_specs;
-        const keys = cs && typeof cs === "object" ? Object.keys(cs) : [];
+        const keys = (cs && typeof cs === "object" ? Object.keys(cs) : []).filter((k) => !promotedKeys.has(k));
         if (!keys.length) return [];
+        const rows = keys.map((k) => {
+          const used = csUsage[k] || 1;
+          const label = k.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase());
+          const actions = [];
+          // Suggested once the same key appears on 3+ parts — evidence it is a
+          // real dimension of the data rather than one supplier's wording.
+          if (role === "rushroom" && used >= 3) {
+            actions.push(el("button", {
+              class: "btn btn-sm", type: "button",
+              title: `Used on ${used} parts — make this a standard field for every component`,
+              style: "padding:0 7px;font-size:0.7rem;white-space:nowrap;color:var(--accent,#2fa564);border-color:#2fa56455",
+              onclick: () => openPromoteFieldModal(k, label, String(cs[k]), token, () => openComponentDetail(componentId, token, panel, nodeData, role)),
+            }, `＋ Make standard · ${used}`));
+          } else if (used >= 2) {
+            actions.push(el("span", { style: "font-size:0.68rem;color:var(--muted,#8b93a1);white-space:nowrap" }, `${used} parts`));
+          }
+          if (role === "rushroom") {
+            actions.push(el("button", {
+              class: "btn btn-sm", type: "button", title: "Remove from this component",
+              style: "padding:0 6px;font-size:0.72rem;color:#e05454;border-color:#e0545440",
+              onclick: async () => {
+                try { await saveCustomSpec(k, ""); renderSpecsRead(); } catch (ex) { alert(ex.message); }
+              },
+            }, "×"));
+          }
+          return el("div", { style: "display:contents" }, [
+            el("span", { style: "font-size:0.8rem;color:var(--muted,#64748b);font-weight:500" }, label),
+            el("span", { style: "font-size:0.82rem;min-width:0;overflow-wrap:anywhere" }, String(cs[k])),
+            el("div", { style: "display:flex;gap:0.3rem;align-items:center;justify-content:flex-end" }, actions),
+          ]);
+        });
         return [
           el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin:0.9rem 0 0.5rem" }, [
             el("strong", { style: "font-size:0.88rem" }, "Custom specs"),
             el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1)" }, "no dedicated field yet"),
           ]),
-          metaGrid(...keys.map((k) => {
-            const label = k.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase());
-            const row = metaRow(label, String(cs[k]));
-            if (role === "rushroom") {
-              row.append(el("button", {
-                class: "btn btn-sm", type: "button", title: "Remove this custom spec",
-                style: "padding:0 6px;font-size:0.72rem;margin-left:0.4rem;color:#e05454;border-color:#e0545440",
-                onclick: async () => {
-                  const next = { ...cs }; delete next[k];
-                  try {
-                    await API.post(token, "upsertComponentMetadata", { component_id: componentId, custom_specs: next });
-                    meta.custom_specs = next;
-                    renderSpecsRead();
-                  } catch (ex) { alert(ex.message); }
-                },
-              }, "×"));
-            }
-            return row;
-          })),
+          // Its own three-column grid. The earlier version appended the delete
+          // button into metaGrid's two-column layout via a display:contents row,
+          // which made it a third cell and split every row in half.
+          el("div", { style: "display:grid;grid-template-columns:auto 1fr auto;gap:0.3rem 1rem;margin-bottom:0.75rem;align-items:center" }, rows),
         ];
       }
 

@@ -192,6 +192,8 @@ const membershipRoleFor = (assigned: string) => MEMBERSHIP_ROLE[assigned] || "co
 const TENANT_TABLES = new Set([
   // PROP-038: part categories (migration 0027)
   "part_categories",
+  // PROP-040: promoted custom spec fields (migration 0028)
+  "custom_spec_fields",
   "steps", "documents", "document_versions", "uploads", "standards", "standard_versions",
   "deviation_scans", "deviation_findings", "standard_clauses", "as_operates_interpretations",
   "product_passports", "passport_interpretation_links", "product_directive_applicability",
@@ -4835,6 +4837,92 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       .select("*").eq("component_id", component_id).maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json({ metadata: data || null });
+  }
+
+  // --- PROP-040: custom spec field catalogue ---------------------------------
+  // Promotion is a data operation, not a migration: values stay in
+  // component_metadata.custom_specs and the catalogue decides how they render.
+  if (action === "listCustomSpecFields") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { data, error } = await tdb("custom_spec_fields")
+      .select("id, field_key, label, unit, data_type, section, sort_order")
+      .order("section").order("sort_order").order("label");
+    if (error) return json({ error: error.message }, 400);
+    return json({ fields: data || [] });
+  }
+
+  // How many components already carry each custom key. Drives both the
+  // "used on N parts" counts and the promotion prompt at 3+.
+  if (action === "listCustomSpecUsage") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { data, error } = await tdb("component_metadata").select("component_id, custom_specs");
+    if (error) return json({ error: error.message }, 400);
+    const counts: Record<string, number> = {};
+    (data || []).forEach((r: any) => {
+      const cs = r.custom_specs;
+      if (cs && typeof cs === "object") {
+        Object.keys(cs).forEach((k) => { counts[k] = (counts[k] || 0) + 1; });
+      }
+    });
+    const usage = Object.entries(counts)
+      .map(([field_key, count]) => ({ field_key, count }))
+      .sort((a, b) => b.count - a.count || a.field_key.localeCompare(b.field_key));
+    return json({ usage });
+  }
+
+  if (action === "createCustomSpecField") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const field_key = String(body.field_key ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+    const label = String(body.label ?? "").trim();
+    if (!field_key) return json({ error: "field_key required" }, 400);
+    if (!label) return json({ error: "label required" }, 400);
+    const data_type = ["text", "number", "boolean"].includes(body.data_type) ? body.data_type : "text";
+    const section = ["physical", "material", "procurement", "quality", "regulatory"].includes(body.section) ? body.section : "physical";
+    const { data: last } = await tdb("custom_spec_fields")
+      .select("sort_order").eq("section", section).order("sort_order", { ascending: false }).limit(1);
+    const sort_order = (((last && last[0]?.sort_order) ?? 0) + 10);
+    const { data, error } = await tdb("custom_spec_fields").insert({
+      field_key, label, unit: body.unit ? String(body.unit).trim() : null,
+      data_type, section, sort_order, created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (error) {
+      if (String(error.message).includes("custom_spec_fields_organization_id_field_key_key")) {
+        return json({ error: `"${field_key}" is already a standard field.` }, 400);
+      }
+      return json({ error: error.message }, 400);
+    }
+    return json({ id: data.id, field_key, label, data_type, section });
+  }
+
+  if (action === "updateCustomSpecField") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { field_id } = body;
+    if (!field_id) return json({ error: "field_id required" }, 400);
+    const patch: Record<string, unknown> = {};
+    if (body.label !== undefined) {
+      const l = String(body.label).trim();
+      if (!l) return json({ error: "label cannot be empty" }, 400);
+      patch.label = l;
+    }
+    if (body.unit !== undefined) patch.unit = body.unit ? String(body.unit).trim() : null;
+    if (body.section !== undefined && ["physical","material","procurement","quality","regulatory"].includes(body.section)) patch.section = body.section;
+    if (body.data_type !== undefined && ["text","number","boolean"].includes(body.data_type)) patch.data_type = body.data_type;
+    if (body.sort_order !== undefined) patch.sort_order = Number(body.sort_order);
+    if (!Object.keys(patch).length) return json({ error: "nothing to update" }, 400);
+    const { error } = await tdb("custom_spec_fields").update(patch).eq("id", field_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  // Demoting only removes the catalogue entry. Values stay in custom_specs, so
+  // nothing is lost and the key simply renders as a custom spec again.
+  if (action === "deleteCustomSpecField") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { field_id } = body;
+    if (!field_id) return json({ error: "field_id required" }, 400);
+    const { error } = await tdb("custom_spec_fields").delete().eq("id", field_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
   }
 
   // --- PROP-039: read a datasheet / drawing / screenshot into the spec fields --

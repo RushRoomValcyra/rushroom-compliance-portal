@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [[ \"$CLAUDE_FILE_PATH\" == *\"portal-api/index.ts\"* || \"$CLAUDE_FILE_PATH\" == *\"assets/app.js\"* ]]; then echo '⚠️  Core file edited. Remember to run /ship when the feature is done.'; fi"
+            "command": "if [[ \"$CLAUDE_FILE_PATH\" == *\"portal-api/index.ts\"* || \"$CLAUDE_FILE_PATH\" == *\"assets/app.js\"* ]]; then echo '\u26a0\ufe0f  Core file edited. Remember to run /ship when the feature is done.'; fi"
           }
         ]
       }
@@ -34,8 +34,8 @@
       {
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "Check: were portal-api/index.ts or assets/app.js modified in this session? If yes and /ship has not been run, output exactly: 'REMINDER: Run /ship before closing — docs are out of sync.' If /ship was run or no core files changed, output exactly: 'ok'"
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" 2>/dev/null || exit 0; CODE=\"assets/app.js supabase/functions/portal-api/index.ts\"; U=$(git status --porcelain -- $CODE 2>/dev/null); C=$(git log -1 --format=%ct -- $CODE 2>/dev/null); D=$(git log -1 --format=%ct -- docs/ 2>/dev/null); if [ -n \"$U\" ]; then echo \"REMINDER: uncommitted changes in a core file \u2014 run /ship before closing.\"; elif [ -n \"$C\" ] && { [ -z \"$D\" ] || [ \"$C\" -gt \"$D\" ]; }; then echo \"REMINDER: core code changed after the last docs commit \u2014 run /ship before closing.\"; fi"
           }
         ]
       }

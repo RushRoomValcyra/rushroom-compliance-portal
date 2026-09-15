@@ -32,3 +32,16 @@ Append this block to docs/IDEAS.md:
 
 ## Step 4 — Confirm
 Tell me: "Written to IDEAS.md. Run /build '[idea title]' to generate the implementation spec."
+
+Then, in at most three lines:
+- **Already exists:** anything in the codebase that already does part of this. Say what it
+  covers and what it does not. Check before claiming the idea is new — several ideas in this
+  repo turned out to be 80% built already.
+- **Blocked on:** any prerequisite defect or decision.
+- **Overlaps:** any existing PROP or IDEAS entry covering the same ground, and which should
+  be built first. Two proposals for one problem is worse than none.
+
+## Quick capture — ideas that arrive mid-build
+When an idea surfaces while building something else, do NOT run the full flow and do not
+expand the current work. Add one line to **Discovered While Building** in docs/ROADMAP.md
+and carry on. Promote it to a full IDEAS.md entry later if it keeps mattering.

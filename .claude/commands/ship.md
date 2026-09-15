@@ -31,9 +31,15 @@ Do not reformat or rewrite sections that weren't touched.
 Preserve all existing HTML, CSS classes, and structure exactly.
 
 ## Step 3 — Update ROADMAP.md
-In docs/ROADMAP.md:
-- Move the feature from "In Progress" to "Shipped" (with today's date)
-- Update "Next" section if priorities changed
+The lifecycle is: Backlog → Next → Now → **Built (awaiting deploy)** → Shipped.
+
+- Move the feature to **Built — Awaiting Deploy or Verification**, NOT to Shipped, unless
+  it has been deployed AND exercised against production. On each Built line, state exactly
+  what is still required (which migration, which deploy, what to verify).
+- Move to **Shipped** only when confirmed working. The date is the verification date.
+- If anything was found mid-build that is real but off-scope, add it to
+  **Discovered While Building** rather than losing it in a commit message.
+- Update "Next" if priorities changed.
 
 ## Step 4 — Append to DECISIONS.md
 Add this block at the bottom of docs/DECISIONS.md:
@@ -51,5 +57,34 @@ Also update the ?v=N line in CLAUDE.md to match.
 
 ## Step 6 — Stage everything
 Run: git add -A
-Show me a summary of every file that changed.
+Show me a summary of every file that changed — as a table, one line per file.
 Then ask: "Ready to commit? Give me a commit message or I'll write one."
+
+## Step 7 — ALWAYS end with the Next Steps block
+This is mandatory and comes last, after any explanation. Never bury ordering in prose.
+Keep the whole block under ~12 lines. Commands only — no rationale inside it.
+
+Use exactly this shape, omitting any section that does not apply:
+
+```
+**Next steps**
+
+1. <command>          # only if this change needs it
+2. <command>
+3. <command>
+
+**Then verify:** <the one or two checks that would actually catch a defect>
+**Blocked:** <anything that cannot proceed, and on what>
+```
+
+Rules for the commands:
+- **Dependency order, always:** `supabase db push` → `supabase functions deploy portal-api
+  --no-verify-jwt` → `git push origin main`. The frontend is last because it is the thing
+  that breaks loudly if the schema or function is behind it.
+- **Only list steps this change actually needs.** A frontend-only change is one command;
+  do not print the full three every time. Say which files changed to justify each step.
+- **Verification must be specific.** "Test it" is useless. Name the click and the expected
+  result, and prefer the check that would catch the riskiest path in the change.
+- If nothing is left to do, say exactly that in one line instead of inventing steps.
+- If a previous feature is still sitting in **Built — Awaiting Deploy**, list it too.
+  The user cannot be expected to remember what is still undeployed.

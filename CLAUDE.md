@@ -22,6 +22,16 @@ Bump cache:            increment ?v=N on every asset tag in index.html (and supp
 - AI responses MUST use JSON schema structured output (no free-form text parsing)
 - Never use claude-opus-4-8 for cheap tasks (classification, metadata) — use haiku instead
 
+## How to end a reply — always
+Every reply that changes code or docs ends with a **Next steps** block: numbered commands
+in dependency order, then one specific thing to verify. Never bury ordering in prose.
+
+Deploy order is always: `supabase db push` → `supabase functions deploy portal-api
+--no-verify-jwt` → `git push origin main`. Only list the steps the change actually needs.
+
+Committed / pushed / deployed / verified are four different states. Do not conflate them,
+and never describe unexercised code as working. Run `/status` to see where everything sits.
+
 ## Key files
 - portal-api/index.ts       — edge function (all API actions dispatched here)
 - portal-api/cellar-service.ts — EU CELLAR SPARQL integration
@@ -30,6 +40,8 @@ Bump cache:            increment ?v=N on every asset tag in index.html (and supp
 - index.html                — page shell + the ?v=N cache-bust on all asset tags
 - docs/SYSTEM_OVERVIEW.html — living system documentation (always update with /ship)
 - docs/IDEAS.md             — raw feature ideas (Claude reads this before /build)
+- docs/ROADMAP.md           — lifecycle state: Backlog → Next → Now → Built (awaiting deploy) → Shipped
+                              plus "Discovered While Building" for ideas found mid-build
 - docs/DECISIONS.md         — architectural decisions log (Claude appends after /ship)
 
 ## Database — 29 tables across 7 domains

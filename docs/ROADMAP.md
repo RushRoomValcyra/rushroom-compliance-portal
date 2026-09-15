@@ -1,9 +1,20 @@
 # Rushroom Compliance Portal — Roadmap
-_Last updated: 2026-09-15 · Auto-maintained by /ship_
+_Last updated: 2026-09-15 · Auto-maintained by /ship · state map for `/status`_
+
+**Lifecycle:** Backlog → Next → Now → **Built (awaiting deploy)** → Shipped.
+"Shipped" means *confirmed working against production*, not "code written" — code that
+exists but has not been deployed and exercised lives in **Built**, because that is the
+state where something looks done and silently is not.
 
 ## Now — In Progress
 - PROP-021 Component Document Lifecycle — Layer 1 shipped (upload & link from component panel); Layers 2–4 (new revision, AI diff, data extraction) pending; PROP-014 must be reviewed before Layer 2 design
 - PROP-012 Multi-tenant SaaS (organizations, memberships, invitations, platform_audit, ai_usage_events) — Stages 5b+6 remaining
+
+## Built — Awaiting Deploy or Verification
+_Code is committed but not yet live, or live but not yet exercised. Each line states what is still required._
+
+- **PROP-038 Part categories** — needs `supabase db push` (migration 0027), `supabase functions deploy portal-api --no-verify-jwt` (5 category actions), then `git push origin main`. **Deploy order matters:** the frontend now sends `category_id`, so the function must go before the push. Verify: chips appear with counts; creating a part without a category is refused.
+- **PROP-036 Move rollback branch** — shipped and in use, but the failure path (re-opening the closed edge when the insert is rejected) has never run, because no move has failed. Not provable without forcing a failure; left recorded rather than claimed.
 
 ## Next — Approved for Build
 - PROP-014 Compliance–BOM Integration: Component Evidence Bridge — spec complete, awaiting "go ahead"
@@ -14,8 +25,15 @@ _Last updated: 2026-09-15 · Auto-maintained by /ship_
 - PROP-009 Scheduled compliance scans + email alerts
 - PROP-007 Multi-language support EN/DE/SV
 
+## Discovered While Building
+_Found mid-build, too small or too tangential for a PROP, too real to drop. Promote to Next, or delete once it stops mattering._
+
+- **`assets/app.js` shared-state scoping** — `bomTreeView` holds list state in one closure while the modals that need it (`openAddChildModal`, `openComponentDetail`, `openMoveModal`) are sibling functions outside it. This has produced two real defects: `parentCountMap` threw a `ReferenceError` mid-handler (PROP-036), and `refreshTree` was unreachable from the detail panel (v211). Each fix was one line; the shape will keep recurring. Worth one deliberate hoist of the shared state.
+- **`fileBlock()` cannot read images** — it branches on extension and everything that is not pdf/docx/xlsx falls through to `TextDecoder`, so a PNG is decoded as bytes and the model reads garbage without erroring. Blocks the AI extraction idea; also affects any existing path where someone uploads a screenshot.
+- **Bulk part tagging** — tolerable at 18 parts, painful at the thousands PROP-038 is built for. Needed if parts ever arrive by import.
+
 ## Shipped
-- **PROP-038 Part categories** (clickable category chips under the Parts tab with live counts, replacing search-only navigation; new org-scoped `part_categories` table + `bom_components.category_id`; 5 API actions; ⚙ manager for add/rename/reorder/delete; category required on create for part-type nodes, enforced server-side; existing parts stay NULL and surface in an Uncategorised chip until tagged; migration 0027; cache v210) — 2026-09-15
+_Confirmed working against production. Date is the verification date, not the commit date._
 - **PROP-037 Editable BOM quantity** (quantity could be set at link time and never changed — correcting one meant unlink + re-add; new `setEdgeQuantity` action, click-to-edit QTY cell, audited old→new in bom_component_history; edge-scoped so other assemblies keep their own quantities; the column shows the rolled-up quantity so the cell edits `edgeQty` and displays the roll-up separately; no migration; cache v209) — 2026-09-15, confirmed against production
 - **PROP-036 BOM Tree Editable Structure** (depth-based permission guards replaced with named booleans — the v202 root cause; Dynamic BOMs now accept sub-tree edits with a shared-edit warning naming affected assemblies; `bom_edges.sort_order` + `↑`/`↓` reordering; edge-scoped `⇄` Move with server-side destination rules; `removeBomEdge` re-keyed on `edge_id`; 3 new API actions; migration 0025; cache v203) + **same-day re-add fix** (bom_edges_unconditional_unique covered closed rows, so removing a child and re-adding it the same day collided with the edge just removed; index rebuilt on active unconditional edges only; migration 0026; reorder controls shown on every tree row from v204 — they were gated on sibCount > 1 and so invisible on single-child assemblies) — 2026-09-15; reordering and Move both confirmed against production (3 moves verified in bom_edges + history; 0 duplicate active pairs, 0 NULL sort_order)
 - **Bug fix — BOM tree delete unlinks instead of destroying** (tree `×` on a direct child of an assembly called `deleteComponent` and wiped the component from the registry; handler now branches on `parentNode` not `depth`, since the tree seeds the root's children at depth 0; registry delete stays on the card-header `×`) + **Cache-bust doc correction** (`?v=N` lives in index.html, not assets/config.js — CLAUDE.md and /ship command corrected; supplier.html v105 / reset.html + verify.html v72 synced to v201) — cache v202 — 2026-09-14

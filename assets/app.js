@@ -4793,12 +4793,14 @@
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(920px,96vw);max-height:92vh;display:flex;flex-direction:column;gap:0.7rem" });
     const body = el("div", { style: "flex:1;overflow-y:auto;min-height:150px" });
     const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;min-height:1.1rem;display:block" }, "");
-    const close = () => { document.removeEventListener("paste", onPaste); overlay.remove(); };
+    const close = () => { stopProg(); document.removeEventListener("paste", onPaste); overlay.remove(); };
 
     let current = {};   // existing metadata, so proposals can be shown against it
 
     // ---- step 1: pick a source -------------------------------------------
     function renderSourcePicker() {
+      stopProg();
+      setProg(0, "");
       const drop = el("div", {
         style: "border:2px dashed var(--border,#2d3748);border-radius:8px;padding:1.6rem 1rem;text-align:center;font-size:0.9rem;color:var(--muted,#8b93a1);cursor:pointer",
         onclick: () => filePick.click(),
@@ -4828,10 +4830,40 @@
       body.replaceChildren(...kids);
     }
 
+    // Progress. The upload segment is REAL — XHR reports it — and runs 0–25%.
+    // The model call reports nothing, so 25–92% is an explicit estimate on a
+    // decay curve that slows as it goes and never reaches the end on its own;
+    // the label says "estimated" so the bar is not read as fact. It only ever
+    // completes when the response actually arrives.
+    let progTimer = null;
+    const progBar = el("div", { style: "height:100%;width:0%;background:var(--accent,#2fa564);border-radius:999px;transition:width 0.25s ease-out" });
+    const progLabel = el("div", { style: "font-size:0.84rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;text-align:center" }, "");
+    const progWrap = el("div", { style: "padding:2.5rem 1rem" }, [
+      progLabel,
+      el("div", { style: "height:8px;background:var(--border,#2d3748);border-radius:999px;overflow:hidden" }, [progBar]),
+    ]);
+    const setProg = (pct, text) => {
+      progBar.style.width = Math.max(0, Math.min(100, pct)) + "%";
+      if (text) progLabel.textContent = text;
+    };
+    function stopProg() { if (progTimer) { clearInterval(progTimer); progTimer = null; } }
+    function startEstimate(from, label) {
+      stopProg();
+      const started = Date.now(), ceiling = 92, span = ceiling - from;
+      setProg(from, label);
+      progTimer = setInterval(() => {
+        const t = (Date.now() - started) / 1000;
+        // Asymptotic: fast at first, never arrives. tau ~9s matches a typical
+        // opus read of a one-page datasheet.
+        setProg(from + span * (1 - Math.exp(-t / 9)));
+      }, 200);
+    }
+
     // A pasted or dropped file is attached to the component first, so the
     // evidence for every extracted value stays on the record.
     async function useNewFile(file) {
-      body.replaceChildren(el("div", { class: "loading", style: "padding:1rem" }, "Uploading…"));
+      body.replaceChildren(progWrap);
+      setProg(2, "Uploading…");
       errEl.textContent = "";
       try {
         const { signedUrl, path } = await API.post(token, "imageUploadUrl", {
@@ -4841,6 +4873,10 @@
           const xhr = new XMLHttpRequest();
           xhr.open("PUT", signedUrl);
           xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+          // The only genuinely measurable part of the operation.
+          xhr.upload.onprogress = (ev) => {
+            if (ev.lengthComputable) setProg(2 + (ev.loaded / ev.total) * 23, "Uploading…");
+          };
           xhr.onload = () => xhr.status < 300 ? res() : rej(new Error(`Upload failed: ${xhr.status}`));
           xhr.onerror = () => rej(new Error("Network error"));
           xhr.send(file);
@@ -4851,6 +4887,7 @@
         // reading, so it never outlives the request.
         await run({ storage_path: path, file_name: file.name || "paste.png", ephemeral: true });
       } catch (ex) {
+        stopProg();
         errEl.textContent = ex.message;
         renderSourcePicker();
       }
@@ -4858,7 +4895,8 @@
 
     // ---- step 2: extract --------------------------------------------------
     async function run(source) {
-      body.replaceChildren(el("div", { class: "loading", style: "padding:1.5rem;text-align:center" }, "Reading the document…"));
+      if (!progTimer && progBar.style.width === "0%") body.replaceChildren(progWrap);
+      startEstimate(25, "Reading the document… (estimated)");
       errEl.textContent = "";
       try {
         const [res, meta] = await Promise.all([
@@ -4866,8 +4904,14 @@
           API.post(token, "getComponentMetadata", { component_id: componentId }).catch(() => ({ metadata: {} })),
         ]);
         current = meta.metadata || {};   // null until a component has a metadata row
+        stopProg();
+        setProg(100, "Done");
+        // Let the bar land before the table replaces it — an instant swap makes
+        // the fill look like it never completed.
+        await new Promise((r) => setTimeout(r, 220));
         renderResults(res);
       } catch (ex) {
+        stopProg();
         errEl.textContent = ex.message;
         renderSourcePicker();
       }

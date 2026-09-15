@@ -3529,7 +3529,23 @@
     const tabBarEl = el("div", { style: "display:flex;gap:0;margin-top:0.75rem;border-bottom:2px solid var(--border,#e2e8f0)" });
     // Second level, Parts only: click a category instead of typing in search.
     const catBarEl = el("div", { style: "display:none;flex-wrap:wrap;gap:0.35rem;margin-top:0.6rem" });
-    const treeArea  = el("div", { class: "pis-tree-area", style: "margin-top:0.75rem" });
+    // The list scrolls inside its own region, so the toolbar, type tabs and
+    // category chips above it stay put instead of scrolling away. Height is
+    // measured rather than hard-coded: the chips row only exists on the Parts
+    // tab, so a fixed calc() would be wrong on the other two.
+    const treeArea  = el("div", { class: "pis-tree-area", style: "margin-top:0.75rem;overflow-y:auto;overscroll-behavior:contain;padding-right:0.25rem" });
+
+    function sizeTreeArea() {
+      if (!treeArea.isConnected) return;
+      const top = treeArea.getBoundingClientRect().top;
+      // 24px so the last row never sits flush against the viewport edge.
+      treeArea.style.maxHeight = Math.max(240, window.innerHeight - top - 24) + "px";
+    }
+    // One listener for the view, replacing any left by a previous mount —
+    // this file has leaked document listeners twice already this session.
+    if (window.__pisSizeTreeArea) window.removeEventListener("resize", window.__pisSizeTreeArea);
+    window.__pisSizeTreeArea = sizeTreeArea;
+    window.addEventListener("resize", sizeTreeArea);
 
     let searchTimer = null;
     const searchInp = el("input", { type: "search", placeholder: "Search by name or part number…", class: "up-text",
@@ -3632,8 +3648,10 @@
           searchQuery ? `No ${labels[activeTab]}${where} match "${searchQuery}".`
             : catName ? `No ${labels[activeTab]} in ${catName} yet.`
             : `No ${labels[activeTab]} yet. Use + New BOM Node to create one.`));
+        requestAnimationFrame(sizeTreeArea);
         return;
       }
+      requestAnimationFrame(sizeTreeArea);
       const shown = Math.min(tabPageShown[activeTab], items.length);
       const allowExpand = activeTab !== "components";
       items.slice(0, shown).forEach((comp) => treeArea.append(renderRootRow(comp, allowExpand)));

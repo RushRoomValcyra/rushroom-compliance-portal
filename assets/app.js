@@ -17,6 +17,9 @@
       if (k === "class") n.className = v;
       else if (k === "html") n.innerHTML = v;
       else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+      // Boolean attributes: presence alone disables/checks an element, so
+      // setAttribute("disabled", "false") would DISABLE it. false must omit it.
+      else if (typeof v === "boolean") { if (v) n.setAttribute(k, ""); }
       else n.setAttribute(k, v);
     }
     for (const c of [].concat(kids)) {

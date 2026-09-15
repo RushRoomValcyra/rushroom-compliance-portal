@@ -3469,7 +3469,7 @@
     // scrolling past every row to reach it — and worse as the list grows. It is
     // now a centred overlay: it opens where you are looking, regardless of
     // scroll position or list length.
-    const detailPanel = el("div", { class: "pis-detail-panel", style: "background:var(--bg,#fff);border-radius:10px;padding:1.25rem 1.5rem;width:min(1180px,96vw);max-height:92vh;overflow-y:auto;box-shadow:0 12px 48px #0004" });
+    const detailPanel = el("div", { class: "pis-detail-panel", style: "background:var(--bg,#fff);border-radius:10px;padding:1.25rem 1.5rem;width:min(1180px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 48px #0004" });
     // NOTE: deliberately no data-modal-overlay here. That attribute means "a
     // modal is stacked above the detail panel, so the panel must not consume the
     // paste" (v213). This IS the detail panel, and tagging it would break
@@ -6260,7 +6260,7 @@
           b.style.borderBottom = b.dataset.tab === id ? "2px solid var(--accent,#2fa564)" : "2px solid transparent";
         }
       }
-      const tabBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:2px;margin-bottom:1rem;border-bottom:1px solid var(--border,#e2e8f0)" });
+      const tabBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:2px;margin-bottom:1rem;border-bottom:1px solid var(--border,#e2e8f0);flex-shrink:0" });
       TAB_DEFS.forEach(({ id, label }) => {
         const btn = el("button", {
           class: "btn btn-sm", type: "button", "data-tab": id,
@@ -6448,7 +6448,7 @@
       activateDetailTab("overview");
 
       panel.replaceChildren(
-        el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem" }, [
+        el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;flex-shrink:0" }, [
           el("div", {}, [
             el("strong", { style: "font-size:0.97rem" }, nodeData?.name || componentId.slice(0, 8) + "…"),
             nodeData?.part_number ? el("span", { style: "margin-left:0.5rem;font-family:monospace;font-size:0.78rem;color:var(--muted,#8b93a1)" }, nodeData.part_number) : null,
@@ -6463,7 +6463,10 @@
           ]),
         ]),
         tabBar,
-        ...Object.values(tabPanels),
+        // Only the tab content scrolls; the title row and the tab bar stay put.
+        // min-height:0 is required — without it a flex child refuses to shrink
+        // below its content and the scroll silently lands on the page instead.
+        el("div", { style: "flex:1;min-height:0;overflow-y:auto;padding-right:0.25rem" }, Object.values(tabPanels)),
       );
     } catch (ex) {
       panel.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`));

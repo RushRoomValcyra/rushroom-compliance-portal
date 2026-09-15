@@ -46,10 +46,11 @@ Classification: classification_log
 SaaS (PROP-012 IN PROGRESS): organizations, memberships,
         invitations, platform_audit, ai_usage_events
 Links (PROP-011): requirement_links, document_statements
+Categories (PROP-038): part_categories
 Manufacturing (PROP-030): family_routing_steps, work_orders,
         work_order_steps, work_order_components
 
 ## Current state
-Frontend cache version: ?v=209
+Frontend cache version: ?v=210
 Last SYSTEM_OVERVIEW audit: 2026-08-29
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

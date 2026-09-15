@@ -190,6 +190,8 @@ const membershipRoleFor = (assigned: string) => MEMBERSHIP_ROLE[assigned] || "co
 // mutable global — so scoping can't race across concurrent requests. Use
 // tdb(table) exactly like db.from(table) for tenant data.
 const TENANT_TABLES = new Set([
+  // PROP-038: part categories (migration 0027)
+  "part_categories",
   "steps", "documents", "document_versions", "uploads", "standards", "standard_versions",
   "deviation_scans", "deviation_findings", "standard_clauses", "as_operates_interpretations",
   "product_passports", "passport_interpretation_links", "product_directive_applicability",
@@ -3450,7 +3452,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const parentIdSet = new Set((parentRows || []).map((r: any) => r.parent_id));
     const search = body.search ? String(body.search).trim() : null;
     let q = tdb("bom_components")
-      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id")
+      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id")
       .order("name");
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
     const { data: comps, error: ce } = await q;
@@ -3459,14 +3461,105 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     return json({ components, root_ids: components.map((c: any) => c.id) });
   }
 
+  // --- Part categories (PROP-038) -------------------------------------------
+  // A managed list, not a CHECK constraint: a growing range will want new
+  // groupings and each one would otherwise be a migration plus a deploy.
+  if (action === "listPartCategories") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { data, error } = await tdb("part_categories")
+      .select("id, name, sort_order").order("sort_order").order("name");
+    if (error) return json({ error: error.message }, 400);
+    return json({ categories: data || [] });
+  }
+
+  if (action === "createPartCategory") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const name = String(body.name ?? "").trim();
+    if (!name) return json({ error: "name required" }, 400);
+    const { data: last } = await tdb("part_categories")
+      .select("sort_order").order("sort_order", { ascending: false }).limit(1);
+    const sort_order = body.sort_order != null ? Number(body.sort_order) : (((last && last[0]?.sort_order) ?? 0) + 10);
+    const { data, error } = await tdb("part_categories")
+      .insert({ name, sort_order, created_by: session.uid || null }).select("id").maybeSingle();
+    if (error) {
+      if (String(error.message).includes("part_categories_organization_id_name_key")) {
+        return json({ error: `A category named "${name}" already exists.` }, 400);
+      }
+      return json({ error: error.message }, 400);
+    }
+    return json({ id: data.id, name, sort_order });
+  }
+
+  if (action === "updatePartCategory") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { category_id } = body;
+    if (!category_id) return json({ error: "category_id required" }, 400);
+    const patch: Record<string, unknown> = {};
+    if (body.name !== undefined) {
+      const nm = String(body.name).trim();
+      if (!nm) return json({ error: "name cannot be empty" }, 400);
+      patch.name = nm;
+    }
+    if (body.sort_order !== undefined) patch.sort_order = Number(body.sort_order);
+    if (!Object.keys(patch).length) return json({ error: "nothing to update" }, 400);
+    const { error } = await tdb("part_categories").update(patch).eq("id", category_id);
+    if (error) {
+      if (String(error.message).includes("part_categories_organization_id_name_key")) {
+        return json({ error: `A category named "${patch.name}" already exists.` }, 400);
+      }
+      return json({ error: error.message }, 400);
+    }
+    return json({ ok: true });
+  }
+
+  // Refuses while parts still reference it. Silently orphaning them would drop
+  // those parts into Uncategorised with no trace of what they used to be.
+  if (action === "deletePartCategory") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { category_id } = body;
+    if (!category_id) return json({ error: "category_id required" }, 400);
+    const { data: inUse } = await tdb("bom_components").select("id").eq("category_id", category_id).limit(25);
+    if (inUse?.length) {
+      return json({ error: `${inUse.length >= 25 ? "25+" : inUse.length} part${inUse.length === 1 ? " is" : "s are"} still in this category. Move them first, then delete it.` }, 400);
+    }
+    const { error } = await tdb("part_categories").delete().eq("id", category_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  if (action === "setComponentCategory") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { component_id, category_id } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
+    if (category_id) {
+      const { data: cat } = await tdb("part_categories").select("id").eq("id", category_id).maybeSingle();
+      if (!cat) return json({ error: "Category not found" }, 404);
+    }
+    const { error } = await tdb("bom_components")
+      .update({ category_id: category_id || null, updated_at: new Date().toISOString(), updated_by: session.uid || null })
+      .eq("id", component_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
   // --- BOM: add a new component (creates the node + first version "A") ------
   if (action === "addComponent") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { name, type, oem_number, description, notes } = body;
+    const { name, type, oem_number, description, notes, category_id } = body;
     let { part_number } = body;
     if (!name || !type) return json({ error: "name and type are required" }, 400);
     const validTypes = ["part", "raw_material", "sub_assembly", "finished_good", "spare_part", "product_family"];
     if (!validTypes.includes(type)) return json({ error: "Invalid type" }, 400);
+    // PROP-038: a category is required for anything that lands in the Parts tab.
+    // Assemblies and Dynamic BOMs are grouped by their own tabs and are exempt.
+    const needsCategory = type !== "sub_assembly" && type !== "product_family";
+    if (needsCategory && !category_id) {
+      return json({ error: "A category is required for parts. Pick one, or add a new category first." }, 400);
+    }
+    if (category_id) {
+      const { data: cat } = await tdb("part_categories").select("id").eq("id", category_id).maybeSingle();
+      if (!cat) return json({ error: "Category not found" }, 404);
+    }
     // Auto-generate part number if not supplied
     if (!part_number || !String(part_number).trim()) {
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -3481,6 +3574,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       part_number: String(part_number).trim(), name: String(name), type,
       oem_number: oem_number ? String(oem_number).trim() : null,
       description: description || null, notes: notes || null,
+      category_id: category_id || null,
       created_by: session.uid || null,
     }).select("id").maybeSingle();
     if (ce || !comp) return json({ error: ce?.message ?? "Component insert returned no data" }, 400);

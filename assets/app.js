@@ -3444,6 +3444,11 @@
   // sibling function, not a nested one — reads it to warn about shared edits.
   let parentCountMap = {};
 
+  // PROP-038 — part categories, module-scoped for the same reason as
+  // parentCountMap: the create modals are sibling functions, not nested ones.
+  let partCategories = [];
+  const categoryNameOf = (id) => (partCategories.find((c) => c.id === id) || {}).name || null;
+
   async function bomTreeView(token, role) {
     const wrap = el("div", { class: "pis-tree-wrap" });
     const detailPanel = el("div", { class: "pis-detail-panel", style: "display:none;margin-top:1rem;padding:1rem;background:var(--bg-2,#f5f5f5);border-radius:6px" });
@@ -3455,6 +3460,7 @@
     ];
 
     let activeTab = "components";
+    let activeCategory = "all";   // "all" | "none" | <category_id>
     let allComponents = [];
     let thumbMap = {}; // component_id → signed thumbnail URL
     let searchQuery = "";
@@ -3473,6 +3479,8 @@
     document.body.append(imgTooltip);
 
     const tabBarEl = el("div", { style: "display:flex;gap:0;margin-top:0.75rem;border-bottom:2px solid var(--border,#e2e8f0)" });
+    // Second level, Parts only: click a category instead of typing in search.
+    const catBarEl = el("div", { style: "display:none;flex-wrap:wrap;gap:0.35rem;margin-top:0.6rem" });
     const treeArea  = el("div", { class: "pis-tree-area", style: "margin-top:0.75rem" });
 
     let searchTimer = null;
@@ -3495,6 +3503,7 @@
         searchInp,
       ]),
       tabBarEl,
+      catBarEl,
       treeArea,
       detailPanel,
     );
@@ -3525,13 +3534,57 @@
           onclick: () => { activeTab = td.id; renderAll(); },
         }, `${td.label} (${count})`);
       }));
+      // Category chips — Parts only. Counts come from the unfiltered Parts group,
+      // so a chip always shows how many it would reveal, not how many are showing.
+      if (activeTab !== "components") {
+        catBarEl.style.display = "none";
+        catBarEl.replaceChildren();
+      } else {
+        catBarEl.style.display = "flex";
+        const parts = grouped.components || [];
+        const countFor = (id) => id === "all" ? parts.length
+          : id === "none" ? parts.filter((c) => !c.category_id).length
+          : parts.filter((c) => c.category_id === id).length;
+        const chip = (id, label) => {
+          const count = countFor(id);
+          const active = activeCategory === id;
+          return el("button", {
+            type: "button",
+            style: `padding:0.28rem 0.7rem;font-size:0.78rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;`
+              + (active
+                ? "background:var(--accent,#2fa564);color:#fff;border:1px solid var(--accent,#2fa564)"
+                : `background:transparent;color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)${count ? "" : ";opacity:0.45"}`),
+            onclick: () => { activeCategory = id; tabPageShown.components = PAGE_SIZE; renderAll(); },
+          }, `${label} (${count})`);
+        };
+        const chips = [chip("all", "All")];
+        partCategories.forEach((c) => chips.push(chip(c.id, c.name)));
+        // Only offered when there is a backlog — a category is required on create,
+        // so this exists for pre-PROP-038 rows and should disappear once cleared.
+        if (countFor("none")) chips.push(chip("none", "Uncategorised"));
+        chips.push(el("button", {
+          type: "button", title: "Add, rename, reorder or delete categories",
+          style: "padding:0.28rem 0.6rem;font-size:0.78rem;border-radius:999px;cursor:pointer;background:transparent;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
+          onclick: () => openCategoryManager(token, refreshTree),
+        }, "⚙ Categories"));
+        catBarEl.replaceChildren(...chips);
+      }
+
       // List
       treeArea.replaceChildren();
-      const items = grouped[activeTab] || [];
+      let items = grouped[activeTab] || [];
+      if (activeTab === "components" && activeCategory !== "all") {
+        items = items.filter((c) => activeCategory === "none" ? !c.category_id : c.category_id === activeCategory);
+      }
       if (!items.length) {
-        const labels = { components: "components", assemblies: "assemblies", dynamic: "dynamic BOMs" };
+        const labels = { components: "parts", assemblies: "assemblies", dynamic: "dynamic BOMs" };
+        const catName = activeTab === "components" && activeCategory !== "all"
+          ? (activeCategory === "none" ? "Uncategorised" : categoryNameOf(activeCategory)) : null;
+        const where = catName ? ` in ${catName}` : "";
         treeArea.append(el("div", { class: "notice", style: "margin-top:1rem" },
-          searchQuery ? `No ${labels[activeTab]} match "${searchQuery}".` : `No ${labels[activeTab]} yet. Use + New BOM Node to create one.`));
+          searchQuery ? `No ${labels[activeTab]}${where} match "${searchQuery}".`
+            : catName ? `No ${labels[activeTab]} in ${catName} yet.`
+            : `No ${labels[activeTab]} yet. Use + New BOM Node to create one.`));
         return;
       }
       const shown = Math.min(tabPageShown[activeTab], items.length);
@@ -3666,6 +3719,7 @@
           }, `↗ ${parentCountMap[comp.id]}`) : null,
         ].filter(Boolean)),
         el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, comp.type || ""),
+        comp.category_id ? el("span", { style: "font-size:0.7rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
         (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
         role === "rushroom" && allowExpand ? el("button", {
@@ -3723,11 +3777,13 @@
       treeArea.replaceChildren(el("div", { class: "loading" }, "Loading BOM…"));
       try {
         const expandedIds = Object.keys(expandedTrees).filter((id) => expandedTrees[id] !== "loading" && expandedTrees[id] !== "error");
-        const [{ components }, thumbRes, pcRes] = await Promise.all([
+        const [{ components }, thumbRes, pcRes, catRes] = await Promise.all([
           API.post(token, "listComponents", {}),
           API.post(token, "listComponentThumbnails", {}).catch(() => ({ thumbnails: [] })),
           API.post(token, "listParentCounts", {}).catch(() => ({ parentCounts: [] })),
+          API.post(token, "listPartCategories", {}).catch(() => ({ categories: [] })),
         ]);
+        partCategories = catRes.categories || [];
         thumbMap = Object.fromEntries((thumbRes.thumbnails || []).map((t) => [t.component_id, t.url]));
         parentCountMap = Object.fromEntries((pcRes.parentCounts || []).map((p) => [p.component_id, p.parent_count]));
         if (!components.length) {
@@ -4056,6 +4112,113 @@
     render();
   }
 
+  // --- Part categories (PROP-038) -------------------------------------------
+  // Shared picker for both create paths and the detail panel. `typeEl`, when
+  // given, drives the required-ness: assemblies and Dynamic BOMs are grouped by
+  // their own tabs and are exempt.
+  function categorySelect(currentId, opts) {
+    const sel = el("select", { class: "up-text" }, [
+      el("option", { value: "" }, (opts && opts.placeholder) || "— pick a category —"),
+      ...partCategories.map((c) => el("option", { value: c.id }, c.name)),
+    ]);
+    sel.value = currentId || "";
+    return sel;
+  }
+  const categoryRequiredFor = (type) => type !== "sub_assembly" && type !== "product_family";
+
+  function openCategoryManager(token, onRefresh) {
+    const overlay = el("div", { style: "position:fixed;inset:0;background:#0009;z-index:1002;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(560px,96vw);max-height:88vh;display:flex;flex-direction:column;gap:0.6rem" });
+    const listEl = el("div", { style: "flex:1;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px;min-height:120px" });
+    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.1rem" }, "");
+    const newName = el("input", { class: "up-text", type: "text", placeholder: "New category name…", style: "flex:1" });
+
+    const fail = (ex) => { errEl.textContent = ex.message || String(ex); };
+
+    async function reload() {
+      try {
+        const { categories } = await API.post(token, "listPartCategories", {});
+        partCategories = categories || [];
+        draw();
+      } catch (ex) { fail(ex); }
+    }
+
+    function draw() {
+      if (!partCategories.length) {
+        listEl.replaceChildren(el("div", { style: "padding:0.8rem;color:var(--muted,#8b93a1);font-size:0.86rem" }, "No categories yet. Add one below."));
+        return;
+      }
+      listEl.replaceChildren(...partCategories.map((c, i) => {
+        const nameInp = el("input", { class: "up-text", type: "text", value: c.name, style: "flex:1;font-size:0.86rem" });
+        const save = async () => {
+          const nm = nameInp.value.trim();
+          if (!nm || nm === c.name) { nameInp.value = c.name; return; }
+          errEl.textContent = "";
+          try { await API.post(token, "updatePartCategory", { category_id: c.id, name: nm }); await reload(); onRefresh(); }
+          catch (ex) { nameInp.value = c.name; fail(ex); }
+        };
+        nameInp.onblur = save;
+        nameInp.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); nameInp.blur(); } };
+        const move = async (dir) => {
+          const other = partCategories[i + dir];
+          if (!other) return;
+          errEl.textContent = "";
+          try {
+            await API.post(token, "updatePartCategory", { category_id: c.id, sort_order: other.sort_order });
+            await API.post(token, "updatePartCategory", { category_id: other.id, sort_order: c.sort_order });
+            await reload(); onRefresh();
+          } catch (ex) { fail(ex); }
+        };
+        return el("div", { style: "display:flex;gap:0.4rem;align-items:center;padding:0.4rem 0.6rem;border-bottom:1px solid var(--border,#2d3748)" }, [
+          nameInp,
+          el("button", { class: "btn btn-sm", type: "button", title: "Move up", style: "padding:1px 6px", onclick: () => move(-1) }, "↑"),
+          el("button", { class: "btn btn-sm", type: "button", title: "Move down", style: "padding:1px 6px", onclick: () => move(1) }, "↓"),
+          el("button", {
+            class: "btn btn-sm", type: "button", title: "Delete category",
+            style: "padding:1px 7px;color:#e05454;border-color:#e0545440",
+            onclick: async () => {
+              errEl.textContent = "";
+              // The server refuses while parts still reference it, rather than
+              // orphaning them silently into Uncategorised.
+              try { await API.post(token, "deletePartCategory", { category_id: c.id }); await reload(); onRefresh(); }
+              catch (ex) { fail(ex); }
+            },
+          }, "×"),
+        ]);
+      }));
+    }
+
+    const addBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Add");
+    addBtn.onclick = async () => {
+      const nm = newName.value.trim();
+      if (!nm) return;
+      errEl.textContent = ""; addBtn.disabled = true;
+      try { await API.post(token, "createPartCategory", { name: nm }); newName.value = ""; await reload(); onRefresh(); }
+      catch (ex) { fail(ex); }
+      finally { addBtn.disabled = false; newName.focus(); }
+    };
+    newName.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addBtn.click(); } };
+
+    dialog.append(
+      el("div", { style: "display:flex;align-items:center;justify-content:space-between" }, [
+        el("h3", { style: "margin:0;font-size:1.05rem" }, "Part categories"),
+        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: () => overlay.remove() }, "✕"),
+      ]),
+      el("p", { style: "margin:0;font-size:0.82rem;color:var(--muted,#8b93a1)" },
+        "Rename in place, reorder with ↑/↓. A category still holding parts cannot be deleted — move them first."),
+      listEl,
+      el("div", { style: "display:flex;gap:0.4rem" }, [newName, addBtn]),
+      errEl,
+      el("div", { style: "display:flex;justify-content:flex-end" }, [
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Done"),
+      ]),
+    );
+    overlay.append(dialog);
+    document.body.append(overlay);
+    draw();
+    newName.focus();
+  }
+
   // --- Move modal: re-parent a child (PROP-036) -----------------------------
   // Edge-scoped on purpose: a component used in several assemblies moves ONLY in
   // the assembly on screen. Every other parent link is left exactly as it was.
@@ -4274,10 +4437,18 @@
     newType.style.cssText = F + ";appearance:none;-webkit-appearance:none;cursor:pointer";
     const LBL = "display:block;font-size:0.8rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem";
     const ROW = "margin-bottom:0.6rem";
+    // PROP-038: a category is required for anything that lands in the Parts tab.
+    const newCat = categorySelect(null);
+    newCat.style.cssText = F + ";appearance:none;-webkit-appearance:none;cursor:pointer";
+    const newCatRow = el("div", { style: ROW }, [el("label", { style: LBL }, "Category"), newCat]);
+    const syncCatRequired = () => { newCatRow.style.display = categoryRequiredFor(newType.value) ? "" : "none"; };
+    newType.addEventListener("change", syncCatRequired);
+    syncCatRequired();
     const newSection = el("div", {}, [
       el("div", { style: ROW }, [el("label", { style: LBL }, "Part number"), newPN]),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Name"), newName]),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Type"), newType]),
+      newCatRow,
     ]);
 
     const qtyRefRow = el("div", { style: "display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem" }, [
@@ -4366,10 +4537,16 @@
               submitBtn.disabled = false; submitBtn.textContent = "Create & add";
               return;
             }
+            if (categoryRequiredFor(newType.value) && !newCat.value) {
+              errEl.textContent = "Pick a category for this part.";
+              submitBtn.disabled = false; submitBtn.textContent = "Create & add";
+              return;
+            }
             const r = await API.post(token, "addComponent", {
               part_number: newPN.value.trim() || null,
               name:        newName.value.trim(),
               type:        newType.value,
+              category_id: newCat.value || null,
             });
             childId = r.id;
           } else {
@@ -5150,14 +5327,28 @@
           MOB_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentMOB ? "selected" : null }, l))
         );
 
+        // PROP-038 — category. This is also the only way to clear the untagged
+        // backlog: a category is required on create, but pre-existing parts have
+        // none and can only be tagged from here.
+        const catSel = categorySelect(nodeData?.category_id || null, { placeholder: "— none —" });
+        catSel.style.cssText = "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)";
+
         const propSaveErr = el("span", { style: "font-size:0.78rem;color:#e05454;flex:1" }, "");
         const propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save changes");
         propSaveBtn.onclick = async () => {
           const newName = nameInp.value.trim();
           if (!newName) { propSaveErr.textContent = "Name cannot be empty."; return; }
+          if (categoryRequiredFor(typeSel.value) && !catSel.value) {
+            propSaveErr.textContent = "Pick a category for this part.";
+            return;
+          }
           propSaveBtn.disabled = true; propSaveBtn.textContent = "Saving…"; propSaveErr.textContent = "";
           try {
             await Promise.all([
+              API.post(token, "setComponentCategory", {
+                component_id: componentId,
+                category_id: catSel.value || null,
+              }),
               API.post(token, "updateComponent", {
                 component_id: componentId,
                 name: newName,
@@ -5177,6 +5368,7 @@
             setTimeout(() => {
               openComponentDetail(componentId, token, panel, {
                 ...nodeData,
+                category_id: catSel.value || null,
                 name: newName,
                 part_number: pnInp.value.trim() || nodeData?.part_number,
                 oem_number: oemInp.value.trim() || null,
@@ -5195,6 +5387,7 @@
 
         const lbl = (text) => el("span", { style: "font-size:0.72rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em" }, text);
         const statusColWrapper = el("div", {}, [lbl("Lifecycle status"), statusSel, replNoteArea, flagReasonArea]);
+        const categoryColWrapper = el("div", {}, [lbl("Category"), catSel]);
 
         propertiesSection = el("div", { style: "margin-bottom:1rem;padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.6rem 0.75rem;margin-bottom:0.6rem" }, [
@@ -5203,7 +5396,8 @@
             el("div", {}, [lbl("OEM no."), oemInp]),
             el("div", {}, [lbl("Type"), typeSel]),
             statusColWrapper,
-            el("div", { style: "grid-column:1/3" }, [lbl("Sourcing"), mobSel]),
+            categoryColWrapper,
+            el("div", {}, [lbl("Sourcing"), mobSel]),
           ]),
           el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
         ]);
@@ -5748,6 +5942,7 @@
     const oem  = el("input",    { class: "up-text", type: "text", placeholder: "OEM / distributor reference (optional)" });
     const nm   = el("input",    { class: "up-text", type: "text", placeholder: "Name" });
     const typ  = el("select",   { class: "up-text" }, TYPE_OPTS.map(([v, l]) => el("option", { value: v }, l)));
+    const cat  = categorySelect(null);   // PROP-038 — required for parts
     const desc = el("textarea", { class: "up-text", rows: "2", placeholder: "Purpose — what does this part do?" });
 
     // Pre-fill part number so user can see what will be saved (still editable)
@@ -5783,6 +5978,16 @@
       processing: true,
       onReady: (up) => autofill(up),
     });
+    // Parts are grouped by category in the list; assemblies and Dynamic BOMs
+    // have their own tabs, so the field hides for those types.
+    const catRow = el("div", {}, []);
+    function drawCatRow() {
+      if (!categoryRequiredFor(typ.value)) { catRow.replaceChildren(); catRow.style.display = "none"; return; }
+      catRow.style.display = "";
+      catRow.replaceChildren(frow("Category", cat, "Required — this is how the part is found in the Parts tab."));
+    }
+    typ.addEventListener("change", drawCatRow);
+
     const submitBtn = el("button", { class: "btn btn-primary btn-sm", type: "submit" }, "Create BOM Node");
     zone.register(submitBtn, false);
 
@@ -5839,11 +6044,17 @@
       errEl.textContent = "";
       submitBtn.disabled = true; submitBtn.textContent = "Creating…";
       try {
+        if (categoryRequiredFor(typ.value) && !cat.value) {
+          errEl.textContent = "Pick a category for this part.";
+          submitBtn.disabled = false; submitBtn.textContent = "Create BOM Node";
+          return;
+        }
         const r = await API.post(token, "addComponent", {
           part_number: pn.value.trim() || null,
           oem_number:  oem.value.trim() || null,
           name:        nm.value.trim(),
           type:        typ.value,
+          category_id: cat.value || null,
           description: desc.value.trim() || null,
         });
         // Upload any queued photos — non-blocking (component creation already succeeded)
@@ -5909,6 +6120,7 @@
       frow("OEM number",  oem,  null),
       frow("Name",        nm,   null),
       frow("Type",        typ,  null),
+      catRow,
       frow("Description", desc, "Purpose — what does this product/assembly do?"),
       el("div", { style: ROW }, [
         el("label", { style: LBL }, "Photos (optional)"),
@@ -5921,6 +6133,7 @@
       ]),
     );
 
+    drawCatRow();   // populate on open, not only on type change
     dialog.append(form);
     overlay.append(dialog);
     document.body.append(overlay);

@@ -6181,8 +6181,12 @@
       const regulatorySection = el("div", {}, [regContainer]);
 
       // --- Tab bar -----------------------------------------------------------
+      const relationsCount = ((usedIn && usedIn.parents) || []).length
+        + ((compFamiliesR && compFamiliesR.families) || []).length
+        + ((variantMembershipsR && variantMembershipsR.memberships) || []).length;
       const TAB_DEFS = [
         { id: "overview",    label: "Overview" },
+        { id: "relations",   label: `Relations${relationsCount ? ` (${relationsCount})` : ""}` },
         { id: "specs",       label: "Specifications" },
         { id: "quality",     label: "Quality" },
         { id: "regulatory",  label: "Regulatory" },
@@ -6371,6 +6375,8 @@
       tabPanels["overview"]   = el("div", { style: "display:none" }, [
         ...(sourceCallout      ? [sourceCallout]      : []),
         ...(propertiesSection  ? [propertiesSection]  : []),
+      ]);
+      tabPanels["relations"]  = el("div", { style: "display:none" }, [
         variantGroupSection,
         ...(configSection     ? [configSection]     : []),
         productFamiliesSection,

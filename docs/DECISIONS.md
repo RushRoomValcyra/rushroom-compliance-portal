@@ -688,3 +688,11 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** supabase/migrations/0029_unify_oem_number.sql, assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
 **Status note:** built and statically checked; migration 0029 unapplied.
 
+---
+**Date:** 2026-09-15
+**Feature:** Component detail panel — Relations tab
+**Decision:** The Overview tab holds only the Properties card. A new Relations tab (second in the bar, with a count) collects Variant Group, Dynamic BOM configurations, Product families and Used in.
+**Why:** Overview had accumulated five stacked sections, one per relationship feature shipped, so opening any component meant scrolling past the card you came to edit — and the problem was structural: every future relationship feature would land on the same tab and make it worse. Separating by *kind of question* fixes it durably: Overview answers "what is this part", Relations answers "what is it connected to". Two alternatives were rejected. A tab each for Variants, Families and Used in would reach twelve tabs, wrapping the bar on a laptop and turning a vertical hunt into a horizontal one. Collapsible sections would leave four headers still stacked above the fold and require remembering collapse state per component, which is fiddly to get right and annoying when wrong. The count on the tab label is the part that makes the move safe: hiding content behind a tab normally costs discoverability, and `Relations (3)` restores it without opening anything. The source callout stays on Overview deliberately — it is a warning about the component itself, not a relationship.
+**Files changed:** assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+**Status note:** built and statically checked; not yet exercised.
+

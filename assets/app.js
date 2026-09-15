@@ -3829,7 +3829,11 @@
         const isTreeRow  = !!parentNode;                    // every row inside a tree has a parent
         const canUnlink  = isTreeRow;                       // unlink the edge, never delete the component
         const canAddChild = n.type !== "finished_good";     // PROP-029: a finished good is a leaf
-        const canReorder = isTreeRow && sibCount > 1;
+        // Always rendered on a tree row, disabled when there is nothing to swap
+        // with. Hiding them on single-child assemblies made the control invisible
+        // and left users unable to tell the feature existed; it also made the
+        // action column width vary per row, which PROP-017 fixed deliberately.
+        const canReorder = isTreeRow;
 
         // Toggle button (only for nodes with children)
         const tog = hasChildren

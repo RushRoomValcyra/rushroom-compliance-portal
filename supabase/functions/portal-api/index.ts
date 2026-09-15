@@ -4265,6 +4265,46 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
   }
 
   // --- Family: set or clear variant_condition on an existing edge -----------
+  // --- BOM: change the quantity on one edge (PROP-037) ----------------------
+  // Edge-scoped like every other edge operation: this changes how many of the
+  // child this ONE parent uses. Other assemblies using the same component keep
+  // their own quantities.
+  if (action === "setEdgeQuantity") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { edge_id, quantity } = body;
+    if (!edge_id) return json({ error: "edge_id required" }, 400);
+    const qty = Number(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return json({ error: "Quantity must be a number greater than zero." }, 400);
+    }
+    const { data: edge } = await tdb("bom_edges")
+      .select("id, parent_id, child_id, quantity").eq("id", edge_id).is("effective_to", null).maybeSingle();
+    if (!edge) return json({ error: "Edge not found or no longer active" }, 404);
+    if (Number(edge.quantity) === qty) return json({ ok: true, changed: false });
+
+    const { error } = await tdb("bom_edges").update({ quantity: qty }).eq("id", edge_id);
+    if (error) return json({ error: error.message }, 400);
+
+    // Audit the change against the child component, matching how moves are logged.
+    const { data: comp } = await tdb("bom_components")
+      .select("part_number, oem_number, name, description, type, lifecycle_status")
+      .eq("id", edge.child_id).maybeSingle();
+    const { data: parent } = await tdb("bom_components").select("name").eq("id", edge.parent_id).maybeSingle();
+    if (comp) {
+      try {
+        await tdb("bom_component_history").insert({
+          component_id: edge.child_id, changed_at: new Date().toISOString(),
+          changed_by: session.uid || null, change_type: "updated",
+          part_number: comp.part_number, oem_number: comp.oem_number,
+          name: comp.name, description: comp.description,
+          type: comp.type, lifecycle_status: comp.lifecycle_status,
+          notes: `Quantity changed from ${edge.quantity} to ${qty} in "${parent?.name ?? "assembly"}"`,
+        });
+      } catch { /* non-fatal — the quantity is already saved */ }
+    }
+    return json({ ok: true, changed: true, quantity: qty });
+  }
+
   if (action === "setEdgeCondition") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { edge_id, variant_condition } = body;

@@ -3780,20 +3780,23 @@
       const rows = [];
       // edgeId / sibIndex / sibCount are carried so a row can reorder and move
       // itself: PROP-036 keys both on the EDGE, never on the (parent, child) pair.
-      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount) {
+      // qty is the rolled-up quantity through the tree; edgeQty is what THIS
+      // edge carries. The column shows the roll-up, but only edgeQty is editable
+      // — editing the roll-up would silently write the wrong number.
+      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty) {
         const n = nodeMap[nodeId];
         if (!n) return;
         const children = childrenOf[nodeId] || [];
-        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount });
+        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty });
         if (collapsed.has(posNum)) return;
         children.forEach((e, i) => {
-          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length);
+          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity);
         });
       }
       // Root is already shown as the list-row header — start from its children
       const topEdges = childrenOf[rootId] || [];
       topEdges.forEach((e, i) => {
-        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length);
+        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity);
       });
       return rows;
     }
@@ -3838,7 +3841,7 @@
         style: "display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.71rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
       }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 3 ? "text-align:center" : "" }, t))));
 
-      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount }) => {
+      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty }) => {
         const isCollapsed = collapsed.has(posNum);
         const isFamily = n.type === "product_family";
         // PROP-036 — guards say what they MEAN. `depth` is positional only (it
@@ -3859,6 +3862,55 @@
         // Deliberately aria-disabled rather than the `disabled` attribute —
         // Chrome suppresses hover events on a disabled control, so its title
         // never appears, which would defeat the whole point.
+        // QTY cell. Click to edit the quantity THIS edge carries; the rolled-up
+        // total is shown underneath when it differs, so the number being edited
+        // is never confused with the number being displayed.
+        const qtyCell = () => {
+          const own = Number(edgeQty);
+          const box = el("div", { style: "text-align:center;font-size:0.8rem;color:var(--muted,#8b93a1);line-height:1.15" });
+          const show = () => {
+            const kids = [
+              el("span", {
+                style: `cursor:${edgeId ? "pointer" : "default"};${edgeId ? "border-bottom:1px dashed var(--muted,#8b93a1)" : ""}`,
+                title: edgeId ? "Click to change how many this assembly uses" : "",
+                onclick: edgeId ? ((ev) => { ev.stopPropagation(); edit(); }) : null,
+              }, `×${own}`),
+            ];
+            if (Number(qty) !== own) {
+              kids.push(el("div", { style: "font-size:0.66rem;opacity:0.65", title: "Rolled-up total through the tree" }, `= ${qty}`));
+            }
+            box.replaceChildren(...kids);
+          };
+          const edit = () => {
+            const input = el("input", {
+              type: "number", min: "0.001", step: "any", value: String(own),
+              style: "width:4.2rem;font-size:0.8rem;padding:1px 3px;text-align:center;box-sizing:border-box",
+            });
+            let settled = false;
+            const commit = async () => {
+              if (settled) return;
+              const v = Number(input.value);
+              if (!Number.isFinite(v) || v <= 0) { alert("Quantity must be greater than zero."); input.focus(); input.select(); return; }
+              settled = true;
+              if (v === own) { show(); return; }
+              input.disabled = true;
+              try { await API.post(token, "setEdgeQuantity", { edge_id: edgeId, quantity: v }); onRefresh(); }
+              catch (ex) { settled = false; input.disabled = false; alert(`Failed: ${ex.message}`); show(); }
+            };
+            input.onkeydown = (ev) => {
+              ev.stopPropagation();
+              if (ev.key === "Enter") { ev.preventDefault(); commit(); }
+              else if (ev.key === "Escape") { settled = true; show(); }
+            };
+            input.onblur = () => commit();
+            input.onclick = (ev) => ev.stopPropagation();
+            box.replaceChildren(input);
+            input.focus(); input.select();
+          };
+          show();
+          return box;
+        };
+
         const reorderBtn = (dir) => {
           const blocked = sibCount <= 1
             ? "Only child — nothing to reorder"
@@ -3921,7 +3973,7 @@
         }, [
           el("span", { style: "font-family:monospace;font-size:0.78rem;font-weight:600;color:var(--muted,#8b93a1)" }, posNum),
           compCell,
-          el("span", { style: "font-size:0.8rem;color:var(--muted,#8b93a1);text-align:center;display:block" }, `×${qty}`),
+          qtyCell(),
           el("div", { style: "display:flex;justify-content:center" }, lifecycleBadge(n.lifecycle_status)),
           el("div", { style: "display:flex;gap:0.2rem;flex-shrink:0;flex-wrap:nowrap" }, [
             // ⚙ variant-configure button hidden until import integration is built (PROP-018)

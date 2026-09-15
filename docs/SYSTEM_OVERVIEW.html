@@ -2319,6 +2319,65 @@
             <div class="proposal-card doc-section-new">
                 <div class="proposal-header">
                     <div style="display: flex; align-items: center;">
+                        <div class="proposal-id">PROP-038</div>
+                        <div class="proposal-title">Part Categories — Clickable Sub-Navigation for the Parts Tab <span class="doc-new-badge">Built 2026-09-15</span></div>
+                    </div>
+                    <span class="proposal-status status-implemented">IMPLEMENTED</span>
+                </div>
+                <div class="proposal-meta">
+                    <span>Priority: <span class="priority-high">HIGH</span></span>
+                    <span>Effort: ~6 hours</span>
+                    <span>Completion: 100% (built, pending deploy)</span>
+                    <span>Proposed: 2026-09-15</span>
+                    <span>Completed: 2026-09-15</span>
+                </div>
+                <div class="effect-box">
+                    <strong>What it builds:</strong> The Parts tab was one flat list whose only navigation was the search box. At the thousands of parts this range is heading for, that forces a hand off the mouse and a typed query for what should be a single click. Categories become clickable chips with live counts.
+                </div>
+                <div>
+                    <ul class="proposal-list" style="margin-top: 5px;">
+                        <li><strong>Schema (migration 0027):</strong> <code>part_categories</code> — org-scoped, RLS, unique name per organization, <code>sort_order</code>. Nullable <code>bom_components.category_id</code> FK. Seeds four categories per organization: Furniture panels, Mechanicals, Fittings &amp; Fasteners, Electronics.</li>
+                        <li><strong>Managed list, not a CHECK constraint:</strong> a fixed enum would be less code, but a growing range will want Packaging, Textiles, Lighting — each of which would then be a migration plus an edge-function deploy for what is really a row of data. Free-text tags were rejected for the opposite reason: several tags per part make chip counts ambiguous and typos silently split a group, defeating the reliable clickable navigation this exists to provide.</li>
+                        <li><strong>API:</strong> <code>listPartCategories</code>, <code>createPartCategory</code>, <code>updatePartCategory</code>, <code>deletePartCategory</code>, <code>setComponentCategory</code>. Deleting a category that still holds parts is refused rather than dumping them into Uncategorised, which would lose what they were.</li>
+                        <li><strong>Required on create, enforced server-side:</strong> <code>addComponent</code> rejects a part with no category, not just the form — a UI-only rule would be bypassed by the add-child path and by any future caller, and the feature collapses once a meaningful share of parts is untagged. Assemblies and Dynamic BOMs have their own tabs and are exempt. Both creation paths carry the picker.</li>
+                        <li><strong>Existing parts are not backfilled</strong> into a default category — that would assert classifications nobody made, producing wrong data that looks right. They stay <code>NULL</code>, surface under an <em>Uncategorised</em> chip that appears only while a backlog exists, and are tagged from the detail panel's Properties card.</li>
+                        <li><strong>Frontend:</strong> chip row under the Parts tab with live counts (All · each category · Uncategorised), a category badge on every part row, a ⚙ Categories manager for add/rename/reorder/delete, and a Category field in the Properties card.</li>
+                        <li><strong>Status:</strong> built and statically checked. Migration 0027 unapplied and <code>portal-api</code> not redeployed at time of writing. <strong>Not built:</strong> bulk tagging — tolerable at 18 parts, painful at thousands, and worth its own proposal if parts arrive by import.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="proposal-card doc-section-new">
+                <div class="proposal-header">
+                    <div style="display: flex; align-items: center;">
+                        <div class="proposal-id">PROP-037</div>
+                        <div class="proposal-title">Editable BOM Quantity <span class="doc-new-badge">Shipped 2026-09-15</span></div>
+                    </div>
+                    <span class="proposal-status status-implemented">IMPLEMENTED</span>
+                </div>
+                <div class="proposal-meta">
+                    <span>Priority: <span class="priority-medium">MEDIUM</span></span>
+                    <span>Effort: ~2 hours</span>
+                    <span>Completion: 100%</span>
+                    <span>Proposed: 2026-09-15</span>
+                    <span>Completed: 2026-09-15</span>
+                </div>
+                <div class="effect-box">
+                    <strong>What it builds:</strong> Quantity was write-once — settable when a child was linked and unchangeable afterwards, so the only correction available was unlink-and-re-add. That is the delete-and-recreate pattern PROP-036 existed to eliminate, and the pattern that met the v202 delete bug.
+                </div>
+                <div>
+                    <ul class="proposal-list" style="margin-top: 5px;">
+                        <li><strong>API:</strong> <code>setEdgeQuantity</code> (edge_id, quantity) — validates <code>&gt; 0</code> against the same rule as the CHECK constraint, patches one edge, and writes a <code>bom_component_history</code> row recording old→new against the child component, matching how moves are audited. No migration: <code>bom_edges.quantity</code> already exists.</li>
+                        <li><strong>Edge-scoped,</strong> like every other edge operation. A quantity belongs to a parent's <em>use</em> of a component, not to the component, so other assemblies using the same part keep their own. Keyed on <code>edge_id</code> for the same reason Move is: PROP-033 permits several conditional edges between one pair, and a pair-keyed patch would rewrite all of them.</li>
+                        <li><strong>The non-obvious part is the display.</strong> The QTY column has always shown the <em>rolled-up</em> quantity (<code>qty × e.quantity</code> accumulated down the tree), not the edge's own value. Binding an editor to the number on screen would have written the roll-up back as the edge quantity — corrupting the BOM in a way that looks correct on the next render. The walk now carries <code>edgeQty</code> alongside the roll-up; the cell edits <code>edgeQty</code> and shows <code>= N</code> underneath when they differ. Rejected alternative: show edge quantity only, which discards the roll-up — the figure that matters when reading a BOM as a pull list.</li>
+                        <li><strong>Status:</strong> confirmed against production 2026-09-15 — six quantity changes audited in <code>bom_component_history</code>, including edits at nested depth where the roll-up differs from the edge value. The recorded old→new pairs are edge quantities, not roll-ups, which is the specific evidence the <code>edgeQty</code> split works.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="proposal-card doc-section-new">
+                <div class="proposal-header">
+                    <div style="display: flex; align-items: center;">
                         <div class="proposal-id">PROP-036</div>
                         <div class="proposal-title">BOM Tree Editable Structure — Depth Semantics, Shared-Edit Warning, Stable Order, Move <span class="doc-new-badge">Shipped 2026-09-15</span></div>
                     </div>

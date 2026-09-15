@@ -3838,6 +3838,32 @@
         // action column width vary per row, which PROP-017 fixed deliberately.
         const canReorder = isTreeRow;
 
+        // ↑/↓ explain themselves when unavailable: a greyed button with a
+        // "Move up" tooltip says nothing about WHY it will not move.
+        // Deliberately aria-disabled rather than the `disabled` attribute —
+        // Chrome suppresses hover events on a disabled control, so its title
+        // never appears, which would defeat the whole point.
+        const reorderBtn = (dir) => {
+          const blocked = sibCount <= 1
+            ? "Only child — nothing to reorder"
+            : dir === "up"
+              ? (sibIndex === 0 ? "Already first in this assembly" : "")
+              : (sibIndex === sibCount - 1 ? "Already last in this assembly" : "");
+          return el("button", {
+            class: "btn btn-sm", type: "button",
+            title: blocked || `Move ${dir} in this assembly`,
+            "aria-disabled": blocked ? "true" : "false",
+            style: `padding:1px 4px;font-size:0.7rem${blocked ? ";opacity:0.4;cursor:not-allowed" : ""}`,
+            onclick: async (ev) => {
+              ev.stopPropagation();
+              if (blocked) return;
+              ev.currentTarget.disabled = true;
+              try { await API.post(token, "reorderBomEdge", { edge_id: edgeId, direction: dir }); onRefresh(); }
+              catch (ex) { ev.currentTarget.disabled = false; alert(`Failed: ${ex.message}`); }
+            },
+          }, dir === "up" ? "↑" : "↓");
+        };
+
         // Toggle button (only for nodes with children)
         const tog = hasChildren
           ? el("span", {
@@ -3884,24 +3910,8 @@
           el("div", { style: "display:flex;gap:0.2rem;flex-shrink:0;flex-wrap:nowrap" }, [
             // ⚙ variant-configure button hidden until import integration is built (PROP-018)
 
-            canReorder ? el("button", {
-              class: "btn btn-sm", type: "button", title: "Move up in this assembly",
-              style: "padding:1px 4px;font-size:0.7rem", disabled: sibIndex === 0,
-              onclick: async (ev) => {
-                ev.stopPropagation(); ev.target.disabled = true;
-                try { await API.post(token, "reorderBomEdge", { edge_id: edgeId, direction: "up" }); onRefresh(); }
-                catch (ex) { ev.target.disabled = false; alert(`Failed: ${ex.message}`); }
-              },
-            }, "↑") : null,
-            canReorder ? el("button", {
-              class: "btn btn-sm", type: "button", title: "Move down in this assembly",
-              style: "padding:1px 4px;font-size:0.7rem", disabled: sibIndex === sibCount - 1,
-              onclick: async (ev) => {
-                ev.stopPropagation(); ev.target.disabled = true;
-                try { await API.post(token, "reorderBomEdge", { edge_id: edgeId, direction: "down" }); onRefresh(); }
-                catch (ex) { ev.target.disabled = false; alert(`Failed: ${ex.message}`); }
-              },
-            }, "↓") : null,
+            canReorder ? reorderBtn("up") : null,
+            canReorder ? reorderBtn("down") : null,
             isTreeRow ? el("button", { class: "btn btn-sm", type: "button", title: "Add sibling", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+sib") : null,
             canAddChild ? el("button", { class: "btn btn-sm", type: "button", title: "Add child", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+child") : null,
             isTreeRow ? el("button", {

@@ -3447,6 +3447,11 @@
   // PROP-038 — part categories, module-scoped for the same reason as
   // parentCountMap: the create modals are sibling functions, not nested ones.
   let partCategories = [];
+  // Set by bomTreeView so the detail panel — a sibling function, not a nested
+  // one — can refresh the list behind it after an edit that changes a list row
+  // (name, part no., type, status, category, sourcing). Without this the row
+  // and the category chip counts stay stale until Refresh is pressed by hand.
+  let refreshBomList = null;
   const categoryNameOf = (id) => (partCategories.find((c) => c.id === id) || {}).name || null;
 
   async function bomTreeView(token, role) {
@@ -3772,6 +3777,8 @@
       container.append(row, treeDiv);
       return container;
     }
+
+    refreshBomList = () => refreshTree();
 
     async function refreshTree() {
       treeArea.replaceChildren(el("div", { class: "loading" }, "Loading BOM…"));
@@ -5365,6 +5372,9 @@
               }),
             ]);
             propSaveBtn.textContent = "Saved ✓";
+            // Every field in this card shows on the list row, and category also
+            // drives the chip counts — so the list behind the panel must reload.
+            try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ }
             setTimeout(() => {
               openComponentDetail(componentId, token, panel, {
                 ...nodeData,

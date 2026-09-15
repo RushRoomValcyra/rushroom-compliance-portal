@@ -3798,6 +3798,22 @@
       return rows;
     }
 
+    // Every WBS position a component occupies in THIS tree, ignoring collapse
+    // state (buildRows() stops at collapsed nodes, so it cannot be used here).
+    // A component can sit in several places, hence an array per id.
+    function allPositions() {
+      const map = {};
+      (function walkAll(nodeId, prefix, depth) {
+        if (depth > 12) return;  // belt-and-braces; trg_check_bom_cycle prevents loops
+        (childrenOf[nodeId] || []).forEach((e, i) => {
+          const pos = prefix ? `${prefix}.${i + 1}` : `${i + 1}`;
+          (map[e.child_id] = map[e.child_id] || []).push(pos);
+          walkAll(e.child_id, pos, depth + 1);
+        });
+      })(rootId, "", 0);
+      return map;
+    }
+
     // Build ASCII tree connector: e.g. depth=3, flags=[false,true,false] → "│  └─ "
     function connector(depth, ancestorLastFlags) {
       if (depth === 0) return "";
@@ -3917,7 +3933,7 @@
             isTreeRow ? el("button", {
               class: "btn btn-sm", type: "button", title: "Move to another assembly",
               style: "padding:1px 5px;font-size:0.7rem",
-              onclick: (ev) => { ev.stopPropagation(); openMoveModal(n, edgeId, parentNode, token, onRefresh); },
+              onclick: (ev) => { ev.stopPropagation(); openMoveModal(n, edgeId, parentNode, token, onRefresh, { positions: allPositions(), rootId, rootName: (nodeMap[rootId] || {}).name, fromPos: posNum }); },
             }, "⇄") : null,
             el("button", {
               class: "btn btn-sm", type: "button",
@@ -3991,7 +4007,17 @@
   // --- Move modal: re-parent a child (PROP-036) -----------------------------
   // Edge-scoped on purpose: a component used in several assemblies moves ONLY in
   // the assembly on screen. Every other parent link is left exactly as it was.
-  function openMoveModal(node, edgeId, currentParent, token, onRefresh) {
+  function openMoveModal(node, edgeId, currentParent, token, onRefresh, tree) {
+    const positions = (tree && tree.positions) || {};
+    const treeRootId = tree && tree.rootId;
+    // Where a destination sits in the assembly on screen. A component can hold
+    // several positions, and many legal destinations are not in this tree at all.
+    function wbsOf(id) {
+      if (id === treeRootId) return { text: "root", muted: false };
+      const p = positions[id];
+      if (p && p.length) return { text: p.join(", "), muted: false };
+      return { text: "not in this assembly", muted: true };
+    }
     const overlay = el("div", { style: "position:fixed;inset:0;background:#0009;z-index:1001;display:flex;align-items:center;justify-content:center" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
     const listEl = el("div", { style: "max-height:260px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
@@ -4014,15 +4040,23 @@
         style: `padding:0.35rem 0.6rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.5rem;align-items:center;${selectedId === c.id ? "background:var(--accent,#2fa564)22;" : ""}`,
         onclick: () => {
           selectedId = c.id;
-          selectedLabel.textContent = `Move into: ${c.part_number} — ${c.name}`;
+          const sw = wbsOf(c.id);
+          selectedLabel.textContent = `Move into: ${c.part_number} — ${c.name}` + (sw.muted ? "  (not in this assembly)" : `  (position ${sw.text})`);
           submitBtn.disabled = false;
           buildList(searchInput.value);
         },
-      }, [
-        el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
-        el("span", { style: "flex:1" }, c.name),
-        el("span", { style: "font-size:0.7rem;color:var(--muted,#8b93a1)" }, c.type || ""),
-      ])));
+      }, (() => {
+        const w = wbsOf(c.id);
+        return [
+          el("span", {
+            style: `font-family:monospace;font-size:0.72rem;min-width:5.5rem;flex-shrink:0;${w.muted ? "color:var(--muted,#8b93a1);opacity:0.6" : "color:var(--accent,#2fa564);font-weight:700"}`,
+            title: w.muted ? "This component is not part of the assembly you are viewing" : "Position in this assembly",
+          }, w.text),
+          el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
+          el("span", { style: "flex:1" }, c.name),
+          el("span", { style: "font-size:0.7rem;color:var(--muted,#8b93a1)" }, c.type || ""),
+        ];
+      })())));
     }
     searchInput.oninput = () => buildList(searchInput.value);
 
@@ -4044,11 +4078,19 @@
         el("h3", { style: "margin:0;font-size:1rem" }, "Move to another assembly"),
         el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 8px", onclick: () => overlay.remove() }, "✕"),
       ]),
-      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.2rem" }, `Moving: ${node.part_number} — ${node.name}`),
-      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.6rem" }, `Out of: ${currentParent && currentParent.name ? currentParent.name : "this assembly"}`),
+      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.2rem" },
+        `Moving: ${node.part_number} — ${node.name}${tree && tree.fromPos ? `  (position ${tree.fromPos})` : ""}`),
+      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.6rem" },
+        `Out of: ${currentParent && currentParent.name ? currentParent.name : "this assembly"}${tree && tree.rootName ? `  ·  assembly: ${tree.rootName}` : ""}`),
       el("div", { style: "background:#2fa56412;border:1px solid #2fa56440;border-radius:6px;padding:0.5rem 0.7rem;margin-bottom:0.75rem;font-size:0.8rem" },
         "Only this assembly changes. If this component is used elsewhere, those assemblies keep it exactly as they have it."),
-      searchInput, listEl, selectedLabel, errEl,
+      searchInput,
+      el("div", { style: "display:flex;gap:0.5rem;padding:0.2rem 0.6rem 0.3rem;font-size:0.68rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em" }, [
+        el("span", { style: "min-width:5.5rem;flex-shrink:0" }, "Pos."),
+        el("span", { style: "flex-shrink:0" }, "Part no."),
+        el("span", { style: "flex:1" }, "Destination"),
+      ]),
+      listEl, selectedLabel, errEl,
       el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
         el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
         submitBtn,

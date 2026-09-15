@@ -5652,10 +5652,12 @@
         const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.82rem" });
         const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.82rem;font-family:monospace" });
         // One OEM number (migration 0029): component_metadata.manufacturer_part_number.
+        // Read from metaR, not `meta`: that const is declared ~170 lines below and
+        // touching it here throws "Cannot access 'meta' before initialization".
         // bom_components.oem_number is legacy and no longer read or written here —
         // two columns behind one label meant a value entered on one tab was
         // invisible on the other, which is how AI fill exposed the split.
-        const oemInp    = el("input", { class: "up-text", type: "text", value: meta.manufacturer_part_number || "", placeholder: "OEM number", style: "width:100%;font-size:0.82rem;font-family:monospace" });
+        const oemInp    = el("input", { class: "up-text", type: "text", value: (metaR?.metadata || {}).manufacturer_part_number || "", placeholder: "OEM number", style: "width:100%;font-size:0.82rem;font-family:monospace" });
 
         const VALID_STATUSES = ["active", "inactive", "replaced", "flagged"];
         const currentStatus = nodeData?.lifecycle_status || "inactive";

@@ -30,7 +30,7 @@ _Code is committed but not yet live, or live but not yet exercised. Each line st
 ## Discovered While Building
 _Found mid-build, too small or too tangential for a PROP, too real to drop. Promote to Next, or delete once it stops mattering._
 
-- **`assets/app.js` shared-state scoping** — `bomTreeView` holds list state in one closure while the modals that need it (`openAddChildModal`, `openComponentDetail`, `openMoveModal`) are sibling functions outside it. This has produced two real defects: `parentCountMap` threw a `ReferenceError` mid-handler (PROP-036), and `refreshTree` was unreachable from the detail panel (v211). Each fix was one line; the shape will keep recurring. Worth one deliberate hoist of the shared state.
+- **`assets/app.js` shared-state scoping** *(now four occurrences — worth acting on)* — `bomTreeView` holds list state in one closure while the modals that need it (`openAddChildModal`, `openComponentDetail`, `openMoveModal`) are sibling functions outside it. This has produced two real defects: `parentCountMap` threw a `ReferenceError` mid-handler (PROP-036), and `refreshTree` was unreachable from the detail panel (v211). Each fix was one line; the shape keeps recurring. Two more since: the image-paste listeners, and `meta` read ~170 lines above its own `const` (v218), which threw on every component open. None of these are caught by `node --check` or an esbuild parse, because they are all valid syntax. `openComponentDetail` is now long enough that declaration order is not visible while editing it — the fix is to hoist the shared state deliberately and split that function.
 - **Bulk part tagging** — tolerable at 18 parts, painful at the thousands PROP-038 is built for. Needed if parts ever arrive by import.
 
 ## Shipped

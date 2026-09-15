@@ -13,7 +13,7 @@ state where something looks done and silently is not.
 ## Built — Awaiting Deploy or Verification
 _Code is committed but not yet live, or live but not yet exercised. Each line states what is still required._
 
-- **v212 duplicate image paste** — fix deployed; awaiting confirmation. A pair with the same signature (same filename, 5s apart, two components) appeared at 12:21 UTC on *Shelf inserts* and *Rapid connector*, after the fix was committed at 10:36 UTC. Cannot be distinguished from two genuine screenshots pasted quickly, and a browser still holding v211 would also explain it. Needs a deliberate test on a reloaded page.
+- **v213 duplicate image paste (real cause)** — the detail panel and the New BOM Node modal both bind `paste` to `document`, so one Cmd+V uploaded to the open component *and* the one being created. v212 fixed a different, real, but non-causal leak. Overlays now carry `data-modal-overlay` and the panel yields to any modal above it. Needs: `git push origin main`, hard reload, then create a part with a pasted photo while another component's panel is open — only the new part should get the image.
 - **PROP-036 Move rollback branch** — shipped and in use, but the failure path (re-opening the closed edge when the insert is rejected) has never run, because no move has failed. Not provable without forcing a failure; left recorded rather than claimed.
 
 ## Next — Approved for Build

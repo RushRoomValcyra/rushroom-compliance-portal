@@ -12,6 +12,7 @@ state where something looks done and silently is not.
 
 ## Built — Awaiting Deploy or Verification
 _Code is committed but not yet live, or live but not yet exercised. Each line states what is still required._
+- **PROP-039 AI field extraction** — needs `supabase functions deploy portal-api --no-verify-jwt` (new `extractComponentSpecs`, `fileBlock` image support, manufacturer whitelist fix) then `git push origin main`. No migration. Verify: paste a datasheet screenshot into ✨ AI fill and check a known value — especially a weight quoted in kg, which must arrive as grams.
 
 - **PROP-036 Move rollback branch** — shipped and in use, but the failure path (re-opening the closed edge when the insert is rejected) has never run, because no move has failed. Not provable without forcing a failure; left recorded rather than claimed.
 
@@ -28,7 +29,6 @@ _Code is committed but not yet live, or live but not yet exercised. Each line st
 _Found mid-build, too small or too tangential for a PROP, too real to drop. Promote to Next, or delete once it stops mattering._
 
 - **`assets/app.js` shared-state scoping** — `bomTreeView` holds list state in one closure while the modals that need it (`openAddChildModal`, `openComponentDetail`, `openMoveModal`) are sibling functions outside it. This has produced two real defects: `parentCountMap` threw a `ReferenceError` mid-handler (PROP-036), and `refreshTree` was unreachable from the detail panel (v211). Each fix was one line; the shape will keep recurring. Worth one deliberate hoist of the shared state.
-- **`fileBlock()` cannot read images** — it branches on extension and everything that is not pdf/docx/xlsx falls through to `TextDecoder`, so a PNG is decoded as bytes and the model reads garbage without erroring. Blocks the AI extraction idea; also affects any existing path where someone uploads a screenshot.
 - **Bulk part tagging** — tolerable at 18 parts, painful at the thousands PROP-038 is built for. Needed if parts ever arrive by import.
 
 ## Shipped

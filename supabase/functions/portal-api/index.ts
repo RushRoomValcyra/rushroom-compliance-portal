@@ -491,6 +491,12 @@ async function fileBlock(bucket: string, path: string, fileName: string) {
   const bytes = new Uint8Array(await data.arrayBuffer());
   const ext = (fileName.split(".").pop() || "").toLowerCase();
   try {
+    const IMG_TYPES: Record<string, string> = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif",
+    };
+    if (IMG_TYPES[ext]) {
+      return { type: "image", source: { type: "base64", media_type: IMG_TYPES[ext], data: toBase64(bytes) } };
+    }
     if (ext === "pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data: toBase64(await capPdfPages(bytes)) } };
     if (ext === "docx") return { type: "text", text: (await extractDocx(bytes)).slice(0, TEXT_CAP) || "(empty)" };
     if (ext === "xlsx" || ext === "xls") return { type: "text", text: (await extractXlsx(bytes)).slice(0, TEXT_CAP) || "(empty)" };
@@ -4831,6 +4837,158 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     return json({ metadata: data || null });
   }
 
+  // --- PROP-039: read a datasheet / drawing / screenshot into the spec fields --
+  // Extraction only. It never writes: the client reviews and applies, because a
+  // wrong flame-retardant class or WEEE category is worse than an empty one —
+  // it looks authoritative and ends up exported into a DPP.
+  if (action === "extractComponentSpecs") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    if (!ANTHROPIC_API_KEY) return json({ error: "AI is not configured — set ANTHROPIC_API_KEY in the function secrets." }, 400);
+    const { component_id, image_id, storage_path, file_name } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
+
+    const { data: comp } = await tdb("bom_components")
+      .select("id, name, part_number, oem_number").eq("id", component_id).maybeSingle();
+    if (!comp) return json({ error: "Component not found" }, 404);
+
+    // Resolve the source, org-scoped in every case.
+    let path = "", fname = "";
+    if (image_id) {
+      const { data: img } = await tdb("component_images")
+        .select("storage_path, file_name").eq("id", image_id).maybeSingle();
+      if (!img) return json({ error: "Image not found" }, 404);
+      path = img.storage_path; fname = img.file_name || "image.png";
+    } else if (storage_path) {
+      path = String(storage_path); fname = String(file_name || "document");
+    } else {
+      return json({ error: "image_id or storage_path required" }, 400);
+    }
+
+    // Numeric and boolean targets are coerced server-side; everything else is text.
+    const NUM = new Set(["weight_g","length_mm","width_mm","height_mm","lead_time_days","moq",
+      "inspection_sample_size","recycled_content_pct","carbon_footprint_kgco2e"]);
+    const BOOL = new Set(["has_cpk_requirement","battery_regulation_applicable",
+      "conflict_minerals_free","repair_spare_part_available"]);
+    const TEXT = new Set(["manufacturer_name","manufacturer_part_number","base_material","surface_treatment",
+      "color_specification","flame_retardant_class","preferred_supplier_name","supplier_part_number",
+      "country_of_origin","hs_code","incoming_inspection_method","critical_to_quality",
+      "weee_category","carbon_footprint_source","end_of_life_instruction"]);
+    const FIELD_KEYS = [...NUM, ...BOOL, ...TEXT];
+
+    const system = `You are reading a component datasheet, technical drawing, catalogue page or screenshot and extracting values for a product data record.
+
+The component on file is: "${comp.name}" (part number ${comp.part_number}${comp.oem_number ? ", OEM " + comp.oem_number : ""}).
+
+Rules that matter more than coverage:
+- Extract ONLY what the document actually states. Never infer, never complete from general knowledge of similar parts. An omitted field is correct; a guessed one is a defect.
+- Give every value exactly as printed in \`as_printed\`, including its unit ("50 mm", "1.2 kg", "±0.2"), and the converted value in \`value\`.
+- UNITS ARE CRITICAL. weight_g is GRAMS: a sheet quoting 1.2 kg must yield value "1200". Lengths are MILLIMETRES. If a unit is ambiguous or missing, use confidence "low".
+- \`evidence\` must be a short verbatim quote from the document showing where the value came from.
+- confidence: "high" only when the document states the value unambiguously for THIS component; "medium" when it is stated but the wording is loose; "low" when a unit is missing, the layout is ambiguous, or the value might belong to a different variant.
+- If the document covers several parts (a catalogue page, a family table), set confident_part_match=false and matched_part to what you believe it describes. Do not guess a row.
+- incoming_inspection_method must be exactly one of: none, visual, dimensional, functional, chemical, destructive, certificate_only.
+- country_of_origin is an ISO 3166-1 alpha-2 code.
+- Anything the document states that does not fit one of the field keys goes in \`unmapped\` with a suggested snake_case key. This is how missing schema fields get discovered, so do not discard it.
+
+Valid field keys: ${FIELD_KEYS.join(", ")}`;
+
+    const EXTRACT_SCHEMA = {
+      type: "object",
+      properties: {
+        matched_part: { type: "string" },
+        confident_part_match: { type: "boolean" },
+        summary: { type: "string" },
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string", enum: FIELD_KEYS },
+              value: { type: "string" },
+              as_printed: { type: "string" },
+              confidence: { type: "string", enum: ["high", "medium", "low"] },
+              evidence: { type: "string" },
+            },
+            required: ["key", "value", "as_printed", "confidence", "evidence"],
+            additionalProperties: false,
+          },
+        },
+        unmapped: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string" },
+              value: { type: "string" },
+              suggested_key: { type: "string" },
+            },
+            required: ["label", "value", "suggested_key"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["matched_part", "confident_part_match", "summary", "fields", "unmapped"],
+      additionalProperties: false,
+    };
+
+    let apiJson: any;
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCAN_MODEL,
+          max_tokens: 4000,
+          thinking: { type: "adaptive" },
+          output_config: { effort: "medium", format: { type: "json_schema", schema: EXTRACT_SCHEMA } },
+          system,
+          messages: [{ role: "user", content: [
+            { type: "text", text: "Extract the product data fields stated in this document." },
+            await fileBlock(DOC_BUCKET, path, fname),
+          ] }],
+        }),
+      });
+      apiJson = await res.json();
+      if (!res.ok) return json({ error: apiJson?.error?.message || "AI request failed" }, 400);
+    } catch (e: any) {
+      return json({ error: `AI request failed: ${e?.message || e}` }, 400);
+    }
+    await meterAi(apiJson);
+
+    let parsed: any;
+    try {
+      const txt = (apiJson.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+      parsed = JSON.parse(txt);
+    } catch {
+      return json({ error: "AI returned an unreadable response." }, 400);
+    }
+
+    // Coerce to column types here rather than in the browser, so what the user
+    // approves is exactly what will be written.
+    const fields = (parsed.fields || []).flatMap((f: any) => {
+      const key = String(f.key || "");
+      if (!NUM.has(key) && !BOOL.has(key) && !TEXT.has(key)) return [];
+      let value: any = String(f.value ?? "").trim();
+      if (!value) return [];
+      if (NUM.has(key)) {
+        const n = Number(value.replace(",", "."));
+        if (!Number.isFinite(n)) return [];
+        value = n;
+      } else if (BOOL.has(key)) {
+        value = /^(true|yes|y|1)$/i.test(value);
+      }
+      return [{ key, value, as_printed: String(f.as_printed ?? ""), confidence: String(f.confidence ?? "low"), evidence: String(f.evidence ?? "") }];
+    });
+
+    return json({
+      fields,
+      unmapped: parsed.unmapped || [],
+      matched_part: parsed.matched_part || "",
+      confident_part_match: !!parsed.confident_part_match,
+      summary: parsed.summary || "",
+    });
+  }
+
   if (action === "upsertComponentMetadata") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { component_id, ...fields } = body;
@@ -4842,6 +5000,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const allowed = [
       "weight_g","length_mm","width_mm","height_mm",
       "base_material","surface_treatment","color_specification","flame_retardant_class",
+      "manufacturer_name","manufacturer_part_number",
       "preferred_supplier_name","supplier_part_number","lead_time_days","moq",
       "country_of_origin","hs_code",
       "incoming_inspection_method","inspection_sample_size","critical_to_quality","has_cpk_requirement",

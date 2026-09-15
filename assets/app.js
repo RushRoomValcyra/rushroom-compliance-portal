@@ -4634,6 +4634,248 @@
     searchInput.focus();
   }
 
+  // --- AI fill (PROP-039) ----------------------------------------------------
+  // Reads a datasheet, drawing or pasted screenshot and proposes values for the
+  // spec fields. It never writes on its own: a wrong flame-retardant class is
+  // worse than an empty one, because it looks authoritative and gets exported
+  // into a DPP. Designed for the shortest honest path — paste, glance, apply.
+  const AI_FILL_LABELS = {
+    weight_g: "Weight (g)", length_mm: "Length (mm)", width_mm: "Width (mm)", height_mm: "Height (mm)",
+    base_material: "Base material", surface_treatment: "Surface treatment",
+    color_specification: "Colour / finish", flame_retardant_class: "Flame retardant class",
+    manufacturer_name: "Manufacturer", manufacturer_part_number: "OEM number",
+    preferred_supplier_name: "Supplier", supplier_part_number: "Supplier part no.",
+    lead_time_days: "Lead time (days)", moq: "MOQ", country_of_origin: "Country of origin", hs_code: "HS code",
+    incoming_inspection_method: "Inspection method", inspection_sample_size: "Sample size",
+    critical_to_quality: "Critical to quality", has_cpk_requirement: "Cpk required",
+    weee_category: "WEEE category", battery_regulation_applicable: "Battery regulation",
+    conflict_minerals_free: "Conflict minerals free", recycled_content_pct: "Recycled content (%)",
+    carbon_footprint_kgco2e: "Carbon footprint (kg CO₂e)", carbon_footprint_source: "Footprint source",
+    end_of_life_instruction: "End-of-life instruction", repair_spare_part_available: "Spare part available",
+  };
+
+  function openAiFillModal(componentId, token, panel, nodeData, role, existingImages) {
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1002;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(920px,96vw);max-height:92vh;display:flex;flex-direction:column;gap:0.7rem" });
+    const body = el("div", { style: "flex:1;overflow-y:auto;min-height:150px" });
+    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;min-height:1.1rem;display:block" }, "");
+    const close = () => { document.removeEventListener("paste", onPaste); overlay.remove(); };
+
+    let current = {};   // existing metadata, so proposals can be shown against it
+
+    // ---- step 1: pick a source -------------------------------------------
+    function renderSourcePicker() {
+      const drop = el("div", {
+        style: "border:2px dashed var(--border,#2d3748);border-radius:8px;padding:1.6rem 1rem;text-align:center;font-size:0.9rem;color:var(--muted,#8b93a1);cursor:pointer",
+        onclick: () => filePick.click(),
+        ondragover: (ev) => { ev.preventDefault(); drop.style.borderColor = "var(--accent,#2fa564)"; },
+        ondragleave: () => { drop.style.borderColor = "var(--border,#2d3748)"; },
+        ondrop: (ev) => {
+          ev.preventDefault(); drop.style.borderColor = "var(--border,#2d3748)";
+          const f = ev.dataTransfer?.files[0]; if (f) useNewFile(f);
+        },
+      }, [
+        el("div", { style: "font-size:1.05rem;font-weight:600;color:var(--text,#e2e8f0);margin-bottom:0.25rem" }, "Paste a screenshot  ⌘V"),
+        el("div", {}, "or drop a datasheet / drawing here · or click to pick a file"),
+      ]);
+      const filePick = el("input", { type: "file", accept: "image/*,application/pdf,.docx,.xlsx", style: "display:none",
+        onchange: (ev) => { const f = ev.target.files[0]; if (f) useNewFile(f); ev.target.value = ""; } });
+
+      const kids = [drop, filePick];
+      if (existingImages && existingImages.length) {
+        kids.push(el("div", { style: "font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin:0.9rem 0 0.4rem" }, "Or use an image already attached"));
+        kids.push(el("div", { style: "display:flex;flex-wrap:wrap;gap:0.5rem" }, existingImages.map((img) =>
+          el("img", {
+            src: img.url, title: `Read ${img.file_name}`,
+            style: "width:74px;height:74px;object-fit:cover;border-radius:6px;border:1px solid var(--border,#2d3748);cursor:pointer",
+            onclick: () => run({ image_id: img.id }),
+          }))));
+      }
+      body.replaceChildren(...kids);
+    }
+
+    // A pasted or dropped file is attached to the component first, so the
+    // evidence for every extracted value stays on the record.
+    async function useNewFile(file) {
+      const ALLOWED_IMG = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+      body.replaceChildren(el("div", { class: "loading", style: "padding:1rem" }, "Uploading…"));
+      errEl.textContent = "";
+      try {
+        const { signedUrl, path } = await API.post(token, "imageUploadUrl", {
+          component_id: componentId, fileName: file.name || "paste.png", contentType: file.type || "image/png",
+        });
+        await new Promise((res, rej) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", signedUrl);
+          xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+          xhr.onload = () => xhr.status < 300 ? res() : rej(new Error(`Upload failed: ${xhr.status}`));
+          xhr.onerror = () => rej(new Error("Network error"));
+          xhr.send(file);
+        });
+        if (ALLOWED_IMG.includes(file.type)) {
+          await API.post(token, "addComponentImage", {
+            component_id: componentId, storage_path: path,
+            file_name: file.name || "paste.png", content_type: file.type,
+          });
+        }
+        await run({ storage_path: path, file_name: file.name || "paste.png" });
+      } catch (ex) {
+        errEl.textContent = ex.message;
+        renderSourcePicker();
+      }
+    }
+
+    // ---- step 2: extract --------------------------------------------------
+    async function run(source) {
+      body.replaceChildren(el("div", { class: "loading", style: "padding:1.5rem;text-align:center" }, "Reading the document…"));
+      errEl.textContent = "";
+      try {
+        const [res, meta] = await Promise.all([
+          API.post(token, "extractComponentSpecs", { component_id: componentId, ...source }),
+          API.post(token, "getComponentMetadata", { component_id: componentId }).catch(() => ({ metadata: {} })),
+        ]);
+        current = meta.metadata || {};   // null until a component has a metadata row
+        renderResults(res);
+      } catch (ex) {
+        errEl.textContent = ex.message;
+        renderSourcePicker();
+      }
+    }
+
+    // ---- step 3: review and apply ----------------------------------------
+    function renderResults(res) {
+      const rows = res.fields || [];
+      if (!rows.length) {
+        body.replaceChildren(
+          el("p", { style: "padding:1rem;font-size:0.9rem" }, "Nothing could be read from that document."),
+          el("p", { style: "padding:0 1rem;font-size:0.82rem;color:var(--muted,#8b93a1)" }, res.summary || ""),
+        );
+        return;
+      }
+      const isEmpty = (k) => current[k] === null || current[k] === undefined || current[k] === "";
+      const picks = {};
+      // Pre-ticked: confident, and the field is empty. A value you typed is
+      // never overwritten by default.
+      rows.forEach((f) => { picks[f.key] = f.confidence !== "low" && isEmpty(f.key); });
+      const unmappedPicks = {};
+      (res.unmapped || []).forEach((u, i) => { unmappedPicks[i] = false; });
+
+      const applyBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Apply");
+      const syncApply = () => {
+        const n = Object.values(picks).filter(Boolean).length + Object.values(unmappedPicks).filter(Boolean).length;
+        applyBtn.textContent = n ? `Apply ${n} field${n > 1 ? "s" : ""}` : "Apply";
+        applyBtn.disabled = !n;
+      };
+
+      const CONF = { high: ["#2fa564", "high"], medium: ["#e5a326", "medium"], low: ["#e05454", "low"] };
+      const GRID = "display:grid;grid-template-columns:1.6rem 12rem 1fr 1fr 4.5rem;gap:0.5rem;align-items:start";
+
+      const head = el("div", { style: `${GRID};padding:0.25rem 0.5rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1)` },
+        [el("span", {}, ""), el("span", {}, "Field"), el("span", {}, "Current"), el("span", {}, "From document"), el("span", {}, "Conf.")]);
+
+      const fieldRows = rows.map((f) => {
+        const cb = el("input", { type: "number", style: "display:none" });
+        const box = el("input", { type: "checkbox", style: "cursor:pointer;margin-top:3px" });
+        box.checked = picks[f.key];
+        box.onchange = () => { picks[f.key] = box.checked; syncApply(); };
+        const [col, lbl] = CONF[f.confidence] || CONF.low;
+        const cur = current[f.key];
+        return el("div", { style: `${GRID};padding:0.4rem 0.5rem;border-top:1px solid var(--border,#2d3748)` }, [
+          box,
+          el("span", { style: "font-size:0.84rem;font-weight:600" }, AI_FILL_LABELS[f.key] || f.key),
+          el("span", { style: `font-size:0.84rem;${isEmpty(f.key) ? "color:var(--muted,#8b93a1);opacity:0.6" : ""}` },
+            isEmpty(f.key) ? "— empty —" : String(cur)),
+          el("div", {}, [
+            el("div", { style: "font-size:0.88rem;font-weight:600" }, String(f.value)),
+            f.as_printed ? el("div", { style: "font-size:0.72rem;color:var(--muted,#8b93a1)" }, `as printed: ${f.as_printed}`) : null,
+            f.evidence ? el("div", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);font-style:italic;margin-top:2px" }, `“${f.evidence}”`) : null,
+          ].filter(Boolean)),
+          el("span", { style: `font-size:0.7rem;font-weight:700;color:${col}` }, lbl),
+        ]);
+      });
+
+      const kids = [];
+      if (!res.confident_part_match) {
+        kids.push(el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.55rem 0.75rem;font-size:0.84rem;margin-bottom:0.6rem" },
+          `⚠ This document may not describe this component${res.matched_part ? ` — it looks like "${res.matched_part}"` : ""}. Check each value before applying.`));
+      }
+      if (res.summary) kids.push(el("p", { style: "margin:0 0 0.5rem;font-size:0.82rem;color:var(--muted,#8b93a1)" }, res.summary));
+      kids.push(head, ...fieldRows);
+
+      // Values the document states that no field can hold — the signal for
+      // which columns the schema is still missing. Kept in custom_specs.
+      if ((res.unmapped || []).length) {
+        kids.push(el("div", { style: "font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin:0.9rem 0 0.3rem" },
+          `No field for these (${res.unmapped.length}) — stored as custom specs`));
+        res.unmapped.forEach((u, i) => {
+          const box = el("input", { type: "checkbox", style: "cursor:pointer" });
+          box.onchange = () => { unmappedPicks[i] = box.checked; syncApply(); };
+          kids.push(el("div", { style: "display:grid;grid-template-columns:1.6rem 12rem 1fr;gap:0.5rem;padding:0.3rem 0.5rem;border-top:1px solid var(--border,#2d3748)" }, [
+            box,
+            el("span", { style: "font-size:0.84rem" }, u.label),
+            el("span", { style: "font-size:0.84rem;color:var(--muted,#8b93a1)" }, u.value),
+          ]));
+        });
+      }
+      body.replaceChildren(...kids);
+
+      applyBtn.onclick = async () => {
+        applyBtn.disabled = true; applyBtn.textContent = "Applying…"; errEl.textContent = "";
+        try {
+          const payload = { component_id: componentId };
+          rows.forEach((f) => { if (picks[f.key]) payload[f.key] = f.value; });
+          const custom = { ...(current.custom_specs || {}) };
+          (res.unmapped || []).forEach((u, i) => { if (unmappedPicks[i]) custom[u.suggested_key || u.label] = u.value; });
+          if (Object.keys(custom).length) payload.custom_specs = custom;
+          await API.post(token, "upsertComponentMetadata", payload);
+          close();
+          openComponentDetail(componentId, token, panel, nodeData, role);
+        } catch (ex) {
+          errEl.textContent = ex.message;
+          applyBtn.disabled = false; syncApply();
+        }
+      };
+
+      footer.replaceChildren(
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => renderSourcePicker() }, "← Different document"),
+        el("span", { style: "flex:1" }),
+        el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"),
+        applyBtn,
+      );
+      syncApply();
+    }
+
+    const footer = el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [
+      el("span", { style: "flex:1" }),
+      el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"),
+    ]);
+
+    // This modal owns the paste while it is open; the panel behind yields
+    // because the overlay carries data-modal-overlay.
+    function onPaste(ev) {
+      if (!overlay.isConnected) { document.removeEventListener("paste", onPaste); return; }
+      if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA") return;
+      const items = ev.clipboardData?.items || [];
+      for (const item of items) {
+        if (item.type.startsWith("image/")) { ev.preventDefault(); useNewFile(item.getAsFile()); return; }
+      }
+    }
+    document.addEventListener("paste", onPaste);
+
+    dialog.append(
+      el("div", { style: "display:flex;align-items:center;justify-content:space-between" }, [
+        el("h3", { style: "margin:0;font-size:1.05rem" }, `✨ AI fill — ${nodeData?.name || "component"}`),
+        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: close }, "✕"),
+      ]),
+      el("p", { style: "margin:0;font-size:0.82rem;color:var(--muted,#8b93a1)" },
+        "Values are proposed, never written straight in. Confident readings of empty fields are pre-ticked; anything you already filled in is left alone unless you tick it."),
+      body, errEl, footer,
+    );
+    overlay.append(dialog);
+    document.body.append(overlay);
+    renderSourcePicker();
+  }
+
   // --- Component detail panel (slide-in below the tree) ----------------------
   async function openComponentDetail(componentId, token, panel, nodeData, role) {
     panel.style.display = "";
@@ -5945,7 +6187,14 @@
             el("strong", { style: "font-size:0.97rem" }, nodeData?.name || componentId.slice(0, 8) + "…"),
             nodeData?.part_number ? el("span", { style: "margin-left:0.5rem;font-family:monospace;font-size:0.78rem;color:var(--muted,#8b93a1)" }, nodeData.part_number) : null,
           ].filter(Boolean)),
-          el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.style.display = "none"; } }, "Close"),
+          el("div", { style: "display:flex;gap:0.4rem;align-items:center" }, [
+            el("button", {
+              class: "btn btn-sm btn-primary", type: "button",
+              title: "Read a datasheet, drawing or screenshot and fill these fields",
+              onclick: () => openAiFillModal(componentId, token, panel, nodeData, role, imgData?.images || []),
+            }, "✨ AI fill"),
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.style.display = "none"; } }, "Close"),
+          ]),
         ]),
         tabBar,
         ...Object.values(tabPanels),

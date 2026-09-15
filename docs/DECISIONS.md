@@ -712,3 +712,19 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
 **Status note:** built and statically checked; not yet exercised.
 
+---
+**Date:** 2026-09-15
+**Feature:** Detail panel — pinned header and tab bar, scrolling content
+**Decision:** The panel is a flex column with `overflow:hidden`; the title row and tab bar are `flex-shrink:0`; the tab content sits in a wrapper carrying `flex:1; min-height:0; overflow-y:auto`.
+**Why:** The whole panel scrolled, so on a long tab — Specifications with custom specs, or Change Log — the tab bar and the Close button scrolled out of reach, and returning meant scrolling back up through content just read. This is the same structural move as the component list (v222): take the scrolling region out of flow rather than pinning the controls with `position: sticky`, which fails silently when an ancestor has `overflow` or a `transform` — and this panel now *is* inside an overflow-hidden flex parent, so sticky would have been actively wrong here rather than merely fragile. **`min-height: 0` is the load-bearing line.** A flex child defaults to `min-height: auto` and refuses to shrink below its content, so without it the wrapper grows to fit, `overflow-y: auto` never has anything to clip, and the scroll silently lands on the page instead — the layout renders correctly and behaves exactly as it did before, which makes the omission hard to spot in review. Recorded because it will look like a redundant line to anyone tidying this CSS later.
+**Files changed:** assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+**Status note:** built and statically checked; not yet exercised.
+
+---
+**Date:** 2026-09-15
+**Feature:** PROP-041 — Category-specific spec fields
+**Decision:** Extend `custom_spec_fields` with `category_id` (NULL = all categories) and `options JSONB` plus a `choice` data type, rather than adding a per-category field mechanism. Migration 0030 seeds Head diameter, Thread / tube diameter, Head slot type and Head type against Fittings & Fasteners.
+**Why:** Different part families genuinely need different attributes, and the alternative — every field on every part — produces a Specifications tab that is mostly dashes, which is the same dilution the category chips were built to prevent in the list. The catalogue already existed and already stored values in `custom_specs`, so scoping is two columns rather than a second system; a part-type-specific table would have duplicated the promotion, rendering and editing paths that PROP-040 just established. `choice` matters more than it looks: Head slot type is exactly the field where free text degrades into PZ2, Pz2 and "pozi 2" as separate values, which makes the data useless for filtering later — the same argument that rejected free-text tags for part categories in PROP-038. **Values persist in `custom_specs` independent of the category**, so re-categorising a part hides the rows without discarding what was recorded and moving it back restores them; the category controls display, never storage, which keeps a mis-categorisation from being destructive. A useful consequence of the PROP-039 design falls out for free: an AI-extracted `head_diameter_mm` arrives as unmapped, is accepted into `custom_specs`, and then renders as the labelled Head diameter field without any further work.
+**Files changed:** supabase/migrations/0030_category_scoped_fields.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+**Status note:** built and statically checked; migration 0030 unapplied, `portal-api` not redeployed.
+

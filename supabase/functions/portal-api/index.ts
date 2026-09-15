@@ -4845,7 +4845,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
   if (action === "listCustomSpecFields") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { data, error } = await tdb("custom_spec_fields")
-      .select("id, field_key, label, unit, data_type, section, sort_order")
+      .select("id, field_key, label, unit, data_type, section, sort_order, category_id, options")
       .order("section").order("sort_order").order("label");
     if (error) return json({ error: error.message }, 400);
     return json({ fields: data || [] });
@@ -4876,14 +4876,26 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     const label = String(body.label ?? "").trim();
     if (!field_key) return json({ error: "field_key required" }, 400);
     if (!label) return json({ error: "label required" }, 400);
-    const data_type = ["text", "number", "boolean"].includes(body.data_type) ? body.data_type : "text";
+    const data_type = ["text", "number", "boolean", "choice"].includes(body.data_type) ? body.data_type : "text";
+    // A choice field without options is a text field with extra steps.
+    const options = Array.isArray(body.options) && body.options.length
+      ? body.options.map((o: any) => String(o).trim()).filter(Boolean) : null;
+    if (data_type === "choice" && !options) return json({ error: "A choice field needs at least one option." }, 400);
+    // null category_id = the field applies to every category.
+    let category_id: string | null = null;
+    if (body.category_id) {
+      const { data: cat } = await tdb("part_categories").select("id").eq("id", body.category_id).maybeSingle();
+      if (!cat) return json({ error: "Category not found" }, 404);
+      category_id = body.category_id;
+    }
     const section = ["physical", "material", "procurement", "quality", "regulatory"].includes(body.section) ? body.section : "physical";
     const { data: last } = await tdb("custom_spec_fields")
       .select("sort_order").eq("section", section).order("sort_order", { ascending: false }).limit(1);
     const sort_order = (((last && last[0]?.sort_order) ?? 0) + 10);
     const { data, error } = await tdb("custom_spec_fields").insert({
       field_key, label, unit: body.unit ? String(body.unit).trim() : null,
-      data_type, section, sort_order, created_by: session.uid || null,
+      data_type, section, sort_order, category_id, options,
+      created_by: session.uid || null,
     }).select("id").maybeSingle();
     if (error) {
       if (String(error.message).includes("custom_spec_fields_organization_id_field_key_key")) {
@@ -4906,7 +4918,12 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     }
     if (body.unit !== undefined) patch.unit = body.unit ? String(body.unit).trim() : null;
     if (body.section !== undefined && ["physical","material","procurement","quality","regulatory"].includes(body.section)) patch.section = body.section;
-    if (body.data_type !== undefined && ["text","number","boolean"].includes(body.data_type)) patch.data_type = body.data_type;
+    if (body.data_type !== undefined && ["text","number","boolean","choice"].includes(body.data_type)) patch.data_type = body.data_type;
+    if (body.options !== undefined) {
+      patch.options = Array.isArray(body.options) && body.options.length
+        ? body.options.map((o: any) => String(o).trim()).filter(Boolean) : null;
+    }
+    if (body.category_id !== undefined) patch.category_id = body.category_id || null;
     if (body.sort_order !== undefined) patch.sort_order = Number(body.sort_order);
     if (!Object.keys(patch).length) return json({ error: "nothing to update" }, 400);
     const { error } = await tdb("custom_spec_fields").update(patch).eq("id", field_id);

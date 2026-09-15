@@ -5969,7 +5969,14 @@
       // A promoted field behaves like any other spec row, but is editable in
       // place so adding one does not mean opening the whole section editor.
       function catalogueRows(section) {
-        return csFields.filter((f) => f.section === section).map((f) => {
+        // A field scoped to a category renders only for parts in it. Showing
+        // every category's fields on every part would turn Specifications into
+        // a page of dashes — the dilution the category chips exist to prevent.
+        // Values persist in custom_specs regardless, so re-categorising a part
+        // hides the row without discarding what was recorded.
+        const mine = csFields.filter((f) =>
+          f.section === section && (!f.category_id || f.category_id === (nodeData?.category_id || null)));
+        return mine.map((f) => {
           const box = el("span", { style: "font-size:0.82rem" });
           const draw = () => {
             const v = csValue(f.field_key);
@@ -5984,6 +5991,9 @@
             const inp = f.data_type === "boolean"
               ? el("select", { class: "up-text", style: "font-size:0.82rem;padding:1px 4px" },
                   [el("option", { value: "" }, "—"), el("option", { value: "true" }, "Yes"), el("option", { value: "false" }, "No")])
+              : f.data_type === "choice"
+              ? el("select", { class: "up-text", style: "font-size:0.82rem;padding:1px 4px;min-width:8rem" },
+                  [el("option", { value: "" }, "—"), ...(f.options || []).map((opt) => el("option", { value: opt }, opt))])
               : el("input", { class: "up-text", type: f.data_type === "number" ? "number" : "text", step: "any",
                   style: "font-size:0.82rem;padding:1px 4px;width:11rem" });
             const cur = csValue(f.field_key);

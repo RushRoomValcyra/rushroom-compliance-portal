@@ -4844,7 +4844,7 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
   if (action === "extractComponentSpecs") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     if (!ANTHROPIC_API_KEY) return json({ error: "AI is not configured — set ANTHROPIC_API_KEY in the function secrets." }, 400);
-    const { component_id, image_id, storage_path, file_name } = body;
+    const { component_id, image_id, storage_path, file_name, ephemeral } = body;
     if (!component_id) return json({ error: "component_id required" }, 400);
 
     const { data: comp } = await tdb("bom_components")
@@ -4931,6 +4931,14 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
       additionalProperties: false,
     };
 
+    // Read it into memory first, then delete an ephemeral source immediately —
+    // the bytes are already in the request payload, so nothing is lost and the
+    // file never reaches the component's image gallery or version history.
+    const sourceBlock = await fileBlock(DOC_BUCKET, path, fname);
+    if (ephemeral) {
+      try { await db.storage.from(DOC_BUCKET).remove([path]); } catch { /* best effort */ }
+    }
+
     let apiJson: any;
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -4944,7 +4952,7 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
           system,
           messages: [{ role: "user", content: [
             { type: "text", text: "Extract the product data fields stated in this document." },
-            await fileBlock(DOC_BUCKET, path, fname),
+            sourceBlock,
           ] }],
         }),
       });

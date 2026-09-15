@@ -4697,7 +4697,6 @@
     // A pasted or dropped file is attached to the component first, so the
     // evidence for every extracted value stays on the record.
     async function useNewFile(file) {
-      const ALLOWED_IMG = ["image/png", "image/jpeg", "image/webp", "image/gif"];
       body.replaceChildren(el("div", { class: "loading", style: "padding:1rem" }, "Uploading…"));
       errEl.textContent = "";
       try {
@@ -4712,13 +4711,11 @@
           xhr.onerror = () => rej(new Error("Network error"));
           xhr.send(file);
         });
-        if (ALLOWED_IMG.includes(file.type)) {
-          await API.post(token, "addComponentImage", {
-            component_id: componentId, storage_path: path,
-            file_name: file.name || "paste.png", content_type: file.type,
-          });
-        }
-        await run({ storage_path: path, file_name: file.name || "paste.png" });
+        // Deliberately NOT attached as a component image: a datasheet snap is
+        // evidence for one extraction, and keeping it would clutter the gallery
+        // and the component's version history. The server deletes it after
+        // reading, so it never outlives the request.
+        await run({ storage_path: path, file_name: file.name || "paste.png", ephemeral: true });
       } catch (ex) {
         errEl.textContent = ex.message;
         renderSourcePicker();
@@ -5793,8 +5790,45 @@
             metaRow("Lead time",             meta.lead_time_days != null ? meta.lead_time_days + " days" : "—"),
             metaRow("MOQ",                   meta.moq != null ? String(meta.moq) : "—"),
           ),
+          ...customSpecsBlock(),
         );
       }
+
+      // PROP-039: values a document stated that no column can hold. They live in
+      // component_metadata.custom_specs and are shown here rather than written to
+      // a JSONB column nothing renders — an invisible store is a silent drop.
+      // Recurring keys across parts are the signal for which columns are missing.
+      function customSpecsBlock() {
+        const cs = meta.custom_specs;
+        const keys = cs && typeof cs === "object" ? Object.keys(cs) : [];
+        if (!keys.length) return [];
+        return [
+          el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin:0.9rem 0 0.5rem" }, [
+            el("strong", { style: "font-size:0.88rem" }, "Custom specs"),
+            el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1)" }, "no dedicated field yet"),
+          ]),
+          metaGrid(...keys.map((k) => {
+            const label = k.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase());
+            const row = metaRow(label, String(cs[k]));
+            if (role === "rushroom") {
+              row.append(el("button", {
+                class: "btn btn-sm", type: "button", title: "Remove this custom spec",
+                style: "padding:0 6px;font-size:0.72rem;margin-left:0.4rem;color:#e05454;border-color:#e0545440",
+                onclick: async () => {
+                  const next = { ...cs }; delete next[k];
+                  try {
+                    await API.post(token, "upsertComponentMetadata", { component_id: componentId, custom_specs: next });
+                    meta.custom_specs = next;
+                    renderSpecsRead();
+                  } catch (ex) { alert(ex.message); }
+                },
+              }, "×"));
+            }
+            return row;
+          })),
+        ];
+      }
+
       function renderSpecsEdit() {
         const wt  = metaInp(meta.weight_g,               "g",                         "number");
         const lmm = metaInp(meta.length_mm,              "mm",                        "number");

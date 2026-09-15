@@ -4013,50 +4013,76 @@
     // Where a destination sits in the assembly on screen. A component can hold
     // several positions, and many legal destinations are not in this tree at all.
     function wbsOf(id) {
-      if (id === treeRootId) return { text: "root", muted: false };
+      if (id === treeRootId) return "root";
       const p = positions[id];
-      if (p && p.length) return { text: p.join(", "), muted: false };
-      return { text: "not in this assembly", muted: true };
+      return p && p.length ? p.join(", ") : null;   // null = lives in another assembly
     }
-    const overlay = el("div", { style: "position:fixed;inset:0;background:#0009;z-index:1001;display:flex;align-items:center;justify-content:center" });
-    const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
-    const listEl = el("div", { style: "max-height:260px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
-    const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search destination by part # or name…", style: "width:100%;margin-bottom:0.5rem" });
-    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.2rem" }, "");
-    const selectedLabel = el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;min-height:1.2rem" }, "");
+
+    const overlay = el("div", { style: "position:fixed;inset:0;background:#0009;z-index:1001;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(860px,96vw);max-height:90vh;display:flex;flex-direction:column;gap:0.6rem" });
+
+    const listEl = el("div", { style: "flex:1;min-height:180px;max-height:46vh;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px" });
+    const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search destination by part # or name…", style: "width:100%;box-sizing:border-box" });
+    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.1rem" }, "");
+    const selectedLabel = el("div", { style: "font-size:0.84rem;min-height:1.3rem;color:var(--muted,#8b93a1)" }, "Pick a destination below.");
     let targets = [], selectedId = null;
 
-    const submitBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true }, "Move");
+    const submitBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true }, "Move here");
 
+    // One grid template shared by the header and every row, so columns line up.
+    const GRID = "display:grid;grid-template-columns:7rem 11rem minmax(0,1fr) 7rem;gap:0.75rem;align-items:center";
+
+    function rowFor(c) {
+      const wbs = wbsOf(c.id);
+      const isSel = selectedId === c.id;
+      return el("div", {
+        style: `${GRID};padding:0.45rem 0.7rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);border-left:3px solid ${isSel ? "var(--accent,#2fa564)" : "transparent"};${isSel ? "background:var(--accent,#2fa564)18;" : ""}`,
+        onclick: () => {
+          selectedId = c.id;
+          selectedLabel.replaceChildren(
+            el("span", {}, "Move "),
+            el("strong", {}, node.name),
+            el("span", {}, " into "),
+            el("strong", {}, c.name),
+            el("span", { style: "color:var(--muted,#8b93a1)" }, wbs ? `  ·  position ${wbs} in this assembly` : "  ·  in another assembly"),
+          );
+          submitBtn.disabled = false;
+          buildList(searchInput.value);
+        },
+      }, [
+        el("span", { style: `font-family:monospace;font-size:0.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${wbs ? "color:var(--accent,#2fa564)" : "color:var(--muted,#8b93a1);opacity:0.5"}` }, wbs || "—"),
+        el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, c.part_number),
+        el("span", { style: "font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: c.name }, c.name),
+        el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);text-align:right;white-space:nowrap" }, c.type || ""),
+      ]);
+    }
+
+    function sectionHeader(text) {
+      return el("div", { style: "padding:0.35rem 0.7rem;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1);background:var(--bg-2,rgba(0,0,0,0.04));border-bottom:1px solid var(--border,#2d3748);position:sticky;top:0;z-index:1" }, text);
+    }
+
+    // Grouped rather than flat: "not in this assembly" was a long string sitting
+    // in the position column, which shoved every other column out of alignment.
+    // As a section heading it says the same thing once, for the whole group.
     function buildList(filter) {
       const f = (filter || "").toLowerCase();
       const shown = f ? targets.filter((c) => (c.part_number + " " + c.name).toLowerCase().includes(f)) : targets;
       if (!shown.length) {
-        listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:var(--muted,#8b93a1);font-size:0.85rem" },
-          targets.length ? "No destinations match." : "No legal destination for this component."));
+        listEl.replaceChildren(el("div", { style: "padding:0.9rem 0.7rem;color:var(--muted,#8b93a1);font-size:0.86rem" },
+          targets.length ? "No destinations match that search." : "No legal destination for this component."));
         return;
       }
-      listEl.replaceChildren(...shown.map((c) => el("div", {
-        style: `padding:0.35rem 0.6rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.5rem;align-items:center;${selectedId === c.id ? "background:var(--accent,#2fa564)22;" : ""}`,
-        onclick: () => {
-          selectedId = c.id;
-          const sw = wbsOf(c.id);
-          selectedLabel.textContent = `Move into: ${c.part_number} — ${c.name}` + (sw.muted ? "  (not in this assembly)" : `  (position ${sw.text})`);
-          submitBtn.disabled = false;
-          buildList(searchInput.value);
-        },
-      }, (() => {
-        const w = wbsOf(c.id);
-        return [
-          el("span", {
-            style: `font-family:monospace;font-size:0.72rem;min-width:5.5rem;flex-shrink:0;${w.muted ? "color:var(--muted,#8b93a1);opacity:0.6" : "color:var(--accent,#2fa564);font-weight:700"}`,
-            title: w.muted ? "This component is not part of the assembly you are viewing" : "Position in this assembly",
-          }, w.text),
-          el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
-          el("span", { style: "flex:1" }, c.name),
-          el("span", { style: "font-size:0.7rem;color:var(--muted,#8b93a1)" }, c.type || ""),
-        ];
-      })())));
+      const here = shown.filter((c) => wbsOf(c.id));
+      const elsewhere = shown.filter((c) => !wbsOf(c.id));
+      // Shallowest position first, so the assembly reads top-down.
+      here.sort((a, b) => {
+        const pa = wbsOf(a.id) === "root" ? "" : wbsOf(a.id), pb = wbsOf(b.id) === "root" ? "" : wbsOf(b.id);
+        return pa.split(".").length - pb.split(".").length || pa.localeCompare(pb, undefined, { numeric: true });
+      });
+      const out = [];
+      if (here.length) { out.push(sectionHeader(`In this assembly — ${tree && tree.rootName ? tree.rootName : "current tree"}`)); here.forEach((c) => out.push(rowFor(c))); }
+      if (elsewhere.length) { out.push(sectionHeader("In other assemblies")); elsewhere.forEach((c) => out.push(rowFor(c))); }
+      listEl.replaceChildren(...out);
     }
     searchInput.oninput = () => buildList(searchInput.value);
 
@@ -4069,29 +4095,36 @@
         onRefresh();
       } catch (ex) {
         errEl.textContent = ex.message;
-        submitBtn.disabled = false; submitBtn.textContent = "Move";
+        submitBtn.disabled = false; submitBtn.textContent = "Move here";
       }
     };
 
+    const fact = (label, value) => el("div", { style: "display:flex;gap:0.4rem;font-size:0.84rem;min-width:0" }, [
+      el("span", { style: "color:var(--muted,#8b93a1);flex-shrink:0" }, label),
+      el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: value }, value),
+    ]);
+
     dialog.append(
-      el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
-        el("h3", { style: "margin:0;font-size:1rem" }, "Move to another assembly"),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 8px", onclick: () => overlay.remove() }, "✕"),
+      el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:1rem" }, [
+        el("h3", { style: "margin:0;font-size:1.05rem" }, "Move to another assembly"),
+        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: () => overlay.remove() }, "✕"),
       ]),
-      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.2rem" },
-        `Moving: ${node.part_number} — ${node.name}${tree && tree.fromPos ? `  (position ${tree.fromPos})` : ""}`),
-      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.6rem" },
-        `Out of: ${currentParent && currentParent.name ? currentParent.name : "this assembly"}${tree && tree.rootName ? `  ·  assembly: ${tree.rootName}` : ""}`),
-      el("div", { style: "background:#2fa56412;border:1px solid #2fa56440;border-radius:6px;padding:0.5rem 0.7rem;margin-bottom:0.75rem;font-size:0.8rem" },
+      el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0.3rem 1.25rem;padding:0.6rem 0.75rem;border:1px solid var(--border,#2d3748);border-radius:6px" }, [
+        fact("Moving:", `${node.name} (${node.part_number})`),
+        fact("Position:", tree && tree.fromPos ? tree.fromPos : "—"),
+        fact("Out of:", currentParent && currentParent.name ? currentParent.name : "this assembly"),
+        fact("Assembly:", tree && tree.rootName ? tree.rootName : "—"),
+      ]),
+      el("div", { style: "background:#2fa56412;border:1px solid #2fa56440;border-radius:6px;padding:0.45rem 0.7rem;font-size:0.82rem" },
         "Only this assembly changes. If this component is used elsewhere, those assemblies keep it exactly as they have it."),
       searchInput,
-      el("div", { style: "display:flex;gap:0.5rem;padding:0.2rem 0.6rem 0.3rem;font-size:0.68rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em" }, [
-        el("span", { style: "min-width:5.5rem;flex-shrink:0" }, "Pos."),
-        el("span", { style: "flex-shrink:0" }, "Part no."),
-        el("span", { style: "flex:1" }, "Destination"),
+      el("div", { style: `${GRID};padding:0.25rem 0.7rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1)` }, [
+        el("span", {}, "Pos."), el("span", {}, "Part no."), el("span", {}, "Destination"), el("span", { style: "text-align:right" }, "Type"),
       ]),
-      listEl, selectedLabel, errEl,
-      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
+      listEl,
+      selectedLabel,
+      errEl,
+      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end" }, [
         el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
         submitBtn,
       ]),
@@ -4099,7 +4132,7 @@
     overlay.append(dialog);
     document.body.append(overlay);
 
-    listEl.replaceChildren(el("div", { class: "loading", style: "padding:0.5rem" }, "Loading destinations…"));
+    listEl.replaceChildren(el("div", { class: "loading", style: "padding:0.9rem 0.7rem" }, "Loading destinations…"));
     (async () => {
       try {
         const res = await API.post(token, "listMoveTargets", { edge_id: edgeId });
@@ -4107,7 +4140,7 @@
         buildList("");
         searchInput.focus();
       } catch (ex) {
-        listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:#e05454;font-size:0.85rem" }, ex.message));
+        listEl.replaceChildren(el("div", { style: "padding:0.9rem 0.7rem;color:#e05454;font-size:0.86rem" }, ex.message));
       }
     })();
   }

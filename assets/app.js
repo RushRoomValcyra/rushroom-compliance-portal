@@ -3465,7 +3465,41 @@
 
   async function bomTreeView(token, role) {
     const wrap = el("div", { class: "pis-tree-wrap" });
-    const detailPanel = el("div", { class: "pis-detail-panel", style: "display:none;margin-top:1rem;padding:1rem;background:var(--bg-2,#f5f5f5);border-radius:6px" });
+    // The panel used to sit under the component list, so opening anything meant
+    // scrolling past every row to reach it — and worse as the list grows. It is
+    // now a centred overlay: it opens where you are looking, regardless of
+    // scroll position or list length.
+    const detailPanel = el("div", { class: "pis-detail-panel", style: "background:var(--bg,#fff);border-radius:10px;padding:1.25rem 1.5rem;width:min(1180px,96vw);max-height:92vh;overflow-y:auto;box-shadow:0 12px 48px #0004" });
+    // NOTE: deliberately no data-modal-overlay here. That attribute means "a
+    // modal is stacked above the detail panel, so the panel must not consume the
+    // paste" (v213). This IS the detail panel, and tagging it would break
+    // pasting images into its own Images tab.
+    document.getElementById("pis-detail-overlay")?.remove();
+    const detailOverlay = el("div", {
+      id: "pis-detail-overlay",
+      style: "display:none;position:fixed;inset:0;background:#0007;z-index:900;align-items:flex-start;justify-content:center;padding:2.5vh 1rem",
+      onclick: (ev) => { if (ev.target === detailOverlay) hideDetail(); },
+    }, [detailPanel]);
+    document.body.append(detailOverlay);
+
+    function showDetail() { detailOverlay.style.display = "flex"; detailPanel.scrollTop = 0; }
+    function hideDetail() {
+      detailOverlay.style.display = "none";
+      detailPanel.replaceChildren();
+      if (activeImgPasteOff) { activeImgPasteOff(); activeImgPasteOff = null; }
+      openDetailComponentId = null;
+    }
+    // Escape closes it, but only when no modal is stacked above — otherwise the
+    // AI fill or Move dialog would close the panel underneath it.
+    const onDetailKey = (ev) => {
+      if (ev.key !== "Escape") return;
+      if (detailOverlay.style.display === "none") return;
+      if (document.querySelector("[data-modal-overlay]")) return;
+      hideDetail();
+    };
+    document.addEventListener("keydown", onDetailKey);
+    detailPanel.__show = showDetail;
+    detailPanel.__hide = hideDetail;
 
     const TAB_DEFS = [
       { id: "components", label: "Parts" },
@@ -3519,7 +3553,6 @@
       tabBarEl,
       catBarEl,
       treeArea,
-      detailPanel,
     );
 
     function groupFiltered() {
@@ -3804,8 +3837,7 @@
         parentCountMap = Object.fromEntries((pcRes.parentCounts || []).map((p) => [p.component_id, p.parent_count]));
         if (!components.length) {
           tabBarEl.replaceChildren();
-          detailPanel.style.display = "none";
-          detailPanel.replaceChildren();
+          hideDetail();
           treeArea.replaceChildren(el("div", { class: "notice", style: "margin-top:1rem" }, [
             "No components yet. Use ", el("strong", {}, "+ New BOM Node"), " to create the first one.",
           ]));
@@ -4959,8 +4991,13 @@
 
   // --- Component detail panel (slide-in below the tree) ----------------------
   async function openComponentDetail(componentId, token, panel, nodeData, role) {
-    panel.style.display = "";
-    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (panel.__show) {
+      panel.__show();
+    } else {
+      // Callers that still mount the panel inline rather than in the overlay.
+      panel.style.display = "";
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
     panel.replaceChildren(el("div", { class: "loading" }, "Loading…"));
     if (panel.__imgPasteOff) { panel.__imgPasteOff(); delete panel.__imgPasteOff; }
     if (activeImgPasteOff) { activeImgPasteOff(); activeImgPasteOff = null; }
@@ -6404,7 +6441,7 @@
               title: "Read a datasheet, drawing or screenshot and fill these fields",
               onclick: () => openAiFillModal(componentId, token, panel, nodeData, role, imgData?.images || []),
             }, "✨ AI fill"),
-            el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.style.display = "none"; } }, "Close"),
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.__hide ? panel.__hide() : (panel.style.display = "none"); } }, "Close"),
           ]),
         ]),
         tabBar,

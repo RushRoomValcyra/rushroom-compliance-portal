@@ -6126,9 +6126,52 @@
         const spn = metaInp(meta.supplier_part_number,     "Supplier's order number");
         const ltd = metaInp(meta.lead_time_days,           "calendar days",             "number");
         const moqI= metaInp(meta.moq,                     "units",                     "number");
+        // Catalogue fields (PROP-040/041) and loose custom specs were editable
+        // only by clicking their value in the read view, so pressing Edit showed
+        // a form that silently omitted them. Everything the read view shows is
+        // now editable here too.
+        const csInputs = {};
+        function csInputFor(f) {
+          const cur = csValue(f.field_key);
+          const isSel = f.data_type === "boolean" || f.data_type === "choice";
+          const inp = isSel
+            ? el("select", { class: "up-text", style: "width:100%;font-size:0.82rem;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:4px" },
+                f.data_type === "boolean"
+                  ? [el("option", { value: "" }, "—"), el("option", { value: "true" }, "Yes"), el("option", { value: "false" }, "No")]
+                  : [el("option", { value: "" }, "—"), ...(f.options || []).map((o2) => el("option", { value: o2 }, o2))])
+            : metaInp(cur, f.unit || "", f.data_type === "number" ? "number" : "text");
+          if (isSel) inp.value = cur === undefined || cur === null ? "" : String(cur);
+          csInputs[f.field_key] = { el: inp, type: f.data_type };
+          return metaFldRow(f.label + (f.unit && f.data_type === "number" ? ` (${f.unit})` : ""), inp);
+        }
+        const csRowsFor = (section) => csFields
+          .filter((f) => f.section === section && (!f.category_id || f.category_id === (nodeData?.category_id || null)))
+          .map(csInputFor);
+
+        // Loose keys with no catalogue entry, so they survive a save.
+        const looseKeys = Object.keys(meta.custom_specs || {}).filter((k) => !promotedKeys.has(k));
+        const looseRows = looseKeys.map((k) => {
+          const inp = metaInp(meta.custom_specs[k], "", "text");
+          csInputs[k] = { el: inp, type: "text" };
+          return metaFldRow(k.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase()), inp);
+        });
+
+        function collectCustomSpecs() {
+          const next = { ...(meta.custom_specs || {}) };
+          Object.entries(csInputs).forEach(([key, rec]) => {
+            const raw = String(rec.el.value ?? "").trim();
+            if (raw === "") { delete next[key]; return; }
+            if (rec.type === "number") { const n = Number(raw.replace(",", ".")); next[key] = Number.isFinite(n) ? n : raw; }
+            else if (rec.type === "boolean") next[key] = raw === "true";
+            else next[key] = raw;
+          });
+          return next;
+        }
+
         const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
         const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
         saveBtn.onclick = () => saveMeta({
+          custom_specs: collectCustomSpecs(),
           weight_g:                   wt.value  !== "" ? parseFloat(wt.value)  : null,
           length_mm:                  lmm.value !== "" ? parseFloat(lmm.value) : null,
           width_mm:                   wmm.value !== "" ? parseFloat(wmm.value) : null,
@@ -6149,17 +6192,21 @@
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Weight (g)", wt), metaFldRow("Length (mm)", lmm),
             metaFldRow("Width (mm)", wmm), metaFldRow("Height (mm)", hmm),
+            ...csRowsFor("physical"),
           ]),
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Material & Finish"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Base material", bm), metaFldRow("Surface treatment", st),
             metaFldRow("Color / finish", cs), metaFldRow("Flame retardant class", fr),
+            ...csRowsFor("material"),
           ]),
           el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Procurement"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Manufacturer", mfr), metaFldRow("OEM number", mfp),
             metaFldRow("Supplier", ps), metaFldRow("Supplier part no.", spn),
             metaFldRow("Lead time (days)", ltd), metaFldRow("MOQ (units)", moqI),
+            ...csRowsFor("procurement"),
+            ...(looseRows.length ? [el("div", { style: "grid-column:1/3;font-size:0.8rem;font-weight:700;color:var(--muted,#8b93a1);margin-top:0.4rem" }, "Custom specs — clear a value to remove it"), ...looseRows] : []),
           ]),
           errEl,
           el("div", { style: "display:flex;gap:0.5rem" }, [

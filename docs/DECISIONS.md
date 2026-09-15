@@ -704,3 +704,11 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
 **Status note:** built and statically checked; not yet exercised.
 
+---
+**Date:** 2026-09-15
+**Feature:** Component list scrolls in its own region
+**Decision:** `treeArea` is an independent scroll region whose `max-height` is measured after every render and on resize. The toolbar, type tabs and category chips sit outside it and therefore stay in place without `position: sticky`.
+**Why:** The page scrolled as one document, so the filters scrolled away with the list — at 21 parts a nuisance, at the thousands PROP-038 was built for it makes the filters unreachable exactly when they are needed. `position: sticky` on the controls was the obvious alternative and was rejected: it fails silently when any ancestor has `overflow` or a `transform`, and this file already carries a comment about that breaking the thumbnail tooltip, so it would be a fragile choice in this specific DOM. Taking the list out of page flow instead makes the controls stay put as a structural consequence rather than a CSS effect that has to keep holding. **The height is measured, not calculated in CSS,** because the category chips row exists only on the Parts tab: a hard-coded `calc(100vh - Npx)` would be correct there and wrong on Assemblies and Dynamic BOMs, and would drift again the next time a control is added above the list. The resize listener replaces any left by a previous mount — document- and window-level listeners have leaked twice in this file already this session, so registering defensively is now the house pattern rather than an afterthought.
+**Files changed:** assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+**Status note:** built and statically checked; not yet exercised.
+

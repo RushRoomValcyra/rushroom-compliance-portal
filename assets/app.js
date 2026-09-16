@@ -5871,6 +5871,17 @@
       if (role === "rushroom") {
         const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.82rem" });
         const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.82rem;font-family:monospace" });
+        // Description was collected by the Create BOM Node modal, written to
+        // bom_components.description, and then shown nowhere — it surfaced only
+        // inside a frozen version snapshot. 5 of 61 components already carried
+        // text nobody could read. It belongs here, beside the other identity
+        // fields, and is saved with them.
+        const descInp = el("textarea", {
+          class: "up-text", rows: "2", placeholder: "What is this part for?",
+          style: "width:100%;font-size:0.82rem;resize:vertical;min-height:2.4rem",
+        });
+        descInp.value = nodeData?.description || "";
+
         // One OEM number (migration 0029): component_metadata.manufacturer_part_number.
         // Read from metaR, not `meta`: that const is declared ~170 lines below and
         // touching it here throws "Cannot access 'meta' before initialization".
@@ -5934,6 +5945,7 @@
                 component_id: componentId,
                 name: newName,
                 part_number: pnInp.value.trim() || undefined,
+                description: descInp.value.trim() || null,
                 type: typeSel.value,
                 make_or_buy: mobSel.value,
               }),
@@ -5957,6 +5969,7 @@
                 ...nodeData,
                 category_id: catSel.value || null,
                 name: newName,
+                description: descInp.value.trim() || null,
                 part_number: pnInp.value.trim() || nodeData?.part_number,
                 type: typeSel.value,
                 make_or_buy: mobSel.value,
@@ -5984,6 +5997,7 @@
             statusColWrapper,
             categoryColWrapper,
             el("div", {}, [lbl("Sourcing"), mobSel]),
+            el("div", { style: "grid-column:1/3" }, [lbl("Description"), descInp]),
           ]),
           el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
         ]);

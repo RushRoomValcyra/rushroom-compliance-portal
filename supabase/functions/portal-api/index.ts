@@ -2323,7 +2323,7 @@ Deno.serve(async (req) => {
     const parentIdSet = new Set((parentRows || []).map((r: any) => r.parent_id));
     const search = body.search ? String(body.search).trim() : null;
     let q = tdb("bom_components")
-      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id")
+      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id, description")
       .order("name");
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
     const { data: comps, error: ce } = await q;
@@ -2770,7 +2770,7 @@ Deno.serve(async (req) => {
       const ids = batch.map((n) => n.id).filter((id) => !visited.has(id));
       if (!ids.length) break;
       ids.forEach((id) => visited.add(id));
-      const { data: comps } = await tdb("bom_components").select("id, part_number, name, type, unit_of_measure, lifecycle_status, notes").in("id", ids);
+      const { data: comps } = await tdb("bom_components").select("id, part_number, name, type, unit_of_measure, lifecycle_status, notes, description").in("id", ids);
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const currentDepth = batch[0].depth;
       if (currentDepth >= depthLimit) continue;

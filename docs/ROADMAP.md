@@ -12,6 +12,7 @@ state where something looks done and silently is not.
 
 ## Built — Awaiting Deploy or Verification
 _Code is committed but not yet live, or live but not yet exercised. Each line states what is still required._
+- **PROP-042 Duplicate a component** — needs `supabase functions deploy portal-api --no-verify-jwt` then `git push origin main`. No migration. Verify: ⧉ on EURO Screw 13mm creates "EURO Screw 13mm - copy" with a new part number, the spec fields carried over, status inactive, and no documents or images attached.
 - **PROP-041 Category-specific spec fields** — needs `supabase db push` (migration 0030) and the function deploy. Verify: open a Fittings & Fasteners part and check Physical shows Head diameter, Thread / tube diameter, Head slot type and Head type; open a Furniture panels part and check they are absent.
 - **Detail panel + list UX batch (v219–v223)** — duplicate variant chips removed; Relations tab splits the relationship sections off Overview; the panel opens as a centred overlay instead of below the list; the component list scrolls in its own region with the filters pinned; the panel's header and tab bar pinned with only tab content scrolling. Needs `git push origin main` and a hard reload — frontend only, no migration or function deploy. Verify: open a component from the bottom of the Parts list (panel appears centred, page does not move), scroll Specifications (tab bar and Close stay visible), paste into Images (still uploads).
 

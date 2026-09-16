@@ -3793,6 +3793,27 @@
           title: "Add child",
           onclick: (ev) => { ev.stopPropagation(); openAddChildModal(comp, allComponents, token, refreshTree, comp.id); },
         }, "+child") : null,
+        role === "rushroom" ? el("button", {
+          class: "btn btn-sm", type: "button",
+          style: "padding:0 7px;font-size:0.8rem;line-height:1;flex-shrink:0",
+          title: "Duplicate — copies the spec fields, not documents or images",
+          onclick: async (ev) => {
+            ev.stopPropagation();
+            ev.target.disabled = true; ev.target.textContent = "…";
+            try {
+              const r = await API.post(token, "duplicateComponent", { component_id: comp.id });
+              await refreshTree();
+              // Open the copy straight away: the point of duplicating is to
+              // change something, and without this you have to find it first.
+              openComponentDetail(r.id, token, detailPanel, {
+                ...comp, id: r.id, name: r.name, part_number: r.part_number, lifecycle_status: "inactive",
+              }, role);
+            } catch (ex) {
+              ev.target.disabled = false; ev.target.textContent = "⧉";
+              alert(`Copy failed: ${ex.message}`);
+            }
+          },
+        }, "⧉") : null,
         el("button", {
           class: "btn btn-sm", type: "button",
           style: "color:#e05454;border-color:#e0545440;padding:0 7px;font-size:0.9rem;font-weight:700;line-height:1;flex-shrink:0",

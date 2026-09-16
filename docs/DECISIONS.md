@@ -728,3 +728,11 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** supabase/migrations/0030_category_scoped_fields.sql, supabase/functions/portal-api/index.ts, assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
 **Status note:** built and statically checked; migration 0030 unapplied, `portal-api` not redeployed.
 
+---
+**Date:** 2026-09-16
+**Feature:** PROP-042 — Duplicate a component
+**Decision:** `duplicateComponent` copies the component row and its entire `component_metadata` row, and nothing else. No BOM children, no documents, no images. The part number is regenerated, the name gets " - copy", and `lifecycle_status` is forced to `inactive`.
+**Why:** The real case is copying EURO Screw 13mm to make the 27.5mm — the value is in the spec record, which is the expensive part to re-enter, and everything else would have to be un-linked afterwards. **Documents and images are deliberately excluded**, and this is the load-bearing choice rather than a scope cut: a test report or supplier datasheet is evidence issued about one specific part, so duplicating those links would put a compliance document on a part it was never issued for — the kind of error that looks like diligence until someone relies on it. **The part number is always regenerated rather than derived** (no "-COPY" suffix) because it is unique per organization and is the string people scan and quote; a copy that resembles its source is a copy that will eventually be ordered by mistake. **Always inactive** because a copy has been reviewed by nobody, whatever the source's status — inheriting "active" would launder approval from one part to another. BOM children were considered and left out: for a plain part it changes nothing, and for an assembly it raises whether children are shared or themselves copied, which is a different feature (PROP-033 already materialises structure). The copy opens immediately after creation, since duplicating exists in order to change something.
+**Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+**Status note:** built and statically checked; `portal-api` not redeployed.
+

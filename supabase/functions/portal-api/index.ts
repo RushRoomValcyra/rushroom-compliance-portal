@@ -3612,6 +3612,71 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
     return json({ id: comp.id, part_number, version_id: ver.id });
   }
 
+  // --- BOM: duplicate a component (PROP-042) ---------------------------------
+  // Specs only: the new part carries every component_metadata field but none of
+  // the source's children, documents or images. A test report or datasheet is
+  // evidence about a specific part — copying those links would make a
+  // compliance document appear on a part it was never issued for.
+  if (action === "duplicateComponent") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { component_id } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
+
+    const { data: src } = await tdb("bom_components")
+      .select("part_number, oem_number, name, description, type, unit_of_measure, notes, make_or_buy, category_id")
+      .eq("id", component_id).maybeSingle();
+    if (!src) return json({ error: "Component not found" }, 404);
+
+    // Always a fresh number: part_number is unique per org and is the thing
+    // people scan for, so a copy must never be mistakable for the original.
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const rand = new Uint8Array(8);
+    crypto.getRandomValues(rand);
+    const d = new Date();
+    const part_number = `RR-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}-${Array.from(rand).map((b) => chars[b % chars.length]).join("")}`;
+
+    const name = `${src.name} - copy`.slice(0, 255);
+    const { data: comp, error: ce } = await tdb("bom_components").insert({
+      part_number, name, type: src.type,
+      oem_number: src.oem_number, description: src.description,
+      unit_of_measure: src.unit_of_measure, notes: src.notes,
+      make_or_buy: src.make_or_buy, category_id: src.category_id,
+      // A copy has not been reviewed or sourced, whatever the original's state.
+      lifecycle_status: "inactive",
+      created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (ce || !comp) return json({ error: ce?.message ?? "Copy failed" }, 400);
+
+    const { data: ver, error: ve } = await tdb("bom_component_versions").insert({
+      component_id: comp.id, revision: "A",
+      spec_summary: `Initial revision — copied from ${src.part_number}`,
+      is_current: true, created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (ve || !ver) return json({ error: ve?.message ?? "Version insert returned no data" }, 400);
+
+    // The whole point of the feature: carry the spec record across.
+    const { data: meta } = await tdb("component_metadata").select("*").eq("component_id", component_id).maybeSingle();
+    if (meta) {
+      const copy: Record<string, unknown> = { ...meta };
+      delete copy.id; delete copy.component_id; delete copy.organization_id;
+      delete copy.created_at; delete copy.updated_at;
+      try { await tdb("component_metadata").insert({ ...copy, component_id: comp.id }); }
+      catch { /* non-fatal: the component exists, specs can be re-entered */ }
+    }
+
+    try {
+      await tdb("bom_component_history").insert({
+        component_id: comp.id, changed_at: new Date().toISOString(),
+        changed_by: session.uid || null, change_type: "created",
+        part_number, oem_number: src.oem_number, name,
+        description: src.description, type: src.type, lifecycle_status: "inactive",
+        notes: `Copied from ${src.name} (${src.part_number})`,
+      });
+    } catch { /* non-fatal */ }
+
+    return json({ id: comp.id, part_number, name });
+  }
+
   // --- BOM: update component metadata (never part_number or type) -----------
   if (action === "updateComponent") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);

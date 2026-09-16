@@ -44,6 +44,13 @@ const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "content-type",
+  // Without this the browser re-runs a preflight before EVERY request, and each
+  // preflight is a full edge-function invocation that pays module boot before
+  // reaching the OPTIONS short-circuit. Measured 2026-09-16: 302 OPTIONS calls
+  // at p50 1200ms / p95 8820ms / max 19.7s, against 669 POSTs — literally half
+  // the traffic, and the slower half. Browsers clamp this (Chrome 2h, Safari
+  // less), but any caching at all removes the per-call preflight.
+  "Access-Control-Max-Age": "86400",
 };
 
 function json(body: unknown, status = 200): Response {

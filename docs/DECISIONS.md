@@ -736,3 +736,11 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
 **Status note:** built and statically checked; `portal-api` not redeployed.
 
+---
+**Date:** 2026-09-16
+**Feature:** Performance — CORS preflight caching
+**Decision:** `portal-api` sends `Access-Control-Max-Age: 86400`.
+**Why:** Loads and saves had degraded to 10–14 seconds. The cause was that every request was preceded by an OPTIONS preflight, and on Supabase Edge Functions a preflight is a full invocation: the module is loaded and its imports resolved before execution reaches the `OPTIONS` short-circuit on the handler's first line. Measured over three hours: **302 OPTIONS at p50 1200 ms, p95 8820 ms, max 19.7 s**, against 669 POSTs at p50 535 ms. Half the traffic was preflights, and they were the slower half — a four-call list load was really eight invocations, four of them paying boot. `Access-Control-Max-Age` lets the browser reuse one preflight rather than repeating it per call. **What this episode is really about is method.** Three fixes preceded it, each addressing something genuinely wrong — per-image signed-URL round trips, a redundant action, full-size thumbnails decoded on first paint — and none of them touched the dominant cost, because none had been measured against the actual traffic. The answer only appeared after grouping the logs by HTTP method, which nothing in the code review would have suggested: the expensive requests were the ones carrying no application logic at all. Cold start was a plausible theory and was refuted by the data (requests after a >60 s gap were the *fastest* bucket), which is worth recording precisely because it sounded right.
+**Files changed:** supabase/functions/portal-api/index.ts
+**Status note:** deployed and re-measured? Not yet — needs a function deploy, then the same log query to confirm OPTIONS volume collapses.
+

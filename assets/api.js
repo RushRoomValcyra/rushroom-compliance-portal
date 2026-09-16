@@ -28,8 +28,34 @@
     return null;
   }
 
+  // --- action routing (2026-09-16) -----------------------------------------
+  // portal-api was split so the hot path stops carrying jszip/pdf-lib and the
+  // CELLAR client. The contract is unchanged — same action names, same bodies,
+  // same token; only the URL differs, chosen here by action name.
+  //
+  // Sibling URLs are derived from the configured portal-api URL, so there is
+  // still exactly one thing to configure in assets/config.js.
+  const HEAVY_ROUTES = {
+    "portal-ai": new Set([
+      "suggestStandardMetadata", "suggestComponentMetadata", "suggestFileMetadata",
+      "suggestDocumentVersion", "runDeviationScan", "extractStandardClauses",
+      "generateInterpretations", "suggestRequirementLinks", "generateComplianceNarrative",
+      "suggestClassifications", "extractComponentSpecs",
+    ]),
+    "portal-cellar": new Set([
+      "addDirective", "syncDirectiveRelations", "inferDirectiveRelations",
+    ]),
+  };
+
+  function urlFor(action) {
+    for (const [fn, actions] of Object.entries(HEAVY_ROUTES)) {
+      if (actions.has(action)) return URL_.replace(/\/[^/]+$/, "/" + fn);
+    }
+    return URL_;
+  }
+
   async function call(payload) {
-    const res = await fetch(URL_, {
+    const res = await fetch(urlFor(payload && payload.action), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

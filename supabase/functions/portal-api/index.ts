@@ -4873,10 +4873,14 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       .eq("component_id", component_id)
       .order("uploaded_at", { ascending: true });
     if (error) return json({ error: error.message }, 500);
-    const images = await Promise.all((data ?? []).map(async (img: any) => {
-      const { data: signed } = await db.storage.from(DOC_BUCKET).createSignedUrl(img.storage_path, 60 * 60);
-      return { ...img, url: signed?.signedUrl ?? "" };
-    }));
+    const rows = data ?? [];
+    let imgSigned: Record<string, string> = {};
+    if (rows.length) {
+      const { data: signed } = await db.storage.from(DOC_BUCKET)
+        .createSignedUrls(rows.map((r: any) => r.storage_path), 60 * 60);
+      imgSigned = Object.fromEntries((signed ?? []).map((x: any) => [x.path, x.signedUrl]));
+    }
+    const images = rows.map((img: any) => ({ ...img, url: imgSigned[img.storage_path] ?? "" }));
     return json({ images });
   }
 
@@ -4913,7 +4917,17 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       .select("id, field_key, label, unit, data_type, section, sort_order, category_id, options")
       .order("section").order("sort_order").order("label");
     if (error) return json({ error: error.message }, 400);
-    return json({ fields: data || [] });
+    // Usage counts ship with the fields: the detail panel needs both on every
+    // open, and two actions meant two round trips for one screen.
+    const { data: metaRows } = await tdb("component_metadata").select("custom_specs");
+    const counts: Record<string, number> = {};
+    (metaRows || []).forEach((r: any) => {
+      if (r.custom_specs && typeof r.custom_specs === "object") {
+        Object.keys(r.custom_specs).forEach((k) => { counts[k] = (counts[k] || 0) + 1; });
+      }
+    });
+    const usage = Object.entries(counts).map(([field_key, count]) => ({ field_key, count }));
+    return json({ fields: data || [], usage });
   }
 
   // How many components already carry each custom key. Drives both the
@@ -5205,9 +5219,18 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
     for (const row of (data ?? [])) {
       if (!seen.has(row.component_id)) { seen.add(row.component_id); firsts.push(row); }
     }
-    const thumbnails = await Promise.all(firsts.map(async (row) => {
-      const { data: signed } = await db.storage.from(DOC_BUCKET).createSignedUrl(row.storage_path, 60 * 60);
-      return { component_id: row.component_id, url: signed?.signedUrl ?? "" };
+    // One batched signing call. This previously issued one storage request per
+    // component with an image, inside a single function invocation — with a
+    // couple of dozen parts that is a couple of dozen sequential round trips,
+    // and it is called on every list load.
+    let signedByPath: Record<string, string> = {};
+    if (firsts.length) {
+      const { data: signed } = await db.storage.from(DOC_BUCKET)
+        .createSignedUrls(firsts.map((r) => r.storage_path), 60 * 60);
+      signedByPath = Object.fromEntries((signed ?? []).map((x: any) => [x.path, x.signedUrl]));
+    }
+    const thumbnails = firsts.map((row) => ({
+      component_id: row.component_id, url: signedByPath[row.storage_path] ?? "",
     }));
     return json({ thumbnails });
   }

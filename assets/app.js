@@ -3452,6 +3452,9 @@
   // (name, part no., type, status, category, sourcing). Without this the row
   // and the category chip counts stay stale until Refresh is pressed by hand.
   let refreshBomList = null;
+  // Narrower sibling of refreshBomList: an image change only alters the row
+  // thumbnail, and a full list reload for that is four requests where one does.
+  let refreshBomThumbs = null;
 
   // Exactly one image-paste listener may be live, and it must belong to the
   // component currently on screen. A per-panel slot (panel.__imgPasteOff) held
@@ -3860,6 +3863,13 @@
     }
 
     refreshBomList = () => refreshTree();
+    refreshBomThumbs = async () => {
+      try {
+        const r = await API.post(token, "listComponentThumbnails", {});
+        thumbMap = Object.fromEntries((r.thumbnails || []).map((t) => [t.component_id, t.url]));
+        renderAll();
+      } catch { /* leave the stale thumbnail rather than blanking the list */ }
+    };
 
     async function refreshTree() {
       treeArea.replaceChildren(el("div", { class: "loading" }, "Loading BOM…"));
@@ -5115,12 +5125,11 @@
         API.post(token, "listConfigurations",    { family_id: componentId }),
         API.post(token, "listVariantsByFamily",  { family_id: componentId }),
       ] : [null, null, null];
-      const [hist, docs, mats, cl, usedIn, imgData, metaR, variantMembershipsR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR, csFieldsR, csUsageR] = await Promise.all([
+      const [hist, docs, mats, cl, usedIn, imgData, metaR, variantMembershipsR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR, csFieldsR] = await Promise.all([
         ...basePromises, ...familyPromises,
         API.post(token, "listComponentFamilies", { component_id: componentId }),
         API.post(token, "listProductFamilies", {}),
-        API.post(token, "listCustomSpecFields", {}).catch(() => ({ fields: [] })),
-        API.post(token, "listCustomSpecUsage", {}).catch(() => ({ usage: [] })),
+        API.post(token, "listCustomSpecFields", {}).catch(() => ({ fields: [], usage: [] })),
       ]);
       const history = hist.history || [];
       const current = history.find((v) => v.is_current) || history[0];
@@ -5695,10 +5704,7 @@
               imgStatus.textContent = "";
               const fresh = await API.post(token, "listComponentImages", { component_id: componentId });
               renderImgGrid(fresh.images || []);
-              // The list row's thumbnail comes from bomTreeView's thumbMap, which only
-              // rebuilds on a list reload — without this the row keeps the old picture
-              // (or none) until Refresh is pressed by hand.
-              try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ }
+              try { refreshBomThumbs && refreshBomThumbs(); } catch { /* list not mounted */ }
             } catch (ex) { imgStatus.textContent = ex.message; }
           } }, "✕");
           wrap.append(thumb, delBtn);
@@ -5730,10 +5736,7 @@
           imgStatus.textContent = "";
           const fresh = await API.post(token, "listComponentImages", { component_id: componentId });
           renderImgGrid(fresh.images || []);
-          // The list row's thumbnail comes from bomTreeView's thumbMap, which only
-          // rebuilds on a list reload — without this the row keeps the old picture
-          // (or none) until Refresh is pressed by hand.
-          try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ }
+          try { refreshBomThumbs && refreshBomThumbs(); } catch { /* list not mounted */ }
         } catch (ex) { imgStatus.textContent = ex.message; }
       }
 
@@ -6038,7 +6041,7 @@
       // rendered by catalogueRows() inside their own section instead, so this
       // section only ever shows the not-yet-standard remainder.
       const csFields = (csFieldsR && csFieldsR.fields) || [];
-      const csUsage  = Object.fromEntries(((csUsageR && csUsageR.usage) || []).map((u) => [u.field_key, u.count]));
+      const csUsage  = Object.fromEntries(((csFieldsR && csFieldsR.usage) || []).map((u) => [u.field_key, u.count]));
       const promotedKeys = new Set(csFields.map((f) => f.field_key));
 
       function csValue(key) {

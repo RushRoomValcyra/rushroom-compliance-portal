@@ -5674,6 +5674,10 @@
               imgStatus.textContent = "";
               const fresh = await API.post(token, "listComponentImages", { component_id: componentId });
               renderImgGrid(fresh.images || []);
+              // The list row's thumbnail comes from bomTreeView's thumbMap, which only
+              // rebuilds on a list reload — without this the row keeps the old picture
+              // (or none) until Refresh is pressed by hand.
+              try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ }
             } catch (ex) { imgStatus.textContent = ex.message; }
           } }, "✕");
           wrap.append(thumb, delBtn);
@@ -5705,6 +5709,10 @@
           imgStatus.textContent = "";
           const fresh = await API.post(token, "listComponentImages", { component_id: componentId });
           renderImgGrid(fresh.images || []);
+          // The list row's thumbnail comes from bomTreeView's thumbMap, which only
+          // rebuilds on a list reload — without this the row keeps the old picture
+          // (or none) until Refresh is pressed by hand.
+          try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ }
         } catch (ex) { imgStatus.textContent = ex.message; }
       }
 

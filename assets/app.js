@@ -3512,6 +3512,35 @@
 
     let activeTab = "components";
     let activeCategory = "all";   // "all" | "none" | <category_id>
+    let sortKey = "name";         // any SORT_COLS key
+    let sortDir = "asc";
+    // What the list actually shows per row, so every visible column is sortable.
+    const SORT_COLS = [
+      { key: "name",             label: "Name" },
+      { key: "part_number",      label: "Part no." },
+      { key: "category",         label: "Category" },
+      { key: "make_or_buy",      label: "Sourcing" },
+      { key: "lifecycle_status", label: "Status" },
+    ];
+
+    function sortValue(c, key) {
+      if (key === "category") return categoryNameOf(c.category_id) || "";
+      return c[key] ?? "";
+    }
+    function sortComparator(a, b) {
+      const dir = sortDir === "asc" ? 1 : -1;
+      const av = String(sortValue(a, sortKey)), bv = String(sortValue(b, sortKey));
+      // Empty values sort last in BOTH directions — an unset category is not
+      // "before A", it is missing, and flipping direction should not parade it
+      // to the top.
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      // numeric:true so "S Shelf 2" sorts before "S Shelf 10".
+      const primary = av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+      if (primary !== 0) return primary * dir;
+      // Stable tiebreak, so equal values never shuffle between renders.
+      return String(a.part_number ?? "").localeCompare(String(b.part_number ?? ""), undefined, { numeric: true });
+    }
     let allComponents = [];
     let thumbMap = {}; // component_id → signed thumbnail URL
     let searchQuery = "";
@@ -3532,6 +3561,9 @@
     const tabBarEl = el("div", { style: "display:flex;gap:0;margin-top:0.75rem;border-bottom:2px solid var(--border,#e2e8f0)" });
     // Second level, Parts only: click a category instead of typing in search.
     const catBarEl = el("div", { style: "display:none;flex-wrap:wrap;gap:0.35rem;margin-top:0.6rem" });
+    // The list is cards, not a table, so there is no column header to click.
+    // This bar plays that role: one control per sortable field.
+    const sortBarEl = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;margin-top:0.6rem" });
     // The list scrolls inside its own region, so the toolbar, type tabs and
     // category chips above it stay put instead of scrolling away. Height is
     // measured rather than hard-coded: the chips row only exists on the Parts
@@ -3571,6 +3603,7 @@
       ]),
       tabBarEl,
       catBarEl,
+      sortBarEl,
       treeArea,
     );
 
@@ -3642,6 +3675,37 @@
       if (activeTab === "components" && activeCategory !== "all") {
         items = items.filter((c) => activeCategory === "none" ? !c.category_id : c.category_id === activeCategory);
       }
+
+      // Sort the filtered set, not the whole list, so the order you see is the
+      // order of what is actually shown. Copy first — `items` may be the array
+      // held in allComponents and sorting in place would reorder the source.
+      items = items.slice().sort(sortComparator);
+
+      // Column bar. Rebuilt per render because the active key and direction
+      // are part of it, and because Category is meaningless outside Parts.
+      const cols = SORT_COLS.filter((c) => c.key !== "category" || activeTab === "components");
+      sortBarEl.replaceChildren(
+        el("span", { style: "font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-right:0.15rem" }, "Sort"),
+        ...cols.map((c) => {
+          const active = sortKey === c.key;
+          return el("button", {
+            type: "button",
+            title: active ? `Sorted by ${c.label} — click to reverse` : `Sort by ${c.label}`,
+            style: `padding:0.2rem 0.55rem;font-size:0.75rem;font-weight:600;border-radius:5px;cursor:pointer;white-space:nowrap;`
+              + (active
+                ? "background:var(--accent,#2fa564)18;color:var(--accent,#2fa564);border:1px solid var(--accent,#2fa564)55"
+                : "background:transparent;color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)"),
+            onclick: () => {
+              // Same column toggles direction; a new column starts ascending,
+              // which is what people expect from a first click.
+              if (sortKey === c.key) sortDir = sortDir === "asc" ? "desc" : "asc";
+              else { sortKey = c.key; sortDir = "asc"; }
+              tabPageShown[activeTab] = PAGE_SIZE;
+              renderAll();
+            },
+          }, active ? `${c.label} ${sortDir === "asc" ? "▲" : "▼"}` : c.label);
+        }),
+      );
       if (!items.length) {
         const labels = { components: "parts", assemblies: "assemblies", dynamic: "dynamic BOMs" };
         const catName = activeTab === "components" && activeCategory !== "all"

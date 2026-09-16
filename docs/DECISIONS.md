@@ -744,3 +744,11 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** supabase/functions/portal-api/index.ts
 **Status note:** deployed and re-measured? Not yet — needs a function deploy, then the same log query to confirm OPTIONS volume collapses.
 
+---
+**Date:** 2026-09-16
+**Feature:** Correction — the slowdown is platform-side, not application code
+**Decision:** The preceding entry claimed CORS preflights were the cause of the 10–15 second loads. That was wrong and is corrected here. Preflight caching is kept because it halves invocation count, but it is not the cause.
+**Why:** Isolating the function from the application settles it. A POST carrying no valid token — rejected with 401 before any database or application work — takes **2.0 to 21.2 seconds** to first byte, measured with curl from a different machine and network than the user's. On the same project, at the same moment, the REST API answers an equivalent 401 in **39 ms**. Supporting measurements: the runtime reports `booted (time: 43ms)`, every PostgREST query the function makes completes in 9–66 ms at origin, and `function_logs` contains no errors at all — only boots and shutdowns, roughly one isolate per request. So the function is not doing slow work; it is slow to be given the chance to work. That is Edge Functions scheduling, not our code. **Why the earlier diagnosis was wrong, and it matters for next time:** the preflight finding was real — 302 OPTIONS against 669 POSTs, and preflights genuinely doubled the request count — but I attributed their latency to module boot without checking boot time, which turned out to be 43 ms. Half a correct observation plus an unverified mechanism reads exactly like a root cause. The check that settled it was the cheapest one available and should have come first: time the endpoint directly, from outside the application, and compare it against another service on the same project.
+**Files changed:** none — this entry corrects the record
+**Status note:** Supabase's status page lists Edge Functions as operational but has an open "Auth Service Outage" identified 2026-09-16. Worth raising with support with the curl timings above.
+

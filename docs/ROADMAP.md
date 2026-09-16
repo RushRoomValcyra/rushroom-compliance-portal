@@ -28,6 +28,7 @@ _Code is committed but not yet live, or live but not yet exercised. Each line st
 - PROP-007 Multi-language support EN/DE/SV
 
 ## Discovered While Building
+- **Measure the boundary before diagnosing performance** — 2026-09-16 cost four attempts. Three fixes were reasoned from reading the code (signed-URL round trips, a redundant action, unlazy thumbnails); all were real improvements and none were the cause, which turned out to be a Supabase API Gateway degradation, confirmed by Supabase. The check that settled it took one command: time the endpoint from outside the app and compare it against another service on the same project. Do that first next time — if an endpoint that returns 401 without touching the database takes seconds, the application is not the subject.
 - **Component detail panel makes ~14 parallel API calls on open** — one `Promise.all` of separate actions, each a full edge-function invocation with p50 ~460 ms. Browsers cap concurrency per origin, so it is several waves before anything renders. v230 removed one call and fixed the per-image URL signing behind two of them, but the shape is the cost: a single `getComponentDetail` action returning the whole panel payload would replace fourteen invocations with one. Worth doing before the part count grows.
 _Found mid-build, too small or too tangential for a PROP, too real to drop. Promote to Next, or delete once it stops mattering._
 

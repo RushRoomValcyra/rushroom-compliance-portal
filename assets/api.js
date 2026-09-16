@@ -354,6 +354,11 @@
       call({ action: "setClassification", token, entityType, ids, id, lifecyclePhase, scope, aiGenerated }),
     suggestClassifications: (token, ids) => call({ action: "suggestClassifications", token, ids }),
 
+    // Assemblies (sub_assembly) as { id, name }, sorted by name. Includes
+    // inactive ones, matching what the Assemblies tab shows; pass
+    // { include_inactive: false } to narrow it.
+    listAssemblies: (token, opts = {}) => call({ action: "listAssemblies", token, ...opts }),
+
     // Generic escape hatch for actions not yet named on this object.
     post: (token, action, body = {}) => call({ action, token, ...body }),
   };

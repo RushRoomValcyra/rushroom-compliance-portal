@@ -597,7 +597,11 @@ Deno.serve(async (req) => {
   }
 
   // --- everything else requires a valid token -----------------------------
-  const session = await verifySession(body.token);
+  // The browser sends the token in the body (unchanged). External callers —
+  // Postman, integrations — can use `Authorization: Bearer <token>` instead,
+  // which is what those tools default to. Body wins if both are present.
+  const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  const session = await verifySession(body.token || bearer || undefined);
   if (!session) return json({ error: "Not authenticated" }, 401);
   const role = session.role as string;      // access tier: "rushroom" | "supplier"
   const isAdmin = session.admin === true;    // account-management privilege
@@ -2282,6 +2286,32 @@ Deno.serve(async (req) => {
   // ==========================================================================
 
   // --- BOM: list all components + identify roots (no active parent edge) -----
+  // --- BOM: assemblies only, minimal shape ----------------------------------
+  // A small, stable endpoint for external integrations (Postman, scripts). It
+  // deliberately returns id + name only: a narrow contract is one that will not
+  // break callers when columns are added to bom_components.
+  //
+  // INACTIVE ASSEMBLIES ARE INCLUDED, and that is a decision, not an oversight:
+  // the Assemblies tab groups purely on `type === "sub_assembly"` with no
+  // lifecycle filter (groupFiltered in assets/app.js), so every assembly in the
+  // portal today shows `inactive` and is still listed. Filtering here would make
+  // the endpoint disagree with the screen it mirrors. Pass
+  // `include_inactive: false` to narrow it explicitly.
+  if (action === "listAssemblies") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    // tdb() scopes to the caller's organization, which comes from the signed
+    // session — a body organization_id has no effect here or anywhere else.
+    let q = tdb("bom_components")
+      .select("id, name")
+      .eq("type", "sub_assembly")
+      .order("name", { ascending: true });
+    if (body.include_inactive === false) q = q.neq("lifecycle_status", "inactive");
+    const { data, error } = await q;
+    if (error) return json({ error: error.message }, 400);
+    const assemblies = (data ?? []).map((a: any) => ({ id: a.id, name: a.name }));
+    return json({ assemblies, count: assemblies.length });
+  }
+
   if (action === "listComponents") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     // Fetch the set of component IDs that are active BOM parents in one indexed query.

@@ -3,21 +3,31 @@
 ## What this is
 Compliance portal for Rushroom AB's LED furniture product.
 - Frontend: GitHub Pages (static, cache-busted via ?v=N on the asset tags in index.html)
-- Backend: Single Supabase Edge Function `portal-api` (Deno, --no-verify-jwt)
+- Backend: Three Supabase Edge Functions (Deno, --no-verify-jwt), sharing `supabase/functions/_shared/`:
+  - `portal-api`    — auth, CRUD, tenants, accounts, BOM (the hot path; no heavy deps)
+  - `portal-ai`     — every Anthropic action + document parsing (jszip, pdf-lib)
+  - `portal-cellar` — EU CELLAR SPARQL + relation inference
 - DB: Supabase Postgres (29 tables). Schema in supabase/migrations/*.sql
 - AI: ALL calls use `claude-opus-4-8` via api.anthropic.com/v1/messages
 
 ## Commands I use to deploy
-Deploy edge function:  supabase functions deploy portal-api --no-verify-jwt
+Deploy edge functions: supabase functions deploy portal-ai --no-verify-jwt
+                       supabase functions deploy portal-cellar --no-verify-jwt
+                       supabase functions deploy portal-api --no-verify-jwt
+                       (heavy functions FIRST — the frontend routes to them once pushed;
+                        a _shared/ change requires redeploying all three)
 Apply DB migration:    supabase db push
 Deploy frontend:       git push origin main (GitHub Actions → Pages)
 Bump cache:            increment ?v=N on every asset tag in index.html (and supplier.html if present)
 
 ## Architecture rules — always follow these
-- ALL business logic goes through portal-api edge function. Browser never touches DB directly.
+- ALL business logic goes through an edge function. Browser never touches DB directly.
+- Heavy work (AI, document parsing, CELLAR) belongs in portal-ai / portal-cellar, never portal-api.
+  portal-api must not import jszip, pdf-lib or cellar-service — that is enforced by tests/routing-static.test.mjs.
 - RLS is deny-all on every table. Service-role key only in edge function.
 - Every new table MUST have: organization_id UUID NOT NULL FK → organizations
-- Every new API action dispatches on body.action in portal-api/index.ts
+- Every new API action dispatches on body.action in the function that owns it.
+  If it is AI or document work, add it to portal-ai and to HEAVY_ROUTES in assets/api.js.
 - Schema changes = new migration file in supabase/migrations/ (never paste into SQL editor)
 - AI responses MUST use JSON schema structured output (no free-form text parsing)
 - Never use claude-opus-4-8 for cheap tasks (classification, metadata) — use haiku instead
@@ -33,7 +43,10 @@ Committed / pushed / deployed / verified are four different states. Do not confl
 and never describe unexercised code as working. Run `/status` to see where everything sits.
 
 ## Key files
-- portal-api/index.ts       — edge function (all API actions dispatched here)
+- portal-api/index.ts       — hot-path actions (auth, CRUD, tenants, BOM)
+- portal-ai/index.ts        — AI + document parsing actions
+- portal-cellar/index.ts    — CELLAR actions
+- _shared/                  — auth, tenancy, CORS/JSON, env+client, timing, request envelope
 - portal-api/cellar-service.ts — EU CELLAR SPARQL integration
 - assets/app.js             — all frontend logic (no framework, vanilla JS)
 - assets/config.js          — API URL + Google OAuth client ID (no ?v= here)

@@ -51,7 +51,10 @@ export function serve(opts: ServeOptions) {
     try {
       let session: any = null;
       if (!publicActions.has(action)) {
-        session = await verifySession(body.token);
+        // Body token is the browser's path; Authorization: Bearer is for
+        // external callers. Same rule in every function.
+        const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+        session = await verifySession(body.token || bearer || undefined);
         if (!session) {
           timer.done(401);
           return json({ error: "Not authenticated" }, 401);

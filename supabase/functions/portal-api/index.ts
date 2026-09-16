@@ -624,6 +624,103 @@ async function recordDocumentRevision(
   return { audited, bumped };
 }
 
+// ---- PROP-045: drawings helpers -------------------------------------------
+
+/**
+ * THE supplier visibility choke point.
+ *
+ * Manufacturing partners need drawings, so the default is that they see them.
+ * Every drawing read passes through here, which is the point: making visibility
+ * selective per supplier — the expected next step — means changing this one
+ * function instead of auditing every query for a forgotten filter. Turning
+ * supplier access off entirely is the constant below; withholding a single
+ * drawing is its is_supplier_visible column, which needs no deploy.
+ */
+const SUPPLIER_DRAWINGS_ENABLED = true;
+function supplierDrawingScope(q: any, role: string) {
+  if (role !== "supplier") return q;
+  if (!SUPPLIER_DRAWINGS_ENABLED) return q.eq("id", "00000000-0000-0000-0000-000000000000");
+  return q.eq("is_supplier_visible", true);
+}
+
+/**
+ * A → B → … → Z → AA → AB. Drawing revisions are letters, not v1/v2, which is
+ * one reason they do not share document_versions' auto-numbering.
+ * Hand-entered labels are respected; this only fills the blank.
+ */
+function nextRevisionLetter(existing: string[]): string {
+  const letters = existing
+    .map((r) => String(r || "").trim().toUpperCase())
+    .filter((r) => /^[A-Z]+$/.test(r));
+  if (!letters.length) return "A";
+  // Longest-then-lexical: "AA" follows "Z", not the other way round.
+  const highest = letters.sort((a, b) => a.length - b.length || a.localeCompare(b)).pop()!;
+  const chars = highest.split("");
+  let i = chars.length - 1;
+  while (i >= 0) {
+    if (chars[i] !== "Z") { chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1); return chars.join(""); }
+    chars[i] = "A"; i--;
+  }
+  return "A" + chars.join("");
+}
+
+/** One audit row on one component. Non-fatal by design: an audit write must
+ *  never block the change it records. Migration 0032 widens the CHECK that
+ *  would otherwise reject the new change_types — silently, inside this catch. */
+async function writeBomHistory(
+  tdb: any, session: any, componentId: string, changeType: string, notes: string,
+): Promise<boolean> {
+  try {
+    const { data: comp } = await tdb("bom_components")
+      .select("organization_id, part_number, oem_number, name, description, type, lifecycle_status")
+      .eq("id", componentId).maybeSingle();
+    if (!comp) return false;
+    await tdb("bom_component_history").insert({
+      organization_id: comp.organization_id,
+      component_id: componentId,
+      changed_at: new Date().toISOString(),
+      changed_by: session?.uid || null,
+      change_type: changeType,
+      part_number: comp.part_number, oem_number: comp.oem_number,
+      name: comp.name, description: comp.description,
+      type: comp.type, lifecycle_status: comp.lifecycle_status,
+      notes,
+    });
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * Fan a drawing event out to every BOM node the drawing depicts, optionally
+ * raising each node's revision. Mirrors recordDocumentRevision: a drawing
+ * change IS a change to the parts built from it, and the trail must say so.
+ */
+async function recordDrawingEvent(
+  tdb: any, session: any, drawingId: string, changeType: string, notes: string,
+  opts: { bump: boolean; bumpSummary?: string },
+): Promise<{ audited: number; bumped: string[] }> {
+  const bumped: string[] = [];
+  let audited = 0;
+  try {
+    const { data: links } = await tdb("drawing_components")
+      .select("component_id").eq("drawing_id", drawingId);
+    const seen = new Set<string>();
+    for (const link of links || []) {
+      if (seen.has(link.component_id)) continue;
+      seen.add(link.component_id);
+      if (await writeBomHistory(tdb, session, link.component_id, changeType, notes)) audited++;
+      if (opts.bump) {
+        try {
+          const { data: comp } = await tdb("bom_components").select("name").eq("id", link.component_id).maybeSingle();
+          const r = await bumpComponentRevision(tdb, session, link.component_id, opts.bumpSummary || notes);
+          bumped.push(`${comp?.name || "part"} ${r.revision}`);
+        } catch { /* a failed bump must not lose the revision just uploaded */ }
+      }
+    }
+  } catch { /* auditing must never break the change it describes */ }
+  return { audited, bumped };
+}
+
 // ---- request handler -------------------------------------------------------
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -3392,6 +3489,283 @@ Deno.serve(async (req) => {
       });
     }
     return json({ ok: true });
+  }
+
+
+  // ==========================================================================
+  // PROP-045: Drawings — a first-class domain, not a document category.
+  // Writes are rushroom-only. Reads are open to manufacturing partners through
+  // ONE choke point (supplierDrawingScope) so that making visibility selective
+  // per supplier later changes a single function rather than every query.
+  // ==========================================================================
+
+  if (action === "listDrawings") {
+    if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
+    let q = tdb("drawings").select(
+      "id, drawing_number, title, status, current_revision_id, projection_angle, sheet_size, scale, is_supplier_visible, created_at");
+    q = supplierDrawingScope(q, role);
+    if (body.status) q = q.eq("status", String(body.status));
+    const { data: rows, error } = await q;
+    if (error) return json({ error: error.message }, 400);
+
+    let drawings = rows || [];
+
+    // Scope to one part when asked — the panel's Drawings tab.
+    const componentId = String(body.component_id ?? "").trim();
+    const { data: allLinks } = await tdb("drawing_components").select("drawing_id, component_id, role");
+    const links = allLinks || [];
+    if (componentId) {
+      const ids = new Set(links.filter((l: any) => l.component_id === componentId).map((l: any) => l.drawing_id));
+      drawings = drawings.filter((d: any) => ids.has(d.id));
+    }
+
+    // Current revision labels in one query rather than per row.
+    const revIds = drawings.map((d: any) => d.current_revision_id).filter(Boolean);
+    const revMap: Record<string, string> = {};
+    if (revIds.length) {
+      const { data: revs } = await tdb("drawing_revisions").select("id, revision").in("id", revIds);
+      (revs || []).forEach((r: any) => { revMap[r.id] = r.revision; });
+    }
+    const partsCount: Record<string, number> = {};
+    links.forEach((l: any) => { partsCount[l.drawing_id] = (partsCount[l.drawing_id] || 0) + 1; });
+
+    const result = drawings.map((d: any) => ({
+      id: d.id, drawing_number: d.drawing_number, title: d.title, status: d.status,
+      revision: d.current_revision_id ? (revMap[d.current_revision_id] || "") : "",
+      projection_angle: d.projection_angle, sheet_size: d.sheet_size, scale: d.scale,
+      is_supplier_visible: d.is_supplier_visible,
+      parts_count: partsCount[d.id] || 0,
+    })).sort((a: any, b: any) => a.drawing_number.localeCompare(b.drawing_number, undefined, { numeric: true, sensitivity: "base" }));
+
+    return json({ drawings: result, count: result.length });
+  }
+
+  if (action === "getDrawing") {
+    if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
+    const drawing_id = String(body.drawing_id ?? "");
+    if (!drawing_id) return json({ error: "drawing_id required" }, 400);
+
+    let q = tdb("drawings").select("*").eq("id", drawing_id);
+    q = supplierDrawingScope(q, role);
+    const { data: rows, error } = await q;
+    if (error) return json({ error: error.message }, 400);
+    const drawing = (rows || [])[0];
+    // A supplier asking for a withheld drawing gets "not found", not "forbidden":
+    // a 403 would confirm the drawing exists.
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+
+    const { data: revisions, error: revErr } = await tdb("drawing_revisions")
+      .select("id, revision, status, file_name, notes, released_at, created_at")
+      .eq("drawing_id", drawing_id).order("created_at", { ascending: false });
+
+    const { data: links, error: linkErr } = await tdb("drawing_components")
+      .select("id, component_id, role, linked_at").eq("drawing_id", drawing_id);
+
+    // Name the parts, so the panel can say which BOM nodes a revision affects.
+    let components: any[] = [];
+    if ((links || []).length) {
+      const { data: comps } = await tdb("bom_components")
+        .select("id, name, part_number").in("id", (links || []).map((l: any) => l.component_id));
+      const byId: Record<string, any> = {};
+      (comps || []).forEach((c: any) => { byId[c.id] = c; });
+      components = (links || []).map((l: any) => ({
+        link_id: l.id, component_id: l.component_id, role: l.role,
+        name: byId[l.component_id]?.name || "", part_number: byId[l.component_id]?.part_number || "",
+      }));
+    }
+
+    // Same rule as PROP-043's changelog: a source that fails is reported, never
+    // silently rendered as an empty list.
+    const failed: string[] = [];
+    if (revErr) failed.push("revisions");
+    if (linkErr) failed.push("components");
+    const payload: any = { drawing, revisions: revisions || [], components };
+    if (failed.length) { payload.partial = true; payload.sources_failed = failed; }
+    return json(payload);
+  }
+
+  if (action === "createDrawing") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_number = String(body.drawing_number ?? "").trim();
+    const title = String(body.title ?? "").trim();
+    if (!drawing_number) return json({ error: "drawing_number required" }, 400);
+    if (!title) return json({ error: "title required" }, 400);
+    const { data, error } = await tdb("drawings").insert({
+      drawing_number: drawing_number.slice(0, 80), title: title.slice(0, 200),
+      projection_angle: body.projection_angle ? String(body.projection_angle).slice(0, 10) : null,
+      sheet_size: body.sheet_size ? String(body.sheet_size).slice(0, 10) : null,
+      scale: body.scale ? String(body.scale).slice(0, 20) : null,
+      is_supplier_visible: body.is_supplier_visible === false ? false : true,
+      created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (error) {
+      // The unique index is per organization, so this is a duplicate number.
+      if (/duplicate key|unique/i.test(error.message)) {
+        return json({ error: `Drawing ${drawing_number} already exists` }, 400);
+      }
+      return json({ error: error.message }, 400);
+    }
+    return json({ ok: true, id: data?.id });
+  }
+
+  if (action === "addDrawingRevision") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "");
+    const storage_path = String(body.storage_path ?? "");
+    const file_name = String(body.file_name ?? "");
+    if (!drawing_id || !storage_path || !file_name) {
+      return json({ error: "drawing_id, storage_path and file_name required" }, 400);
+    }
+    const { data: drawRows } = await tdb("drawings").select("id, drawing_number, title").eq("id", drawing_id);
+    const drawing = (drawRows || [])[0];
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+
+    const { data: existing } = await tdb("drawing_revisions")
+      .select("revision, created_at").eq("drawing_id", drawing_id)
+      .order("created_at", { ascending: true });
+    const priorLabels = (existing || []).map((r: any) => r.revision);
+    const revision = String(body.revision ?? "").trim().toUpperCase().slice(0, 10)
+      || nextRevisionLetter(priorLabels);
+    const from = priorLabels.length ? priorLabels[priorLabels.length - 1] : "—";
+
+    const { data: inserted, error } = await tdb("drawing_revisions").insert({
+      drawing_id, revision, storage_path, file_name: file_name.slice(0, 200),
+      notes: body.notes ? String(body.notes).slice(0, 1000) : null,
+      created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) {
+        return json({ error: `Revision ${revision} already exists on this drawing` }, 400);
+      }
+      return json({ error: error.message }, 400);
+    }
+    await tdb("drawings").update({ current_revision_id: inserted?.id }).eq("id", drawing_id);
+
+    // A drawing revision is a change to every BOM node that shows it — the same
+    // rule PROP-043 established, now on the drawings chain.
+    const audit = await recordDrawingEvent(tdb, session, drawing_id, "drawing_revised",
+      `Drawing revised: ${drawing.drawing_number} ${drawing.title} ${from} → ${revision}`,
+      { bump: true, bumpSummary: `Drawing revised: ${drawing.drawing_number} ${from} → ${revision}` });
+
+    return json({ ok: true, id: inserted?.id, revision, ...audit });
+  }
+
+  if (action === "linkDrawingToComponent") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "");
+    const component_id = String(body.component_id ?? "");
+    const linkRole = String(body.role ?? "depicts");
+    if (!drawing_id || !component_id) return json({ error: "drawing_id and component_id required" }, 400);
+    if (!["depicts", "installation", "wiring"].includes(linkRole)) {
+      return json({ error: "role must be depicts, installation or wiring" }, 400);
+    }
+    const { data: drawRows } = await tdb("drawings").select("id, drawing_number, title").eq("id", drawing_id);
+    const drawing = (drawRows || [])[0];
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+
+    const { error } = await tdb("drawing_components").insert({
+      drawing_id, component_id, role: linkRole, linked_by: session.uid || null,
+    });
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) {
+        return json({ error: "That drawing is already linked to this part in that role" }, 400);
+      }
+      return json({ error: error.message }, 400);
+    }
+    await writeBomHistory(tdb, session, component_id, "drawing_linked",
+      `Drawing linked: ${drawing.drawing_number} ${drawing.title} (${linkRole})`);
+    return json({ ok: true });
+  }
+
+  if (action === "unlinkDrawingFromComponent") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "");
+    const component_id = String(body.component_id ?? "");
+    if (!drawing_id || !component_id) return json({ error: "drawing_id and component_id required" }, 400);
+    // Removes the link only. The drawing itself is never deleted here — losing a
+    // released drawing because a link was tidied up is not a recoverable mistake.
+    let q = tdb("drawing_components").delete().eq("drawing_id", drawing_id).eq("component_id", component_id);
+    if (body.role) q = q.eq("role", String(body.role));
+    const { error } = await q;
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  if (action === "setDrawingStatus") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "");
+    const status = String(body.status ?? "");
+    if (!drawing_id || !status) return json({ error: "drawing_id and status required" }, 400);
+    const ALLOWED: Record<string, string[]> = {
+      draft:      ["checked"],
+      checked:    ["approved", "draft"],
+      approved:   ["released", "draft"],
+      released:   ["superseded"],
+      superseded: [],
+    };
+    const { data: drawRows } = await tdb("drawings")
+      .select("id, status, drawing_number, title, current_revision_id").eq("id", drawing_id);
+    const drawing = (drawRows || [])[0];
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+    if (!ALLOWED[drawing.status]?.includes(status)) {
+      return json({ error: `Cannot go from ${drawing.status} to ${status}` }, 400);
+    }
+
+    const patch: any = { status };
+    const { error } = await tdb("drawings").update(patch).eq("id", drawing_id);
+    if (error) return json({ error: error.message }, 400);
+
+    let superseded = 0;
+    if (status === "released" && drawing.current_revision_id) {
+      // Releasing this revision supersedes whatever was released before it.
+      const { data: prior } = await tdb("drawing_revisions")
+        .select("id").eq("drawing_id", drawing_id).eq("status", "released");
+      const priorIds = (prior || []).map((r: any) => r.id).filter((id: string) => id !== drawing.current_revision_id);
+      if (priorIds.length) {
+        await tdb("drawing_revisions").update({ status: "superseded" }).in("id", priorIds);
+        superseded = priorIds.length;
+      }
+      await tdb("drawing_revisions")
+        .update({ status: "released", released_at: new Date().toISOString() })
+        .eq("id", drawing.current_revision_id);
+    }
+
+    const audit = status === "released"
+      ? await recordDrawingEvent(tdb, session, drawing_id, "drawing_released",
+          `Drawing released: ${drawing.drawing_number} ${drawing.title}`, { bump: false })
+      : { audited: 0, bumped: [] };
+
+    return json({ ok: true, status, superseded, ...audit });
+  }
+
+  if (action === "setDrawingSupplierVisibility") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "");
+    if (!drawing_id) return json({ error: "drawing_id required" }, 400);
+    const visible = body.is_supplier_visible !== false;
+    const { error } = await tdb("drawings").update({ is_supplier_visible: visible }).eq("id", drawing_id);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true, is_supplier_visible: visible });
+  }
+
+  if (action === "drawingFileUrl") {
+    if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
+    const revision_id = String(body.drawing_revision_id ?? "");
+    if (!revision_id) return json({ error: "drawing_revision_id required" }, 400);
+    const { data: revs } = await tdb("drawing_revisions")
+      .select("id, drawing_id, storage_path").eq("id", revision_id);
+    const rev = (revs || [])[0];
+    if (!rev) return json({ error: "Revision not found" }, 404);
+    // The file is reached through the drawing, so the same visibility rule that
+    // hides a drawing from a supplier also withholds its file. Checking only the
+    // revision row would leak the bytes of a drawing they cannot see listed.
+    let dq = tdb("drawings").select("id").eq("id", rev.drawing_id);
+    dq = supplierDrawingScope(dq, role);
+    const { data: allowed } = await dq;
+    if (!(allowed || []).length) return json({ error: "Revision not found" }, 404);
+    const { data: signed, error } = await db.storage.from(DOC_BUCKET).createSignedUrl(rev.storage_path, 60 * 60);
+    if (error) return json({ error: error.message }, 500);
+    return json({ url: signed?.signedUrl });
   }
 
   // PROP-019: COGS/cost action blocks removed — financial analysis belongs in ERP, not compliance portal.

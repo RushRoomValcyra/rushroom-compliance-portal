@@ -868,3 +868,62 @@ assets/app.js (panel Documents tab: revision column, shared-with column,
 New revision modal, instructive empty state, tab count),
 docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, index.html, supplier.html,
 reset.html, verify.html, CLAUDE.md (v234 → v235)
+
+---
+**Date:** 2026-09-16
+**Feature:** PROP-045 — Drawings as a first-class domain
+
+**Decision:** Drawings get four tables, a top-level DRAWINGS tab, letter
+revisions and an approval state. They do **not** reuse `document_versions`.
+Suppliers can read drawings by default, gated through a single choke point.
+`drawing` is removed from the component-document categories.
+
+**Why not reuse `document_versions`:** the IDEAS entry proposed exactly that,
+and reading the code showed it was wrong. `documents` drives the Documents
+Library list, so a shared table would put every drawing back into the library
+this carve-out exists to empty. It would also create two version chains over
+one file — the drift risk the entry flagged and then walked into. What is
+genuinely shared is the upload mechanism: same storage bucket, same signed-URL
+action. Sharing the mechanism is not sharing the model. Drawing revisions are
+letters, so `v1`/`v2` auto-numbering was never a saving either.
+
+**Why suppliers see drawings, and how to take it back:** manufacturing partners
+cannot build from a drawing they cannot open, so `is_supplier_visible` defaults
+TRUE. The design constraint was the stated next step — selective access per
+supplier — so every drawing read goes through `supplierDrawingScope`. Making it
+selective is one function rather than an audit of every query for a forgotten
+filter, which is the shape these mistakes actually take. Three levels of
+switch-off, in descending cost: one constant kills the feature, one column
+withholds one drawing with no deploy, and the future per-supplier table changes
+one function. `drawingFileUrl` re-checks the parent drawing, because checking
+only the revision row would serve the bytes of a drawing the supplier cannot
+see listed. A withheld drawing answers 404, not 403 — a 403 confirms it exists.
+
+**Why the old path is deleted rather than deprecated:** leaving `drawing` in the
+document categories would let the weaker record be created by accident, and
+muscle memory beats advice. Removing the option removes the failure.
+
+**Why `drawing_dimensions` ships empty:** the AI extraction is imminent, and
+this way it adds behaviour instead of schema. More importantly a tolerance
+stack-up is an ordered path across dimensions on several drawings for several
+parts — it needs a row type to reference at all. That requirement is precisely
+what the 2026-09-02 entry did not anticipate when it concluded "drawing
+intelligence is NOT a new tab or module", and it is why that conclusion no
+longer holds.
+
+**Found while building:** a table missing from `TENANT_TABLES` passes through
+`makeTdb` unscoped — every tenant reads every row, and nothing errors. There was
+no guard. `tests/tenant-tables.test.mjs` now asserts every migration-created
+table carrying `organization_id` is listed; on its first run it flagged nine,
+of which six were tables dropped by later migrations and three are account
+tables that cross the tenant boundary by design, now allowlisted with reasons.
+
+**Files changed:** supabase/migrations/0032_drawings_domain.sql,
+supabase/functions/_shared/tenant.ts, supabase/functions/portal-api/index.ts
+(8 actions + supplierDrawingScope, nextRevisionLetter, writeBomHistory,
+recordDrawingEvent), assets/app.js (renderDrawings, openDrawingDetail,
+addDrawingRevisionModal, newDrawingModal, part-panel Drawings tab, changelog
+badges, drawing removed from CATS), index.html, supplier.html,
+tests/tenant-tables.test.mjs, tests/drawings.test.mjs,
+docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, reset.html, verify.html,
+CLAUDE.md (v235 → v236)

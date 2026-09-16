@@ -25,7 +25,10 @@ Bump cache:            increment ?v=N on every asset tag in index.html (and supp
 - Heavy work (AI, document parsing, CELLAR) belongs in portal-ai / portal-cellar, never portal-api.
   portal-api must not import jszip, pdf-lib or cellar-service — that is enforced by tests/routing-static.test.mjs.
 - RLS is deny-all on every table. Service-role key only in edge function.
-- Every new table MUST have: organization_id UUID NOT NULL FK → organizations
+- Every new table MUST have: organization_id UUID NOT NULL FK → organizations,
+  AND be added to TENANT_TABLES in _shared/tenant.ts — a table missing from that set
+  passes through makeTdb unscoped, so every tenant reads every row and nothing errors.
+  tests/tenant-tables.test.mjs guards this.
 - Every new API action dispatches on body.action in the function that owns it.
   If it is AI or document work, add it to portal-ai and to HEAVY_ROUTES in assets/api.js.
 - Schema changes = new migration file in supabase/migrations/ (never paste into SQL editor)
@@ -72,11 +75,13 @@ SaaS (PROP-012 IN PROGRESS): organizations, memberships,
         invitations, platform_audit, ai_usage_events
 Links (PROP-011): requirement_links, document_statements
 Categories (PROP-038): part_categories
+Drawings (PROP-045): drawings, drawing_revisions,
+        drawing_components, drawing_dimensions
 Custom fields (PROP-040): custom_spec_fields
 Manufacturing (PROP-030): family_routing_steps, work_orders,
         work_order_steps, work_order_components
 
 ## Current state
-Frontend cache version: ?v=235
+Frontend cache version: ?v=236
 Last SYSTEM_OVERVIEW audit: 2026-08-29
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

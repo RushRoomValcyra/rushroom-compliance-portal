@@ -41,6 +41,10 @@ export const TENANT_TABLES = new Set([
   "component_metadata",
   // PROP-035: Component variant groups (migration 0024)
   "component_variant_groups", "component_variant_members",
+  // PROP-045: Drawings domain (migration 0032). A table missing from this set
+  // passes through makeTdb UNSCOPED — every tenant sees every row and nothing
+  // errors. tests/tenant-tables.test.mjs guards the omission.
+  "drawings", "drawing_revisions", "drawing_components", "drawing_dimensions",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

@@ -3724,6 +3724,10 @@
       const thumbUrl = thumbMap[comp.id];
       const thumbEl = thumbUrl ? el("img", {
         src: thumbUrl,
+        // Stored images are full-size (≈220 KB each) and rendered here at 40 px.
+        // Lazy + async keeps rows below the fold from being fetched at all and
+        // stops decoding from blocking the first paint of the list.
+        loading: "lazy", decoding: "async",
         style: "width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border,#e2e8f0);flex-shrink:0;cursor:zoom-in",
         onclick: async (ev) => {
           ev.stopPropagation();
@@ -3872,6 +3876,10 @@
     };
 
     async function refreshTree() {
+      // Temporary instrumentation (v231): prints where the time actually goes,
+      // so the next report can name the slow step rather than the whole screen.
+      const t0 = performance.now();
+      const mark = (label) => console.log(`[BOM] ${label}: ${Math.round(performance.now() - t0)}ms`);
       treeArea.replaceChildren(el("div", { class: "loading" }, "Loading BOM…"));
       try {
         const expandedIds = Object.keys(expandedTrees).filter((id) => expandedTrees[id] !== "loading" && expandedTrees[id] !== "error");
@@ -3882,6 +3890,7 @@
           API.post(token, "listPartCategories", {}).catch(() => ({ categories: [] })),
         ]);
         partCategories = catRes.categories || [];
+        mark(`4 list API calls done (${(components || []).length} components)`);
         thumbMap = Object.fromEntries((thumbRes.thumbnails || []).map((t) => [t.component_id, t.url]));
         parentCountMap = Object.fromEntries((pcRes.parentCounts || []).map((p) => [p.component_id, p.parent_count]));
         if (!components.length) {
@@ -3896,12 +3905,15 @@
         const idSet = new Set(components.map((c) => c.id));
         Object.keys(expandedTrees).forEach((k) => { if (!idSet.has(k)) delete expandedTrees[k]; });
         if (expandedIds.length) {
+          mark(`re-fetching ${expandedIds.length} expanded BOM tree(s)`);
           await Promise.all(expandedIds.filter((id) => idSet.has(id)).map(async (id) => {
             try { expandedTrees[id] = await API.post(token, "getBom", { root_component_id: id, max_depth: 10 }); }
             catch { expandedTrees[id] = "error"; }
           }));
         }
+        mark("data ready, rendering");
         renderAll();
+        mark("render complete");
       } catch (ex) {
         treeArea.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
       }

@@ -132,14 +132,17 @@ async function insertDocumentVersion(tdb: any, row: Record<string, unknown>) {
     const { count } = await tdb("document_versions").select("id", { count: "exact", head: true }).eq("document_id", row.document_id as string);
     row.version = `v${(count ?? 0) + 1}`;
   }
-  let res = await tdb("document_versions").insert(row);
+  // The resolved label and the new row's id are returned, not just the error.
+  // Callers that audit the revision need to name it, and the auto-numbered case
+  // is the common one — reading body.version there yields an empty string.
+  let res = await tdb("document_versions").insert(row).select("id").maybeSingle();
   if (res.error && /source_(document|standard)_version_ids?/.test(res.error.message || "")) {
     const clean = { ...row };
     delete clean.source_document_version_id;
     delete clean.source_standard_version_ids;
-    res = await tdb("document_versions").insert(clean);
+    res = await tdb("document_versions").insert(clean).select("id").maybeSingle();
   }
-  return res;
+  return { ...res, version: String(row.version ?? ""), versionId: res.data?.id ?? null };
 }
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
@@ -431,6 +434,195 @@ async function applyClassification(tdb: any, entityType: string, id: string, pha
 // Load every classifiable item (documents + interpretations) with its own and
 // EFFECTIVE classification (interpretations inherit their parent document's
 // classification when their own is unset — overridable per row).
+
+// ---- component revision bump (PROP-043) ------------------------------------
+// Extracted from the bumpComponentVersion action so a document revision can
+// raise a component revision without duplicating the numbering, the retire-old
+// step, or the snapshot. One implementation means the two paths cannot drift.
+async function bumpComponentRevision(
+  tdb: any, session: any, component_id: string, spec_summary: string | null,
+): Promise<{ version_id: string; revision: string }> {
+    // Auto-compute next revision from existing versions (server is authoritative)
+    function revRank(r: string): number {
+      let n = 0;
+      for (const ch of r.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+      return n;
+    }
+    function nextRev(revisions: string[]): string {
+      const max = revisions.length ? revisions.reduce((m, r) => revRank(r) > revRank(m) ? r : m) : "";
+      let num = 0;
+      for (const ch of max.toUpperCase()) num = num * 26 + (ch.charCodeAt(0) - 64);
+      num++;
+      let result = "";
+      while (num > 0) { num--; result = String.fromCharCode(65 + num % 26) + result; num = Math.floor(num / 26); }
+      return result;
+    }
+    const { data: existing } = await tdb("bom_component_versions")
+      .select("id, revision").eq("component_id", component_id);
+    const revision = nextRev((existing || []).map((r: any) => r.revision));
+
+    // Explicitly retire old versions before inserting the new one.
+    // The trigger fn_set_current_version does the same but may not fire
+    // reliably in all Supabase RLS configurations, so we do it here too.
+    if ((existing || []).length > 0) {
+      await tdb("bom_component_versions")
+        .update({ is_current: false }).eq("component_id", component_id);
+    }
+
+    // Fetch component fields for snapshot + audit trail
+    const { data: comp } = await tdb("bom_components")
+      .select("organization_id, part_number, oem_number, name, description, notes, type, make_or_buy, lifecycle_status, replacement_note, flag_reason")
+      .eq("id", component_id).maybeSingle();
+
+    // Build version snapshot: capture documents + materials as they exist right now
+    const { data: snapDocs } = await tdb("component_documents")
+      .select("id, category, label, document_version_id").eq("component_id", component_id);
+    let snapDocNames: Record<string, string> = {};
+    if ((snapDocs || []).length) {
+      const dvIds = (snapDocs || []).map((d: any) => d.document_version_id);
+      const { data: dvs } = await tdb("document_versions").select("id, document_id").in("id", dvIds);
+      const docIds = (dvs || []).map((v: any) => v.document_id);
+      if (docIds.length) {
+        const { data: docRows } = await tdb("documents").select("id, name").in("id", docIds);
+        const nameMap: Record<string, string> = {};
+        (docRows || []).forEach((d: any) => { nameMap[d.id] = d.name; });
+        (dvs || []).forEach((v: any) => { snapDocNames[v.id] = nameMap[v.document_id] || ""; });
+      }
+    }
+    const { data: snapMats } = await tdb("component_materials")
+      .select("substance_name, cas_number, percentage_w_w, reach_svhc, rohs_restricted")
+      .eq("component_id", component_id);
+    const { data: snapMeta } = await tdb("component_metadata")
+      .select("weight_g,length_mm,width_mm,height_mm,base_material,surface_treatment,color_specification,incoming_inspection_method,country_of_origin,hs_code,recycled_content_pct,carbon_footprint_kgco2e,carbon_footprint_source,weee_category,conflict_minerals_free,recycled_content_pct")
+      .eq("component_id", component_id).maybeSingle();
+    const version_snapshot = comp ? {
+      description:      comp.description      || null,
+      notes:            comp.notes            || null,
+      lifecycle_status: comp.lifecycle_status,
+      make_or_buy:      comp.make_or_buy      || "purchased",
+      replacement_note: comp.replacement_note || null,
+      flag_reason:      comp.flag_reason      || null,
+      documents: (snapDocs || []).map((d: any) => ({
+        doc_name: snapDocNames[d.document_version_id] || "",
+        category: d.category,
+        label:    d.label || null,
+      })),
+      materials: (snapMats || []).map((m: any) => ({
+        substance_name:  m.substance_name,
+        cas_number:      m.cas_number      || null,
+        percentage_w_w:  m.percentage_w_w  ?? null,
+        reach_svhc:      m.reach_svhc,
+        rohs_restricted: m.rohs_restricted,
+      })),
+      metadata: snapMeta || null,
+    } : null;
+
+    const { data: ver, error } = await tdb("bom_component_versions").insert({
+      component_id, revision, spec_summary: spec_summary || null,
+      is_current: true, created_by: session.uid || null,
+      version_snapshot,
+    }).select("id").maybeSingle();
+    if (error) throw new Error(error.message);
+
+    // Write audit trail — trigger doesn't fire because bom_components isn't touched
+    if (comp) {
+      await tdb("bom_component_history").insert({
+        organization_id: comp.organization_id,
+        component_id,
+        changed_at: new Date().toISOString(),
+        changed_by: session.uid || null,
+        change_type: "version_bumped",
+        part_number: comp.part_number,
+        oem_number: comp.oem_number,
+        name: comp.name,
+        description: comp.description,
+        type: comp.type,
+        lifecycle_status: comp.lifecycle_status,
+        notes: `Revision ${revision}${spec_summary ? ": " + spec_summary : ""}`,
+      });
+    }
+    return { version_id: ver.id, revision };
+}
+
+// ---- document revision -> BOM node events (PROP-043) -----------------------
+// A new version of a document is a change to every component that links it.
+// Drawings additionally raise the component revision: a dimension change is a
+// change to the part. A supplier reissuing a datasheet is not, so other
+// categories record history without bumping.
+async function recordDocumentRevision(
+  tdb: any, session: any, documentId: string, newVersion: string, newVersionId?: string | null,
+): Promise<{ audited: number; bumped: string[] }> {
+  const bumped: string[] = [];
+  let audited = 0;
+  try {
+    // Which components link ANY version of this document, and under what category.
+    // Ordered: the "previous revision" in the audit note is positional, so an
+    // unordered read would name an arbitrary row as the one being superseded.
+    const { data: versions } = await tdb("document_versions")
+      .select("id, version, created_at").eq("document_id", documentId)
+      .order("created_at", { ascending: true });
+    const versionIds = (versions || []).map((v: any) => v.id);
+    if (!versionIds.length) return { audited, bumped };
+
+    const { data: links } = await tdb("component_documents")
+      .select("component_id, category, label, document_version_id")
+      .in("document_version_id", versionIds);
+    if (!links?.length) return { audited, bumped };
+
+    const { data: doc } = await tdb("documents").select("name").eq("id", documentId).maybeSingle();
+    const docName = doc?.name || "document";
+
+    // The revision this document carried before the one just added. Identify
+    // the new row by id where we have it: two revisions may share a label
+    // (nothing forbids uploading "Rev B" twice), so matching on the string
+    // would drop the real predecessor along with the new row.
+    const ordered = versions || [];
+    const newIdx = newVersionId
+      ? ordered.findIndex((v: any) => v.id === newVersionId)
+      : ordered.map((v: any) => v.version).lastIndexOf(newVersion);
+    const priorRow = newIdx > 0 ? ordered[newIdx - 1]
+      : (newIdx === -1 && ordered.length ? ordered[ordered.length - 1] : null);
+    const from = priorRow?.version || "—";
+
+    // One component may link the document more than once; audit each node once.
+    const seen = new Set<string>();
+    for (const link of links) {
+      if (seen.has(link.component_id)) continue;
+      seen.add(link.component_id);
+
+      const { data: comp } = await tdb("bom_components")
+        .select("organization_id, part_number, oem_number, name, description, type, lifecycle_status")
+        .eq("id", link.component_id).maybeSingle();
+      if (!comp) continue;   // tdb() scopes by org, so a foreign component simply is not found
+
+      try {
+        await tdb("bom_component_history").insert({
+          organization_id: comp.organization_id,
+          component_id: link.component_id,
+          changed_at: new Date().toISOString(),
+          changed_by: session?.uid || null,
+          change_type: "document_revised",
+          part_number: comp.part_number, oem_number: comp.oem_number,
+          name: comp.name, description: comp.description,
+          type: comp.type, lifecycle_status: comp.lifecycle_status,
+          notes: `${link.category === "drawing" ? "Drawing" : "Document"} revised: ${docName}${link.label ? ` (${link.label})` : ""} ${from} → ${newVersion || "new revision"}`,
+        });
+        audited++;
+      } catch { /* non-fatal: the document version itself is already saved */ }
+
+      if (link.category === "drawing") {
+        try {
+          const r = await bumpComponentRevision(
+            tdb, session, link.component_id,
+            `Drawing revised: ${docName} ${from} → ${newVersion || "new revision"}`,
+          );
+          bumped.push(`${comp.name} ${r.revision}`);
+        } catch { /* a failed bump must not lose the uploaded revision */ }
+      }
+    }
+  } catch { /* auditing must never break the upload it describes */ }
+  return { audited, bumped };
+}
 
 // ---- request handler -------------------------------------------------------
 Deno.serve(async (req) => {
@@ -1236,7 +1428,7 @@ Deno.serve(async (req) => {
     const sourceStandardVersionIds = Array.isArray(body.sourceStandardVersionIds) ? body.sourceStandardVersionIds.filter((v: unknown) => String(v ?? "").trim()) : [];
     const sourceDocumentVersionId = String(body.sourceDocumentVersionId ?? "").trim() || null;
     if (!document_id || !path || !fileName) return json({ error: "documentId, path, fileName required" }, 400);
-    const { error } = await insertDocumentVersion(tdb, {
+    const { error, version: newVersion, versionId } = await insertDocumentVersion(tdb, {
       document_id, version: String(body.version ?? "").slice(0, 80),
       file_name: fileName.slice(0, 200), storage_path: path,
       notes: String(body.notes ?? "").slice(0, 1000), uploaded_by: "rushroom",
@@ -1245,7 +1437,34 @@ Deno.serve(async (req) => {
     });
     if (error) return json({ error: error.message }, 500);
     await tdb("documents").update({ storage_path: path }).eq("id", document_id); // keep current pointer in sync
-    return json({ ok: true });
+
+    // PROP-043: a document revision is a change to every BOM node that links
+    // it. Previously this action touched document_versions and nothing else, so
+    // uploading Rev C of a drawing left the component's Change Log unchanged.
+    // newVersion is the RESOLVED label — body.version is blank whenever the
+    // version was auto-numbered, which is the default path from the UI.
+    const audit = await recordDocumentRevision(tdb, session, document_id, newVersion, versionId);
+
+    // PROP-044: when the revision is uploaded from a part's Documents tab, that
+    // part's link follows the new revision — the user's intent is "this part now
+    // uses the new drawing", and leaving it pointing at the old one would show
+    // the row as stale the instant they uploaded it. Only the part they are
+    // standing on advances; the others keep their link and surface a "newer
+    // revision available" marker, which is the signal their owner needs rather
+    // than a silent substitution.
+    let advanced = false;
+    const advanceFor = String(body.advance_component_id ?? "").trim();
+    if (advanceFor && versionId) {
+      const { data: priorVers } = await tdb("document_versions").select("id").eq("document_id", document_id);
+      const priorIds = (priorVers || []).map((v: any) => v.id).filter((id: string) => id !== versionId);
+      if (priorIds.length) {
+        const { error: advErr } = await tdb("component_documents")
+          .update({ document_version_id: versionId })
+          .eq("component_id", advanceFor).in("document_version_id", priorIds);
+        advanced = !advErr;
+      }
+    }
+    return json({ ok: true, version: newVersion, advanced, ...audit });
   }
 
   if (action === "updateDocument") {
@@ -2594,107 +2813,12 @@ Deno.serve(async (req) => {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { component_id, spec_summary } = body;
     if (!component_id) return json({ error: "component_id required" }, 400);
-
-    // Auto-compute next revision from existing versions (server is authoritative)
-    function revRank(r: string): number {
-      let n = 0;
-      for (const ch of r.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
-      return n;
+    try {
+      const r = await bumpComponentRevision(tdb, session, component_id, spec_summary || null);
+      return json(r);
+    } catch (e: any) {
+      return json({ error: e?.message ?? "Bump failed" }, 400);
     }
-    function nextRev(revisions: string[]): string {
-      const max = revisions.length ? revisions.reduce((m, r) => revRank(r) > revRank(m) ? r : m) : "";
-      let num = 0;
-      for (const ch of max.toUpperCase()) num = num * 26 + (ch.charCodeAt(0) - 64);
-      num++;
-      let result = "";
-      while (num > 0) { num--; result = String.fromCharCode(65 + num % 26) + result; num = Math.floor(num / 26); }
-      return result;
-    }
-    const { data: existing } = await tdb("bom_component_versions")
-      .select("id, revision").eq("component_id", component_id);
-    const revision = nextRev((existing || []).map((r: any) => r.revision));
-
-    // Explicitly retire old versions before inserting the new one.
-    // The trigger fn_set_current_version does the same but may not fire
-    // reliably in all Supabase RLS configurations, so we do it here too.
-    if ((existing || []).length > 0) {
-      await tdb("bom_component_versions")
-        .update({ is_current: false }).eq("component_id", component_id);
-    }
-
-    // Fetch component fields for snapshot + audit trail
-    const { data: comp } = await tdb("bom_components")
-      .select("organization_id, part_number, oem_number, name, description, notes, type, make_or_buy, lifecycle_status, replacement_note, flag_reason")
-      .eq("id", component_id).maybeSingle();
-
-    // Build version snapshot: capture documents + materials as they exist right now
-    const { data: snapDocs } = await tdb("component_documents")
-      .select("id, category, label, document_version_id").eq("component_id", component_id);
-    let snapDocNames: Record<string, string> = {};
-    if ((snapDocs || []).length) {
-      const dvIds = (snapDocs || []).map((d: any) => d.document_version_id);
-      const { data: dvs } = await tdb("document_versions").select("id, document_id").in("id", dvIds);
-      const docIds = (dvs || []).map((v: any) => v.document_id);
-      if (docIds.length) {
-        const { data: docRows } = await tdb("documents").select("id, name").in("id", docIds);
-        const nameMap: Record<string, string> = {};
-        (docRows || []).forEach((d: any) => { nameMap[d.id] = d.name; });
-        (dvs || []).forEach((v: any) => { snapDocNames[v.id] = nameMap[v.document_id] || ""; });
-      }
-    }
-    const { data: snapMats } = await tdb("component_materials")
-      .select("substance_name, cas_number, percentage_w_w, reach_svhc, rohs_restricted")
-      .eq("component_id", component_id);
-    const { data: snapMeta } = await tdb("component_metadata")
-      .select("weight_g,length_mm,width_mm,height_mm,base_material,surface_treatment,color_specification,incoming_inspection_method,country_of_origin,hs_code,recycled_content_pct,carbon_footprint_kgco2e,carbon_footprint_source,weee_category,conflict_minerals_free,recycled_content_pct")
-      .eq("component_id", component_id).maybeSingle();
-    const version_snapshot = comp ? {
-      description:      comp.description      || null,
-      notes:            comp.notes            || null,
-      lifecycle_status: comp.lifecycle_status,
-      make_or_buy:      comp.make_or_buy      || "purchased",
-      replacement_note: comp.replacement_note || null,
-      flag_reason:      comp.flag_reason      || null,
-      documents: (snapDocs || []).map((d: any) => ({
-        doc_name: snapDocNames[d.document_version_id] || "",
-        category: d.category,
-        label:    d.label || null,
-      })),
-      materials: (snapMats || []).map((m: any) => ({
-        substance_name:  m.substance_name,
-        cas_number:      m.cas_number      || null,
-        percentage_w_w:  m.percentage_w_w  ?? null,
-        reach_svhc:      m.reach_svhc,
-        rohs_restricted: m.rohs_restricted,
-      })),
-      metadata: snapMeta || null,
-    } : null;
-
-    const { data: ver, error } = await tdb("bom_component_versions").insert({
-      component_id, revision, spec_summary: spec_summary || null,
-      is_current: true, created_by: session.uid || null,
-      version_snapshot,
-    }).select("id").maybeSingle();
-    if (error) return json({ error: error.message }, 400);
-
-    // Write audit trail — trigger doesn't fire because bom_components isn't touched
-    if (comp) {
-      await tdb("bom_component_history").insert({
-        organization_id: comp.organization_id,
-        component_id,
-        changed_at: new Date().toISOString(),
-        changed_by: session.uid || null,
-        change_type: "version_bumped",
-        part_number: comp.part_number,
-        oem_number: comp.oem_number,
-        name: comp.name,
-        description: comp.description,
-        type: comp.type,
-        lifecycle_status: comp.lifecycle_status,
-        notes: `Revision ${revision}${spec_summary ? ": " + spec_summary : ""}`,
-      });
-    }
-    return json({ version_id: ver.id, revision });
   }
 
   // --- BOM: version history for a component ---------------------------------
@@ -2728,10 +2852,21 @@ Deno.serve(async (req) => {
         .select("id, revision, spec_summary, created_at, created_by")
         .eq("component_id", component_id),
       tdb("component_documents")
-        .select("id, category, label, created_at, uploaded_by")
+        // `uploaded_at`, not `created_at`. Selecting the wrong name made
+        // PostgREST reject this query, and because only histRes.error was
+        // checked the merge proceeded with zero document entries — the trail
+        // looked complete and had never included a single document.
+        .select("id, category, label, uploaded_at, uploaded_by")
         .eq("component_id", component_id),
     ]);
+    // Check EVERY source. A parallel fetch whose error goes unchecked degrades
+    // to an empty list, which is indistinguishable from "nothing happened" — in
+    // an audit trail that is the worst possible failure mode. A source that
+    // fails is reported, not hidden.
     if (histRes.error) return json({ error: histRes.error.message }, 400);
+    const sourcesFailed: string[] = [];
+    if (verRes.error) sourcesFailed.push("revisions");
+    if (docRes.error) sourcesFailed.push("documents");
 
     const versionEntries = (verRes.data || []).map((v: any) => ({
       id: v.id,
@@ -2743,7 +2878,7 @@ Deno.serve(async (req) => {
 
     const docEntries = (docRes.data || []).map((d: any) => ({
       id: d.id,
-      changed_at: d.created_at,
+      changed_at: d.uploaded_at,
       changed_by: d.uploaded_by,
       change_type: "document_linked",
       notes: `Document linked: ${d.label || d.category} (${d.category})`,
@@ -2752,7 +2887,10 @@ Deno.serve(async (req) => {
     const changelog = [...(histRes.data || []), ...versionEntries, ...docEntries]
       .sort((a: any, b: any) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime());
 
-    return json({ changelog });
+    // `partial` lets the panel say so out loud rather than render a short list.
+    return json(sourcesFailed.length
+      ? { changelog, partial: true, sources_failed: sourcesFailed }
+      : { changelog });
   }
 
   // --- BOM: get tree (BFS, max_depth levels deep) ---------------------------
@@ -3103,20 +3241,63 @@ Deno.serve(async (req) => {
     if (role === "supplier") q = q.eq("is_supplier_visible", true);
     const { data: docs, error } = await q;
     if (error) return json({ error: error.message }, 400);
-    // Attach document names via document_versions → documents
+    // Attach document names via document_versions → documents.
+    // PROP-044 also returns document_id, the linked revision label, whether a
+    // newer revision exists, and how many components share the document — the
+    // panel cannot offer "New version" or warn about the blast radius without
+    // them, and having to open the Documents library to find out was the whole
+    // reason drawings were unreachable from the part.
     const dvIds = (docs || []).map((d: any) => d.document_version_id);
-    let nameMap: Record<string, string> = {};
+    const meta: Record<string, { name: string; document_id: string; version: string }> = {};
+    const latestOf: Record<string, string> = {};   // document_id → newest version label
+    const sharedWith: Record<string, number> = {}; // document_id → distinct components linking it
     if (dvIds.length) {
-      const { data: dvs } = await tdb("document_versions").select("id, document_id").in("id", dvIds);
-      const docIds = (dvs || []).map((v: any) => v.document_id);
+      const { data: dvs } = await tdb("document_versions").select("id, document_id, version").in("id", dvIds);
+      const docIds = [...new Set((dvs || []).map((v: any) => v.document_id))];
       if (docIds.length) {
         const { data: docRows } = await tdb("documents").select("id, name").in("id", docIds);
         const docNameMap: Record<string, string> = {};
         (docRows || []).forEach((d: any) => { docNameMap[d.id] = d.name; });
-        (dvs || []).forEach((v: any) => { nameMap[v.id] = docNameMap[v.document_id] || ""; });
+        (dvs || []).forEach((v: any) => {
+          meta[v.id] = { name: docNameMap[v.document_id] || "", document_id: v.document_id, version: v.version || "" };
+        });
+
+        // Every revision of these documents, so the panel can say "Rev v2 —
+        // v3 available" instead of silently showing a stale link.
+        const { data: allVers } = await tdb("document_versions")
+          .select("id, document_id, version, created_at").in("document_id", docIds)
+          .order("created_at", { ascending: true });
+        (allVers || []).forEach((v: any) => { latestOf[v.document_id] = v.version || latestOf[v.document_id] || ""; });
+
+        const { data: allLinks } = await tdb("component_documents")
+          .select("component_id, document_version_id")
+          .in("document_version_id", (allVers || []).map((v: any) => v.id));
+        const byDoc: Record<string, Set<string>> = {};
+        const verDoc: Record<string, string> = {};
+        (allVers || []).forEach((v: any) => { verDoc[v.id] = v.document_id; });
+        (allLinks || []).forEach((l: any) => {
+          const did = verDoc[l.document_version_id];
+          if (!did) return;
+          (byDoc[did] ||= new Set()).add(l.component_id);
+        });
+        Object.entries(byDoc).forEach(([did, set]) => { sharedWith[did] = set.size; });
       }
     }
-    const result = (docs || []).map((d: any) => ({ ...d, document_name: nameMap[d.document_version_id] || "" }));
+    const result = (docs || []).map((d: any) => {
+      const m = meta[d.document_version_id];
+      const documentId = m?.document_id || null;
+      const linkedVersion = m?.version || "";
+      const latest = documentId ? (latestOf[documentId] || linkedVersion) : linkedVersion;
+      return {
+        ...d,
+        document_name: m?.name || "",
+        document_id: documentId,
+        version: linkedVersion,
+        latest_version: latest,
+        outdated: Boolean(latest && linkedVersion && latest !== linkedVersion),
+        shared_with: documentId ? (sharedWith[documentId] || 1) : 1,
+      };
+    });
     return json({ documents: result });
   }
 

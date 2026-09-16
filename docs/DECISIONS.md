@@ -778,3 +778,93 @@ _Append-only. Claude Code appends one entry here after every /ship._
 **Files changed:** supabase/functions/portal-api/index.ts, supabase/functions/_shared/handler.ts, assets/api.js, tests/assemblies.test.mjs, docs/API.md
 **Status note:** built and statically checked; the unauthenticated tests pass against production, the credentialed ones skip without secrets. Needs a `portal-api` deploy.
 
+
+---
+**Date:** 2026-09-16
+**Feature:** PROP-043 — Complete the BOM node audit trail
+
+**Decision:** Document revisions become first-class BOM node events, but only a
+`drawing` revision raises the node's revision number. Every other category
+(datasheet, certificate, declaration) is audited without a bump. Approval and
+release state stay out of scope.
+
+**Why:** The Change Log advertised three sources and delivered two — not a missing
+feature but a false claim, since the screen asserts "this is everything that
+happened." Two causes, both silent. `getComponentChangelog` selected `created_at`
+from `component_documents`, which has `uploaded_at`; only `histRes.error` was
+checked, so PostgREST's rejection was discarded and the merge continued with zero
+document rows. Every source now reports its own failure and the handler returns
+`partial: true` with `sources_failed`, which the panel renders as a warning — an
+audit trail that under-reports invisibly is more dangerous than one that admits a
+gap. Separately, `addDocumentVersion` wrote only to `document_versions`, so a new
+drawing revision left every node referencing it untouched.
+
+The drawing-only bump is the substantive choice. Bumping on every category would
+inflate revision numbers with events that are not changes to our part — a supplier
+reissuing their datasheet is a change to their document. Bumping on none would
+lose the link that matters most for compliance: which drawing revision a given
+component revision was built against. Drawings define the physical part; that is
+the line.
+
+Migration 0031 must be applied *before* the deploy. The history insert is
+deliberately non-fatal — an audit write must never block the upload it records —
+so an unwidened CHECK would reject `document_revised` inside the try/catch and the
+rows would vanish silently, recreating exactly the defect being removed.
+
+Approval workflow was declined deliberately: `document_versions` has no status
+column, and designing draft/review/released is its own proposal. Holding a
+one-line column fix hostage to that design would have left the trail broken.
+
+**Files changed:** supabase/migrations/0031_audit_document_revisions.sql,
+supabase/functions/portal-api/index.ts (getComponentChangelog,
+bumpComponentRevision extracted, recordDocumentRevision added, addDocumentVersion),
+assets/app.js (document_revised badge, partial-source warning),
+docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, index.html, supplier.html,
+reset.html, verify.html, CLAUDE.md (v233 → v234)
+
+---
+**Date:** 2026-09-16
+**Feature:** PROP-044 — Revise a drawing from the part
+
+**Decision:** The part's Documents tab becomes the single screen for a drawing's
+whole life — attach, see its revision, revise it. The Documents library stays as
+the shared store, but is no longer a required stop. When a revision is uploaded
+from a part, only *that* part's link advances to the new revision; other parts
+linking the same document keep theirs and display a "newer revision available"
+marker.
+
+**Why:** The user could not find where to upload drawings. That was not a gap in
+their understanding — production held zero `component_documents` rows, so the
+flow had never been completed by anyone. Attaching happened on the part and
+revising happened in a different top-level tab, with neither screen referencing
+the other, and PROP-043's audit trail hung entirely off the unreachable half.
+
+The link-advance rule is the substantive choice. Advancing every linked part
+would silently change which drawing a part is built against, for parts whose
+owner never asked — the failure mode is invisible and lands in a compliance
+record. Advancing none would show the row as stale the instant the user revised
+it from that very row, which reads as a bug. Advancing only the originating part
+follows the one intent that is unambiguous, and turns the others into a visible
+decision rather than a silent substitution.
+
+Consequences are stated before the upload, not after. The drawing-only bump from
+PROP-043 is only defensible if the user sees it coming at the moment it applies;
+a rule that surprises people after the fact is indistinguishable from a bug. For
+the same reason the outcome replaces the modal instead of firing a toast — a
+revision bump changes the part's identity and should not vanish on a timer.
+
+**Two PROP-043 defects fixed here:** `addDocumentVersion` passed `body.version`
+to the audit, which is empty whenever the version is auto-numbered — the default
+path — so every auto-numbered note read `v2 → new revision`. And the prior
+revision was read from an unordered query filtered by version label, so an
+arbitrary row was named as superseded, and a repeated label would drop the real
+predecessor along with the new row. `insertDocumentVersion` now returns the
+resolved label and the new row id; the lookup is ordered by `created_at` and
+matched by id.
+
+**Files changed:** supabase/functions/portal-api/index.ts (insertDocumentVersion,
+addDocumentVersion, recordDocumentRevision, getComponentDocuments),
+assets/app.js (panel Documents tab: revision column, shared-with column,
+New revision modal, instructive empty state, tab count),
+docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, index.html, supplier.html,
+reset.html, verify.html, CLAUDE.md (v234 → v235)

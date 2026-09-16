@@ -1075,3 +1075,90 @@ The consequence for compliance is the point. A technical file has to show what a
 **Related PROPs:** **PROP-021 Component Document Lifecycle** (*Now*) — Layers 2–4 are new revision, AI diff, data extraction; this idea is the audit half of Layer 2 and should be built with it rather than beside it. **PROP-013** — the Change Log this repairs. **PROP-014 Evidence Bridge** (*Next*) — once a drawing revision is a component event, "this revision invalidates that test report" becomes expressible. **Engineering Drawing Intelligence** (2026-09-02) — its revision-diff and re-test signals assume exactly the wiring described here, so this is its prerequisite. **PROP-024 Component Version History** — full state per revision, complementary.
 **Status:** Raw idea
 
+
+---
+### Drawings as a First-Class Domain — Carve Engineering Drawings Out of Documents — 2026-09-16
+
+**One sentence:** Give engineering drawings their own tables, their own top-level DRAWINGS tab and their own revision/approval semantics, reusing the document store only for the file bytes — so that AI interpretation, tolerance chains and drawing-to-drawing relationships have somewhere to live that is not a generic file-link table with a `category` column.
+
+**Problem it solves:**
+
+Today a drawing is a `documents` row + a `document_versions` row + a `component_documents` link whose `category` happens to be the string `"drawing"`. That models a *file attached to a part*. It does not model a drawing.
+
+What a drawing actually is, and where each part of it has no home today:
+
+| Drawing concept | Where it lives now |
+|---|---|
+| Drawing number (its own identity, independent of any part) | nowhere — `documents.name` is a free-text filename |
+| Revision (Rev A/B/C, a controlled sequence) | `document_versions.version`, free text shared with datasheets |
+| Approval state (draft → checked → approved → released → superseded) | nowhere — `document_versions` has no status column at all |
+| Title block (drawn by, checked by, date, scale, projection angle, sheet N of M) | nowhere |
+| Tolerance block / general tolerances | nowhere |
+| Individual dimensions with nominal + upper/lower limits + datum | nowhere |
+| Assembly drawing → detail drawing relationships | nowhere |
+| Which BOM assembly a drawing depicts | nowhere — only a flat part link |
+
+Six of eight have no home. The pattern of the last few weeks has been fields that are accepted and then displayed nowhere; this is the same failure one level up — an entire entity type with no schema, wearing a document's clothes.
+
+**Why the 2026-09-02 entry said the opposite, and why that has changed:**
+
+*Engineering Drawing Intelligence* (2026-09-02) states explicitly: "Drawing intelligence is NOT a new tab or module. It is intelligence layered onto the existing component record." That was the right call **for that scope** — extract a title block, diff two revisions, prompt a revision bump. All of that genuinely is a thin layer on a component.
+
+It stops being right the moment tolerance chains enter. A stack-up analysis is an ordered path of dimensions across *several* drawings for *several* parts in one assembly, each with a nominal and a tolerance band, producing a computed worst-case and RSS result. That is a graph over dimension entities. There is no version of `component_documents` that holds it, and no amount of AI on top of a file-link table produces one. The 2026-09-02 entry did not anticipate that requirement; this entry does. The older entry is not wrong — it is **the payload that should land on this spine instead of on `component_documents`**.
+
+**The window is open right now, and it will not stay open:**
+
+`component_documents` currently holds **zero rows** in production (verified 2026-09-16 — it is also how PROP-044 was found). `document_versions` holds 6, `documents` 12, none of them drawings. There is no data to migrate, no link to rewrite, no user habit to unlearn. The same carve-out attempted after a year of drawings is a migration project with a re-linking script and a re-training problem. Doing it before the first drawing is uploaded costs a migration file and nothing else.
+
+**Architecture intent — reuse the bytes, not the meaning:**
+
+The mistake to avoid is a Drawings tab that re-implements upload, storage, signed URLs, retention and versioning for one category. None of that is drawing-specific.
+
+- `drawings` is the entity: drawing number, title, current revision, status, projection angle, sheet size, scale.
+- `drawing_revisions` is its controlled history, each row pointing at a `document_versions` row for the actual file. The document library keeps owning bytes; the drawings domain owns meaning.
+- `drawing_components` links a drawing to the parts it depicts (many-to-many — a detail drawing shows one part, an assembly drawing shows a whole sub-assembly, a part may have detail + installation + wiring drawings).
+- `drawing_dimensions` is the row type that makes tolerance chains possible later: nominal, upper, lower, datum, feature label, source revision. Empty in the MVP, populated by AI in the follow-on.
+
+One domain, two entry points, deliberately cross-linked this time: a top-level **DRAWINGS** tab (the drawing register — every drawing, its revision, its status, which parts it is on), and a **Drawings** tab in the part panel showing the same records filtered to that part. The failure that produced PROP-044 was two screens with no route between them; the fix is not "one screen", it is "two screens that each name the other".
+
+**What this does to the Documents tab:** `drawing` leaves the component document category list. Documents keeps datasheets, test reports, declarations, quality certs — things that genuinely are *files about a part*. That tab gets simpler, not more complex.
+
+**What survives from PROP-043/044:** all of the semantics, none of the placement. The rule that a drawing revision advances the BOM node's revision while a datasheet revision does not, the `document_revised` history event, stating the consequence before upload and the outcome after — these move onto `drawing_revisions` unchanged. PROP-044's "New revision" modal is the seed of the drawings revision flow, not throwaway work.
+
+**MVP scope — prove the spine, no AI:**
+
+The value to prove is that drawings-as-entities is the right model. AI is the second step and it lands better on a real schema.
+
+1. Migration: `drawings`, `drawing_revisions`, `drawing_components`, `drawing_dimensions` (created empty, so the AI step adds no schema). Every table `organization_id UUID NOT NULL FK → organizations`, RLS deny-all.
+2. API: `listDrawings`, `getDrawing`, `createDrawing`, `addDrawingRevision`, `linkDrawingToComponent`, `unlinkDrawingFromComponent`, `setDrawingStatus`.
+3. Top-level **DRAWINGS** tab: register list — drawing number, title, current revision, status, parts count. Filter by status, sort by number. Same list conventions as Parts (sticky filters, scrollable list) so it is not a new interaction language.
+4. Part panel gains a **Drawings** tab: the drawings on this part, revision and status, plus "New revision" carrying the PROP-043 bump rule, and a link through to the register.
+5. Approval state as a plain enum with explicit transitions — draft → checked → approved → released, and released → superseded when a newer revision is released. No approval *routing* (no assignees, no notifications, no gates). The state is the MVP; the workflow is not.
+
+**Tables involved:**
+- New: `drawings`, `drawing_revisions`, `drawing_components`, `drawing_dimensions` — all `organization_id NOT NULL`
+- Read/reuse: `document_versions` (file bytes + storage path), `documents` (the library row), `bom_components`, `bom_component_versions`, `bom_component_history` (the PROP-043 audit events)
+- Shrinks: `component_documents` loses the `drawing` category
+
+**Effort estimate:** 14–18 hours
+- Migration (4 tables, RLS, indexes): 2 h
+- Backend (7 actions, tenant-scoped via `makeTdb`): 4 h
+- DRAWINGS register tab (list, filters, detail): 4–5 h
+- Part panel Drawings tab + revision flow (ports PROP-044): 3 h
+- Status transitions + audit wiring into `bom_component_history`: 2 h
+
+**Risks:**
+- **Two places to upload a file.** The real risk of the carve-out: a user uploads a drawing through Documents anyway. Mitigated by removing `drawing` from the component document categories entirely, so the wrong path stops existing rather than merely being discouraged.
+- **A second versioning concept.** `drawing_revisions` alongside `document_versions` is two version chains over one file. They must not drift: `drawing_revisions` is authoritative for drawing revision letters, `document_versions` for bytes. The rule needs to be written down and one direction of truth enforced in the API, or this becomes the next silent-mismatch bug.
+- **Scope gravity.** Approval workflow, ECO process, GD&T parsing and tolerance stack-ups will all pull at this. The MVP is the register and the revision chain. Everything else is a later PROP landing on this schema — which is the entire point of building the schema first.
+- **Empty-tab problem.** A DRAWINGS tab with nothing in it is worse than no tab. Ship with the part-panel entry point and an empty state that says how to add the first drawing, the way PROP-044 did for documents.
+- **PROP-012 multi-tenancy:** drawings are among the most confidential per-tenant IP in the system. All four tables carry `organization_id NOT NULL`, scoped through `makeTdb` from the signed session, never from the request — same rule as everywhere, higher stakes.
+
+**Related PROPs:**
+- **Engineering Drawing Intelligence (2026-09-02)** — direct overlap and the main dependency relationship. That entry's AI extraction, revision diff and revision-bump prompt should be **rebased onto this schema**: extracted fields become `drawing_dimensions` + title-block columns instead of a generic `component_specs` table. Build this first; that second.
+- **PROP-043 / PROP-044** — the revision-audit semantics and the revise-from-the-part flow port onto `drawing_revisions` directly.
+- **PROP-021 Component Document Lifecycle** — Layers 2–4 were scoped over `component_documents`. With drawings carved out, Layer 4 (`component_specs`) may not be needed at all for drawings; it still applies to datasheets.
+- **PROP-014 Compliance–BOM Integration** — a released drawing revision is exactly the trigger for a `pending_retest` signal; cleaner to fire from a drawing status transition than from a generic document upload.
+- **PROP-024 Component Version History** — a version snapshot should cite the released drawing revision it was built against.
+
+**Status:** Raw idea

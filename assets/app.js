@@ -5327,10 +5327,122 @@
       ]);
 
       // Documents section
+      //
+      // PROP-044: a drawing used to be attached here and revised somewhere else
+      // entirely — the Documents library in the main nav — with nothing on this
+      // screen saying so. Revising is now a row action, so the part is the only
+      // screen you need.
+      function openNewVersionModal(d) {
+        const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:2000;display:flex;align-items:center;justify-content:center" });
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+        const box = el("div", { style: "background:var(--bg,#fff);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
+        overlay.append(box);
+        document.body.append(overlay);
+
+        let selectedFile = null;
+        const statusEl = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+        const barFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.15s" });
+        const progressEl = el("div", { style: "display:none;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden;margin-bottom:0.5rem" }, barFill);
+        const verInp = el("input", { class: "up-text", type: "text", placeholder: "Auto-numbered if blank", style: "margin-top:4px" });
+        const notesInp = el("input", { class: "up-text", type: "text", placeholder: "What changed? (optional)", style: "margin-top:4px" });
+        const fileLabel = el("span", { style: "font-size:0.8rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
+        const fileInp = el("input", { type: "file", style: "margin-top:4px" });
+        fileInp.onchange = () => {
+          const f = fileInp.files?.[0];
+          selectedFile = f || null;
+          fileLabel.textContent = f ? f.name : "No file chosen";
+        };
+
+        // Say what this will do before it does it. A drawing revision moves the
+        // part's revision letter and touches every part sharing the document —
+        // that must not be something the user discovers afterwards.
+        const isDrawing = d.category === "drawing";
+        const shared = d.shared_with > 1
+          ? ` It is linked to ${d.shared_with} parts, and all of them are affected.`
+          : "";
+        const effect = el("div", { class: isDrawing ? "notice warn" : "notice", style: "font-size:0.8rem;margin-bottom:0.8rem" },
+          isDrawing
+            ? `This is a drawing. Uploading a new revision advances this part's revision letter and records it in the Change Log.${shared}`
+            : `This is a ${d.category}. The new revision is recorded in the Change Log, but the part's revision letter does not move — a supplier reissuing their document is not a change to your part.${shared}`);
+
+        box.replaceChildren(
+          el("h3", { style: "margin:0 0 0.2rem;font-size:1rem" }, "New revision"),
+          el("div", { class: "muted", style: "font-size:0.82rem;margin-bottom:0.8rem" },
+            `${d.document_name || d.label || "Document"} — currently ${d.latest_version || d.version || "unversioned"}`),
+          effect,
+          el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "File"), fileInp, fileLabel]),
+          el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Revision label"), verInp]),
+          el("div", { style: "margin-bottom:0.9rem" }, [el("div", { class: "form-label" }, "Notes"), notesInp]),
+          progressEl,
+          statusEl,
+          el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
+            el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+              if (!selectedFile) { statusEl.textContent = "Pick a file first."; return; }
+              if (!d.document_id) { statusEl.textContent = "This link has no document behind it — re-attach it."; return; }
+              ev.target.disabled = true; statusEl.textContent = "Uploading…";
+              progressEl.style.display = "";
+              try {
+                const { signedUrl, path } = await API.post(token, "docUploadUrl", { fileName: selectedFile.name });
+                await xhrPut(signedUrl, selectedFile, (p) => { barFill.style.width = `${p}%`; });
+                barFill.style.width = "100%";
+                statusEl.textContent = "Recording revision…";
+                const res = await API.post(token, "addDocumentVersion", {
+                  documentId: d.document_id, path, fileName: selectedFile.name,
+                  version: verInp.value.trim() || null, notes: notesInp.value.trim() || null,
+                  advance_component_id: componentId,
+                });
+                // Report what actually happened rather than closing on a
+                // generic success. A revision bump changes the part's identity;
+                // that belongs on screen until the user acknowledges it, not in
+                // a toast that vanishes before it is read.
+                const bumped = (res && res.bumped) || [];
+                const audited = (res && res.audited) || 0;
+                box.replaceChildren(
+                  el("h3", { style: "margin:0 0 0.8rem;font-size:1rem" }, `Revision ${res && res.version ? res.version : ""} saved`.trim()),
+                  bumped.length
+                    ? el("div", { class: "notice warn", style: "font-size:0.85rem" }, [
+                        el("div", { style: "font-weight:600;margin-bottom:0.3rem" }, "Part revision advanced"),
+                        el("div", {}, bumped.join(" · ")),
+                      ])
+                    : el("div", { class: "notice", style: "font-size:0.85rem" },
+                        "Recorded in the Change Log. No part revision moved — only drawings advance the revision letter."),
+                  el("div", { class: "muted", style: "font-size:0.8rem;margin:0.6rem 0" },
+                    audited === 1 ? "1 part updated." : `${audited} parts updated.`),
+                  el("div", { style: "display:flex;justify-content:flex-end" }, [
+                    el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
+                      overlay.remove();
+                      await openComponentDetail(componentId, token, panel, nodeData, role);
+                    } }, "Done"),
+                  ]),
+                );
+              } catch (ex) {
+                statusEl.textContent = ex.message;
+                ev.target.disabled = false;
+                barFill.style.width = "0%";
+                progressEl.style.display = "none";
+              }
+            } }, "Upload revision"),
+          ]),
+        );
+      }
+
       const docRows = (docs.documents || []).map((d) =>
         el("tr", {}, [
-          el("td", {}, d.category), el("td", {}, d.label || d.document_name || "—"),
+          el("td", {}, d.category),
+          el("td", {}, d.label || d.document_name || "—"),
+          el("td", {}, d.outdated
+            ? el("span", { title: `This part is linked to ${d.version}, but ${d.latest_version} exists`, style: "color:#b45309;font-weight:600" },
+                `${d.version} → ${d.latest_version} available`)
+            : (d.version || "—")),
+          el("td", {}, d.shared_with > 1
+            ? el("span", { title: "This document is linked to more than one part — revising it affects all of them" }, `${d.shared_with} parts`)
+            : "this part"),
           el("td", {}, d.is_supplier_visible ? "Yes" : "No"),
+          el("td", {}, role === "rushroom" && d.document_id
+            ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px",
+                onclick: () => openNewVersionModal(d) }, "New revision")
+            : ""),
         ]));
 
       function openAddDocModal() {
@@ -5466,9 +5578,15 @@
           el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: () => openAddDocModal() }, "+ Add document"),
         ]),
         docRows.length ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
-          el("thead", {}, el("tr", {}, ["Category", "Name", "Supplier visible"].map((h) => el("th", {}, h)))),
+          el("thead", {}, el("tr", {}, ["Category", "Name", "Revision", "Used on", "Supplier visible", ""].map((h) => el("th", {}, h)))),
           el("tbody", {}, docRows),
-        ])) : el("div", { class: "muted" }, "No documents attached yet."),
+        ])) : el("div", { class: "muted", style: "font-size:0.85rem" }, [
+          el("div", {}, "No documents attached yet."),
+          el("div", { style: "margin-top:0.35rem" },
+            "Drawings, datasheets, test reports and declarations all attach here. Use + Add document → Upload & link, and set the category to drawing for a production drawing."),
+        ]),
+        el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.5rem" },
+          "Revising a drawing from here advances this part's revision letter. Other categories are logged without a bump."),
       ]);
 
       // Materials section
@@ -5516,9 +5634,12 @@
           updated:         ["#4a9eed20", "#4a9eed"],
           version_bumped:  ["#a855f720", "#a855f7"],
           document_linked: ["#f59e0b20", "#f59e0b"],
+          // PROP-043 — distinct from document_linked: attaching a document and
+          // revising one are different events, and only the first existed.
+          document_revised: ["#4a9eed20", "#4a9eed"],
         };
         const [bg, fg] = BADGE_COLORS[entry.change_type] || ["#8b93a120", "#8b93a1"];
-        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document" }[entry.change_type] || entry.change_type;
+        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document", document_revised: "doc revision" }[entry.change_type] || entry.change_type;
 
         let changeCell;
         if (diffs.length) {
@@ -5558,6 +5679,11 @@
         el("h4", { style: "margin-bottom:0.4rem" }, "Change Log"),
         el("p", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" },
           "Immutable audit trail — every field change captured automatically by the database."),
+        // An audit trail that under-reports silently is worse than one that
+        // admits a gap. Before PROP-043 a failed source degraded to an empty
+        // list and the timeline looked complete; now it says so.
+        cl.partial ? el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.5rem 0.7rem;font-size:0.8rem;margin-bottom:0.5rem" },
+          `⚠ This trail is incomplete — ${(cl.sources_failed || []).join(" and ") || "a source"} could not be loaded. Do not treat it as a full record.`) : null,
         clRows.length
           ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem;width:100%" }, [
               el("thead", {}, el("tr", {}, ["Date", "Event", "Changes"].map((h) => el("th", {}, h)))),
@@ -6481,7 +6607,7 @@
         { id: "quality",     label: "Quality" },
         { id: "regulatory",  label: "Regulatory" },
         { id: "materials",   label: "Materials" },
-        { id: "documents",   label: "Documents" },
+        { id: "documents",   label: `Documents${(docs.documents || []).length ? ` (${(docs.documents || []).length})` : ""}` },
         { id: "images",      label: "Images" },
         { id: "versions",    label: "Versions" },
         { id: "changelog",   label: "Change Log" },

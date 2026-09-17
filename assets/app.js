@@ -3425,6 +3425,52 @@
   const LIFECYCLE_COLORS = {
     active: "#2fa564", inactive: "#8b93a1", replaced: "#e5a326", flagged: "#e05454",
   };
+  /**
+   * Lifecycle distribution for a set of components. Shared by the BOM Tree strip
+   * and the Status Overview so the two can never report different numbers for
+   * the same thing — which they would, sooner or later, as two copies.
+   *
+   * Deduped by id on purpose: one component can appear under several assemblies,
+   * and counting it once per appearance would overstate the BOM.
+   */
+  const LIFECYCLE_ORDER = ["active", "inactive", "replaced", "flagged"];
+  function lifecycleSummary(nodes, opts = {}) {
+    const seen = new Map();
+    (nodes || []).forEach((n) => { if (n && n.id && !seen.has(n.id)) seen.set(n.id, n); });
+    const unique = [...seen.values()];
+    const counts = {};
+    LIFECYCLE_ORDER.forEach((k) => { counts[k] = 0; });
+    let unknown = 0;
+    unique.forEach((n) => {
+      if (counts[n.lifecycle_status] !== undefined) counts[n.lifecycle_status]++;
+      else unknown++;
+    });
+    const pills = LIFECYCLE_ORDER
+      .filter((k) => counts[k] > 0 || opts.showEmpty)
+      .map((k) => {
+        const color = LIFECYCLE_COLORS[k];
+        return el("span", {
+          title: `${counts[k]} ${k}`,
+          style: `background:${color}20;color:${color};border:1px solid ${color}60;padding:2px 10px;border-radius:99px;font-size:0.78rem;font-weight:600;white-space:nowrap`,
+        }, `${counts[k]} ${k}`);
+      });
+    if (unknown) {
+      pills.push(el("span", { title: "No lifecycle status recorded",
+        style: "background:#8b93a120;color:#8b93a1;border:1px solid #8b93a160;padding:2px 10px;border-radius:99px;font-size:0.78rem;font-weight:600" },
+        `${unknown} unset`));
+    }
+    return {
+      total: unique.length,
+      counts,
+      el: el("div", { style: "display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap" }, [
+        opts.label ? el("span", { class: "muted", style: "font-size:0.78rem" }, opts.label) : null,
+        ...pills,
+        el("span", { class: "muted", style: "font-size:0.78rem" },
+          `${unique.length} component${unique.length === 1 ? "" : "s"}`),
+      ].filter(Boolean)),
+    };
+  }
+
   const MATURITY_COLORS = {
     estimate: "#e5a326", budgetary_quote: "#4a9eed", firm_quote: "#2bb5a0",
     contracted: "#2fa564", actual: "#1a8a50",
@@ -3601,6 +3647,11 @@
       },
     });
 
+    // Lifecycle health of what is on screen. It needs no root to be chosen —
+    // that requirement is what made the Status Overview unusable — and it widens
+    // as subtrees are expanded, so it always describes what you are looking at.
+    const summaryEl = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.4rem 0" });
+
     wrap.replaceChildren(
       el("div", { class: "pis-toolbar", style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap" }, [
         el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => openAddComponent(token, (id, type) => { activeTab = type === "sub_assembly" ? "assemblies" : "components"; refreshTree(); }) }, "+ New BOM Node"),
@@ -3608,10 +3659,32 @@
         searchInp,
       ]),
       tabBarEl,
+      summaryEl,
       catBarEl,
       sortBarEl,
       treeArea,
     );
+
+    function visibleNodes(grouped) {
+      const base = grouped[activeTab] || [];
+      const out = base.slice();
+      base.forEach((c) => {
+        const sub = expandedTrees[c.id];
+        if (sub && sub !== "loading" && sub !== "error" && Array.isArray(sub.nodes)) out.push(...sub.nodes);
+      });
+      return out;
+    }
+
+    function paintSummary(grouped) {
+      const nodes = visibleNodes(grouped);
+      if (!nodes.length) { summaryEl.replaceChildren(); return; }
+      const expanded = (grouped[activeTab] || []).some((c) => {
+        const sub = expandedTrees[c.id];
+        return sub && sub !== "loading" && sub !== "error";
+      });
+      const label = expanded ? "Showing, including expanded sub-assemblies:" : "Showing:";
+      summaryEl.replaceChildren(lifecycleSummary(nodes, { label }).el);
+    }
 
     function groupFiltered() {
       const q = searchQuery;
@@ -3629,6 +3702,7 @@
 
     function renderAll() {
       const grouped = groupFiltered();
+      paintSummary(grouped);
       // Tab bar
       tabBarEl.replaceChildren(...TAB_DEFS.map((td) => {
         const count = (grouped[td.id] || []).length;
@@ -7311,40 +7385,94 @@
   }
 
   // --- Status overview dashboard ---------------------------------------------
+  //
+  // This asked for a raw component UUID and nothing in the portal displays one,
+  // so the only way to use it was to read an id out of the database. A working
+  // feature behind an unusable door is indistinguishable from a broken one — the
+  // same shape as drawings being attachable only from a screen nobody found.
+  // It now picks from a list, loads on selection, and names what needs attention
+  // rather than only counting it.
   async function statusOverviewView(token) {
     const wrap = el("div", { class: "pis-overview-wrap" });
-    const rootIdInput = el("input", { class: "up-text", type: "text", placeholder: "Root component ID", style: "width:min(320px,100%)" });
-    const loadBtn = el("button", { class: "btn btn-sm", type: "button" }, "Load");
+    const picker = el("select", { class: "up-text", style: "min-width:min(360px,100%)" },
+      [el("option", { value: "" }, "Choose a product, assembly or part…")]);
     const resultArea = el("div", { style: "margin-top:1rem" });
+    const TYPE_GROUPS = [
+      ["product_family", "Dynamic BOMs"],
+      ["sub_assembly", "Assemblies"],
+      ["part", "Parts"],
+    ];
 
-    loadBtn.onclick = async () => {
-      const rootId = rootIdInput.value.trim(); if (!rootId) return;
+    async function analyse(rootId, rootName) {
       resultArea.replaceChildren(el("div", { class: "loading" }, "Analysing…"));
       try {
         const { nodes } = await API.post(token, "getBom", { root_component_id: rootId, max_depth: 99 });
-        if (!nodes || !nodes.length) { resultArea.replaceChildren(el("div", { class: "notice" }, "No components found.")); return; }
-        // Lifecycle status distribution
-        const lcCounts = {};
-        const lcOrder = ["active", "inactive", "replaced", "flagged"];
-        lcOrder.forEach((s) => { lcCounts[s] = 0; });
-        nodes.forEach((n) => { if (lcCounts[n.lifecycle_status] !== undefined) lcCounts[n.lifecycle_status]++; });
-        const lcPills = lcOrder.map((s) => {
-          const c = lcCounts[s];
-          const color = LIFECYCLE_COLORS[s];
-          return el("span", { style: `background:${color}20;color:${color};border:1px solid ${color}60;padding:4px 12px;border-radius:99px;font-size:0.85rem;cursor:default`, title: `${c} component${c !== 1 ? "s" : ""} at ${s}` }, `${s}: ${c}`);
-        });
+        if (!nodes || !nodes.length) {
+          resultArea.replaceChildren(el("div", { class: "notice" },
+            `${rootName} has no components beneath it, so there is nothing to summarise.`));
+          return;
+        }
+        const summary = lifecycleSummary(nodes, { showEmpty: true });
+        // Counting is only half of it — a status overview that does not say WHICH
+        // components need attention leaves the user to go and find them by hand.
+        const needsAttention = [...new Map((nodes || [])
+          .filter((n) => n.lifecycle_status === "flagged" || n.lifecycle_status === "replaced")
+          .map((n) => [n.id, n])).values()]
+          .sort((a, b) => (a.lifecycle_status || "").localeCompare(b.lifecycle_status || "") || (a.name || "").localeCompare(b.name || ""));
+
         resultArea.replaceChildren(
-          el("h4", { style: "margin-bottom:0.5rem" }, "Lifecycle status distribution"),
-          el("div", { style: "display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1.5rem" }, ...lcPills),
-          el("p", { class: "muted", style: "font-size:0.82rem" }, `${nodes.length} total components in BOM (all depths).`),
+          el("h4", { style: "margin:0 0 0.5rem" }, `Lifecycle status beneath ${rootName}`),
+          summary.el,
+          el("p", { class: "muted", style: "font-size:0.8rem;margin:0.6rem 0 0" },
+            "Every component at every depth, counted once even where it appears under more than one assembly."),
+          needsAttention.length
+            ? el("div", { style: "margin-top:1.2rem" }, [
+                el("h4", { style: "margin:0 0 0.4rem" }, `Needs attention (${needsAttention.length})`),
+                el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+                  el("thead", {}, el("tr", {}, ["Component", "Part number", "Status"].map((h) => el("th", {}, h)))),
+                  el("tbody", {}, needsAttention.map((n) => el("tr", {}, [
+                    el("td", {}, n.name || "—"),
+                    el("td", {}, n.part_number || "—"),
+                    el("td", {}, lifecycleBadge(n.lifecycle_status)),
+                  ]))),
+                ])),
+              ])
+            : el("div", { class: "notice", style: "margin-top:1.2rem;font-size:0.85rem" },
+                "Nothing is flagged or replaced beneath this root."),
         );
       } catch (ex) {
         resultArea.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
       }
+    }
+
+    picker.onchange = () => {
+      const id = picker.value;
+      if (!id) { resultArea.replaceChildren(); return; }
+      analyse(id, picker.options[picker.selectedIndex].textContent.replace(/\s+·.*$/, ""));
     };
 
+    try {
+      const { components } = await API.post(token, "listComponents", {});
+      const all = (components || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      const opts = [el("option", { value: "" }, "Choose a product, assembly or part…")];
+      for (const [type, label] of TYPE_GROUPS) {
+        const group = all.filter((c) => (type === "part" ? (c.type !== "sub_assembly" && c.type !== "product_family") : c.type === type));
+        if (!group.length) continue;
+        opts.push(el("optgroup", { label: `${label} (${group.length})` },
+          group.map((c) => el("option", { value: c.id }, `${c.name}${c.part_number ? ` · ${c.part_number}` : ""}`))));
+      }
+      picker.replaceChildren(...opts);
+    } catch (ex) {
+      resultArea.replaceChildren(el("div", { class: "error" }, `Couldn't load components: ${ex.message}`));
+    }
+
     wrap.replaceChildren(
-      el("div", { class: "pis-toolbar", style: "display:flex;gap:0.5rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap" }, [rootIdInput, loadBtn]),
+      el("div", { class: "pis-toolbar", style: "display:flex;gap:0.5rem;align-items:center;margin-bottom:0.3rem;flex-wrap:wrap" }, [
+        el("span", { class: "form-label", style: "margin:0" }, "Summarise the BOM beneath:"),
+        picker,
+      ]),
+      el("div", { class: "muted", style: "font-size:0.78rem" },
+        "The BOM Tree shows the same figures for whatever is on screen. Use this when you want one product's whole tree, however deep."),
       resultArea,
     );
     return wrap;

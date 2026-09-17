@@ -878,7 +878,7 @@
                 ver ? el("span", { class: "rl-kind" }, ver) : null,
                 rlStatusChip(l.status),
               ]))),
-              el("div", { class: "muted", style: "font-size:0.78rem; margin-top:0.3rem" }, "Manage in Clauses & DPP → Links, or in “Paragraphs & links” below."),
+              el("div", { class: "muted", style: "font-size:0.75rem; margin-top:0.3rem" }, "Manage in Clauses & DPP → Links, or in “Paragraphs & links” below."),
             ]));
           }).catch(() => linkBox.replaceChildren());
         }
@@ -1330,7 +1330,7 @@
     let gdocId = null, gdocKind = "doc";
     const gopen = el("button", { class: "btn btn-sm btn-primary", type: "button" }, `📝 Open current version in ${gTool}`);
     const gsave = el("button", { class: "btn btn-primary", type: "button" }, `⬆ Save ${isSheet ? "Google Sheet" : "Google Doc"} as new version`);
-    const glink = el("span", { style: "font-size:0.85rem" });
+    const glink = el("span", { style: "font-size:0.875rem" });
     const gstatus = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.4rem 0 0" }, "");
     gsave.disabled = true;
     const gsection = showGoogle ? el("div", { class: "src-section" }, [
@@ -1465,7 +1465,7 @@
     const gdocEdit = el("button", { class: "btn btn-sm", type: "button" }, "📝 Edit in Google Docs");
     const gdocPublish = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "⬆ Publish from Google Docs (Word)");
     const gdocFetch = el("button", { class: "btn btn-sm", type: "button" }, "↓ Fetch text back");
-    const gdocLink = el("span", { style: "font-size:0.85rem" });
+    const gdocLink = el("span", { style: "font-size:0.875rem" });
     const gdocStatus = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.4rem 0 0" }, "");
     const gdocRow = el("div", { style: "display:none; margin-top:0.6rem" }, [
       el("div", { style: "display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center" }, [gdocEdit, gdocPublish, gdocFetch, gdocLink]),
@@ -1564,11 +1564,11 @@
               checkbox,
               el("span", {}, [
                 el("strong", {}, std.code || std.title || "Standard"),
-                el("div", { class: "muted", style: "font-size:0.82rem; margin-top:0.1rem" }, `${std.title || ""}${latest?.version ? ` · ${latest.version}` : ""}`),
+                el("div", { class: "muted", style: "font-size:0.8125rem; margin-top:0.1rem" }, `${std.title || ""}${latest?.version ? ` · ${latest.version}` : ""}`),
               ]),
             ]),
             el("div", { style: "display:flex; flex-direction:column; gap:0.25rem; margin-top:0.5rem" }, [
-              el("span", { class: "muted", style: "font-size:0.82rem;" }, "Select the exact standard version to use for drafting."),
+              el("span", { class: "muted", style: "font-size:0.8125rem;" }, "Select the exact standard version to use for drafting."),
               select,
             ]),
           ]);
@@ -2263,7 +2263,7 @@
     const card = gateEl && gateEl.querySelector(".gate-card");
     if (!card || card.querySelector(".gate-register")) return;
     card.appendChild(el("div", { class: "gate-register" }, [
-      el("p", { class: "muted", style: "margin:0 0 0.5rem; font-size:0.9rem" }, "Don't have access yet?"),
+      el("p", { class: "muted", style: "margin:0 0 0.5rem; font-size:0.875rem" }, "Don't have access yet?"),
       el("button", { class: "btn btn-sm", type: "button", onclick: registerModal }, "Register for access"),
     ]));
   }
@@ -2289,10 +2289,10 @@
     const del = actionBtn("Delete", "trash", { danger: true, onClick: () => { if (confirm(`Delete ${u.name} (${u.email})?`)) run(() => API.adminDeleteUser(tok(), u.id)); } });
     return el("div", { class: "card acct-card" }, [
       el("div", { class: "acct-head" }, [
-        el("div", {}, [el("strong", {}, u.name), el("div", { class: "muted", style: "font-size:0.85rem" }, u.email)]),
+        el("div", {}, [el("strong", {}, u.name), el("div", { class: "muted", style: "font-size:0.875rem" }, u.email)]),
         el("span", { class: `acct-badge acct-${u.status}` }, `${u.status}${u.email_verified ? " · verified" : " · unverified"}`),
       ]),
-      el("div", { class: "muted", style: "font-size:0.85rem; margin-top:0.2rem" }, `${u.phone ? "☎ " + u.phone : "no phone"}${u.whatsapp ? "  ·  WhatsApp " + u.whatsapp : ""}  ·  requested: ${u.requested_role}`),
+      el("div", { class: "muted", style: "font-size:0.875rem; margin-top:0.2rem" }, `${u.phone ? "☎ " + u.phone : "no phone"}${u.whatsapp ? "  ·  WhatsApp " + u.whatsapp : ""}  ·  requested: ${u.requested_role}`),
       el("div", { style: "display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-top:0.6rem" }, [
         el("span", { class: "form-label" }, "Role"), roleSel,
         el("span", { class: "form-label" }, "Status"), statusSel,
@@ -2380,7 +2380,7 @@
     return el("div", { class: "acct-card" }, [
       el("div", {}, [
         el("div", { class: "name" }, [el("strong", {}, m.name || m.email), m.account_status && m.account_status !== "approved" ? el("span", { class: "pill-priority", style: "margin-left:0.4rem" }, m.account_status) : null]),
-        el("div", { class: "muted", style: "font-size:0.82rem" }, m.email),
+        el("div", { class: "muted", style: "font-size:0.8125rem" }, m.email),
       ]),
       el("div", { style: "display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap" }, [
         el("span", { class: "rl-status " + (suspended ? "rl-s-suspended" : "rl-s-accepted") }, suspended ? "Suspended" : "Active"),
@@ -2394,7 +2394,7 @@
     const wrap = el("div");
     const nameInput = el("input", { type: "text", class: "up-text", style: "max-width:320px" });
     const note = el("span", { class: "up-status" }, "");
-    const info = el("div", { class: "muted", style: "margin-top:0.6rem; font-size:0.85rem" }, "Loading…");
+    const info = el("div", { class: "muted", style: "margin-top:0.6rem; font-size:0.875rem" }, "Loading…");
     API.orgSettings(API.getToken()).then((r) => {
       const o = r.organization || {};
       nameInput.value = o.name || ctx.organization_name || "";
@@ -2475,20 +2475,20 @@
       el("p", { class: "muted", style: "margin:0 0 0.4rem" }, `Included: ${(r.features || []).map((f) => FEATURE_LABELS[f] || f).join(" · ")}`),
       el("div", { class: "acct-card", style: "display:block" }, [
         el("div", { class: "name" }, `AI usage · ${usagePeriodLabel(r.period)}`),
-        el("div", { class: "muted", style: "font-size:0.85rem; margin:0.2rem 0" }, `${fmtQuota(r.ai.used)} of ${fmtQuota(r.ai.limit)} tokens${aiPct != null ? ` (${aiPct}%)` : ""}`),
+        el("div", { class: "muted", style: "font-size:0.875rem; margin:0.2rem 0" }, `${fmtQuota(r.ai.used)} of ${fmtQuota(r.ai.limit)} tokens${aiPct != null ? ` (${aiPct}%)` : ""}`),
         bar(aiPct, aiPct != null && aiPct >= 100),
       ]),
       el("div", { class: "acct-card", style: "display:block; margin-top:0.5rem" }, [
         el("div", { class: "name" }, "Seats (active members)"),
-        el("div", { class: "muted", style: "font-size:0.85rem; margin:0.2rem 0" }, `${r.seats.used} of ${r.seats.limit == null ? "unlimited" : r.seats.limit}`),
+        el("div", { class: "muted", style: "font-size:0.875rem; margin:0.2rem 0" }, `${r.seats.used} of ${r.seats.limit == null ? "unlimited" : r.seats.limit}`),
         bar(seatPct, seatPct != null && seatPct >= 100),
       ]),
       el("h3", { style: "margin-top:1rem" }, "Plans"),
       el("div", { class: "acct-list" }, (r.plans || []).filter((p) => p.id !== "internal").map((p) => el("div", { class: "acct-card" }, [
-        el("div", {}, [el("div", { class: "name" }, [el("strong", {}, p.label), p.id === r.plan ? el("span", { class: "rl-status rl-s-accepted", style: "margin-left:0.4rem" }, "Current") : null]), el("div", { class: "muted", style: "font-size:0.8rem" }, (p.features || []).map((f) => FEATURE_LABELS[f] || f).join(" · "))]),
-        el("span", { class: "muted", style: "font-size:0.82rem" }, `${fmtQuota(p.aiTokensPerMonth)} AI · ${p.maxSeats == null ? "∞" : p.maxSeats} seats`),
+        el("div", {}, [el("div", { class: "name" }, [el("strong", {}, p.label), p.id === r.plan ? el("span", { class: "rl-status rl-s-accepted", style: "margin-left:0.4rem" }, "Current") : null]), el("div", { class: "muted", style: "font-size:0.8125rem" }, (p.features || []).map((f) => FEATURE_LABELS[f] || f).join(" · "))]),
+        el("span", { class: "muted", style: "font-size:0.8125rem" }, `${fmtQuota(p.aiTokensPerMonth)} AI · ${p.maxSeats == null ? "∞" : p.maxSeats} seats`),
       ]))),
-      el("p", { class: "muted", style: "font-size:0.8rem; margin-top:0.6rem" }, "To change plan, contact your account manager. (Self-serve checkout is on the roadmap.)"),
+      el("p", { class: "muted", style: "font-size:0.8125rem; margin-top:0.6rem" }, "To change plan, contact your account manager. (Self-serve checkout is on the roadmap.)"),
     );
     return wrap;
   }
@@ -2581,7 +2581,7 @@
     return el("div", { class: "acct-card" }, [
       el("div", {}, [
         el("div", { class: "name" }, [el("strong", {}, t.name), t.is_seed ? el("span", { class: "pill-priority", style: "margin-left:0.4rem" }, "operator") : null]),
-        el("div", { class: "muted", style: "font-size:0.82rem" }, `${t.slug || "—"} · ${t.active_members} member${t.active_members === 1 ? "" : "s"} · plan ${t.plan || "—"}`),
+        el("div", { class: "muted", style: "font-size:0.8125rem" }, `${t.slug || "—"} · ${t.active_members} member${t.active_members === 1 ? "" : "s"} · plan ${t.plan || "—"}`),
       ]),
       el("div", { style: "display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap" }, [planSel, statusSel, t.is_seed ? null : actAs, note].filter(Boolean)),
     ]);
@@ -2599,8 +2599,8 @@
     wrap.append(
       el("div", { style: "display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap" }, [el("h3", { style: "margin:0" }, "Platform audit log"), exportBtn]),
       entries.length ? el("div", { class: "acct-list" }, entries.map((e) => el("div", { class: "acct-card" }, [
-        el("div", {}, [el("div", { class: "name" }, el("strong", {}, e.action)), el("div", { class: "muted", style: "font-size:0.82rem" }, `${e.actor_email || "operator"}${e.detail && e.detail.reason ? " · " + e.detail.reason : ""}`)]),
-        el("span", { class: "muted", style: "font-size:0.8rem" }, fmtDate(e.created_at)),
+        el("div", {}, [el("div", { class: "name" }, el("strong", {}, e.action)), el("div", { class: "muted", style: "font-size:0.8125rem" }, `${e.actor_email || "operator"}${e.detail && e.detail.reason ? " · " + e.detail.reason : ""}`)]),
+        el("span", { class: "muted", style: "font-size:0.8125rem" }, fmtDate(e.created_at)),
       ]))) : el("div", { class: "empty" }, "No operator activity yet."),
     );
     return wrap;
@@ -2694,7 +2694,7 @@
           const detail = el("tr", { class: "rl-detail", hidden: "hidden" }, el("td", { colspan: "5" }, rlInlineStrip(entries)));
           const toggle = entries.length
             ? el("button", { type: "button", class: "rl-count", "aria-expanded": "false" }, `🔗 ${entries.length}`)
-            : el("span", { class: "muted", style: "font-size:0.8rem" }, "—");
+            : el("span", { class: "muted", style: "font-size:0.8125rem" }, "—");
           if (entries.length) toggle.addEventListener("click", () => {
             const open = detail.hasAttribute("hidden");
             if (open) detail.removeAttribute("hidden"); else detail.setAttribute("hidden", "hidden");
@@ -2775,7 +2775,7 @@
         ]),
         rlStatusChip(link.status),
       ])),
-      el("span", { class: "muted", style: "font-size:0.78rem" }, "Manage in the Links tab."),
+      el("span", { class: "muted", style: "font-size:0.75rem" }, "Manage in the Links tab."),
     ]);
   }
 
@@ -2815,7 +2815,7 @@
       catch (ex) { body.replaceChildren(el("div", { class: "error" }, ex.message)); return; }
       if (!statements.length) {
         body.replaceChildren(el("div", {}, [
-          el("p", { class: "muted", style: "font-size:0.85rem; margin:0 0 0.45rem" }, "Break this version into paragraphs so you can link each one to the clauses it satisfies."),
+          el("p", { class: "muted", style: "font-size:0.875rem; margin:0 0 0.45rem" }, "Break this version into paragraphs so you can link each one to the clauses it satisfies."),
           actionBtn("Break into paragraphs", "layers", { primary: true, onClick: segment }),
         ]));
         return;
@@ -2829,7 +2829,7 @@
         }
       } catch { /* links optional */ }
       const tools = el("div", { class: "rl-stmt-tools" }, [
-        el("span", { class: "muted", style: "font-size:0.8rem" }, `${statements.length} paragraph${statements.length === 1 ? "" : "s"}`),
+        el("span", { class: "muted", style: "font-size:0.8125rem" }, `${statements.length} paragraph${statements.length === 1 ? "" : "s"}`),
         actionBtn("Re-segment", "refresh", { onClick: () => { if (confirm("Re-splitting replaces the current paragraphs and removes any links attached to them. Continue?")) segment(); } }),
       ]);
       body.replaceChildren(tools, el("div", { class: "rl-stmt-list" }, statements.map((s) => docStatementRow(s, byStmt.get(s.id) || [], getStandards, load))));
@@ -2937,7 +2937,7 @@
         summary.replaceChildren(document.createTextNode(`Review queue (${links.length})`));
         body.replaceChildren(links.length
           ? el("div", { class: "rl-list" }, links.map((l) => rlQueueRow(ctx, l, load)))
-          : el("div", { class: "muted", style: "font-size:0.85rem" }, "Nothing to review — no proposed or flagged links."));
+          : el("div", { class: "muted", style: "font-size:0.875rem" }, "Nothing to review — no proposed or flagged links."));
       } catch (ex) { body.replaceChildren(el("div", { class: "error" }, ex.message)); }
     };
     load();
@@ -3031,7 +3031,7 @@
     const box = el("div");
     box.append(el("div", { class: "rl-clause-head" }, [
       el("div", {}, [el("strong", {}, clause.clause_ref), clause.clause_title ? el("span", { class: "muted" }, ` — ${clause.clause_title}`) : null]),
-      el("span", { class: "muted", style: "font-size:0.8rem" }, `${links.length} link${links.length === 1 ? "" : "s"}`),
+      el("span", { class: "muted", style: "font-size:0.8125rem" }, `${links.length} link${links.length === 1 ? "" : "s"}`),
     ]));
     if (clause.clause_text) box.append(el("details", { class: "l2-clause-req" }, [el("summary", {}, "Requirement text"), el("p", { class: "muted" }, clause.clause_text)]));
 
@@ -3179,7 +3179,7 @@
     return el("div", { class: "card l2-interp" }, [
       el("div", { class: "l2-interp-head" }, [
         el("div", {}, [el("strong", {}, clause.clause_ref), clause.clause_title ? el("span", { class: "muted" }, ` — ${clause.clause_title}`) : null]),
-        interp ? l2StatusChip(interp.compliance_status) : el("span", { class: "muted", style: "font-size:0.8rem" }, "no interpretation yet"),
+        interp ? l2StatusChip(interp.compliance_status) : el("span", { class: "muted", style: "font-size:0.8125rem" }, "no interpretation yet"),
       ]),
       clause.clause_text ? el("details", { class: "l2-clause-req" }, [el("summary", {}, "Requirement text"), el("p", { class: "muted" }, clause.clause_text)]) : null,
       el("label", { class: "form-row" }, [el("span", { class: "form-label" }, "Interpretation"), text]),
@@ -3188,7 +3188,7 @@
         : null,
       el("label", { class: "form-row" }, [el("span", { class: "form-label" }, "Rationale"), rationale]),
       el("div", { style: "display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center" }, [el("span", { class: "form-label" }, "Status"), statusSel, interp && interp.id ? save : genOne, note]),
-      interp && interp.reviewed_by ? el("div", { class: "muted", style: "font-size:0.8rem; margin-top:0.3rem" }, `Reviewed by ${interp.reviewed_by}${interp.reviewed_at ? " · " + fmtDate(interp.reviewed_at) : ""}${interp.ai_generated ? " · AI-drafted" : ""}`) : null,
+      interp && interp.reviewed_by ? el("div", { class: "muted", style: "font-size:0.8125rem; margin-top:0.3rem" }, `Reviewed by ${interp.reviewed_by}${interp.reviewed_at ? " · " + fmtDate(interp.reviewed_at) : ""}${interp.ai_generated ? " · AI-drafted" : ""}`) : null,
     ]);
   }
 
@@ -3316,10 +3316,10 @@
     };
     return el("div", { class: "card l2-passport" }, [
       el("div", { class: "acct-head" }, [
-        el("div", {}, [el("strong", {}, p.product_name), el("div", { class: "muted", style: "font-size:0.85rem" }, `${p.product_model ? p.product_model + " · " : ""}${p.manufacturer || ""}${p.gtin ? " · GTIN " + p.gtin : ""}`)]),
+        el("div", {}, [el("strong", {}, p.product_name), el("div", { class: "muted", style: "font-size:0.875rem" }, `${p.product_model ? p.product_model + " · " : ""}${p.manufacturer || ""}${p.gtin ? " · GTIN " + p.gtin : ""}`)]),
         el("span", { class: `acct-badge acct-${p.passport_status === "active" ? "approved" : p.passport_status === "superseded" ? "disabled" : "pending"}` }, p.passport_status || "draft"),
       ]),
-      el("div", { class: "muted", style: "font-size:0.85rem; margin-top:0.2rem" }, `${p.link_count || 0} linked interpretation${p.link_count === 1 ? "" : "s"}`),
+      el("div", { class: "muted", style: "font-size:0.875rem; margin-top:0.2rem" }, `${p.link_count || 0} linked interpretation${p.link_count === 1 ? "" : "s"}`),
       el("div", { style: "display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-top:0.6rem" }, [
         actionBtn("Open", "edit", { onClick: () => l2PassportEditor(ctx, p, reload) }),
         actionBtn("Export JSON-LD", "external", { onClick: () => doExport("json-ld") }),
@@ -3377,7 +3377,7 @@
         el("span", {}, [el("strong", {}, c.clause_ref || "?"), c.clause_title ? el("span", { class: "muted" }, ` — ${c.clause_title}`) : null, " ", l2StatusChip(i.compliance_status)]),
         actionBtn("Unlink", "trash", { danger: true, onClick: async () => { try { await API.unlinkPassportInterpretation(ctx.token, { passportId: passport.id, interpretationId: i.id }); await reload(); } catch (ex) { alert(ex.message); } } }),
       ]);
-    }) : [el("div", { class: "muted", style: "font-size:0.85rem" }, "Nothing linked yet.")]);
+    }) : [el("div", { class: "muted", style: "font-size:0.875rem" }, "Nothing linked yet.")]);
 
     // Add-links: pick a document version, list its interpretations, link them.
     const docVers = flattenDocVersions(ctx.documents);
@@ -3393,7 +3393,7 @@
         pickList.replaceChildren(...(avail.length ? avail.map((i) => el("div", { class: "l2-link-row" }, [
           el("span", {}, [el("strong", {}, i.clause && i.clause.clause_ref || "?"), " ", l2StatusChip(i.compliance_status)]),
           actionBtn("Link", "plus", { onClick: async () => { try { await API.linkPassportInterpretation(ctx.token, { passportId: passport.id, interpretationId: i.id }); await reload(); } catch (ex) { alert(ex.message); } } }),
-        ])) : [el("div", { class: "muted", style: "font-size:0.85rem" }, "No unlinked interpretations for this document.")]));
+        ])) : [el("div", { class: "muted", style: "font-size:0.875rem" }, "No unlinked interpretations for this document.")]));
       } catch (ex) { pickList.replaceChildren(el("div", { class: "error" }, ex.message)); }
     });
     box.replaceChildren(linked, el("div", { style: "margin-top:0.6rem" }, [el("span", { class: "form-label" }, "Add from document"), docSel, pickList]));
@@ -3451,21 +3451,21 @@
         const color = LIFECYCLE_COLORS[k];
         return el("span", {
           title: `${counts[k]} ${k}`,
-          style: `background:${color}20;color:${color};border:1px solid ${color}60;padding:2px 10px;border-radius:99px;font-size:0.78rem;font-weight:600;white-space:nowrap`,
+          style: `background:${color}20;color:${color};border:1px solid ${color}60;padding:2px 10px;border-radius:99px;font-size:0.75rem;font-weight:600;white-space:nowrap`,
         }, `${counts[k]} ${k}`);
       });
     if (unknown) {
       pills.push(el("span", { title: "No lifecycle status recorded",
-        style: "background:#8b93a120;color:#8b93a1;border:1px solid #8b93a160;padding:2px 10px;border-radius:99px;font-size:0.78rem;font-weight:600" },
+        style: "background:#8b93a120;color:#8b93a1;border:1px solid #8b93a160;padding:2px 10px;border-radius:99px;font-size:0.75rem;font-weight:600" },
         `${unknown} unset`));
     }
     return {
       total: unique.length,
       counts,
       el: el("div", { style: "display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap" }, [
-        opts.label ? el("span", { class: "muted", style: "font-size:0.78rem" }, opts.label) : null,
+        opts.label ? el("span", { class: "muted", style: "font-size:0.75rem" }, opts.label) : null,
         ...pills,
-        el("span", { class: "muted", style: "font-size:0.78rem" },
+        el("span", { class: "muted", style: "font-size:0.75rem" },
           `${unique.length} component${unique.length === 1 ? "" : "s"}`),
       ].filter(Boolean)),
     };
@@ -3729,7 +3729,7 @@
           const active = activeCategory === id;
           return el("button", {
             type: "button",
-            style: `padding:0.28rem 0.7rem;font-size:0.78rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;`
+            style: `padding:0.28rem 0.7rem;font-size:0.75rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;`
               + (active
                 ? "background:var(--accent,#2fa564);color:#fff;border:1px solid var(--accent,#2fa564)"
                 : `background:transparent;color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)${count ? "" : ";opacity:0.45"}`),
@@ -3743,7 +3743,7 @@
         if (countFor("none")) chips.push(chip("none", "Uncategorised"));
         chips.push(el("button", {
           type: "button", title: "Add, rename, reorder or delete categories",
-          style: "padding:0.28rem 0.6rem;font-size:0.78rem;border-radius:999px;cursor:pointer;background:transparent;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
+          style: "padding:0.28rem 0.6rem;font-size:0.75rem;border-radius:999px;cursor:pointer;background:transparent;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
           onclick: () => openCategoryManager(token, refreshTree),
         }, "⚙ Categories"));
         catBarEl.replaceChildren(...chips);
@@ -3765,7 +3765,7 @@
       // are part of it, and because Category is meaningless outside Parts.
       const cols = SORT_COLS.filter((c) => c.key !== "category" || activeTab === "components");
       sortBarEl.replaceChildren(
-        el("span", { style: "font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-right:0.15rem" }, "Sort"),
+        el("span", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-right:0.15rem" }, "Sort"),
         ...cols.map((c) => {
           const active = sortKey === c.key;
           return el("button", {
@@ -3822,9 +3822,9 @@
       function rebuildTreeDiv() {
         const state = expandedTrees[comp.id];
         if (!state || state === "loading") {
-          treeDiv.replaceChildren(el("div", { class: "loading", style: "font-size:0.8rem;padding:0.4rem" }, "Loading tree…"));
+          treeDiv.replaceChildren(el("div", { class: "loading", style: "font-size:0.8125rem;padding:0.4rem" }, "Loading tree…"));
         } else if (state === "error") {
-          treeDiv.replaceChildren(el("div", { class: "error", style: "font-size:0.8rem;padding:0.4rem" }, "Failed to load tree."));
+          treeDiv.replaceChildren(el("div", { class: "error", style: "font-size:0.8125rem;padding:0.4rem" }, "Failed to load tree."));
         } else {
           treeDiv.replaceChildren();
           renderBomTree(comp.id, state, treeDiv, detailPanel, token, allComponents, refreshTree, role);
@@ -3886,7 +3886,7 @@
           let idx = 0;
           const multi = imgs.length > 1;
           const lbImg = el("img", { style: "max-width:min(90vw,860px);max-height:82vh;border-radius:6px;box-shadow:0 4px 32px #0008;display:block;object-fit:contain", onclick: (e) => e.stopPropagation() });
-          const lbCount = el("div", { style: "color:rgba(255,255,255,0.6);font-size:0.78rem;margin-top:0.5rem;text-align:center;min-height:1.1em" });
+          const lbCount = el("div", { style: "color:rgba(255,255,255,0.6);font-size:0.75rem;margin-top:0.5rem;text-align:center;min-height:1.1em" });
           function lbShow(i) {
             idx = ((i % imgs.length) + imgs.length) % imgs.length;
             lbImg.src = imgs[idx].url;
@@ -3928,25 +3928,25 @@
         thumbEl,
         el("div", { style: "flex:1;min-width:0;overflow:hidden" }, [
           el("span", { style: "font-weight:600;font-size:0.875rem" }, comp.name || "—"),
-          comp.part_number ? el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);margin-left:0.4rem;font-family:monospace" }, comp.part_number) : null,
+          comp.part_number ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-left:0.4rem;font-family:monospace" }, comp.part_number) : null,
           parentCountMap[comp.id] ? el("span", {
             title: `Used in ${parentCountMap[comp.id]} assemblies — changes propagate to all of them`,
-            style: "margin-left:6px;font-size:0.66rem;color:var(--muted,#94a3b8);cursor:default;white-space:nowrap;vertical-align:middle",
+            style: "margin-left:6px;font-size:0.6875rem;color:var(--muted,#94a3b8);cursor:default;white-space:nowrap;vertical-align:middle",
           }, `↗ ${parentCountMap[comp.id]}`) : null,
         ].filter(Boolean)),
-        el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, comp.type || ""),
-        comp.category_id ? el("span", { style: "font-size:0.7rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
-        (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
-        comp.lifecycle_status ? el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
+        el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, comp.type || ""),
+        comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
+        (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
+        comp.lifecycle_status ? el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
         role === "rushroom" && allowExpand ? el("button", {
           class: "btn btn-sm", type: "button",
-          style: "padding:0 6px;font-size:0.72rem;flex-shrink:0",
+          style: "padding:0 6px;font-size:0.75rem;flex-shrink:0",
           title: "Add child",
           onclick: (ev) => { ev.stopPropagation(); openAddChildModal(comp, allComponents, token, refreshTree, comp.id); },
         }, "+child") : null,
         role === "rushroom" ? el("button", {
           class: "btn btn-sm", type: "button",
-          style: "padding:0 7px;font-size:0.8rem;line-height:1;flex-shrink:0",
+          style: "padding:0 7px;font-size:0.8125rem;line-height:1;flex-shrink:0",
           title: "Duplicate — copies the spec fields, not documents or images",
           onclick: async (ev) => {
             ev.stopPropagation();
@@ -3967,7 +3967,7 @@
         }, "⧉") : null,
         el("button", {
           class: "btn btn-sm", type: "button",
-          style: "color:#e05454;border-color:#e0545440;padding:0 7px;font-size:0.9rem;font-weight:700;line-height:1;flex-shrink:0",
+          style: "color:#e05454;border-color:#e0545440;padding:0 7px;font-size:0.875rem;font-weight:700;line-height:1;flex-shrink:0",
           title: "Delete", onclick: async (ev) => {
             ev.stopPropagation();
             ev.target.disabled = true;
@@ -3979,18 +3979,18 @@
                 mo.onclick = (e) => { if (e.target === mo) close(false); };
                 const rows = [
                   el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem" }, [
-                    el("span", { style: "font-size:1.3rem;line-height:1" }, "🗑"),
+                    el("span", { style: "font-size:1.25rem;line-height:1" }, "🗑"),
                     el("h3", { style: "margin:0;font-size:1rem;color:#e05454" }, `Delete "${comp.name}" from registry?`),
                   ]),
                   el("p", { style: "margin:0 0 0.75rem;font-size:0.875rem" }, "This permanently removes the component and all its compliance data."),
                 ];
                 if (parents && parents.length) rows.push(el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.6rem 0.75rem;margin-bottom:0.75rem" }, [
-                  el("div", { style: "font-size:0.82rem;font-weight:700;color:#e05454;margin-bottom:0.3rem" }, `⚠ Linked in ${parents.length} assembl${parents.length > 1 ? "ies" : "y"}:`),
-                  el("ul", { style: "margin:0.2rem 0 0.3rem;padding-left:1.2rem;font-size:0.82rem" }, parents.map((p) => el("li", {}, p.parent ? p.parent.name : p.parent_id))),
-                  el("div", { style: "font-size:0.78rem;color:var(--muted,#8b93a1)" }, "Deleting will unlink it from all of them."),
+                  el("div", { style: "font-size:0.8125rem;font-weight:700;color:#e05454;margin-bottom:0.3rem" }, `⚠ Linked in ${parents.length} assembl${parents.length > 1 ? "ies" : "y"}:`),
+                  el("ul", { style: "margin:0.2rem 0 0.3rem;padding-left:1.2rem;font-size:0.8125rem" }, parents.map((p) => el("li", {}, p.parent ? p.parent.name : p.parent_id))),
+                  el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Deleting will unlink it from all of them."),
                 ]));
-                if (comp.has_children) rows.push(el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" }, "Direct children will become standalone BOM Nodes."));
-                rows.push(el("p", { style: "font-size:0.82rem;font-weight:700;color:#e05454;margin:0 0 1.1rem" }, "This cannot be undone."));
+                if (comp.has_children) rows.push(el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" }, "Direct children will become standalone BOM Nodes."));
+                rows.push(el("p", { style: "font-size:0.8125rem;font-weight:700;color:#e05454;margin:0 0 1.1rem" }, "This cannot be undone."));
                 rows.push(el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
                   el("button", { class: "btn btn-sm", type: "button", onclick: () => close(false) }, "Cancel"),
                   el("button", { type: "button", style: "background:#e05454;color:#fff;border:none;border-radius:6px;padding:0.45rem 1.1rem;font-size:0.875rem;font-weight:700;cursor:pointer;letter-spacing:0.01em", onclick: () => close(true) }, "Delete Permanently"),
@@ -4137,7 +4137,7 @@
 
     function render() {
       const rows = buildRows();
-      const wrap = el("div", { style: "font-size:0.84rem;overflow-x:auto" });
+      const wrap = el("div", { style: "font-size:0.8125rem;overflow-x:auto" });
 
       // Column header
       // Expand / Collapse all controls
@@ -4147,7 +4147,7 @@
     ]));
 
     wrap.append(el("div", {
-        style: "display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.71rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
+        style: "display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
       }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 3 ? "text-align:center" : "" }, t))));
 
       rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty }) => {
@@ -4176,7 +4176,7 @@
         // is never confused with the number being displayed.
         const qtyCell = () => {
           const own = Number(edgeQty);
-          const box = el("div", { style: "text-align:center;font-size:0.8rem;color:var(--muted,#8b93a1);line-height:1.15" });
+          const box = el("div", { style: "text-align:center;font-size:0.8125rem;color:var(--muted,#8b93a1);line-height:1.15" });
           const show = () => {
             const kids = [
               el("span", {
@@ -4186,14 +4186,14 @@
               }, `×${own}`),
             ];
             if (Number(qty) !== own) {
-              kids.push(el("div", { style: "font-size:0.66rem;opacity:0.65", title: "Rolled-up total through the tree" }, `= ${qty}`));
+              kids.push(el("div", { style: "font-size:0.6875rem;opacity:0.65", title: "Rolled-up total through the tree" }, `= ${qty}`));
             }
             box.replaceChildren(...kids);
           };
           const edit = () => {
             const input = el("input", {
               type: "number", min: "0.001", step: "any", value: String(own),
-              style: "width:4.2rem;font-size:0.8rem;padding:1px 3px;text-align:center;box-sizing:border-box",
+              style: "width:4.2rem;font-size:0.8125rem;padding:1px 3px;text-align:center;box-sizing:border-box",
             });
             let settled = false;
             const commit = async () => {
@@ -4230,7 +4230,7 @@
             class: "btn btn-sm", type: "button",
             title: blocked || `Move ${dir} in this assembly`,
             "aria-disabled": blocked ? "true" : "false",
-            style: `padding:1px 4px;font-size:0.7rem${blocked ? ";opacity:0.4;cursor:not-allowed" : ""}`,
+            style: `padding:1px 4px;font-size:0.6875rem${blocked ? ";opacity:0.4;cursor:not-allowed" : ""}`,
             onclick: async (ev) => {
               ev.stopPropagation();
               if (blocked) return;
@@ -4244,20 +4244,20 @@
         // Toggle button (only for nodes with children)
         const tog = hasChildren
           ? el("span", {
-              style: "cursor:pointer;user-select:none;font-size:0.65rem;margin-right:2px;color:var(--muted,#8b93a1)",
+              style: "cursor:pointer;user-select:none;font-size:0.6875rem;margin-right:2px;color:var(--muted,#8b93a1)",
               onclick: (ev) => { ev.stopPropagation(); if (isCollapsed) collapsed.delete(posNum); else collapsed.add(posNum); render(); },
             }, isCollapsed ? "▶" : "▼")
           : el("span", { style: "display:inline-block;width:0.7rem" });
 
         // Variant condition tag (shown on conditional edges)
         const condTag = edgeCondition
-          ? el("span", { style: "font-size:0.68rem;font-weight:600;background:#a855f720;color:#a855f7;border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;margin-left:4px" },
+          ? el("span", { style: "font-size:0.6875rem;font-weight:600;background:#a855f720;color:#a855f7;border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;margin-left:4px" },
               "⚙ " + Object.entries(edgeCondition).map(([k, v]) => `${k}:${v}`).join(" "))
           : null;
 
         // Family badge for product_family roots
         const familyBadge = isFamily
-          ? el("span", { style: "font-size:0.68rem;font-weight:700;background:#2fa56420;color:#2fa564;border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;margin-left:4px" }, "DYNAMIC BOM")
+          ? el("span", { style: "font-size:0.6875rem;font-weight:700;background:#2fa56420;color:#2fa564;border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;margin-left:4px" }, "DYNAMIC BOM")
           : null;
 
         // Component cell: connector + toggle | name + badges (line 1) / part# (line 2)
@@ -4266,10 +4266,10 @@
             el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, n.name),
             familyBadge, condTag,
           ].filter(Boolean)),
-          el("div", { style: "font-family:monospace;font-size:0.67rem;color:var(--muted,#8b93a1);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number),
+          el("div", { style: "font-family:monospace;font-size:0.6875rem;color:var(--muted,#8b93a1);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number),
         ]);
         const compCell = el("div", { style: "display:flex;align-items:center;gap:0.1rem;min-width:0;overflow:hidden" }, [
-          el("span", { style: "font-family:monospace;white-space:pre;color:var(--muted,#8b93a1);font-size:0.76rem;flex-shrink:0;opacity:0.6" }, connector(depth, ancestorLastFlags)),
+          el("span", { style: "font-family:monospace;white-space:pre;color:var(--muted,#8b93a1);font-size:0.75rem;flex-shrink:0;opacity:0.6" }, connector(depth, ancestorLastFlags)),
           tog,
           nameBlock,
         ]);
@@ -4280,7 +4280,7 @@
           onmouseleave: (ev) => { ev.currentTarget.style.background = ""; },
           ondblclick: (ev) => { ev.stopPropagation(); openComponentDetail(n.id, token, detailPanel, n, role); },
         }, [
-          el("span", { style: "font-family:monospace;font-size:0.78rem;font-weight:600;color:var(--muted,#8b93a1)" }, posNum),
+          el("span", { style: "font-family:monospace;font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1)" }, posNum),
           compCell,
           qtyCell(),
           el("div", { style: "display:flex;justify-content:center" }, lifecycleBadge(n.lifecycle_status)),
@@ -4289,16 +4289,16 @@
 
             canReorder ? reorderBtn("up") : null,
             canReorder ? reorderBtn("down") : null,
-            isTreeRow ? el("button", { class: "btn btn-sm", type: "button", title: "Add sibling", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+sib") : null,
-            canAddChild ? el("button", { class: "btn btn-sm", type: "button", title: "Add child", style: "padding:1px 5px;font-size:0.7rem", onclick: () => openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+child") : null,
+            isTreeRow ? el("button", { class: "btn btn-xs", type: "button", title: "Add sibling", style: "font-size:0.6875rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+sib") : null,
+            canAddChild ? el("button", { class: "btn btn-xs", type: "button", title: "Add child", style: "font-size:0.6875rem", onclick: () => openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+child") : null,
             isTreeRow ? el("button", {
               class: "btn btn-sm", type: "button", title: "Move to another assembly",
-              style: "padding:1px 5px;font-size:0.7rem",
+              style: "padding:1px 5px;font-size:0.6875rem",
               onclick: (ev) => { ev.stopPropagation(); openMoveModal(n, edgeId, parentNode, token, onRefresh, { positions: allPositions(), rootId, rootName: (nodeMap[rootId] || {}).name, fromPos: posNum }); },
             }, "⇄") : null,
             el("button", {
               class: "btn btn-sm", type: "button",
-              style: "padding:1px 6px;font-size:0.85rem;font-weight:700;color:#e05454;border-color:#e0545440;line-height:1",
+              style: "padding:1px 6px;font-size:0.875rem;font-weight:700;color:#e05454;border-color:#e0545440;line-height:1",
               title: canUnlink ? "Remove from this assembly" : "Delete from registry",
               onclick: async (ev) => {
                 ev.stopPropagation();
@@ -4323,20 +4323,20 @@
                       mo.onclick = (e) => { if (e.target === mo) close(false); };
                       const rows = [
                         el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem" }, [
-                          el("span", { style: "font-size:1.3rem;line-height:1" }, "🗑"),
+                          el("span", { style: "font-size:1.25rem;line-height:1" }, "🗑"),
                           el("h3", { style: "margin:0;font-size:1rem;color:#e05454" }, `Delete "${n.name}" from registry?`),
                         ]),
                         el("p", { style: "margin:0 0 0.75rem;font-size:0.875rem" }, "This permanently removes the component and all its compliance data."),
                       ];
                       if (parents && parents.length) {
                         rows.push(el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.6rem 0.75rem;margin-bottom:0.75rem" }, [
-                          el("div", { style: "font-size:0.82rem;font-weight:700;color:#e05454;margin-bottom:0.3rem" }, `⚠ Linked in ${parents.length} assembl${parents.length > 1 ? "ies" : "y"}:`),
-                          el("ul", { style: "margin:0.2rem 0 0.3rem;padding-left:1.2rem;font-size:0.82rem" }, parents.map((p) => el("li", {}, p.parent ? p.parent.name : p.parent_id))),
-                          el("div", { style: "font-size:0.78rem;color:var(--muted,#8b93a1)" }, "Deleting will unlink it from all of them."),
+                          el("div", { style: "font-size:0.8125rem;font-weight:700;color:#e05454;margin-bottom:0.3rem" }, `⚠ Linked in ${parents.length} assembl${parents.length > 1 ? "ies" : "y"}:`),
+                          el("ul", { style: "margin:0.2rem 0 0.3rem;padding-left:1.2rem;font-size:0.8125rem" }, parents.map((p) => el("li", {}, p.parent ? p.parent.name : p.parent_id))),
+                          el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Deleting will unlink it from all of them."),
                         ]));
                       }
-                      if (childCount) rows.push(el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" }, `${childCount} direct child${childCount > 1 ? "ren" : ""} will become standalone BOM Nodes.`));
-                      rows.push(el("p", { style: "font-size:0.82rem;font-weight:700;color:#e05454;margin:0 0 1.1rem" }, "This cannot be undone."));
+                      if (childCount) rows.push(el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" }, `${childCount} direct child${childCount > 1 ? "ren" : ""} will become standalone BOM Nodes.`));
+                      rows.push(el("p", { style: "font-size:0.8125rem;font-weight:700;color:#e05454;margin:0 0 1.1rem" }, "This cannot be undone."));
                       rows.push(el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
                         el("button", { class: "btn btn-sm", type: "button", onclick: () => close(false) }, "Cancel"),
                         el("button", { type: "button", style: "background:#e05454;color:#fff;border:none;border-radius:6px;padding:0.45rem 1.1rem;font-size:0.875rem;font-weight:700;cursor:pointer;letter-spacing:0.01em", onclick: () => close(true) }, "Delete Permanently"),
@@ -4383,7 +4383,7 @@
     const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1002;display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(560px,96vw);max-height:88vh;display:flex;flex-direction:column;gap:0.6rem" });
     const listEl = el("div", { style: "flex:1;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px;min-height:120px" });
-    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.1rem" }, "");
+    const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.1rem" }, "");
     const newName = el("input", { class: "up-text", type: "text", placeholder: "New category name…", style: "flex:1" });
 
     const fail = (ex) => { errEl.textContent = ex.message || String(ex); };
@@ -4398,11 +4398,11 @@
 
     function draw() {
       if (!partCategories.length) {
-        listEl.replaceChildren(el("div", { style: "padding:0.8rem;color:var(--muted,#8b93a1);font-size:0.86rem" }, "No categories yet. Add one below."));
+        listEl.replaceChildren(el("div", { style: "padding:0.8rem;color:var(--muted,#8b93a1);font-size:0.875rem" }, "No categories yet. Add one below."));
         return;
       }
       listEl.replaceChildren(...partCategories.map((c, i) => {
-        const nameInp = el("input", { class: "up-text", type: "text", value: c.name, style: "flex:1;font-size:0.86rem" });
+        const nameInp = el("input", { class: "up-text", type: "text", value: c.name, style: "flex:1;font-size:0.875rem" });
         const save = async () => {
           const nm = nameInp.value.trim();
           if (!nm || nm === c.name) { nameInp.value = c.name; return; }
@@ -4424,8 +4424,8 @@
         };
         return el("div", { style: "display:flex;gap:0.4rem;align-items:center;padding:0.4rem 0.6rem;border-bottom:1px solid var(--border,#2d3748)" }, [
           nameInp,
-          el("button", { class: "btn btn-sm", type: "button", title: "Move up", style: "padding:1px 6px", onclick: () => move(-1) }, "↑"),
-          el("button", { class: "btn btn-sm", type: "button", title: "Move down", style: "padding:1px 6px", onclick: () => move(1) }, "↓"),
+          el("button", { class: "btn btn-xs", type: "button", title: "Move up", onclick: () => move(-1) }, "↑"),
+          el("button", { class: "btn btn-xs", type: "button", title: "Move down", onclick: () => move(1) }, "↓"),
           el("button", {
             class: "btn btn-sm", type: "button", title: "Delete category",
             style: "padding:1px 7px;color:#e05454;border-color:#e0545440",
@@ -4454,10 +4454,10 @@
 
     dialog.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between" }, [
-        el("h3", { style: "margin:0;font-size:1.05rem" }, "Part categories"),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: () => overlay.remove() }, "✕"),
+        el("h3", { style: "margin:0;font-size:1rem" }, "Part categories"),
+        el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
       ]),
-      el("p", { style: "margin:0;font-size:0.82rem;color:var(--muted,#8b93a1)" },
+      el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" },
         "Rename in place, reorder with ↑/↓. A category still holding parts cannot be deleted — move them first."),
       listEl,
       el("div", { style: "display:flex;gap:0.4rem" }, [newName, addBtn]),
@@ -4491,8 +4491,8 @@
 
     const listEl = el("div", { style: "flex:1;min-height:180px;max-height:46vh;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px" });
     const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search destination by part # or name…", style: "width:100%;box-sizing:border-box" });
-    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.1rem" }, "");
-    const selectedLabel = el("div", { style: "font-size:0.84rem;min-height:1.3rem;color:var(--muted,#8b93a1)" }, "Pick a destination below.");
+    const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.1rem" }, "");
+    const selectedLabel = el("div", { style: "font-size:0.8125rem;min-height:1.3rem;color:var(--muted,#8b93a1)" }, "Pick a destination below.");
     let targets = [], selectedId = null;
 
     const submitBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true }, "Move here");
@@ -4518,15 +4518,15 @@
           buildList(searchInput.value);
         },
       }, [
-        el("span", { style: `font-family:monospace;font-size:0.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${wbs ? "color:var(--accent,#2fa564)" : "color:var(--muted,#8b93a1);opacity:0.5"}` }, wbs || "—"),
-        el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, c.part_number),
-        el("span", { style: "font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: c.name }, c.name),
-        el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);text-align:right;white-space:nowrap" }, c.type || ""),
+        el("span", { style: `font-family:monospace;font-size:0.75rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${wbs ? "color:var(--accent,#2fa564)" : "color:var(--muted,#8b93a1);opacity:0.5"}` }, wbs || "—"),
+        el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, c.part_number),
+        el("span", { style: "font-size:0.875rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: c.name }, c.name),
+        el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);text-align:right;white-space:nowrap" }, c.type || ""),
       ]);
     }
 
     function sectionHeader(text) {
-      return el("div", { style: "padding:0.35rem 0.7rem;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1);background:var(--bg-2,rgba(0,0,0,0.04));border-bottom:1px solid var(--border,#2d3748);position:sticky;top:0;z-index:1" }, text);
+      return el("div", { style: "padding:0.35rem 0.7rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1);background:var(--bg-2,rgba(0,0,0,0.04));border-bottom:1px solid var(--border,#2d3748);position:sticky;top:0;z-index:1" }, text);
     }
 
     // Grouped rather than flat: "not in this assembly" was a long string sitting
@@ -4536,7 +4536,7 @@
       const f = (filter || "").toLowerCase();
       const shown = f ? targets.filter((c) => (c.part_number + " " + c.name).toLowerCase().includes(f)) : targets;
       if (!shown.length) {
-        listEl.replaceChildren(el("div", { style: "padding:0.9rem 0.7rem;color:var(--muted,#8b93a1);font-size:0.86rem" },
+        listEl.replaceChildren(el("div", { style: "padding:0.9rem 0.7rem;color:var(--muted,#8b93a1);font-size:0.875rem" },
           targets.length ? "No destinations match that search." : "No legal destination for this component."));
         return;
       }
@@ -4567,15 +4567,15 @@
       }
     };
 
-    const fact = (label, value) => el("div", { style: "display:flex;gap:0.4rem;font-size:0.84rem;min-width:0" }, [
+    const fact = (label, value) => el("div", { style: "display:flex;gap:0.4rem;font-size:0.8125rem;min-width:0" }, [
       el("span", { style: "color:var(--muted,#8b93a1);flex-shrink:0" }, label),
       el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: value }, value),
     ]);
 
     dialog.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:1rem" }, [
-        el("h3", { style: "margin:0;font-size:1.05rem" }, "Move to another assembly"),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: () => overlay.remove() }, "✕"),
+        el("h3", { style: "margin:0;font-size:1rem" }, "Move to another assembly"),
+        el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
       ]),
       el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0.3rem 1.25rem;padding:0.6rem 0.75rem;border:1px solid var(--border,#2d3748);border-radius:6px" }, [
         fact("Moving:", `${node.name} (${node.part_number})`),
@@ -4583,10 +4583,10 @@
         fact("Out of:", currentParent && currentParent.name ? currentParent.name : "this assembly"),
         fact("Assembly:", tree && tree.rootName ? tree.rootName : "—"),
       ]),
-      el("div", { style: "background:#2fa56412;border:1px solid #2fa56440;border-radius:6px;padding:0.45rem 0.7rem;font-size:0.82rem" },
+      el("div", { style: "background:#2fa56412;border:1px solid #2fa56440;border-radius:6px;padding:0.45rem 0.7rem;font-size:0.8125rem" },
         "Only this assembly changes. If this component is used elsewhere, those assemblies keep it exactly as they have it."),
       searchInput,
-      el("div", { style: `${GRID};padding:0.25rem 0.7rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1)` }, [
+      el("div", { style: `${GRID};padding:0.25rem 0.7rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1)` }, [
         el("span", {}, "Pos."), el("span", {}, "Part no."), el("span", {}, "Destination"), el("span", { style: "text-align:right" }, "Type"),
       ]),
       listEl,
@@ -4608,7 +4608,7 @@
         buildList("");
         searchInput.focus();
       } catch (ex) {
-        listEl.replaceChildren(el("div", { style: "padding:0.9rem 0.7rem;color:#e05454;font-size:0.86rem" }, ex.message));
+        listEl.replaceChildren(el("div", { style: "padding:0.9rem 0.7rem;color:#e05454;font-size:0.875rem" }, ex.message));
       }
     })();
   }
@@ -4624,11 +4624,11 @@
     // Shared qty / ref designator fields
     const qtyInput = el("input", { class: "up-text", type: "number", min: "0.001", step: "any", value: "1", style: "width:100px" });
     const refInput = el("input", { class: "up-text", type: "text", placeholder: "e.g. J1, J2 (optional)", style: "flex:1" });
-    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.2rem;margin-top:0.25rem" }, "");
+    const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.2rem;margin-top:0.25rem" }, "");
 
     // Tab bar
-    const tabExisting = el("button", { type: "button", style: "flex:1;border-radius:0;border:none;padding:0.4rem 0.75rem;font-size:0.82rem;font-weight:600;cursor:pointer;transition:background 0.1s" }, "Link existing");
-    const tabNew      = el("button", { type: "button", style: "flex:1;border-radius:0;border:none;padding:0.4rem 0.75rem;font-size:0.82rem;font-weight:600;cursor:pointer;transition:background 0.1s" }, "Create new");
+    const tabExisting = el("button", { type: "button", style: "flex:1;border-radius:0;border:none;padding:0.4rem 0.75rem;font-size:0.8125rem;font-weight:600;cursor:pointer;transition:background 0.1s" }, "Link existing");
+    const tabNew      = el("button", { type: "button", style: "flex:1;border-radius:0;border:none;padding:0.4rem 0.75rem;font-size:0.8125rem;font-weight:600;cursor:pointer;transition:background 0.1s" }, "Create new");
     const tabBar = el("div", { style: `display:${linkExistingOnly ? "none" : "flex"};border:1px solid var(--border,#2d3748);border-radius:4px;overflow:hidden;margin-bottom:0.9rem` }, [tabExisting, tabNew]);
 
     // Existing component section
@@ -4636,8 +4636,8 @@
     const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search by part # or name…", style: "width:100%;margin-bottom:0.5rem" });
     const listEl = el("div", { style: "max-height:200px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
     let selectedId = null;
-    const selectedLabel = el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;min-height:1.2rem" }, "");
-    const sharedWarn = el("p", { style: "display:none;margin:4px 0 6px;font-size:0.8rem;color:#d97706;background:#fef3c715;border:1px solid #d9770640;border-radius:4px;padding:4px 8px" }, "");
+    const selectedLabel = el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;min-height:1.2rem" }, "");
+    const sharedWarn = el("p", { style: "display:none;margin:4px 0 6px;font-size:0.8125rem;color:#d97706;background:#fef3c715;border:1px solid #d9770640;border-radius:4px;padding:4px 8px" }, "");
 
     function buildList(filter) {
       const filtered = filter ? candidates.filter((c) => (c.part_number + " " + c.name).toLowerCase().includes(filter.toLowerCase())) : candidates;
@@ -4657,18 +4657,18 @@
             buildList(searchInput.value);
           },
         }, [
-          el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
+          el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
           el("span", { style: "flex:1" }, c.name),
           lifecycleBadge(c.lifecycle_status),
         ]);
         return row;
       }));
-      if (!filtered.length) listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:var(--muted,#8b93a1);font-size:0.85rem" }, "No components match."));
+      if (!filtered.length) listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:var(--muted,#8b93a1);font-size:0.875rem" }, "No components match."));
     }
     buildList("");
     searchInput.oninput = () => buildList(searchInput.value);
     const existingSection = el("div", {}, [
-      el("label", { style: "display:block;margin-bottom:0.25rem;font-size:0.82rem;font-weight:600" }, "Select child"),
+      el("label", { style: "display:block;margin-bottom:0.25rem;font-size:0.8125rem;font-weight:600" }, "Select child"),
       searchInput, listEl, selectedLabel, sharedWarn,
     ]);
 
@@ -4688,7 +4688,7 @@
     const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
     [newPN, newName].forEach((el_) => el_.style.cssText = F);
     newType.style.cssText = F + ";appearance:none;-webkit-appearance:none;cursor:pointer";
-    const LBL = "display:block;font-size:0.8rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem";
+    const LBL = "display:block;font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem";
     const ROW = "margin-bottom:0.6rem";
     // PROP-038: a category is required for anything that lands in the Parts tab.
     const newCat = categorySelect(null);
@@ -4705,8 +4705,8 @@
     ]);
 
     const qtyRefRow = el("div", { style: "display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem" }, [
-      el("label", { style: "display:flex;flex-direction:column;gap:0.2rem;font-size:0.82rem;font-weight:600" }, ["Quantity", qtyInput]),
-      el("label", { style: "display:flex;flex-direction:column;gap:0.2rem;font-size:0.82rem;font-weight:600;flex:1" }, ["Reference designator", refInput]),
+      el("label", { style: "display:flex;flex-direction:column;gap:0.2rem;font-size:0.8125rem;font-weight:600" }, ["Quantity", qtyInput]),
+      el("label", { style: "display:flex;flex-direction:column;gap:0.2rem;font-size:0.8125rem;font-weight:600;flex:1" }, ["Reference designator", refInput]),
     ]);
 
     const submitBtn = el("button", { class: "btn btn-primary btn-sm", type: "submit" }, "Add to BOM");
@@ -4732,11 +4732,11 @@
           const r = await API.post(token, "listFamilyAttributes", { family_id: rootId });
           const attrs = r.attributes || [];
           if (!attrs.length) {
-            condSection.replaceChildren(el("div", { style: "font-size:0.8rem;color:var(--muted,#8b93a1)" }, "No attributes defined on this family yet."));
+            condSection.replaceChildren(el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "No attributes defined on this family yet."));
           } else {
             const LBL = "display:block;font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.15rem";
             condSection.replaceChildren(
-              el("p", { style: "font-size:0.78rem;color:var(--muted,#8b93a1);margin:0 0 0.4rem" },
+              el("p", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin:0 0 0.4rem" },
                 "Include this child only when the following attributes are selected (leave blank = no condition):"),
               ...attrs.map((attr) => {
                 const sel = el("select", { class: "up-text", style: "width:100%",
@@ -4830,17 +4830,17 @@
       const known = parentCountMap[parentNode.id];
       if (!known) return;  // not shared — nothing to warn about
       blastPanel.style.display = "";
-      blastPanel.replaceChildren(el("div", { style: "font-size:0.82rem;font-weight:700;color:#d97706" },
+      blastPanel.replaceChildren(el("div", { style: "font-size:0.8125rem;font-weight:700;color:#d97706" },
         `⚠ This also changes ${known} other assembl${known === 1 ? "y" : "ies"}`));
       try {
         const { parents } = await API.post(token, "listParentsOf", { component_id: parentNode.id });
         if (!parents || !parents.length) return;
         blastPanel.replaceChildren(
-          el("div", { style: "font-size:0.82rem;font-weight:700;color:#d97706;margin-bottom:0.25rem" },
+          el("div", { style: "font-size:0.8125rem;font-weight:700;color:#d97706;margin-bottom:0.25rem" },
             `⚠ "${parentNode.name}" is used in ${parents.length} other assembl${parents.length === 1 ? "y" : "ies"} — the new child appears in all of them:`),
-          el("ul", { style: "margin:0.15rem 0 0.35rem;padding-left:1.2rem;font-size:0.8rem" },
+          el("ul", { style: "margin:0.15rem 0 0.35rem;padding-left:1.2rem;font-size:0.8125rem" },
             parents.map((pp) => el("li", {}, pp.parent ? `${pp.parent.name} (${pp.parent.part_number})` : pp.parent_id))),
-          el("div", { style: "font-size:0.76rem;color:var(--muted,#8b93a1)" },
+          el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" },
             "Wanted it in one configuration only? Add it with a variant condition instead, or stock the configuration as its own SKU."),
         );
       } catch { /* the count above is still shown; names are a nicety */ }
@@ -4849,9 +4849,9 @@
     form.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
         el("h3", { style: "margin:0;font-size:1rem" }, "Add child component"),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 8px", onclick: () => overlay.remove() }, "✕"),
+        el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
       ]),
-      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),
+      el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),
       blastPanel,
       tabBar,
       existingSection,
@@ -4907,7 +4907,7 @@
       }
     }
 
-    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;min-height:1.1rem" }, "");
+    const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;min-height:1.1rem" }, "");
     const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Make standard field");
     saveBtn.onclick = async () => {
       if (!label.value.trim()) { errEl.textContent = "Give the field a label."; return; }
@@ -4926,24 +4926,24 @@
     };
 
     const row = (lbl, ctrl, hint) => el("div", {}, [
-      el("label", { style: "display:block;font-size:0.8rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem" }, lbl),
+      el("label", { style: "display:block;font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem" }, lbl),
       ctrl,
-      hint ? el("div", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);margin-top:0.15rem" }, hint) : null,
+      hint ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:0.15rem" }, hint) : null,
     ].filter(Boolean));
 
     dialog.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between" }, [
-        el("h3", { style: "margin:0;font-size:1.05rem" }, "Make this a standard field"),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: close }, "✕"),
+        el("h3", { style: "margin:0;font-size:1rem" }, "Make this a standard field"),
+        el("button", { class: "btn btn-xs", type: "button", onclick: close }, "✕"),
       ]),
-      el("p", { style: "margin:0;font-size:0.82rem;color:var(--muted,#8b93a1)" },
+      el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" },
         `"${fieldKey}" becomes a labelled field on every component's Specifications tab. Values already captured stay where they are — nothing is migrated or lost, and you can undo it later.`),
       row("Label", label, "What the tab shows"),
       el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.75rem" }, [
         row("Type", type), row("Unit", unit),
       ]),
       row("Section", section, "Which group it appears under"),
-      el("div", { style: "font-size:0.78rem;color:var(--muted,#8b93a1)" }, `Example value on this part: ${sampleValue || "—"}`),
+      el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `Example value on this part: ${sampleValue || "—"}`),
       errEl,
       el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end" }, [
         el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"),
@@ -4979,7 +4979,7 @@
     const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1002;display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(920px,96vw);max-height:92vh;display:flex;flex-direction:column;gap:0.7rem" });
     const body = el("div", { style: "flex:1;overflow-y:auto;min-height:150px" });
-    const errEl = el("span", { style: "color:#e05454;font-size:0.82rem;min-height:1.1rem;display:block" }, "");
+    const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;min-height:1.1rem;display:block" }, "");
     const close = () => { stopProg(); document.removeEventListener("paste", onPaste); overlay.remove(); };
 
     let current = {};   // existing metadata, so proposals can be shown against it
@@ -4989,7 +4989,7 @@
       stopProg();
       setProg(0, "");
       const drop = el("div", {
-        style: "border:2px dashed var(--border,#2d3748);border-radius:8px;padding:1.6rem 1rem;text-align:center;font-size:0.9rem;color:var(--muted,#8b93a1);cursor:pointer",
+        style: "border:2px dashed var(--border,#2d3748);border-radius:8px;padding:1.6rem 1rem;text-align:center;font-size:0.875rem;color:var(--muted,#8b93a1);cursor:pointer",
         onclick: () => filePick.click(),
         ondragover: (ev) => { ev.preventDefault(); drop.style.borderColor = "var(--accent,#2fa564)"; },
         ondragleave: () => { drop.style.borderColor = "var(--border,#2d3748)"; },
@@ -4998,7 +4998,7 @@
           const f = ev.dataTransfer?.files[0]; if (f) useNewFile(f);
         },
       }, [
-        el("div", { style: "font-size:1.05rem;font-weight:600;color:var(--text,#e2e8f0);margin-bottom:0.25rem" }, "Paste a screenshot  ⌘V"),
+        el("div", { style: "font-size:1rem;font-weight:600;color:var(--text,#e2e8f0);margin-bottom:0.25rem" }, "Paste a screenshot  ⌘V"),
         el("div", {}, "or drop a datasheet / drawing here · or click to pick a file"),
       ]);
       const filePick = el("input", { type: "file", accept: "image/*,application/pdf,.docx,.xlsx", style: "display:none",
@@ -5006,7 +5006,7 @@
 
       const kids = [drop, filePick];
       if (existingImages && existingImages.length) {
-        kids.push(el("div", { style: "font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin:0.9rem 0 0.4rem" }, "Or use an image already attached"));
+        kids.push(el("div", { style: "font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin:0.9rem 0 0.4rem" }, "Or use an image already attached"));
         kids.push(el("div", { style: "display:flex;flex-wrap:wrap;gap:0.5rem" }, existingImages.map((img) =>
           el("img", {
             src: img.url, title: `Read ${img.file_name}`,
@@ -5024,7 +5024,7 @@
     // completes when the response actually arrives.
     let progTimer = null;
     const progBar = el("div", { style: "height:100%;width:0%;background:var(--accent,#2fa564);border-radius:999px;transition:width 0.25s ease-out" });
-    const progLabel = el("div", { style: "font-size:0.84rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;text-align:center" }, "");
+    const progLabel = el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;text-align:center" }, "");
     const progWrap = el("div", { style: "padding:2.5rem 1rem" }, [
       progLabel,
       el("div", { style: "height:8px;background:var(--border,#2d3748);border-radius:999px;overflow:hidden" }, [progBar]),
@@ -5109,8 +5109,8 @@
       const rows = res.fields || [];
       if (!rows.length) {
         body.replaceChildren(
-          el("p", { style: "padding:1rem;font-size:0.9rem" }, "Nothing could be read from that document."),
-          el("p", { style: "padding:0 1rem;font-size:0.82rem;color:var(--muted,#8b93a1)" }, res.summary || ""),
+          el("p", { style: "padding:1rem;font-size:0.875rem" }, "Nothing could be read from that document."),
+          el("p", { style: "padding:0 1rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, res.summary || ""),
         );
         return;
       }
@@ -5132,7 +5132,7 @@
       const CONF = { high: ["#2fa564", "high"], medium: ["#e5a326", "medium"], low: ["#e05454", "low"] };
       const GRID = "display:grid;grid-template-columns:1.6rem 12rem 1fr 1fr 4.5rem;gap:0.5rem;align-items:start";
 
-      const head = el("div", { style: `${GRID};padding:0.25rem 0.5rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1)` },
+      const head = el("div", { style: `${GRID};padding:0.25rem 0.5rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1)` },
         [el("span", {}, ""), el("span", {}, "Field"), el("span", {}, "Current"), el("span", {}, "From document"), el("span", {}, "Conf.")]);
 
       const fieldRows = rows.map((f) => {
@@ -5144,38 +5144,38 @@
         const cur = current[f.key];
         return el("div", { style: `${GRID};padding:0.4rem 0.5rem;border-top:1px solid var(--border,#2d3748)` }, [
           box,
-          el("span", { style: "font-size:0.84rem;font-weight:600" }, AI_FILL_LABELS[f.key] || f.key),
-          el("span", { style: `font-size:0.84rem;${isEmpty(f.key) ? "color:var(--muted,#8b93a1);opacity:0.6" : ""}` },
+          el("span", { style: "font-size:0.8125rem;font-weight:600" }, AI_FILL_LABELS[f.key] || f.key),
+          el("span", { style: `font-size:0.8125rem;${isEmpty(f.key) ? "color:var(--muted,#8b93a1);opacity:0.6" : ""}` },
             isEmpty(f.key) ? "— empty —" : String(cur)),
           el("div", {}, [
-            el("div", { style: "font-size:0.88rem;font-weight:600" }, String(f.value)),
-            f.as_printed ? el("div", { style: "font-size:0.72rem;color:var(--muted,#8b93a1)" }, `as printed: ${f.as_printed}`) : null,
-            f.evidence ? el("div", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);font-style:italic;margin-top:2px" }, `“${f.evidence}”`) : null,
+            el("div", { style: "font-size:0.875rem;font-weight:600" }, String(f.value)),
+            f.as_printed ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `as printed: ${f.as_printed}`) : null,
+            f.evidence ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;margin-top:2px" }, `“${f.evidence}”`) : null,
           ].filter(Boolean)),
-          el("span", { style: `font-size:0.7rem;font-weight:700;color:${col}` }, lbl),
+          el("span", { style: `font-size:0.6875rem;font-weight:700;color:${col}` }, lbl),
         ]);
       });
 
       const kids = [];
       if (!res.confident_part_match) {
-        kids.push(el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.55rem 0.75rem;font-size:0.84rem;margin-bottom:0.6rem" },
+        kids.push(el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.55rem 0.75rem;font-size:0.8125rem;margin-bottom:0.6rem" },
           `⚠ This document may not describe this component${res.matched_part ? ` — it looks like "${res.matched_part}"` : ""}. Check each value before applying.`));
       }
-      if (res.summary) kids.push(el("p", { style: "margin:0 0 0.5rem;font-size:0.82rem;color:var(--muted,#8b93a1)" }, res.summary));
+      if (res.summary) kids.push(el("p", { style: "margin:0 0 0.5rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, res.summary));
       kids.push(head, ...fieldRows);
 
       // Values the document states that no field can hold — the signal for
       // which columns the schema is still missing. Kept in custom_specs.
       if ((res.unmapped || []).length) {
-        kids.push(el("div", { style: "font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin:0.9rem 0 0.3rem" },
+        kids.push(el("div", { style: "font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin:0.9rem 0 0.3rem" },
           `No field for these (${res.unmapped.length}) — stored as custom specs`));
         res.unmapped.forEach((u, i) => {
           const box = el("input", { type: "checkbox", style: "cursor:pointer" });
           box.onchange = () => { unmappedPicks[i] = box.checked; syncApply(); };
           kids.push(el("div", { style: "display:grid;grid-template-columns:1.6rem 12rem 1fr;gap:0.5rem;padding:0.3rem 0.5rem;border-top:1px solid var(--border,#2d3748)" }, [
             box,
-            el("span", { style: "font-size:0.84rem" }, u.label),
-            el("span", { style: "font-size:0.84rem;color:var(--muted,#8b93a1)" }, u.value),
+            el("span", { style: "font-size:0.8125rem" }, u.label),
+            el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, u.value),
           ]));
         });
       }
@@ -5226,10 +5226,10 @@
 
     dialog.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between" }, [
-        el("h3", { style: "margin:0;font-size:1.05rem" }, `✨ AI fill — ${nodeData?.name || "component"}`),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 9px", onclick: close }, "✕"),
+        el("h3", { style: "margin:0;font-size:1rem" }, `✨ AI fill — ${nodeData?.name || "component"}`),
+        el("button", { class: "btn btn-xs", type: "button", onclick: close }, "✕"),
       ]),
-      el("p", { style: "margin:0;font-size:0.82rem;color:var(--muted,#8b93a1)" },
+      el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" },
         "Values are proposed, never written straight in. Confident readings of empty fields are pre-ticked; anything you already filled in is left alone unless you tick it."),
       body, errEl, footer,
     );
@@ -5256,7 +5256,7 @@
   function drawingStatusChip(status) {
     const tone = { draft: "#64748b", checked: "#0369a1", approved: "#7c3aed", released: "#15803d", superseded: "#b45309" }[status] || "#64748b";
     return el("span", {
-      style: `display:inline-block;font-size:0.72rem;font-weight:600;padding:1px 8px;border-radius:999px;color:${tone};border:1px solid ${tone}44;background:${tone}12`,
+      style: `display:inline-block;font-size:0.75rem;font-weight:600;padding:1px 8px;border-radius:999px;color:${tone};border:1px solid ${tone}44;background:${tone}12`,
     }, status);
   }
 
@@ -5350,21 +5350,21 @@
           el("p", { style: "margin:0 0 0.75rem" }, [el("strong", {}, "Status: "), statusLine])
         );
         parts.push(
-          el("strong", { style: "font-size:0.8rem" }, "Documents (" + (snap.documents || []).length + ")"),
+          el("strong", { style: "font-size:0.8125rem" }, "Documents (" + (snap.documents || []).length + ")"),
           (snap.documents || []).length
             ? el("div", { class: "table-wrap", style: "margin:0.25rem 0 0.75rem" },
-                el("table", { style: "font-size:0.8rem" }, [
+                el("table", { style: "font-size:0.8125rem" }, [
                   el("thead", {}, el("tr", {}, ["Category", "Document", "Label"].map((h) => el("th", {}, h)))),
                   el("tbody", {}, (snap.documents || []).map((d) =>
                     el("tr", {}, [el("td", {}, d.category), el("td", {}, d.doc_name || "—"), el("td", {}, d.label || "—")])
                   )),
                 ])
               )
-            : el("p", { style: "color:var(--muted,#64748b);margin:0.25rem 0 0.75rem;font-size:0.85rem" }, "No documents linked at this revision"),
-          el("strong", { style: "font-size:0.8rem" }, "Materials (" + (snap.materials || []).length + ")"),
+            : el("p", { style: "color:var(--muted,#64748b);margin:0.25rem 0 0.75rem;font-size:0.875rem" }, "No documents linked at this revision"),
+          el("strong", { style: "font-size:0.8125rem" }, "Materials (" + (snap.materials || []).length + ")"),
           (snap.materials || []).length
             ? el("div", { class: "table-wrap", style: "margin:0.25rem 0 0" },
-                el("table", { style: "font-size:0.8rem" }, [
+                el("table", { style: "font-size:0.8125rem" }, [
                   el("thead", {}, el("tr", {}, ["Substance", "CAS", "% w/w", "SVHC", "RoHS"].map((h) => el("th", {}, h)))),
                   el("tbody", {}, (snap.materials || []).map((m) =>
                     el("tr", {}, [
@@ -5376,13 +5376,13 @@
                   )),
                 ])
               )
-            : el("p", { style: "color:var(--muted,#64748b);margin:0.25rem 0 0;font-size:0.85rem" }, "No materials declared at this revision"),
+            : el("p", { style: "color:var(--muted,#64748b);margin:0.25rem 0 0;font-size:0.875rem" }, "No materials declared at this revision"),
         );
         return el("div", {}, parts);
       }
       const versionRows = [];
       for (const v of history) {
-        const indicator = el("span", { style: "font-size:0.7rem;margin-right:0.3rem;color:var(--muted,#64748b)" }, "▸");
+        const indicator = el("span", { style: "font-size:0.6875rem;margin-right:0.3rem;color:var(--muted,#64748b)" }, "▸");
         const detailRow = el("tr", { style: "display:none" }, [
           el("td", { colspan: "4", style: "padding:0.75rem 1rem 0.85rem;background:var(--subtle,#f8fafc);border-bottom:1px solid var(--border,#e2e8f0)" },
             renderVersionSnapshot(v.version_snapshot)
@@ -5416,7 +5416,7 @@
         }
       } });
       bumpForm.append(
-        el("span", { style: "font-size:0.8rem;font-weight:600;white-space:nowrap;background:var(--subtle,#f1f5f9);padding:0.38rem 0.7rem;border-radius:6px;border:1px solid var(--border,#e2e8f0);color:var(--muted,#64748b)" }, `Next: ${previewRev}`),
+        el("span", { style: "font-size:0.8125rem;font-weight:600;white-space:nowrap;background:var(--subtle,#f1f5f9);padding:0.38rem 0.7rem;border-radius:6px;border:1px solid var(--border,#e2e8f0);color:var(--muted,#64748b)" }, `Next: ${previewRev}`),
         bumpSumInput,
         el("button", { class: "btn btn-sm btn-primary", type: "submit" }, "Bump version"),
         bumpErr,
@@ -5424,7 +5424,7 @@
 
       const versionsSection = el("div", {}, [
         el("h4", {}, "Versions"),
-        el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+        el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
           el("thead", {}, el("tr", {}, ["Revision", "Summary", "Status", "Created"].map((h) => el("th", {}, h)))),
           el("tbody", {}, versionRows),
         ])),
@@ -5445,12 +5445,12 @@
         document.body.append(overlay);
 
         let selectedFile = null;
-        const statusEl = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+        const statusEl = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
         const barFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.15s" });
         const progressEl = el("div", { style: "display:none;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden;margin-bottom:0.5rem" }, barFill);
         const verInp = el("input", { class: "up-text", type: "text", placeholder: "Auto-numbered if blank", style: "margin-top:4px" });
         const notesInp = el("input", { class: "up-text", type: "text", placeholder: "What changed? (optional)", style: "margin-top:4px" });
-        const fileLabel = el("span", { style: "font-size:0.8rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
+        const fileLabel = el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
         const fileInp = el("input", { type: "file", style: "margin-top:4px" });
         fileInp.onchange = () => {
           const f = fileInp.files?.[0];
@@ -5465,14 +5465,14 @@
         const shared = d.shared_with > 1
           ? ` It is linked to ${d.shared_with} parts, and all of them are affected.`
           : "";
-        const effect = el("div", { class: isDrawing ? "notice warn" : "notice", style: "font-size:0.8rem;margin-bottom:0.8rem" },
+        const effect = el("div", { class: isDrawing ? "notice warn" : "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
           isDrawing
             ? `This document is categorised as a drawing, from before drawings moved to their own tab. Uploading a new revision advances this part's revision letter and records it in the Change Log.${shared}`
             : `This is a ${d.category}. The new version is recorded in the Change Log, but the part's revision letter does not move — a supplier reissuing their document is not a change to your part.${shared}`);
 
         box.replaceChildren(
           el("h3", { style: "margin:0 0 0.2rem;font-size:1rem" }, "New version"),
-          el("div", { class: "muted", style: "font-size:0.82rem;margin-bottom:0.8rem" },
+          el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
             `${d.document_name || d.label || "Document"} — currently ${d.latest_version || d.version || "unversioned"}`),
           effect,
           el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "File"), fileInp, fileLabel]),
@@ -5506,13 +5506,13 @@
                 box.replaceChildren(
                   el("h3", { style: "margin:0 0 0.8rem;font-size:1rem" }, `Version ${res && res.version ? res.version : ""} saved`.trim()),
                   bumped.length
-                    ? el("div", { class: "notice warn", style: "font-size:0.85rem" }, [
+                    ? el("div", { class: "notice warn", style: "font-size:0.875rem" }, [
                         el("div", { style: "font-weight:600;margin-bottom:0.3rem" }, "Part revision advanced"),
                         el("div", {}, bumped.join(" · ")),
                       ])
-                    : el("div", { class: "notice", style: "font-size:0.85rem" },
+                    : el("div", { class: "notice", style: "font-size:0.875rem" },
                         "Recorded in the Change Log. No part revision moved — only drawing revisions advance the revision letter, and drawings live on their own tab."),
-                  el("div", { class: "muted", style: "font-size:0.8rem;margin:0.6rem 0" },
+                  el("div", { class: "muted", style: "font-size:0.8125rem;margin:0.6rem 0" },
                     audited === 1 ? "1 part updated." : `${audited} parts updated.`),
                   el("div", { style: "display:flex;justify-content:flex-end" }, [
                     el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
@@ -5545,7 +5545,7 @@
             : "this part"),
           el("td", {}, d.is_supplier_visible ? "Yes" : "No"),
           el("td", {}, role === "rushroom" && d.document_id
-            ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px",
+            ? el("button", { class: "btn btn-xs", type: "button",
                 onclick: () => openNewVersionModal(d) }, "New version")
             : ""),
         ]));
@@ -5578,7 +5578,7 @@
           API.post(token, "data", {}).then(({ documents: allDocs }) => {
             const versions = [];
             (allDocs || []).forEach((doc) => (doc.versions || []).forEach((v) => versions.push({ id: v.id, display: `${doc.name} — v${v.version || v.created_at?.slice(0, 10)}` })));
-            const statusEl = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+            const statusEl = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
             if (!versions.length) {
               box.replaceChildren(
                 el("h3", { style: "margin:0 0 0.8rem;font-size:1rem" }, "Add document to component"),
@@ -5600,7 +5600,7 @@
               el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Document version"), dvSel]),
               el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Category"), catSel]),
               el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Label (optional)"), labelInp]),
-              el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.9rem" }, [supVis, el("span", { style: "font-size:0.85rem" }, "Supplier visible")]),
+              el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.9rem" }, [supVis, el("span", { style: "font-size:0.875rem" }, "Supplier visible")]),
               statusEl,
               el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
                 el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
@@ -5619,7 +5619,7 @@
 
         function renderUploadTab() {
           let selectedFile = null;
-          const statusEl = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+          const statusEl = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
           const barFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.15s" });
           const progressEl = el("div", { style: "display:none;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden;margin-bottom:0.5rem" }, barFill);
           const nameInp = el("input", { class: "up-text", type: "text", placeholder: "Document name", style: "margin-top:4px" });
@@ -5628,7 +5628,7 @@
           const linkCatSel = el("select", { class: "up-text", style: "margin-top:4px" }, CATS.map((c) => el("option", { value: c }, c)));
           const labelInp = el("input", { class: "up-text", type: "text", placeholder: "Optional label", style: "margin-top:4px" });
           const supVis = el("input", { type: "checkbox" });
-          const fileLabel = el("span", { style: "font-size:0.8rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
+          const fileLabel = el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
           const fileInp = el("input", { type: "file", style: "margin-top:4px" });
           fileInp.onchange = () => {
             const f = fileInp.files?.[0];
@@ -5645,7 +5645,7 @@
             el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Version label"), verInp]),
             el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Link category (component context)"), linkCatSel]),
             el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Label (optional)"), labelInp]),
-            el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.9rem" }, [supVis, el("span", { style: "font-size:0.85rem" }, "Supplier visible")]),
+            el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.9rem" }, [supVis, el("span", { style: "font-size:0.875rem" }, "Supplier visible")]),
             progressEl,
             statusEl,
             el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
@@ -5689,7 +5689,7 @@
       const partDrawings = (drawingsR && drawingsR.drawings) || [];
 
       function openLinkDrawingModal() {
-        const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+        const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
         const box = el("div", {}, el("div", { class: "loading" }, "Loading drawings…"));
         const close = openModal("Link a drawing to this part", box);
         API.post(token, "listDrawings", {}).then(({ drawings }) => {
@@ -5711,7 +5711,7 @@
           box.replaceChildren(
             el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Drawing"), sel]),
             el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Role on this part"), roleSel]),
-            el("div", { class: "muted", style: "font-size:0.78rem;margin-bottom:0.8rem" },
+            el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.8rem" },
               "Once linked, a new revision of this drawing advances this part's revision letter and appears in its Change Log."),
             status,
             el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
@@ -5737,10 +5737,10 @@
           ? el("span", { title: "Revising this drawing affects every part it is on" }, `${d.parts_count} parts`)
           : "this part"),
         el("td", {}, el("div", { style: "display:flex;gap:4px" }, [
-          el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px",
+          el("button", { class: "btn btn-xs", type: "button",
             onclick: () => openDrawingDetail(d.id, role, () => openComponentDetail(componentId, token, panel, nodeData, role)) }, "Open"),
           role === "rushroom"
-            ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px",
+            ? el("button", { class: "btn btn-xs", type: "button",
                 onclick: () => addDrawingRevisionModal(d, role, () => openComponentDetail(componentId, token, panel, nodeData, role)) }, "New revision")
             : null,
         ].filter(Boolean))),
@@ -5750,20 +5750,20 @@
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem;flex-wrap:wrap" }, [
           el("h4", { style: "margin:0" }, "Drawings"),
           role === "rushroom"
-            ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px",
+            ? el("button", { class: "btn btn-xs btn-primary", type: "button",
                 onclick: () => newDrawingModal(role, () => openComponentDetail(componentId, token, panel, nodeData, role),
                   { id: componentId, name: (nodeData && nodeData.name) || "this part" }) }, "+ New drawing")
             : null,
           role === "rushroom"
-            ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: openLinkDrawingModal }, "+ Link an existing drawing")
+            ? el("button", { class: "btn btn-xs", type: "button", onclick: openLinkDrawingModal }, "+ Link an existing drawing")
             : null,
         ].filter(Boolean)),
         drawingRows.length
-          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
               el("thead", {}, el("tr", {}, ["Number", "Title", "Revision", "Status", "Used on", ""].map((h) => el("th", {}, h)))),
               el("tbody", {}, drawingRows),
             ]))
-          : el("div", { class: "muted", style: "font-size:0.85rem" }, [
+          : el("div", { class: "muted", style: "font-size:0.875rem" }, [
               el("div", {}, "No drawings on this part yet."),
               el("div", { style: "margin-top:0.35rem" },
                 role === "rushroom"
@@ -5775,19 +5775,19 @@
       const docsSection = el("div", { style: "margin-top:1rem" }, [
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem" }, [
           el("h4", { style: "margin:0" }, "Documents"),
-          el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: () => openAddDocModal() }, "+ Add document"),
+          el("button", { class: "btn btn-xs btn-primary", type: "button", onclick: () => openAddDocModal() }, "+ Add document"),
         ]),
-        docRows.length ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+        docRows.length ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
           el("thead", {}, el("tr", {}, ["Category", "Name", "Version", "Used on", "Supplier visible", ""].map((h) => el("th", {}, h)))),
           el("tbody", {}, docRows),
-        ])) : el("div", { class: "muted", style: "font-size:0.85rem" }, [
+        ])) : el("div", { class: "muted", style: "font-size:0.875rem" }, [
           el("div", {}, "No documents attached yet."),
           el("div", { style: "margin-top:0.35rem" },
             "Datasheets, test reports, declarations and quality certificates attach here — use + Add document → Upload & link."),
           el("div", { style: "margin-top:0.35rem" },
             "Production drawings do not live here. They have their own Drawings tab, with drawing numbers, revision letters and an approval state."),
         ]),
-        el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.5rem" },
+        el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.5rem" },
           "A new revision of a document here is recorded in the Change Log. It does not move this part's revision letter — a supplier reissuing their datasheet is not a change to your part. Drawing revisions, which do move it, are on the Drawings tab."),
       ]);
 
@@ -5801,7 +5801,7 @@
         ]));
       const matsSection = el("div", { style: "margin-top:1rem" }, [
         el("h4", {}, "Materials (REACH / RoHS)"),
-        matRows.length ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+        matRows.length ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
           el("thead", {}, el("tr", {}, ["Substance", "CAS", "% w/w", "SVHC", "RoHS restricted"].map((h) => el("th", {}, h)))),
           el("tbody", {}, matRows),
         ])) : el("div", { class: "muted" }, "No substance data yet."),
@@ -5859,10 +5859,10 @@
         }
 
         return el("tr", {}, [
-          el("td", { style: "white-space:nowrap;font-size:0.8rem" },
+          el("td", { style: "white-space:nowrap;font-size:0.8125rem" },
             new Date(entry.changed_at).toLocaleString("sv", { dateStyle: "short", timeStyle: "short" })),
-          el("td", { style: "font-size:0.8rem" },
-            el("span", { style: `display:inline-block;padding:1px 6px;border-radius:99px;font-size:0.72rem;font-weight:600;background:${bg};color:${fg}` }, badgeLabel)),
+          el("td", { style: "font-size:0.8125rem" },
+            el("span", { style: `display:inline-block;padding:1px 6px;border-radius:99px;font-size:0.75rem;font-weight:600;background:${bg};color:${fg}` }, badgeLabel)),
           el("td", {}, changeCell),
         ]);
       });
@@ -5871,16 +5871,16 @@
       const usedInSection = el("div", { style: "margin-top:1rem" }, [
         el("h4", {}, "Used in"),
         usedInParents.length
-          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
               el("thead", {}, el("tr", {}, ["Assembly", "Part #", "Qty", "Ref"].map((h) => el("th", {}, h)))),
               el("tbody", {}, usedInParents.map((p) => el("tr", {}, [
                 el("td", {}, p.parent ? p.parent.name : "—"),
-                el("td", { style: "font-family:monospace;font-size:0.78rem;color:var(--muted,#8b93a1)" }, p.parent ? p.parent.part_number : "—"),
+                el("td", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1)" }, p.parent ? p.parent.part_number : "—"),
                 el("td", {}, `×${p.quantity}`),
                 el("td", { style: "color:var(--muted,#8b93a1)" }, p.reference_designator || "—"),
               ]))),
             ]))
-          : el("div", { style: "font-size:0.85rem;color:var(--muted,#8b93a1);margin-top:0.25rem" }, "Not linked in any assembly."),
+          : el("div", { style: "font-size:0.875rem;color:var(--muted,#8b93a1);margin-top:0.25rem" }, "Not linked in any assembly."),
       ]);
 
       const changelogSection = el("div", { style: "margin-top:1.25rem" }, [
@@ -5890,10 +5890,10 @@
         // An audit trail that under-reports silently is worse than one that
         // admits a gap. Before PROP-043 a failed source degraded to an empty
         // list and the timeline looked complete; now it says so.
-        cl.partial ? el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.5rem 0.7rem;font-size:0.8rem;margin-bottom:0.5rem" },
+        cl.partial ? el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.5rem 0.7rem;font-size:0.8125rem;margin-bottom:0.5rem" },
           `⚠ This trail is incomplete — ${(cl.sources_failed || []).join(" and ") || "a source"} could not be loaded. Do not treat it as a full record.`) : null,
         clRows.length
-          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem;width:100%" }, [
+          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem;width:100%" }, [
               el("thead", {}, el("tr", {}, ["Date", "Event", "Changes"].map((h) => el("th", {}, h)))),
               el("tbody", {}, clRows),
             ]))
@@ -5904,14 +5904,14 @@
       let configSection = null;
       if (isFamily && familyAttrs) {
         const attrs = familyAttrs.attributes || [];
-        const LBL = "display:block;font-size:0.8rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.2rem";
+        const LBL = "display:block;font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.2rem";
         const attrList = el("div", {});
         function renderAttrs() {
           attrList.replaceChildren(...attrs.map((attr) => {
             const valTags = (attr.values || []).map((v) =>
-              el("span", { style: "display:inline-flex;align-items:center;gap:0.25rem;background:var(--subtle,#f1f5f9);border:1px solid var(--border,#e2e8f0);border-radius:4px;padding:1px 6px;font-size:0.76rem;margin-right:3px" }, [
+              el("span", { style: "display:inline-flex;align-items:center;gap:0.25rem;background:var(--subtle,#f1f5f9);border:1px solid var(--border,#e2e8f0);border-radius:4px;padding:1px 6px;font-size:0.75rem;margin-right:3px" }, [
                 v.label,
-                el("button", { type: "button", style: "background:none;border:none;cursor:pointer;color:#e05454;font-size:0.65rem;padding:0;line-height:1", onclick: async () => {
+                el("button", { type: "button", style: "background:none;border:none;cursor:pointer;color:#e05454;font-size:0.6875rem;padding:0;line-height:1", onclick: async () => {
                   if (!confirm(`Delete value "${v.label}"?`)) return;
                   try {
                     await API.post(token, "deleteFamilyAttributeValue", { value_id: v.id });
@@ -5920,8 +5920,8 @@
                   } catch (ex) { alert(ex.message); }
                 } }, "✕"),
               ]));
-            const addValInput = el("input", { class: "up-text", type: "text", placeholder: "Add value…", style: "width:140px;font-size:0.8rem;padding:0.2rem 0.4rem;margin-left:4px" });
-            const addValBtn = el("button", { class: "btn btn-sm", type: "button", style: "padding:1px 6px;font-size:0.75rem;margin-left:2px", onclick: async () => {
+            const addValInput = el("input", { class: "up-text", type: "text", placeholder: "Add value…", style: "width:140px;font-size:0.8125rem;padding:0.2rem 0.4rem;margin-left:4px" });
+            const addValBtn = el("button", { class: "btn btn-xs", type: "button", style: "font-size:0.75rem;margin-left:2px", onclick: async () => {
               const raw = addValInput.value.trim();
               if (!raw) return;
               try {
@@ -5931,7 +5931,7 @@
                 renderAttrs();
               } catch (ex) { alert(ex.message); }
             } }, "+ value");
-            const delAttrBtn = el("button", { class: "btn btn-sm", type: "button", style: "padding:1px 6px;font-size:0.7rem;color:#e05454;border-color:#e0545440;margin-left:4px", onclick: async () => {
+            const delAttrBtn = el("button", { class: "btn btn-xs", type: "button", style: "font-size:0.6875rem;color:#e05454;border-color:#e0545440;margin-left:4px", onclick: async () => {
               if (!confirm(`Delete attribute "${attr.display_name}" and all its values?`)) return;
               try {
                 await API.post(token, "deleteFamilyAttribute", { attribute_id: attr.id });
@@ -5941,21 +5941,21 @@
             } }, "✕ attr");
             return el("div", { style: "margin-bottom:0.55rem;padding:0.4rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
               el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.3rem" }, [
-                el("strong", { style: "font-size:0.83rem" }, attr.display_name),
-                el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1)" }, attr.is_required ? "(required)" : "(optional)"),
+                el("strong", { style: "font-size:0.8125rem" }, attr.display_name),
+                el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, attr.is_required ? "(required)" : "(optional)"),
                 delAttrBtn,
               ]),
               el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:2px" }, [...valTags, addValInput, addValBtn]),
             ]);
           }));
-          if (!attrs.length) attrList.replaceChildren(el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1)" }, "No attributes yet."));
+          if (!attrs.length) attrList.replaceChildren(el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "No attributes yet."));
         }
         renderAttrs();
 
-        const newAttrName = el("input", { class: "up-text", type: "text", placeholder: "name (key)", style: "width:110px;font-size:0.8rem;padding:0.25rem 0.4rem" });
-        const newAttrLabel = el("input", { class: "up-text", type: "text", placeholder: "display label", style: "width:130px;font-size:0.8rem;padding:0.25rem 0.4rem" });
+        const newAttrName = el("input", { class: "up-text", type: "text", placeholder: "name (key)", style: "width:110px;font-size:0.8125rem;padding:0.25rem 0.4rem" });
+        const newAttrLabel = el("input", { class: "up-text", type: "text", placeholder: "display label", style: "width:130px;font-size:0.8125rem;padding:0.25rem 0.4rem" });
         const newAttrReq = el("input", { type: "checkbox", checked: true, style: "margin-right:2px" });
-        const addAttrBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "padding:2px 8px;font-size:0.78rem", onclick: async () => {
+        const addAttrBtn = el("button", { class: "btn btn-xs btn-primary", type: "button", style: "font-size:0.75rem", onclick: async () => {
           const nm = newAttrName.value.trim(); const dl = newAttrLabel.value.trim();
           if (!nm || !dl) { alert("Both name and label are required."); return; }
           try {
@@ -5970,7 +5970,7 @@
           const pnInput  = el("input", { class: "up-text", type: "text", placeholder: "Part number (auto-generated if blank)", style: "width:100%;box-sizing:border-box", value: cfg.part_number || "" });
           const nmInput  = el("input", { class: "up-text", type: "text", placeholder: "Name", style: "width:100%;box-sizing:border-box", value: cfg.name || "" });
           const notesInput = el("textarea", { class: "up-text", rows: "2", placeholder: "Notes (optional)", style: "width:100%;box-sizing:border-box;resize:vertical" });
-          const errSpan  = el("span", { style: "color:#e05454;font-size:0.8rem;min-height:1.1em;display:block" }, "");
+          const errSpan  = el("span", { style: "color:#e05454;font-size:0.8125rem;min-height:1.1em;display:block" }, "");
           const submitBtn = el("button", { class: "btn btn-primary", type: "button", onclick: async () => {
             submitBtn.disabled = true; errSpan.textContent = "";
             try {
@@ -5987,10 +5987,10 @@
           const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0007;z-index:2000;display:flex;align-items:center;justify-content:center", onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, [
             el("div", { style: "background:var(--surface,#fff);border-radius:8px;padding:1.25rem;width:min(440px,95vw);display:flex;flex-direction:column;gap:0.6rem", onclick: (ev) => ev.stopPropagation() }, [
               el("h4", { style: "margin:0;font-size:1rem" }, `Materialise "${cfg.name}" as Stocked Variant`),
-              el("div", { style: "font-size:0.8rem;color:var(--muted,#8b93a1)" }, Object.entries(cfg.selections || {}).map(([k, v]) => `${k}: ${v}`).join("  ·  ")),
-              el("label", { style: "font-size:0.82rem;font-weight:600" }, ["Part number", pnInput]),
-              el("label", { style: "font-size:0.82rem;font-weight:600" }, ["Name", nmInput]),
-              el("label", { style: "font-size:0.82rem;font-weight:600" }, ["Notes", notesInput]),
+              el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, Object.entries(cfg.selections || {}).map(([k, v]) => `${k}: ${v}`).join("  ·  ")),
+              el("label", { style: "font-size:0.8125rem;font-weight:600" }, ["Part number", pnInput]),
+              el("label", { style: "font-size:0.8125rem;font-weight:600" }, ["Name", nmInput]),
+              el("label", { style: "font-size:0.8125rem;font-weight:600" }, ["Notes", notesInput]),
               errSpan,
               el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end" }, [
                 el("button", { class: "btn", type: "button", onclick: () => overlay.remove() }, "Cancel"),
@@ -6004,45 +6004,45 @@
         const cfgs = familyConfigs?.configurations || [];
         const refresh = () => openComponentDetail(componentId, token, panel, nodeData, role);
         const cfgList = cfgs.length
-          ? el("div", {}, cfgs.map((cfg) => el("div", { style: "display:flex;align-items:center;justify-content:space-between;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:5px;margin-bottom:3px;font-size:0.82rem" }, [
-              el("span", {}, [el("strong", {}, cfg.name), cfg.part_number ? el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-family:monospace;font-size:0.76rem" }, cfg.part_number) : null,
-                el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-size:0.73rem" }, Object.entries(cfg.selections).map(([k, v]) => `${k}:${v}`).join(", ")),
+          ? el("div", {}, cfgs.map((cfg) => el("div", { style: "display:flex;align-items:center;justify-content:space-between;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:5px;margin-bottom:3px;font-size:0.8125rem" }, [
+              el("span", {}, [el("strong", {}, cfg.name), cfg.part_number ? el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-family:monospace;font-size:0.75rem" }, cfg.part_number) : null,
+                el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-size:0.75rem" }, Object.entries(cfg.selections).map(([k, v]) => `${k}:${v}`).join(", ")),
               ].filter(Boolean)),
               el("div", { style: "display:flex;gap:0.3rem;flex-shrink:0" }, [
-                el("button", { class: "btn btn-sm btn-primary", type: "button", style: "padding:1px 7px;font-size:0.7rem", onclick: () => openMaterialiseModal(cfg, token, refresh) }, "Stock"),
-                el("button", { class: "btn btn-sm", type: "button", style: "padding:1px 5px;font-size:0.7rem;color:#e05454;border-color:#e0545440", onclick: async () => {
+                el("button", { class: "btn btn-xs btn-primary", type: "button", style: "font-size:0.6875rem", onclick: () => openMaterialiseModal(cfg, token, refresh) }, "Stock"),
+                el("button", { class: "btn btn-xs", type: "button", style: "font-size:0.6875rem;color:#e05454;border-color:#e0545440", onclick: async () => {
                   if (!confirm(`Delete configuration "${cfg.name}"?`)) return;
                   try { await API.post(token, "deleteConfiguration", { configuration_id: cfg.id }); refresh(); } catch (ex) { alert(ex.message); }
                 } }, "Delete"),
               ]),
             ])))
-          : el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1)" }, "No saved configurations yet. Configurations will be imported from the order system (PROP-018).");
+          : el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "No saved configurations yet. Configurations will be imported from the order system (PROP-018).");
 
         const stockedVariants = variantsR?.variants || [];
         const LIFECYCLE_COLORS = { active: "#2fa564", inactive: "#8b93a1", replaced: "#d97706", flagged: "#e05454" };
         const variantsList = stockedVariants.length
           ? el("div", {}, stockedVariants.map((v) => {
               const lcColor = LIFECYCLE_COLORS[v.lifecycle_status] || "#8b93a1";
-              return el("div", { style: "display:flex;align-items:center;justify-content:space-between;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:5px;margin-bottom:3px;font-size:0.82rem" }, [
+              return el("div", { style: "display:flex;align-items:center;justify-content:space-between;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:5px;margin-bottom:3px;font-size:0.8125rem" }, [
                 el("span", {}, [
                   el("strong", {}, v.name),
-                  el("span", { style: "font-family:monospace;font-size:0.76rem;color:var(--muted,#8b93a1);margin-left:0.4rem" }, v.part_number),
-                  v.config_selections ? el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-size:0.73rem" }, Object.entries(v.config_selections).map(([k, vv]) => `${k}:${vv}`).join(", ")) : null,
+                  el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);margin-left:0.4rem" }, v.part_number),
+                  v.config_selections ? el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4rem;font-size:0.75rem" }, Object.entries(v.config_selections).map(([k, vv]) => `${k}:${vv}`).join(", ")) : null,
                 ].filter(Boolean)),
                 el("div", { style: "display:flex;align-items:center;gap:0.35rem;flex-shrink:0" }, [
-                  el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:10px;background:${lcColor}22;color:${lcColor};font-weight:600;text-transform:capitalize` }, v.lifecycle_status || "inactive"),
-                  el("button", { class: "btn btn-sm", type: "button", style: "padding:1px 7px;font-size:0.7rem", onclick: () => openComponentDetail(v.id, token, panel, v, role) }, "Open →"),
+                  el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:10px;background:${lcColor}22;color:${lcColor};font-weight:600;text-transform:capitalize` }, v.lifecycle_status || "inactive"),
+                  el("button", { class: "btn btn-xs", type: "button", style: "font-size:0.6875rem", onclick: () => openComponentDetail(v.id, token, panel, v, role) }, "Open →"),
                 ]),
               ]);
             }))
-          : el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1)" }, "No stocked variants yet. Click Stock on a configuration above to materialise one.");
+          : el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "No stocked variants yet. Click Stock on a configuration above to materialise one.");
 
         configSection = el("div", { style: "margin-bottom:1rem;border:1px solid #2fa56440;border-radius:6px;padding:0.75rem" }, [
           el("h4", { style: "margin:0 0 0.5rem;color:#2fa564" }, "Dynamic BOM — Variant Setup"),
           el("div", { style: "margin-bottom:0.6rem" }, [el("label", { style: LBL }, "Attributes"), attrList]),
           el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:0.35rem;margin-bottom:0.75rem" }, [
             newAttrName, newAttrLabel,
-            el("label", { style: "display:flex;align-items:center;gap:0.2rem;font-size:0.78rem;white-space:nowrap" }, [newAttrReq, "Required"]),
+            el("label", { style: "display:flex;align-items:center;gap:0.2rem;font-size:0.75rem;white-space:nowrap" }, [newAttrReq, "Required"]),
             addAttrBtn,
           ]),
           el("div", { style: "margin-bottom:0.75rem" }, [el("label", { style: LBL }, "Saved Configurations"), cfgList]),
@@ -6051,7 +6051,7 @@
       }
 
       // Images section (PROP-026) -----------------------------------------------
-      const imgStatus = el("span", { style: "font-size:0.78rem;color:#e05454;min-height:1.1em;display:block" }, "");
+      const imgStatus = el("span", { style: "font-size:0.75rem;color:#e05454;min-height:1.1em;display:block" }, "");
       const imgGrid = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem;min-height:2rem" });
 
       function openLightbox(images, startIndex) {
@@ -6063,7 +6063,7 @@
           onclick: (ev) => ev.stopPropagation(),
         });
         const counter = el("div", {
-          style: "color:rgba(255,255,255,0.6);font-size:0.78rem;margin-top:0.5rem;text-align:center;min-height:1.1em",
+          style: "color:rgba(255,255,255,0.6);font-size:0.75rem;margin-top:0.5rem;text-align:center;min-height:1.1em",
         });
 
         function show(i) {
@@ -6099,7 +6099,7 @@
 
       function renderImgGrid(images) {
         if (!images.length) {
-          imgGrid.replaceChildren(el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1)" }, "No images yet."));
+          imgGrid.replaceChildren(el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "No images yet."));
           return;
         }
         imgGrid.replaceChildren(...images.map((img, i) => {
@@ -6156,7 +6156,7 @@
         imgFileInput.value = "";
       } });
       const imgDropZone = el("div", {
-        style: "border:2px dashed var(--border,#e2e8f0);border-radius:6px;padding:0.5rem 0.75rem;font-size:0.8rem;color:var(--muted,#8b93a1);cursor:pointer;text-align:center;margin-top:0.4rem",
+        style: "border:2px dashed var(--border,#e2e8f0);border-radius:6px;padding:0.5rem 0.75rem;font-size:0.8125rem;color:var(--muted,#8b93a1);cursor:pointer;text-align:center;margin-top:0.4rem",
         ondragover: (ev) => { ev.preventDefault(); imgDropZone.style.borderColor = "var(--accent,#2fa564)"; },
         ondragleave: () => { imgDropZone.style.borderColor = "var(--border,#e2e8f0)"; },
         ondrop: (ev) => {
@@ -6203,8 +6203,8 @@
       // --- Unified Properties card (rushroom only) — replaces separate name/status/type/sourcing cards ---
       let propertiesSection = null;
       if (role === "rushroom") {
-        const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.82rem" });
-        const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.82rem;font-family:monospace" });
+        const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.8125rem" });
+        const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.8125rem;font-family:monospace" });
         // Description was collected by the Create BOM Node modal, written to
         // bom_components.description, and then shown nowhere — it surfaced only
         // inside a frozen version snapshot. 5 of 61 components already carried
@@ -6212,7 +6212,7 @@
         // fields, and is saved with them.
         const descInp = el("textarea", {
           class: "up-text", rows: "2", placeholder: "What is this part for?",
-          style: "width:100%;font-size:0.82rem;resize:vertical;min-height:2.4rem",
+          style: "width:100%;font-size:0.8125rem;resize:vertical;min-height:2.4rem",
         });
         descInp.value = nodeData?.description || "";
 
@@ -6222,16 +6222,16 @@
         // bom_components.oem_number is legacy and no longer read or written here —
         // two columns behind one label meant a value entered on one tab was
         // invisible on the other, which is how AI fill exposed the split.
-        const oemInp    = el("input", { class: "up-text", type: "text", value: (metaR?.metadata || {}).manufacturer_part_number || "", placeholder: "OEM number", style: "width:100%;font-size:0.82rem;font-family:monospace" });
+        const oemInp    = el("input", { class: "up-text", type: "text", value: (metaR?.metadata || {}).manufacturer_part_number || "", placeholder: "OEM number", style: "width:100%;font-size:0.8125rem;font-family:monospace" });
 
         const VALID_STATUSES = ["active", "inactive", "replaced", "flagged"];
         const currentStatus = nodeData?.lifecycle_status || "inactive";
-        const statusSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
+        const statusSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
           VALID_STATUSES.map((s) => el("option", { value: s, selected: s === currentStatus ? "selected" : null }, s))
         );
-        const replNoteArea = el("textarea", { class: "up-text", rows: "2", placeholder: "What replaced this, and why?", style: "display:none;resize:vertical;font-size:0.82rem;margin-top:0.3rem;width:100%" });
+        const replNoteArea = el("textarea", { class: "up-text", rows: "2", placeholder: "What replaced this, and why?", style: "display:none;resize:vertical;font-size:0.8125rem;margin-top:0.3rem;width:100%" });
         replNoteArea.value = nodeData?.replacement_note || "";
-        const flagReasonArea = el("textarea", { class: "up-text", rows: "2", placeholder: "Describe the flag reason or concern", style: "display:none;resize:vertical;font-size:0.82rem;margin-top:0.3rem;width:100%" });
+        const flagReasonArea = el("textarea", { class: "up-text", rows: "2", placeholder: "Describe the flag reason or concern", style: "display:none;resize:vertical;font-size:0.8125rem;margin-top:0.3rem;width:100%" });
         flagReasonArea.value = nodeData?.flag_reason || "";
         function syncConditionalFields() {
           const v = statusSel.value;
@@ -6243,13 +6243,13 @@
 
         const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["finished_good", "Finished Good"]];
         const currentType = nodeData?.type || "part";
-        const typeSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
+        const typeSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
           TYPE_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentType ? "selected" : null }, l))
         );
 
         const MOB_OPTS = [["purchased","Purchased (bought-in)"],["manufactured","Manufactured (made in-house)"],["assembled","Assembled (in-house from bought parts)"],["subcontracted","Subcontracted (outsourced)"]];
         const currentMOB = nodeData?.make_or_buy || "purchased";
-        const mobSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
+        const mobSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
           MOB_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentMOB ? "selected" : null }, l))
         );
 
@@ -6257,9 +6257,9 @@
         // backlog: a category is required on create, but pre-existing parts have
         // none and can only be tagged from here.
         const catSel = categorySelect(nodeData?.category_id || null, { placeholder: "— none —" });
-        catSel.style.cssText = "width:100%;padding:0.3rem 0.5rem;font-size:0.82rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)";
+        catSel.style.cssText = "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)";
 
-        const propSaveErr = el("span", { style: "font-size:0.78rem;color:#e05454;flex:1" }, "");
+        const propSaveErr = el("span", { style: "font-size:0.75rem;color:#e05454;flex:1" }, "");
         const propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save changes");
         propSaveBtn.onclick = async () => {
           const newName = nameInp.value.trim();
@@ -6318,7 +6318,7 @@
           }
         };
 
-        const lbl = (text) => el("span", { style: "font-size:0.72rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em" }, text);
+        const lbl = (text) => el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em" }, text);
         const statusColWrapper = el("div", {}, [lbl("Lifecycle status"), statusSel, replNoteArea, flagReasonArea]);
         const categoryColWrapper = el("div", {}, [lbl("Category"), catSel]);
 
@@ -6353,7 +6353,7 @@
                 f.name,
                 ...(role === "rushroom" ? [el("button", {
                   type: "button",
-                  style: "background:none;border:none;cursor:pointer;font-size:0.8rem;line-height:1;padding:0;color:inherit;opacity:0.7",
+                  style: "background:none;border:none;cursor:pointer;font-size:0.8125rem;line-height:1;padding:0;color:inherit;opacity:0.7",
                   title: `Remove from ${f.name}`,
                   onclick: async (e) => {
                     e.stopPropagation();
@@ -6364,14 +6364,14 @@
               ]);
               return chip;
             })
-          : [el("span", { style: "font-size:0.82rem;color:var(--muted,#8b93a1)" }, "Not assigned to any product family")]
+          : [el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "Not assigned to any product family")]
       );
 
       let familyPickerEl = null;
       if (role === "rushroom") {
         const available = allFamilies.filter((f) => !memberFamIds.has(f.id));
         if (available.length) {
-          const sel = el("select", { class: "up-text", style: "font-size:0.82rem;max-width:220px" }, [
+          const sel = el("select", { class: "up-text", style: "font-size:0.8125rem;max-width:220px" }, [
             el("option", { value: "" }, "+ Assign to family…"),
             ...available.map((f) => el("option", { value: f.id }, f.name)),
           ]);
@@ -6399,8 +6399,8 @@
       function metaBool(v) { return v === true ? "Yes" : v === false ? "No" : "—"; }
       function metaRow(label, value) {
         return el("div", { style: "display:contents" }, [
-          el("span", { style: "font-size:0.8rem;color:var(--muted,#64748b);font-weight:500" }, label),
-          el("span", { style: "font-size:0.82rem" }, value),
+          el("span", { style: "font-size:0.8125rem;color:var(--muted,#64748b);font-weight:500" }, label),
+          el("span", { style: "font-size:0.8125rem" }, value),
         ]);
       }
       function metaGrid(...rows) {
@@ -6420,7 +6420,7 @@
       }
       function metaInp(val, placeholder, type) {
         return el("input", { class: "up-text", type: type || "text", placeholder,
-          style: "padding:0.25rem 0.4rem;font-size:0.82rem", value: val != null ? String(val) : "" });
+          style: "padding:0.25rem 0.4rem;font-size:0.8125rem", value: val != null ? String(val) : "" });
       }
 
       // Specifications (Physical + Material + Procurement)
@@ -6432,13 +6432,13 @@
           ? `${meta.length_mm ?? "—"} × ${meta.width_mm ?? "—"} × ${meta.height_mm ?? "—"} mm` : "—";
         specsContainer.replaceChildren(
           el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
-            [el("strong", { style: "font-size:0.88rem" }, "Physical"), editBtn].filter(Boolean)),
+            [el("strong", { style: "font-size:0.875rem" }, "Physical"), editBtn].filter(Boolean)),
           metaGrid(
             metaRow("Weight", meta.weight_g != null ? meta.weight_g + " g" : "—"),
             metaRow("L × W × H", dimsStr),
             ...catalogueRows("physical"),
           ),
-          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Material & Finish"),
+          el("strong", { style: "font-size:0.875rem;display:block;margin-bottom:0.6rem" }, "Material & Finish"),
           metaGrid(
             metaRow("Base material",     metaFld(meta.base_material)),
             metaRow("Surface treatment", metaFld(meta.surface_treatment)),
@@ -6446,7 +6446,7 @@
             metaRow("Flame retardant",   metaFld(meta.flame_retardant_class)),
             ...catalogueRows("material"),
           ),
-          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.6rem" }, "Procurement"),
+          el("strong", { style: "font-size:0.875rem;display:block;margin-bottom:0.6rem" }, "Procurement"),
           metaGrid(
             metaRow("Manufacturer",          metaFld(meta.manufacturer_name)),
             metaRow("OEM number",            metaFld(meta.manufacturer_part_number)),
@@ -6491,7 +6491,7 @@
         const mine = csFields.filter((f) =>
           f.section === section && (!f.category_id || f.category_id === (nodeData?.category_id || null)));
         return mine.map((f) => {
-          const box = el("span", { style: "font-size:0.82rem" });
+          const box = el("span", { style: "font-size:0.8125rem" });
           const draw = () => {
             const v = csValue(f.field_key);
             const shown = (v === undefined || v === null || v === "") ? "—" : String(v) + (f.unit ? " " + f.unit : "");
@@ -6503,13 +6503,13 @@
           };
           const edit = () => {
             const inp = f.data_type === "boolean"
-              ? el("select", { class: "up-text", style: "font-size:0.82rem;padding:1px 4px" },
+              ? el("select", { class: "up-text", style: "font-size:0.8125rem;padding:1px 4px" },
                   [el("option", { value: "" }, "—"), el("option", { value: "true" }, "Yes"), el("option", { value: "false" }, "No")])
               : f.data_type === "choice"
-              ? el("select", { class: "up-text", style: "font-size:0.82rem;padding:1px 4px;min-width:8rem" },
+              ? el("select", { class: "up-text", style: "font-size:0.8125rem;padding:1px 4px;min-width:8rem" },
                   [el("option", { value: "" }, "—"), ...(f.options || []).map((opt) => el("option", { value: opt }, opt))])
               : el("input", { class: "up-text", type: f.data_type === "number" ? "number" : "text", step: "any",
-                  style: "font-size:0.82rem;padding:1px 4px;width:11rem" });
+                  style: "font-size:0.8125rem;padding:1px 4px;width:11rem" });
             const cur = csValue(f.field_key);
             inp.value = cur === undefined || cur === null ? "" : String(cur);
             let settled = false;
@@ -6528,7 +6528,7 @@
           };
           draw();
           return el("div", { style: "display:contents" }, [
-            el("span", { style: "font-size:0.8rem;color:var(--muted,#64748b);font-weight:500" }, f.label),
+            el("span", { style: "font-size:0.8125rem;color:var(--muted,#64748b);font-weight:500" }, f.label),
             box,
           ]);
         });
@@ -6548,31 +6548,31 @@
             actions.push(el("button", {
               class: "btn btn-sm", type: "button",
               title: `Used on ${used} parts — make this a standard field for every component`,
-              style: "padding:0 7px;font-size:0.7rem;white-space:nowrap;color:var(--accent,#2fa564);border-color:#2fa56455",
+              style: "padding:0 7px;font-size:0.6875rem;white-space:nowrap;color:var(--accent,#2fa564);border-color:#2fa56455",
               onclick: () => openPromoteFieldModal(k, label, String(cs[k]), token, () => openComponentDetail(componentId, token, panel, nodeData, role)),
             }, `＋ Make standard · ${used}`));
           } else if (used >= 2) {
-            actions.push(el("span", { style: "font-size:0.68rem;color:var(--muted,#8b93a1);white-space:nowrap" }, `${used} parts`));
+            actions.push(el("span", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);white-space:nowrap" }, `${used} parts`));
           }
           if (role === "rushroom") {
             actions.push(el("button", {
               class: "btn btn-sm", type: "button", title: "Remove from this component",
-              style: "padding:0 6px;font-size:0.72rem;color:#e05454;border-color:#e0545440",
+              style: "padding:0 6px;font-size:0.75rem;color:#e05454;border-color:#e0545440",
               onclick: async () => {
                 try { await saveCustomSpec(k, ""); renderSpecsRead(); } catch (ex) { alert(ex.message); }
               },
             }, "×"));
           }
           return el("div", { style: "display:contents" }, [
-            el("span", { style: "font-size:0.8rem;color:var(--muted,#64748b);font-weight:500" }, label),
-            el("span", { style: "font-size:0.82rem;min-width:0;overflow-wrap:anywhere" }, String(cs[k])),
+            el("span", { style: "font-size:0.8125rem;color:var(--muted,#64748b);font-weight:500" }, label),
+            el("span", { style: "font-size:0.8125rem;min-width:0;overflow-wrap:anywhere" }, String(cs[k])),
             el("div", { style: "display:flex;gap:0.3rem;align-items:center;justify-content:flex-end" }, actions),
           ]);
         });
         return [
           el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin:0.9rem 0 0.5rem" }, [
-            el("strong", { style: "font-size:0.88rem" }, "Custom specs"),
-            el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1)" }, "no dedicated field yet"),
+            el("strong", { style: "font-size:0.875rem" }, "Custom specs"),
+            el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "no dedicated field yet"),
           ]),
           // Its own three-column grid. The earlier version appended the delete
           // button into metaGrid's two-column layout via a display:contents row,
@@ -6605,7 +6605,7 @@
           const cur = csValue(f.field_key);
           const isSel = f.data_type === "boolean" || f.data_type === "choice";
           const inp = isSel
-            ? el("select", { class: "up-text", style: "width:100%;font-size:0.82rem;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:4px" },
+            ? el("select", { class: "up-text", style: "width:100%;font-size:0.8125rem;padding:0.3rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:4px" },
                 f.data_type === "boolean"
                   ? [el("option", { value: "" }, "—"), el("option", { value: "true" }, "Yes"), el("option", { value: "false" }, "No")]
                   : [el("option", { value: "" }, "—"), ...(f.options || []).map((o2) => el("option", { value: o2 }, o2))])
@@ -6638,7 +6638,7 @@
           return next;
         }
 
-        const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
+        const errEl  = el("span", { style: "font-size:0.75rem;color:#e05454;display:block;min-height:1.1em" }, "");
         const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
         saveBtn.onclick = () => saveMeta({
           custom_specs: collectCustomSpecs(),
@@ -6658,25 +6658,25 @@
           moq:                        moqI.value !== "" ? parseInt(moqI.value): null,
         }, saveBtn, errEl, () => openComponentDetail(componentId, token, panel, nodeData, role));
         specsContainer.replaceChildren(
-          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Physical"),
+          el("strong", { style: "font-size:0.875rem;display:block;margin-bottom:0.5rem" }, "Physical"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Weight (g)", wt), metaFldRow("Length (mm)", lmm),
             metaFldRow("Width (mm)", wmm), metaFldRow("Height (mm)", hmm),
             ...csRowsFor("physical"),
           ]),
-          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Material & Finish"),
+          el("strong", { style: "font-size:0.875rem;display:block;margin-bottom:0.5rem" }, "Material & Finish"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Base material", bm), metaFldRow("Surface treatment", st),
             metaFldRow("Color / finish", cs), metaFldRow("Flame retardant class", fr),
             ...csRowsFor("material"),
           ]),
-          el("strong", { style: "font-size:0.88rem;display:block;margin-bottom:0.5rem" }, "Procurement"),
+          el("strong", { style: "font-size:0.875rem;display:block;margin-bottom:0.5rem" }, "Procurement"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Manufacturer", mfr), metaFldRow("OEM number", mfp),
             metaFldRow("Supplier", ps), metaFldRow("Supplier part no.", spn),
             metaFldRow("Lead time (days)", ltd), metaFldRow("MOQ (units)", moqI),
             ...csRowsFor("procurement"),
-            ...(looseRows.length ? [el("div", { style: "grid-column:1/3;font-size:0.8rem;font-weight:700;color:var(--muted,#8b93a1);margin-top:0.4rem" }, "Custom specs — clear a value to remove it"), ...looseRows] : []),
+            ...(looseRows.length ? [el("div", { style: "grid-column:1/3;font-size:0.8125rem;font-weight:700;color:var(--muted,#8b93a1);margin-top:0.4rem" }, "Custom specs — clear a value to remove it"), ...looseRows] : []),
           ]),
           errEl,
         );
@@ -6693,7 +6693,7 @@
         const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderQualEdit }, "Edit") : null;
         qualContainer.replaceChildren(
           el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
-            [el("strong", { style: "font-size:0.88rem" }, "Quality & Incoming Inspection"), editBtn].filter(Boolean)),
+            [el("strong", { style: "font-size:0.875rem" }, "Quality & Incoming Inspection"), editBtn].filter(Boolean)),
           metaGrid(
             metaRow("Inspection method",   metaFld(meta.incoming_inspection_method)),
             metaRow("Sample size / AQL",   metaFld(meta.inspection_sample_size)),
@@ -6703,15 +6703,15 @@
         );
       }
       function renderQualEdit() {
-        const methodSel = el("select", { class: "up-text", style: "font-size:0.82rem;padding:0.25rem 0.4rem" },
+        const methodSel = el("select", { class: "up-text", style: "font-size:0.8125rem;padding:0.25rem 0.4rem" },
           ["", ...INSP_METHODS].map((v) => el("option", { value: v,
             selected: v === (meta.incoming_inspection_method || "") ? "selected" : null }, v || "— select —")));
         const sampleInp = metaInp(meta.inspection_sample_size, 'e.g. "AQL 2.5" or "100%"');
         const ctqInp = el("textarea", { class: "up-text", rows: "2",
-          placeholder: "Key CTQ characteristics", style: "font-size:0.82rem;padding:0.25rem 0.4rem;resize:vertical" });
+          placeholder: "Key CTQ characteristics", style: "font-size:0.8125rem;padding:0.25rem 0.4rem;resize:vertical" });
         ctqInp.value = meta.critical_to_quality || "";
         const cpkChk = el("input", { type: "checkbox" }); if (meta.has_cpk_requirement) cpkChk.checked = true;
-        const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
+        const errEl  = el("span", { style: "font-size:0.75rem;color:#e05454;display:block;min-height:1.1em" }, "");
         const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
         saveBtn.onclick = () => saveMeta({
           incoming_inspection_method: methodSel.value || null,
@@ -6725,7 +6725,7 @@
           metaFldRow("Sample size / AQL", sampleInp),
           metaFldRow("Critical-to-quality characteristics", ctqInp),
           el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.45rem" },
-            [cpkChk, el("span", { style: "font-size:0.82rem" }, "CPK required from supplier")]),
+            [cpkChk, el("span", { style: "font-size:0.8125rem" }, "CPK required from supplier")]),
           errEl,
 
         );
@@ -6740,7 +6740,7 @@
         const editBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", onclick: renderRegEdit }, "Edit") : null;
         regContainer.replaceChildren(
           el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem" },
-            [el("strong", { style: "font-size:0.88rem" }, "Regulatory & DPP (ESPR Article 7)"), editBtn].filter(Boolean)),
+            [el("strong", { style: "font-size:0.875rem" }, "Regulatory & DPP (ESPR Article 7)"), editBtn].filter(Boolean)),
           metaGrid(
             metaRow("Country of origin",      metaFld(meta.country_of_origin)),
             metaRow("HS code",                metaFld(meta.hs_code)),
@@ -6763,12 +6763,12 @@
         const cfp = metaInp(meta.carbon_footprint_kgco2e,"kg CO₂e",  "number");
         const cfs = metaInp(meta.carbon_footprint_source, "e.g. EPD, Ecoinvent 3.9");
         const eol = el("textarea", { class: "up-text", rows: "2",
-          placeholder: "Disassembly / recycling instruction", style: "font-size:0.82rem;padding:0.25rem 0.4rem;resize:vertical" });
+          placeholder: "Disassembly / recycling instruction", style: "font-size:0.8125rem;padding:0.25rem 0.4rem;resize:vertical" });
         eol.value = meta.end_of_life_instruction || "";
         const batChk = el("input", { type: "checkbox" }); if (meta.battery_regulation_applicable) batChk.checked = true;
         const cmfChk = el("input", { type: "checkbox" }); if (meta.conflict_minerals_free)        cmfChk.checked = true;
         const spaChk = el("input", { type: "checkbox" }); spaChk.checked = meta.repair_spare_part_available !== false;
-        const errEl  = el("span", { style: "font-size:0.78rem;color:#e05454;display:block;min-height:1.1em" }, "");
+        const errEl  = el("span", { style: "font-size:0.75rem;color:#e05454;display:block;min-height:1.1em" }, "");
         const saveBtn= el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save");
         saveBtn.onclick = () => saveMeta({
           country_of_origin:             co.value.trim().toUpperCase() || null,
@@ -6784,7 +6784,7 @@
         }, saveBtn, errEl, () => openComponentDetail(componentId, token, panel, nodeData, role));
         function chkRow(label, chkEl) {
           return el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.45rem" },
-            [chkEl, el("span", { style: "font-size:0.82rem" }, label)]);
+            [chkEl, el("span", { style: "font-size:0.8125rem" }, label)]);
         }
         setHeaderSave(saveBtn, renderRegRead);
         regContainer.replaceChildren(
@@ -6837,7 +6837,7 @@
       TAB_DEFS.forEach(({ id, label }) => {
         const btn = el("button", {
           class: "btn btn-sm", type: "button", "data-tab": id,
-          style: "font-size:0.76rem;padding:0.22rem 0.55rem;border-radius:4px 4px 0 0;margin-bottom:-1px;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer",
+          style: "font-size:0.75rem;padding:0.22rem 0.55rem;border-radius:4px 4px 0 0;margin-bottom:-1px;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer",
           onclick: () => activateDetailTab(id),
         }, label);
         tabButtons.push(btn);
@@ -6847,10 +6847,10 @@
       // Stale-source callout for materialised stocked variants (PROP-033)
       let sourceCallout = null;
       if (nodeData?.source_family_id) {
-        sourceCallout = el("div", { style: "margin-bottom:1rem;padding:0.65rem 0.85rem;border:1px solid #d9770680;border-radius:6px;background:#d9770610;font-size:0.82rem;color:#92400e" }, [
+        sourceCallout = el("div", { style: "margin-bottom:1rem;padding:0.65rem 0.85rem;border:1px solid #d9770680;border-radius:6px;background:#d9770610;font-size:0.8125rem;color:#92400e" }, [
           el("strong", {}, "Stocked variant"),
           el("span", {}, " — materialised from "),
-          el("button", { type: "button", style: "background:none;border:none;padding:0;color:#2fa564;font-size:0.82rem;cursor:pointer;font-weight:600;text-decoration:underline",
+          el("button", { type: "button", style: "background:none;border:none;padding:0;color:#2fa564;font-size:0.8125rem;cursor:pointer;font-weight:600;text-decoration:underline",
             onclick: () => openComponentDetail(nodeData.source_family_id, token, panel, { id: nodeData.source_family_id, type: "product_family" }, role) }, "the source Dynamic BOM family"),
           el("span", {}, ". If the family BOM has changed, re-materialise to pick up updates."),
         ]);
@@ -6880,7 +6880,7 @@
           const newGrpName  = el("input",  { class: "up-text", type: "text", placeholder: "Group name, e.g. Left Side Panel", style: "flex:1;min-width:120px" });
           const newGrpAttr  = el("input",  { class: "up-text", type: "text", placeholder: "Attribute (Color, Finish…)", style: "width:130px", value: "Color" });
           const newGrpVal   = el("input",  { class: "up-text", type: "text", placeholder: "Value for this component, e.g. Arctic White", style: "flex:1;min-width:140px" });
-          const newGrpErr   = el("span",   { style: "color:#e05454;font-size:0.78rem;display:block;min-height:1em" }, "");
+          const newGrpErr   = el("span",   { style: "color:#e05454;font-size:0.75rem;display:block;min-height:1em" }, "");
           const newGrpBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
             if (!newGrpName.value.trim() || !newGrpVal.value.trim()) { newGrpErr.textContent = "Group name and variant value are required."; return; }
             newGrpBtn.disabled = true; newGrpErr.textContent = "";
@@ -6894,7 +6894,7 @@
           // earlier loose forEach append rendered a second, unwrapped copy.
           modeNew.append(
             el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.4rem;margin-top:0.3rem" }, VA_COMMON.map((a) =>
-              el("button", { type: "button", style: "font-size:0.72rem;padding:1px 8px;border:1px solid var(--border,#e2e8f0);border-radius:10px;cursor:pointer;background:none", onclick: () => { newGrpAttr.value = a; } }, a)
+              el("button", { type: "button", style: "font-size:0.75rem;padding:1px 8px;border:1px solid var(--border,#e2e8f0);border-radius:10px;cursor:pointer;background:none", onclick: () => { newGrpAttr.value = a; } }, a)
             )),
             el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.3rem" }, [newGrpName, newGrpAttr]),
             el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:0.3rem" }, [newGrpVal]),
@@ -6903,13 +6903,13 @@
           );
 
           // Join-existing-group flow
-          const joinSel = el("select", { class: "up-text", style: "flex:1;font-size:0.82rem" },
+          const joinSel = el("select", { class: "up-text", style: "flex:1;font-size:0.8125rem" },
             allGroups.length
               ? allGroups.map((g) => el("option", { value: g.id }, `${g.name} (${g.variant_attribute})`))
               : [el("option", {}, "No groups yet")]
           );
           const joinVal  = el("input",  { class: "up-text", type: "text", placeholder: "Value for this component, e.g. Arctic White", style: "flex:1;min-width:140px" });
-          const joinErr  = el("span",   { style: "color:#e05454;font-size:0.78rem;display:block;min-height:1em" }, "");
+          const joinErr  = el("span",   { style: "color:#e05454;font-size:0.75rem;display:block;min-height:1em" }, "");
           const joinBtn  = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
             if (!allGroups.length || !joinVal.value.trim()) { joinErr.textContent = "Select a group and enter a variant value."; return; }
             joinBtn.disabled = true; joinErr.textContent = "";
@@ -6924,15 +6924,15 @@
             joinBtn,
           );
 
-          const tabNew  = el("button", { type: "button", style: "font-size:0.78rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border,#e2e8f0);cursor:pointer;font-weight:600", onclick: () => { modeNew.style.display=""; modeJoin.style.display="none"; tabNew.style.fontWeight="700"; tabJoin.style.fontWeight="400"; } }, "New group");
-          const tabJoin = el("button", { type: "button", style: "font-size:0.78rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border,#e2e8f0);cursor:pointer", onclick: () => { modeJoin.style.display=""; modeNew.style.display="none"; tabJoin.style.fontWeight="700"; tabNew.style.fontWeight="400"; } }, "Join existing");
+          const tabNew  = el("button", { type: "button", style: "font-size:0.75rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border,#e2e8f0);cursor:pointer;font-weight:600", onclick: () => { modeNew.style.display=""; modeJoin.style.display="none"; tabNew.style.fontWeight="700"; tabJoin.style.fontWeight="400"; } }, "New group");
+          const tabJoin = el("button", { type: "button", style: "font-size:0.75rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border,#e2e8f0);cursor:pointer", onclick: () => { modeJoin.style.display=""; modeNew.style.display="none"; tabJoin.style.fontWeight="700"; tabNew.style.fontWeight="400"; } }, "Join existing");
 
           variantGroupContainer.replaceChildren(
             el("div", { style: "margin-bottom:1rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.75rem" }, [
               el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem" }, [
-                el("label", { style: "font-size:0.82rem;font-weight:600;color:var(--muted,#8b93a1)" }, "Variant Group"),
+                el("label", { style: "font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1)" }, "Variant Group"),
               ]),
-              el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem" }, "Not assigned to a variant group."),
+              el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem" }, "Not assigned to a variant group."),
               el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.6rem" }, [tabNew, tabJoin]),
               modeNew, modeJoin,
             ]),
@@ -6945,15 +6945,15 @@
           const { group, my_variant_value, siblings } = mem;
           const chips = siblings.map((s) => {
             const isSelf = s.id === componentId;
-            const chip = el("button", { type: "button", style: `display:inline-flex;align-items:center;gap:0.25rem;padding:3px 10px;border-radius:12px;border:1.5px solid ${isSelf ? "#2fa564" : "var(--border,#e2e8f0)"};font-size:0.78rem;cursor:${isSelf?"default":"pointer"};font-weight:${isSelf?"700":"400"};background:${isSelf?"#2fa56412":"none"}` }, [
+            const chip = el("button", { type: "button", style: `display:inline-flex;align-items:center;gap:0.25rem;padding:3px 10px;border-radius:12px;border:1.5px solid ${isSelf ? "#2fa564" : "var(--border,#e2e8f0)"};font-size:0.75rem;cursor:${isSelf?"default":"pointer"};font-weight:${isSelf?"700":"400"};background:${isSelf?"#2fa56412":"none"}` }, [
               el("span", {}, s.variant_value),
             ]);
             if (!isSelf) chip.onclick = () => openComponentDetail(s.id, token, panel, s, role);
             return chip;
           });
 
-          const addValInp = el("input", { class: "up-text", type: "text", placeholder: `Add another ${group.variant_attribute} value…`, style: "flex:1;font-size:0.8rem;min-width:160px" });
-          const addCompSel = el("select", { class: "up-text", style: "flex:1;font-size:0.8rem" });
+          const addValInp = el("input", { class: "up-text", type: "text", placeholder: `Add another ${group.variant_attribute} value…`, style: "flex:1;font-size:0.8125rem;min-width:160px" });
+          const addCompSel = el("select", { class: "up-text", style: "flex:1;font-size:0.8125rem" });
           // Populate with components not already in this group
           (async () => {
             try {
@@ -6964,7 +6964,7 @@
               });
             } catch { /**/ }
           })();
-          const addErr = el("span", { style: "color:#e05454;font-size:0.76rem;min-height:1em;display:block" }, "");
+          const addErr = el("span", { style: "color:#e05454;font-size:0.75rem;min-height:1em;display:block" }, "");
           const addBtn = el("button", { class: "btn btn-sm", type: "button", onclick: async () => {
             if (!addValInp.value.trim()) { addErr.textContent = "Enter a variant value."; return; }
             addBtn.disabled = true; addErr.textContent = "";
@@ -6973,7 +6973,7 @@
               renderVariantGroups();
             } catch (ex) { addErr.textContent = ex.message; addBtn.disabled = false; }
           } }, "+ Add sibling");
-          const removeBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;color:#e05454;border-color:#e0545440", onclick: async () => {
+          const removeBtn = role === "rushroom" ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.75rem;color:#e05454;border-color:#e0545440", onclick: async () => {
             if (!confirm(`Remove this component from group "${group.name}"?`)) return;
             try { await API.post(token, "removeVariantMember", { group_id: group.id, component_id: componentId }); renderVariantGroups(); }
             catch (ex) { alert(ex.message); }
@@ -6982,7 +6982,7 @@
           return el("div", { style: "margin-bottom:0.75rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.75rem" }, [
             el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem" }, [
               el("div", {}, [
-                el("span", { style: "font-size:0.82rem;font-weight:600" }, group.name),
+                el("span", { style: "font-size:0.8125rem;font-weight:600" }, group.name),
                 el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-left:0.4rem" }, `· varies by ${group.variant_attribute}`),
               ]),
               removeBtn,
@@ -6996,7 +6996,7 @@
       }
       renderVariantGroups();
       const variantGroupSection = el("div", { style: "margin-bottom:0.5rem" }, [
-        el("label", { style: "font-size:0.82rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:0.25rem" }, "Variant Group"),
+        el("label", { style: "font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:0.25rem" }, "Variant Group"),
         variantGroupContainer,
       ]);
 
@@ -7024,8 +7024,8 @@
       panel.replaceChildren(
         el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;flex-shrink:0" }, [
           el("div", {}, [
-            el("strong", { style: "font-size:0.97rem" }, nodeData?.name || componentId.slice(0, 8) + "…"),
-            nodeData?.part_number ? el("span", { style: "margin-left:0.5rem;font-family:monospace;font-size:0.78rem;color:var(--muted,#8b93a1)" }, nodeData.part_number) : null,
+            el("strong", { style: "font-size:1rem" }, nodeData?.name || componentId.slice(0, 8) + "…"),
+            nodeData?.part_number ? el("span", { style: "margin-left:0.5rem;font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1)" }, nodeData.part_number) : null,
           ].filter(Boolean)),
           el("div", { style: "display:flex;gap:0.4rem;align-items:center" }, [
             headerActions,
@@ -7145,7 +7145,7 @@
       const f = ev.target.files[0]; if (f) addPendingImg(f); imgPickInput.value = "";
     } });
     const imgZone = el("div", {
-      style: "border:2px dashed var(--border,#e2e8f0);border-radius:6px;padding:0.45rem 0.75rem;font-size:0.78rem;color:var(--muted,#8b93a1);cursor:pointer;text-align:center",
+      style: "border:2px dashed var(--border,#e2e8f0);border-radius:6px;padding:0.45rem 0.75rem;font-size:0.75rem;color:var(--muted,#8b93a1);cursor:pointer;text-align:center",
       ondragover: (ev) => { ev.preventDefault(); imgZone.style.borderColor = "var(--accent,#2fa564)"; },
       ondragleave: () => { imgZone.style.borderColor = "var(--border,#e2e8f0)"; },
       ondrop: (ev) => { ev.preventDefault(); imgZone.style.borderColor = "var(--border,#e2e8f0)"; const f = ev.dataTransfer?.files[0]; if (f && f.type.startsWith("image/")) addPendingImg(f); },
@@ -7231,24 +7231,24 @@
     typ.style.cssText  = F + ";appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:2rem;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a94a6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 0.6rem center;background-size:12px";
     desc.style.cssText = F + ";resize:vertical;min-height:64px";
 
-    const LBL = "display:block;font-size:0.8rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem";
+    const LBL = "display:block;font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem";
     const ROW = "margin-bottom:0.7rem";
     function frow(label, input, hint) {
       return el("div", { style: ROW }, [
         el("label", { style: LBL }, label),
         input,
-        hint ? el("span", { style: "font-size:0.72rem;color:var(--muted,#8b93a1);display:block;margin-top:3px" }, hint) : null,
+        hint ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);display:block;margin-top:3px" }, hint) : null,
       ].filter(Boolean));
     }
 
     form.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem" }, [
         el("h3", { style: "margin:0;font-size:1rem" }, "New BOM Node"),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 8px", onclick: () => { document.removeEventListener("paste", handleModalPaste); overlay.remove(); } }, "✕"),
+        el("button", { class: "btn btn-xs", type: "button", onclick: () => { document.removeEventListener("paste", handleModalPaste); overlay.remove(); } }, "✕"),
       ]),
-      el("p", { style: "font-size:0.8rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" },
+      el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" },
         "Creates a top-level product or assembly. To add components under it, use the + child button on any tree row."),
-      el("p", { style: "font-size:0.8rem;color:var(--muted,#8b93a1);margin:0 0 0.9rem" },
+      el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.9rem" },
         "Upload a datasheet and the AI will suggest fields. Or fill in manually."),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Document (optional)"), zone.el, statusEl]),
       frow("Part number", pn,   "Auto-generated if left as-is — you can edit it."),
@@ -7284,13 +7284,13 @@
     const selects = {};
     let lastSelections = {};
 
-    const errEl      = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.2rem;margin-top:0.4rem" }, "");
+    const errEl      = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.2rem;margin-top:0.4rem" }, "");
     const attrForm   = el("div", {}, [el("div", { class: "loading" }, "Loading attributes…")]);
     const resultsArea = el("div", {});
 
     const saveName = el("input", { class: "up-text", type: "text", placeholder: "Configuration name (required)", style: "width:100%;margin-bottom:0.35rem" });
     const savePN   = el("input", { class: "up-text", type: "text", placeholder: "Sales / part number (optional)", style: "width:100%" });
-    const saveErr  = el("span", { style: "color:#e05454;font-size:0.82rem;display:block;min-height:1.2rem;margin-top:0.2rem" }, "");
+    const saveErr  = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.2rem;margin-top:0.2rem" }, "");
     const saveBtn  = el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: async () => {
       if (!saveName.value.trim()) { saveErr.textContent = "Name is required."; return; }
       saveErr.textContent = "";
@@ -7319,13 +7319,13 @@
         const bom = await API.post(token, "resolveVariant", { family_id: familyNode.id, selections });
         lastSelections = { ...selections };
         const nodeCount = (bom.nodes || []).length;
-        const S = "font-size:0.8rem;font-weight:600";
+        const S = "font-size:0.8125rem;font-weight:600";
         resultsArea.replaceChildren(
           el("div", { style: "margin-top:0.75rem;padding:0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
             el("p", { style: S + ";margin:0 0 0.4rem" }, `Resolved: ${nodeCount} component${nodeCount !== 1 ? "s" : ""}`),
-            el("div", { style: "max-height:180px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:4px;font-size:0.8rem;margin-bottom:0.75rem" },
+            el("div", { style: "max-height:180px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:4px;font-size:0.8125rem;margin-bottom:0.75rem" },
               (bom.nodes || []).map((n) => el("div", { style: "padding:0.25rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0)" }, [
-                el("span", { style: "font-family:monospace;font-size:0.73rem;color:var(--muted,#8b93a1);margin-right:0.4rem" }, n.part_number),
+                el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);margin-right:0.4rem" }, n.part_number),
                 el("span", {}, n.name),
               ]))),
             el("div", { style: "border-top:1px solid var(--border,#e2e8f0);padding-top:0.6rem" }, [
@@ -7349,11 +7349,11 @@
         const r = await API.post(token, "listFamilyAttributes", { family_id: familyNode.id });
         attributes = r.attributes || [];
         if (!attributes.length) {
-          attrForm.replaceChildren(el("div", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);padding:0.5rem" }, "No attributes defined on this family. Open Details to add them first."));
+          attrForm.replaceChildren(el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);padding:0.5rem" }, "No attributes defined on this family. Open Details to add them first."));
           resolveBtn.disabled = true;
           return;
         }
-        const LBL = "display:block;font-size:0.8rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.2rem";
+        const LBL = "display:block;font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.2rem";
         const F = "width:100%;font-size:0.875rem;padding:0.38rem 0.55rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit";
         attrForm.replaceChildren(...attributes.map((attr) => {
           const sel = el("select", { style: F + ";margin-bottom:0.55rem", onchange: () => { selects[attr.name] = sel; } },
@@ -7370,9 +7370,9 @@
     dialog.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
         el("h3", { style: "margin:0;font-size:1rem" }, `Configure: ${familyNode.name}`),
-        el("button", { class: "btn btn-sm", type: "button", style: "padding:2px 8px", onclick: () => overlay.remove() }, "✕"),
+        el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
       ]),
-      el("p", { style: "font-size:0.82rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, "Select attribute values to resolve the BOM for a specific configuration."),
+      el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, "Select attribute values to resolve the BOM for a specific configuration."),
       attrForm,
       el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.5rem" }, [resolveBtn]),
       errEl,
@@ -7423,12 +7423,12 @@
         resultArea.replaceChildren(
           el("h4", { style: "margin:0 0 0.5rem" }, `Lifecycle status beneath ${rootName}`),
           summary.el,
-          el("p", { class: "muted", style: "font-size:0.8rem;margin:0.6rem 0 0" },
+          el("p", { class: "muted", style: "font-size:0.8125rem;margin:0.6rem 0 0" },
             "Every component at every depth, counted once even where it appears under more than one assembly."),
           needsAttention.length
             ? el("div", { style: "margin-top:1.2rem" }, [
                 el("h4", { style: "margin:0 0 0.4rem" }, `Needs attention (${needsAttention.length})`),
-                el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+                el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
                   el("thead", {}, el("tr", {}, ["Component", "Part number", "Status"].map((h) => el("th", {}, h)))),
                   el("tbody", {}, needsAttention.map((n) => el("tr", {}, [
                     el("td", {}, n.name || "—"),
@@ -7437,7 +7437,7 @@
                   ]))),
                 ])),
               ])
-            : el("div", { class: "notice", style: "margin-top:1.2rem;font-size:0.85rem" },
+            : el("div", { class: "notice", style: "margin-top:1.2rem;font-size:0.875rem" },
                 "Nothing is flagged or replaced beneath this root."),
         );
       } catch (ex) {
@@ -7471,7 +7471,7 @@
         el("span", { class: "form-label", style: "margin:0" }, "Summarise the BOM beneath:"),
         picker,
       ]),
-      el("div", { class: "muted", style: "font-size:0.78rem" },
+      el("div", { class: "muted", style: "font-size:0.75rem" },
         "The BOM Tree shows the same figures for whatever is on screen. Use this when you want one product's whole tree, however deep."),
       resultArea,
     );
@@ -7494,11 +7494,11 @@
     }
 
     const opBadge = (type) => el("span", {
-      style: `display:inline-block;font-size:0.7rem;font-weight:700;padding:2px 6px;border-radius:3px;background:${(OP_COLOR[type]||"#6b7280")}22;color:${OP_COLOR[type]||"#6b7280"};text-transform:uppercase;letter-spacing:0.03em`,
+      style: `display:inline-block;font-size:0.6875rem;font-weight:700;padding:2px 6px;border-radius:3px;background:${(OP_COLOR[type]||"#6b7280")}22;color:${OP_COLOR[type]||"#6b7280"};text-transform:uppercase;letter-spacing:0.03em`,
     }, OP_LABEL[type] || type);
 
     const statusBadge = (status) => el("span", {
-      style: `display:inline-block;font-size:0.7rem;font-weight:700;padding:2px 7px;border-radius:3px;background:${(STATUS_COLORS[status]||"#8b93a1")}22;color:${STATUS_COLORS[status]||"#8b93a1"};text-transform:uppercase`,
+      style: `display:inline-block;font-size:0.6875rem;font-weight:700;padding:2px 7px;border-radius:3px;background:${(STATUS_COLORS[status]||"#8b93a1")}22;color:${STATUS_COLORS[status]||"#8b93a1"};text-transform:uppercase`,
     }, status.replace(/_/g, " "));
 
     // ---- Manufacturing Steps sub-tab ------------------------------------
@@ -7546,10 +7546,10 @@
           style: "display:inline-flex;align-items:center;gap:0.25rem;padding:2px 8px;border-radius:99px;font-size:0.75rem;font-weight:600;background:var(--bg-2,#f5f5f5);border:1px solid var(--border,#e2e8f0);cursor:default",
         }, [
           f.name,
-          el("span", { class: "muted", style: "font-size:0.7rem" }, `(${f.member_count})`),
+          el("span", { class: "muted", style: "font-size:0.6875rem" }, `(${f.member_count})`),
           el("button", {
             type: "button", title: `Delete ${f.name}`,
-            style: "background:none;border:none;cursor:pointer;font-size:0.78rem;opacity:0.5;padding:0;line-height:1",
+            style: "background:none;border:none;cursor:pointer;font-size:0.75rem;opacity:0.5;padding:0;line-height:1",
             onclick: async () => {
               if (!confirm(`Delete product family "${f.name}"? This will remove all step definitions for this family.`)) return;
               try {
@@ -7568,7 +7568,7 @@
           ]),
           chips.length
             ? el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem" }, chips)
-            : el("span", { class: "muted", style: "font-size:0.82rem" }, "No product families yet — create one above."),
+            : el("span", { class: "muted", style: "font-size:0.8125rem" }, "No product families yet — create one above."),
         );
       };
 
@@ -7603,7 +7603,7 @@
             return;
           }
           compArea.replaceChildren(
-            el("p", { class: "muted", style: "font-size:0.82rem;margin-bottom:0.5rem" },
+            el("p", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.5rem" },
               "Click a component to view and edit its manufacturing steps for this product family."),
             el("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0.5rem" },
               nodes.map((n) => {
@@ -7614,7 +7614,7 @@
                 }, [
                   el("div", { style: "font-size:0.875rem;font-weight:600;margin-bottom:0.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, n.name || n.part_number || n.id),
                   n.part_number ? el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.3rem" }, n.part_number) : null,
-                  el("div", { style: `font-size:0.72rem;font-weight:700;padding:2px 6px;border-radius:3px;display:inline-block;background:${count?"#2fa56422":"#8b93a122"};color:${count?"#2fa564":"#8b93a1"}` },
+                  el("div", { style: `font-size:0.75rem;font-weight:700;padding:2px 6px;border-radius:3px;display:inline-block;background:${count?"#2fa56422":"#8b93a122"};color:${count?"#2fa564":"#8b93a1"}` },
                     count ? `${count} step${count !== 1 ? "s" : ""}` : "No steps yet"),
                 ].filter(Boolean));
                 card.onclick = () => {
@@ -7643,7 +7643,7 @@
       const renderSteps = () => {
         const heading = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;padding-bottom:0.4rem;border-bottom:1px solid var(--border,#e2e8f0)" }, [
           el("span", { style: "font-size:0.875rem;font-weight:700" }, selectedCompName),
-          el("span", { class: "muted", style: "font-size:0.8rem" }, `— ${steps.length} step${steps.length !== 1 ? "s" : ""}`),
+          el("span", { class: "muted", style: "font-size:0.8125rem" }, `— ${steps.length} step${steps.length !== 1 ? "s" : ""}`),
           el("span", { class: "spacer" }),
           addStepBtn(),
         ]);
@@ -7662,11 +7662,11 @@
           el("div", { style: "display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [
             opBadge(s.operation_type),
             s.variant_condition && Object.keys(s.variant_condition).length
-              ? el("span", { style: "font-size:0.7rem;background:var(--bg-2,#f5f5f5);border-radius:3px;padding:1px 5px;color:var(--muted,#8b93a1)" }, "conditional") : null,
+              ? el("span", { style: "font-size:0.6875rem;background:var(--bg-2,#f5f5f5);border-radius:3px;padding:1px 5px;color:var(--muted,#8b93a1)" }, "conditional") : null,
           ].filter(Boolean)),
-          el("div", { style: "margin-top:0.25rem;font-size:0.9rem" }, s.instruction_text),
-          s.reference_document_name ? el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.1rem" }, "📎 " + s.reference_document_name) : null,
-          s.notes ? el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.1rem" }, s.notes) : null,
+          el("div", { style: "margin-top:0.25rem;font-size:0.875rem" }, s.instruction_text),
+          s.reference_document_name ? el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.1rem" }, "📎 " + s.reference_document_name) : null,
+          s.notes ? el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.1rem" }, s.notes) : null,
         ].filter(Boolean)),
         el("div", { style: "display:flex;gap:0.25rem;flex-shrink:0" }, [
           el("button", { class: "btn btn-sm", type: "button", title: "Move up",   disabled: idx === 0 ? "" : null, onclick: () => moveStep(idx, -1) }, "↑"),
@@ -7831,7 +7831,7 @@
           const packComps    = comps.filter((c) => !processedCompIds.has(c.component_id));
           const selStr = null;
 
-          const statusSel = el("select", { class: "up-text", style: "font-size:0.85rem" },
+          const statusSel = el("select", { class: "up-text", style: "font-size:0.875rem" },
             STATUS_OPTS.map((s) => el("option", { value: s, selected: s === wo.status ? "selected" : null }, s.replace(/_/g, " ")))
           );
           const updateStatusBtn = actionBtn("Update", "refresh", { onClick: async () => {
@@ -7846,8 +7846,8 @@
               el("span", { style: "font-size:0.75rem;font-weight:700;color:var(--muted,#8b93a1);min-width:1.6rem;text-align:right;padding-top:3px" }, `${s.step_number}.`),
               cb,
               el("div", { style: "flex:1;min-width:0" }, [
-                el("div", { style: "font-size:0.88rem" }, s.instruction_text),
-                s.component_name ? el("div", { class: "muted", style: "font-size:0.78rem" }, "→ " + s.component_name) : null,
+                el("div", { style: "font-size:0.875rem" }, s.instruction_text),
+                s.component_name ? el("div", { class: "muted", style: "font-size:0.75rem" }, "→ " + s.component_name) : null,
                 s.reference_document_url ? el("div", { style: "margin-top:0.15rem" }, actionBtn("Open reference", "external", { href: s.reference_document_url, target: "_blank" })) : null,
               ].filter(Boolean)),
             ]);
@@ -7867,7 +7867,7 @@
           const compRow = (c) => el("div", { style: "display:flex;gap:0.5rem;padding:0.3rem 0;font-size:0.875rem;border-bottom:1px solid var(--border,#e2e8f0);align-items:center" }, [
             el("span", { style: "min-width:2.5rem;text-align:right;color:var(--muted,#8b93a1);font-weight:600" }, `×${Number(c.quantity)}`),
             el("span", { style: "flex:1" }, c.name || c.component_id),
-            c.part_number ? el("span", { class: "muted", style: "font-size:0.78rem" }, c.part_number) : null,
+            c.part_number ? el("span", { class: "muted", style: "font-size:0.75rem" }, c.part_number) : null,
           ].filter(Boolean));
 
           detailArea.replaceChildren(el("div", { style: "border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:1rem" }, [
@@ -7877,8 +7877,8 @@
               el("span", { class: "spacer" }),
               el("button", { class: "btn btn-sm", type: "button", onclick: () => detailArea.replaceChildren() }, "✕ Close"),
             ]),
-            wo.external_order_id ? el("p", { class: "muted", style: "margin:0 0 0.25rem;font-size:0.85rem" }, `Order ref: ${wo.external_order_id}`) : null,
-            el("p", { class: "muted", style: "margin:0 0 0.75rem;font-size:0.85rem" }, `Config: ${selStr}`),
+            wo.external_order_id ? el("p", { class: "muted", style: "margin:0 0 0.25rem;font-size:0.875rem" }, `Order ref: ${wo.external_order_id}`) : null,
+            el("p", { class: "muted", style: "margin:0 0 0.75rem;font-size:0.875rem" }, `Config: ${selStr}`),
             el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap" }, [
               el("span", { class: "form-label", style: "margin:0" }, "Status:"),
               statusSel,
@@ -8114,7 +8114,7 @@
         el("div", { class: "dg-side-block" }, [
           el("div", { class: "dg-side-label" }, `Compliance coverage — ${dgCoverageLabel(n.complianceCoverage)}`),
           bar,
-          el("div", { class: "muted", style: "font-size:0.78rem; margin-top:0.3rem" }, cov.total_clauses ? `${cov.covered_clauses}/${cov.total_clauses} clauses compliant · ${cov.deviation_count} deviation(s) · ${cov.pending_count} pending` : "No clause-level interpretations mapped to this directive yet."),
+          el("div", { class: "muted", style: "font-size:0.75rem; margin-top:0.3rem" }, cov.total_clauses ? `${cov.covered_clauses}/${cov.total_clauses} clauses compliant · ${cov.deviation_count} deviation(s) · ${cov.pending_count} pending` : "No clause-level interpretations mapped to this directive yet."),
         ]),
         el("div", { class: "dg-side-block" }, [
           el("div", { class: "dg-side-label" }, `Related directives (${rel.length})`),
@@ -8123,7 +8123,7 @@
             const other = byId.get(otherId);
             const dir = e.source === n.id ? "→" : "←";
             return el("li", {}, [el("strong", {}, other ? other.shortName : "?"), ` ${dir} ${REL_LABELS[e.relationType] || e.relationType}`, e.sourceKind === "ai_inferred" ? el("span", { class: "dg-conf" }, ` AI · ${Math.round((e.confidence || 0) * 100)}%`) : null]);
-          })) : el("div", { class: "muted", style: "font-size:0.8rem" }, "No relations synced yet — use “Sync from CELLAR”."),
+          })) : el("div", { class: "muted", style: "font-size:0.8125rem" }, "No relations synced yet — use “Sync from CELLAR”."),
         ]),
         el("div", { class: "dg-side-actions" }, [
           n.celex ? el("a", { class: "btn btn-sm", href: `https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:${n.celex}`, target: "_blank", rel: "noopener" }, "Open in EUR-Lex") : null,
@@ -8142,8 +8142,8 @@
         e.clauses && e.clauses.target ? el("div", { class: "dg-kv" }, [el("span", {}, "Target clause"), el("strong", {}, e.clauses.target)]) : null,
         el("div", { class: "dg-kv" }, [el("span", {}, "Source"), el("strong", {}, e.sourceKind === "cellar_sparql" ? "CELLAR (SPARQL)" : e.sourceKind === "akn_ref_element" ? "CELLAR (text cross-ref)" : "AI-inferred")]),
         el("div", { class: "dg-kv" }, [el("span", {}, "Confidence"), el("strong", { style: `color:${(e.confidence || 1) >= 0.8 ? "#3fb56b" : "#d9a441"}` }, `${Math.round((e.confidence != null ? e.confidence : 1) * 100)}%`)]),
-        e.description ? el("p", { class: "muted", style: "margin:0.5rem 0 0; font-size:0.82rem" }, e.description) : null,
-        e.sourceKind === "ai_inferred" ? el("div", { class: "notice warn", style: "margin-top:0.5rem; font-size:0.8rem" }, "AI-inferred relationship — verify before relying on it.") : null,
+        e.description ? el("p", { class: "muted", style: "margin:0.5rem 0 0; font-size:0.8125rem" }, e.description) : null,
+        e.sourceKind === "ai_inferred" ? el("div", { class: "notice warn", style: "margin-top:0.5rem; font-size:0.8125rem" }, "AI-inferred relationship — verify before relying on it.") : null,
       ]));
     };
 
@@ -8153,12 +8153,12 @@
       const rows = gaps.map((g) => el("tr", {}, [
         el("td", {}, el("code", {}, g.celex)),
         el("td", {}, g.shortName || (g.inRegistry ? "—" : el("span", { class: "muted" }, "not in portal"))),
-        el("td", { class: "muted", style: "font-size:0.82rem" }, g.reason),
+        el("td", { class: "muted", style: "font-size:0.8125rem" }, g.reason),
         el("td", {}, actionBtn("Add to portal", "plus", { primary: true, onClick: (ev) => { const b = ev.currentTarget; addGapDirective(g, b); } })),
       ]));
       gapsMount.replaceChildren(el("div", { class: "card" }, [
         el("h3", { style: "margin:0 0 0.2rem" }, `Gaps — referenced directives not yet in scope (${gaps.length})`),
-        el("p", { class: "muted", style: "margin:0 0 0.7rem; font-size:0.85rem" }, "Directives referenced by applicable ones that aren’t in the portal (or aren’t assessed). Add them to complete the picture."),
+        el("p", { class: "muted", style: "margin:0 0 0.7rem; font-size:0.875rem" }, "Directives referenced by applicable ones that aren’t in the portal (or aren’t assessed). Add them to complete the picture."),
         el("table", { class: "dg-gap-table" }, [
           el("thead", {}, el("tr", {}, [el("th", {}, "CELEX"), el("th", {}, "Name"), el("th", {}, "Why"), el("th", {}, "")])),
           el("tbody", {}, rows),
@@ -8366,7 +8366,7 @@
 
       const header = el("div", { class: "cs-head" }, [
         el("h3", { style: "margin:0" }, "Compliance matrix"),
-        el("span", { class: "muted", style: "font-size:0.82rem" }, state.filter ? `${shown.length} item(s) — ` : "Lifecycle phase × scope. "),
+        el("span", { class: "muted", style: "font-size:0.8125rem" }, state.filter ? `${shown.length} item(s) — ` : "Lifecycle phase × scope. "),
         state.filter ? el("button", { class: "btn btn-sm", type: "button", onclick: () => setFilter(null) }, "Clear filter") : null,
         el("span", { class: "spacer" }),
         canEdit ? el("button", { class: "btn btn-sm cs-suggest-btn", type: "button", onclick: () => runSuggest(shown) }, "✨ Suggest classifications") : null,
@@ -8497,7 +8497,7 @@
         ? el("button", { class: `map-unclassified${state.cell === "__unc__" ? " active" : ""}`, type: "button", onclick: () => { state.cell = state.cell === "__unc__" ? null : "__unc__"; render(); } }, [
             el("strong", {}, `${u.total} unclassified`), el("span", { class: "muted" }, ` — ${u.steps} actions · ${u.documents} docs · ${u.interpretations} clauses (classify them in the action / document forms)`),
           ])
-        : el("div", { class: "muted", style: "margin-top:0.6rem; font-size:0.85rem" }, "✓ All items are classified.");
+        : el("div", { class: "muted", style: "margin-top:0.6rem; font-size:0.875rem" }, "✓ All items are classified.");
       const summary = el("div", { class: "map-summary muted" }, `${t.classified || 0} of ${t.total || 0} items classified · ${t.steps || 0} actions · ${t.documents || 0} docs · ${t.interpretations || 0} clauses. Green ≥80% done · amber 40–79% · red <40% · grey not rated. Click a cell to list its items.`);
       gridMount.replaceChildren(el("div", {}, [grid, unc, summary]));
       renderList();
@@ -8514,7 +8514,7 @@
     };
 
     const tools = el("div", { class: "row-tools" }, [
-      el("h2", { style: "margin:0; font-size:1.1rem" }, "Compliance Map"),
+      el("h2", { style: "margin:0; font-size:1.125rem" }, "Compliance Map"),
       el("span", { class: "spacer" }),
       actionBtn("Refresh", "refresh", { onClick: load }),
       actionBtn("Print / Save PDF", "printer", { onClick: () => window.print() }),
@@ -8735,7 +8735,7 @@
             all.length ? "No drawings match those filters." : "No drawings yet."))]));
       }
 
-      const emptyHelp = all.length ? null : el("div", { class: "notice", style: "font-size:0.85rem;margin-top:0.6rem" },
+      const emptyHelp = all.length ? null : el("div", { class: "notice", style: "font-size:0.875rem;margin-top:0.6rem" },
         role === "rushroom"
           ? "+ New drawing asks which part the drawing is for, then takes the file and reads what it can from the title block. The drawing number and Rev A are assigned for you. Revising a drawing later advances the revision letter of every part it is on, and is recorded in their Change Log."
           : "No drawings have been shared with you yet.");
@@ -8743,13 +8743,13 @@
       mount.replaceChildren(el("div", { class: "card" }, [
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
           el("h3", { style: "margin:0" }, "Drawings"),
-          el("span", { class: "muted", style: "font-size:0.82rem" }, `${all.length} drawing${all.length === 1 ? "" : "s"}`),
+          el("span", { class: "muted", style: "font-size:0.8125rem" }, `${all.length} drawing${all.length === 1 ? "" : "s"}`),
           el("span", { class: "spacer", style: "flex:1" }),
           role === "rushroom" ? actionBtn("New drawing", "plus", { primary: true, onClick: () => newDrawingModal(role, load) }) : null,
           actionBtn("Refresh", "refresh", { onClick: load }),
         ]),
         el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips, freeChip]),
-        el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.88rem" }, [
+        el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
           el("thead", {}, el("tr", {}, [
             head("Number", "drawing_number"), head("Title", "title"), head("Revision", "revision"),
             head("Status", "status"), head("Belongs to", "owner_name"), head("Supplier no.", "supplier_drawing_number"), head("Used on", "parts_count"),
@@ -8795,7 +8795,7 @@
 
     const stepHeader = () => {
       const label = (n, text) => el("span", {
-        style: `font-size:0.78rem;padding:2px 9px;border-radius:999px;${state.step === n
+        style: `font-size:0.75rem;padding:2px 9px;border-radius:999px;${state.step === n
           ? "background:var(--accent,#2fa564);color:#fff;font-weight:600"
           : state.step > n ? "color:var(--accent,#2fa564);border:1px solid var(--accent,#2fa564)44" : "color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)"}`,
       }, `${n}. ${text}`);
@@ -8803,7 +8803,7 @@
         [label(1, "Belongs to"), label(2, "File"), label(3, "Review")]);
     };
 
-    const identityNote = () => el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.7rem" },
+    const identityNote = () => el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.7rem" },
       "The drawing number and revision letter are assigned by the system — you will not be asked for them. Whatever the supplier calls this drawing is recorded separately, so changing supplier never changes our reference.");
 
     // ---- Step 1: what is this a drawing of? --------------------------------
@@ -8824,8 +8824,8 @@
             onclick: () => { state.ownerId = p.id; state.ownerName = p.name; state.free = false; paint(); gate(); },
           }, [
             el("span", {}, p.name),
-            el("span", { class: "muted", style: "font-size:0.78rem;margin-left:0.5rem" }, p.part_number || ""),
-          ])) : [el("div", { class: "muted", style: "padding:0.6rem;font-size:0.85rem" }, "No parts match.")]));
+            el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.5rem" }, p.part_number || ""),
+          ])) : [el("div", { class: "muted", style: "padding:0.6rem;font-size:0.875rem" }, "No parts match.")]));
         };
         search.oninput = paint;
 
@@ -8842,10 +8842,10 @@
           stepHeader(),
           el("div", { class: "form-label" }, "What is this a drawing of?"),
           search, list,
-          el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin-top:0.7rem;font-size:0.85rem" }, [
+          el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin-top:0.7rem;font-size:0.875rem" }, [
             freeBox, el("span", {}, "Free drawing — development work, not attached to a part yet"),
           ]),
-          el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.2rem" },
+          el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.2rem" },
             "A free drawing can be adopted onto a part later. Until then it is listed under Free drawings so it is not forgotten."),
           identityNote(),
           el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.9rem" }, [
@@ -8865,7 +8865,7 @@
     function renderStep2() {
       state.step = 2;
       if (pasteOff) { pasteOff(); pasteOff = null; }
-      const status = el("span", { role: "status", style: "font-size:0.8rem;display:block;min-height:1.2em" }, "");
+      const status = el("span", { role: "status", style: "font-size:0.8125rem;display:block;min-height:1.2em" }, "");
       const zone = uploadZone(role, "documents", {
         ariaLabel: "Choose or drop the drawing file",
         hint: "Drag & drop the drawing here, or",
@@ -8935,14 +8935,14 @@
 
       setChildren(box,
         stepHeader(),
-        el("div", { class: "notice", style: "font-size:0.82rem;margin-bottom:0.8rem" },
+        el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
           state.free ? "Free drawing — not attached to a part." : `Drawing for ${state.ownerName}`),
         el("div", { class: "form-label" }, "Drawing file"),
         zone.el,
-        el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.4rem" },
+        el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.4rem" },
           "PDF or image. It is uploaded and read in one step — what can be found in the title block is filled in for you to check."),
         state.path
-          ? el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.4rem" },
+          ? el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.4rem" },
               `Already uploaded: ${state.file ? state.file.name : "your file"}. Drop a new one to replace it.`)
           : null,
         status,
@@ -8968,7 +8968,7 @@
         const ev = state.extracted[k]?.as_printed || state.extracted[k]?.evidence || "";
         return el("span", {
           title: ev ? `Read from the drawing as: ${ev}` : "",
-          style: `font-size:0.68rem;font-weight:600;color:${tone};border:1px solid ${tone}44;background:${tone}12;padding:0px 6px;border-radius:999px;margin-left:0.4rem`,
+          style: `font-size:0.6875rem;font-weight:600;color:${tone};border:1px solid ${tone}44;background:${tone}12;padding:0px 6px;border-radius:999px;margin-left:0.4rem`,
         }, c);
       };
       const field = (k, label, placeholder) => {
@@ -8986,7 +8986,7 @@
       const sheetSel = el("select", { class: "up-text" }, ["", "A0", "A1", "A2", "A3", "A4"].map((s) => el("option", { value: s }, s || "—")));
       sheetSel.value = ["A0", "A1", "A2", "A3", "A4"].includes(val("sheet_size").toUpperCase()) ? val("sheet_size").toUpperCase() : "";
       const supVis = el("input", { type: "checkbox", checked: "checked" });
-      const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
 
       const save = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = inputs.title.value.trim();
@@ -9006,13 +9006,13 @@
           });
           box.replaceChildren(
             el("h3", { style: "margin:0 0 0.6rem;font-size:1rem" }, "Drawing created"),
-            el("div", { class: "notice", style: "font-size:0.88rem" }, [
+            el("div", { class: "notice", style: "font-size:0.875rem" }, [
               el("div", { style: "font-weight:600;font-size:1rem" }, `${res.drawing_number} · Rev ${res.revision}`),
               el("div", { style: "margin-top:0.3rem" }, state.free
                 ? "Free drawing — adopt it onto a part when it is ready."
                 : `Drawing ${res.node_sequence} of ${state.ownerName}. Its Change Log now records this.`),
             ]),
-            el("div", { class: "muted", style: "font-size:0.78rem;margin:0.6rem 0" },
+            el("div", { class: "muted", style: "font-size:0.75rem;margin:0.6rem 0" },
               "This number is ours and will not change if you change supplier."),
             el("div", { style: "display:flex;justify-content:flex-end" },
               el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => { close(); await onDone(); } }, "Done")),
@@ -9022,14 +9022,14 @@
 
       setChildren(box,
         stepHeader(),
-        state.aiNote ? el("div", { class: "notice warn", style: "font-size:0.82rem;margin-bottom:0.7rem" }, state.aiNote) : null,
+        state.aiNote ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.7rem" }, state.aiNote) : null,
         state.aiRan && !state.aiNote
-          ? el("div", { class: "notice", style: "font-size:0.82rem;margin-bottom:0.7rem" },
+          ? el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.7rem" },
               `Read from the drawing — check each value before saving. Hover a badge to see the text it came from.`)
           : null,
         field("title", "Title", "45 mm steel pin"),
         el("div", { class: "form-label", style: "margin-top:0.6rem" }, "What the supplier calls it"),
-        el("div", { class: "muted", style: "font-size:0.76rem;margin-bottom:0.4rem" },
+        el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.4rem" },
           "Recorded for recognition and purchase orders. Nothing in the system keys off these."),
         field("supplier_drawing_number", "Supplier drawing number", "e.g. 4711-02"),
         field("supplier_revision", "Supplier revision", "e.g. Rev 3, Issue B, 02"),
@@ -9038,7 +9038,7 @@
           el("div", {}, [el("div", { class: "form-label" }, [el("span", {}, "Sheet size"), confBadge("sheet_size")].filter(Boolean)), sheetSel]),
           el("div", { style: "flex:1;min-width:120px" }, [field("scale", "Scale", "1:1")]),
         ]),
-        el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin:0.6rem 0;font-size:0.85rem" }, [
+        el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin:0.6rem 0;font-size:0.875rem" }, [
           supVis, el("span", {}, "Visible to manufacturing partners"),
         ]),
         status,
@@ -9057,10 +9057,10 @@
   function addDrawingRevisionModal(drawing, role, onDone) {
     const token = API.getToken(role);
     let file = null;
-    const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+    const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
     const barFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.15s" });
     const progress = el("div", { style: "display:none;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden;margin-bottom:0.5rem" }, barFill);
-    const fileLabel = el("span", { style: "font-size:0.8rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
+    const fileLabel = el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
     const fileInp = el("input", { type: "file", accept: ".pdf,.png,.jpg,.jpeg,.tif,.tiff", style: "margin-top:4px" });
     fileInp.onchange = () => { file = fileInp.files?.[0] || null; fileLabel.textContent = file ? file.name : "No file chosen"; };
     const revInp = el("input", { class: "up-text", type: "text", placeholder: "Auto-lettered if blank (A → B → C)" });
@@ -9068,7 +9068,7 @@
     const body = el("div", {});
 
     const parts = drawing.parts_count || 0;
-    const effect = el("div", { class: parts ? "notice warn" : "notice", style: "font-size:0.8rem;margin-bottom:0.8rem" },
+    const effect = el("div", { class: parts ? "notice warn" : "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
       parts
         ? `This drawing is on ${parts} part${parts === 1 ? "" : "s"}. A new revision advances ${parts === 1 ? "its" : "each of their"} revision letter${parts === 1 ? "" : "s"} and is recorded in ${parts === 1 ? "its" : "their"} Change Log.`
         : "This is a free drawing, so nothing else changes. Adopt it onto a part and future revisions will advance that part's revision letter.");
@@ -9090,11 +9090,11 @@
         body.replaceChildren(
           el("h3", { style: "margin:0 0 0.8rem;font-size:1rem" }, `Revision ${res.revision} saved`),
           bumped.length
-            ? el("div", { class: "notice warn", style: "font-size:0.85rem" }, [
+            ? el("div", { class: "notice warn", style: "font-size:0.875rem" }, [
                 el("div", { style: "font-weight:600;margin-bottom:0.3rem" }, "Part revisions advanced"),
                 el("div", {}, bumped.join(" · ")),
               ])
-            : el("div", { class: "notice", style: "font-size:0.85rem" }, "Recorded. No part revision moved — this is a free drawing."),
+            : el("div", { class: "notice", style: "font-size:0.875rem" }, "Recorded. No part revision moved — this is a free drawing."),
           el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.8rem" },
             el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => { close(); await onDone(); } }, "Done")),
         );
@@ -9105,7 +9105,7 @@
     } }, "Upload revision");
 
     body.replaceChildren(
-      el("div", { class: "muted", style: "font-size:0.82rem;margin-bottom:0.6rem" },
+      el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.6rem" },
         `${drawing.drawing_number} — ${drawing.title}${drawing.revision ? ` · currently Rev ${drawing.revision}` : ""}`),
       effect,
       el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "File"), fileInp, fileLabel]),
@@ -9127,7 +9127,7 @@
     const box = el("div", {}, el("div", { class: "loading" }, "Loading parts…"));
     const close = openModal("Adopt drawing onto a part", box);
     let chosen = null;
-    const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+    const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
 
     API.post(token, "listComponents", {}).then(({ components }) => {
       const parts = (components || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
@@ -9151,16 +9151,16 @@
           onclick: () => { chosen = p; save.disabled = false; paint(); },
         }, [
           el("span", {}, p.name),
-          el("span", { class: "muted", style: "font-size:0.78rem;margin-left:0.5rem" }, p.part_number || ""),
-        ])) : [el("div", { class: "muted", style: "padding:0.6rem;font-size:0.85rem" }, "No parts match.")]));
+          el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.5rem" }, p.part_number || ""),
+        ])) : [el("div", { class: "muted", style: "padding:0.6rem;font-size:0.875rem" }, "No parts match.")]));
       };
       search.oninput = paint;
       box.replaceChildren(
-        el("div", { class: "muted", style: "font-size:0.82rem;margin-bottom:0.6rem" },
+        el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.6rem" },
           `${drawing.drawing_number} — ${drawing.title}`),
         el("div", { class: "form-label" }, "Adopt onto which part?"),
         search, list,
-        el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.5rem" },
+        el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.5rem" },
           "The drawing keeps its number and revision. From then on, revising it advances that part's revision letter."),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.8rem" }, [
@@ -9197,19 +9197,19 @@
       const revRows = revisions.map((r) => el("tr", {}, [
         el("td", {}, [
           el("strong", {}, `Rev ${r.revision}`),
-          r.supplier_revision ? el("span", { class: "muted", style: "font-size:0.76rem;margin-left:0.4rem" }, `(their ${r.supplier_revision})`) : null,
+          r.supplier_revision ? el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, `(their ${r.supplier_revision})`) : null,
         ].filter(Boolean)),
         el("td", {}, drawingStatusChip(r.status)),
         el("td", {}, r.file_name),
         el("td", {}, r.notes || el("span", { class: "muted" }, "—")),
         el("td", {}, new Date(r.created_at).toLocaleDateString()),
-        el("td", {}, el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: () => openFile(r) }, "Open")),
+        el("td", {}, el("button", { class: "btn btn-xs", type: "button", onclick: () => openFile(r) }, "Open")),
       ]));
 
       const partRows = components.map((c) => el("tr", {}, [
         el("td", {}, c.name || "—"), el("td", {}, c.part_number || "—"), el("td", {}, c.role),
         el("td", {}, role === "rushroom"
-          ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: async () => {
+          ? el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
               if (!confirm(`Unlink “${c.name}” from ${drawing.drawing_number}? The drawing itself is kept.`)) return;
               try { await API.post(token, "unlinkDrawingFromComponent", { drawing_id: drawing.id, component_id: c.component_id, role: c.role }); await done(); }
               catch (ex) { alert(ex.message); }
@@ -9219,13 +9219,13 @@
 
       const NEXT = { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: ["superseded"], superseded: [] };
       const statusActions = role === "rushroom" ? (NEXT[drawing.status] || []).map((s) =>
-        el("button", { class: `btn btn-sm${s === "released" ? " btn-primary" : ""}`, type: "button", style: "font-size:0.74rem", onclick: async () => {
+        el("button", { class: `btn btn-sm${s === "released" ? " btn-primary" : ""}`, type: "button", style: "font-size:0.75rem", onclick: async () => {
           if (s === "released" && !confirm(`Release ${drawing.drawing_number}? This supersedes the previously released revision and is recorded on every linked part.`)) return;
           try { await API.post(token, "setDrawingStatus", { drawing_id: drawing.id, status: s }); await done(); }
           catch (ex) { alert(ex.message); }
         } }, `Mark ${s}`)) : [];
 
-      const supToggle = role === "rushroom" ? el("label", { style: "display:flex;align-items:center;gap:0.4rem;font-size:0.82rem" }, [
+      const supToggle = role === "rushroom" ? el("label", { style: "display:flex;align-items:center;gap:0.4rem;font-size:0.8125rem" }, [
         el("input", { type: "checkbox", checked: drawing.is_supplier_visible ? "checked" : null, onchange: async (e) => {
           try { await API.post(token, "setDrawingSupplierVisibility", { drawing_id: drawing.id, is_supplier_visible: e.target.checked }); if (onChange) await onChange(); }
           catch (ex) { alert(ex.message); e.target.checked = !e.target.checked; }
@@ -9234,10 +9234,10 @@
       ]) : null;
 
       setChildren(body,
-        d.partial ? el("div", { class: "notice warn", style: "font-size:0.82rem;margin-bottom:0.6rem" },
+        d.partial ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.6rem" },
           `Some of this record could not be loaded (${(d.sources_failed || []).join(", ")}). What you see below is incomplete.`) : null,
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.8rem" }, [
-          el("h3", { style: "margin:0;font-size:1.05rem" }, `${drawing.drawing_number} — ${drawing.title}`),
+          el("h3", { style: "margin:0;font-size:1rem" }, `${drawing.drawing_number} — ${drawing.title}`),
           drawingStatusChip(drawing.status),
           el("span", { style: "flex:1" }),
           ...statusActions,
@@ -9245,41 +9245,41 @@
         ].filter(Boolean)),
         // PROP-046: ours first, theirs second, clearly separated — the whole
         // point is that one of these is stable and the other is not.
-        el("div", { style: "font-size:0.82rem;margin-bottom:0.5rem" }, [
+        el("div", { style: "font-size:0.8125rem;margin-bottom:0.5rem" }, [
           el("span", { class: "muted" }, "Belongs to: "),
           drawing.owner_component_id
             ? el("span", {}, `${ownerName || "a part"}${drawing.node_sequence ? ` · drawing ${drawing.node_sequence} of that part` : ""}`)
             : el("span", { style: "color:#b45309;font-weight:600" }, "Free drawing — not attached to a part"),
           role === "rushroom" && !drawing.owner_component_id
-            ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px;margin-left:0.5rem",
+            ? el("button", { class: "btn btn-xs btn-primary", type: "button", style: "margin-left:0.5rem",
                 onclick: () => adoptDrawingModal(drawing, role, done) }, "Adopt onto a part")
             : null,
         ].filter(Boolean)),
         drawing.supplier_drawing_number
-          ? el("div", { style: "font-size:0.82rem;margin-bottom:0.5rem" }, [
+          ? el("div", { style: "font-size:0.8125rem;margin-bottom:0.5rem" }, [
               el("span", { class: "muted" }, "Supplier calls it: "),
               el("span", {}, drawing.supplier_drawing_number),
-              el("span", { class: "muted", style: "margin-left:0.4rem;font-size:0.76rem" }, "(recorded only — nothing keys off it)"),
+              el("span", { class: "muted", style: "margin-left:0.4rem;font-size:0.75rem" }, "(recorded only — nothing keys off it)"),
             ])
           : null,
-        el("div", { class: "muted", style: "font-size:0.8rem;margin-bottom:0.8rem" },
+        el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
           [drawing.projection_angle ? `${drawing.projection_angle} angle` : null, drawing.sheet_size, drawing.scale ? `scale ${drawing.scale}` : null]
             .filter(Boolean).join(" · ") || "No sheet properties recorded"),
         supToggle,
         el("h4", { style: "margin:0.9rem 0 0.3rem" }, `Revisions (${revisions.length})`),
         revisions.length
-          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
               el("thead", {}, el("tr", {}, ["Revision", "Status", "File", "Notes", "Created", ""].map((h) => el("th", {}, h)))),
               el("tbody", {}, revRows),
             ]))
-          : el("div", { class: "muted", style: "font-size:0.85rem" }, "No revisions yet — add one to attach the drawing file."),
+          : el("div", { class: "muted", style: "font-size:0.875rem" }, "No revisions yet — add one to attach the drawing file."),
         el("h4", { style: "margin:0.9rem 0 0.3rem" }, `Used on (${components.length})`),
         components.length
-          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
+          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
               el("thead", {}, el("tr", {}, ["Part", "Part number", "Role", ""].map((h) => el("th", {}, h)))),
               el("tbody", {}, partRows),
             ]))
-          : el("div", { class: "muted", style: "font-size:0.85rem" },
+          : el("div", { class: "muted", style: "font-size:0.875rem" },
               "Not linked to any part. Link it from the part's Drawings tab — revisions then advance that part's revision letter."),
       );
     }
@@ -9389,7 +9389,7 @@
       form,
       el("div", { class: "gate-links" }, el("button", { class: "linklike", type: "button", onclick: () => forgotPasswordModal(email.value.trim()) }, "Forgot password?")),
       el("div", { class: "gate-register" }, [
-        el("p", { class: "muted", style: "margin:0 0 0.5rem; font-size:0.9rem" }, "Don't have access yet?"),
+        el("p", { class: "muted", style: "margin:0 0 0.5rem; font-size:0.875rem" }, "Don't have access yet?"),
         el("button", { class: "btn btn-sm", type: "button", onclick: registerModal }, "Register for access"),
       ]),
       el("details", { class: "gate-fallback" }, [

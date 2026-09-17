@@ -2963,15 +2963,34 @@ Deno.serve(async (req) => {
     if (!component_id) return json({ error: "component_id required" }, 400);
 
     // Three canonical sources merged into one unified timeline:
-    // (1) bom_component_history — field-level snapshots (created + updated only;
-    //     version_bumped/document_linked rows exist but are superseded by canonical sources)
+    // (1) bom_component_history — field snapshots AND the event rows that have no
+    //     canonical source of their own
     // (2) bom_component_versions — all revisions ever, including pre-audit-trail ones
     // (3) component_documents — all linked docs ever, including pre-audit-trail ones
+    //
+    // Which history rows to read is the subtle part. version_bumped and
+    // document_linked are deliberately excluded: sources (2) and (3) already
+    // reconstruct those events from the canonical tables, so reading both would
+    // double every revision and every document.
+    //
+    // Everything else must be read here, because nothing else reconstructs it.
+    // The filter was ["created","updated"], which silently dropped every drawing
+    // event and every document_revised row — they were written correctly and then
+    // excluded by the query that displays them. PROP-043 fixed the document
+    // SOURCE and missed this; the trail still under-reported, which for an audit
+    // trail is the failure that matters most because it looks like nothing
+    // happened. Any change_type added in future must be listed here or it will
+    // vanish the same way.
+    const HISTORY_EVENTS = [
+      "created", "updated",
+      "document_revised",
+      "drawing_linked", "drawing_revised", "drawing_released", "drawing_adopted",
+    ];
     const [histRes, verRes, docRes] = await Promise.all([
       tdb("bom_component_history")
         .select("id, changed_at, changed_by, change_type, part_number, oem_number, name, description, type, lifecycle_status, notes")
         .eq("component_id", component_id)
-        .in("change_type", ["created", "updated"]),
+        .in("change_type", HISTORY_EVENTS),
       tdb("bom_component_versions")
         .select("id, revision, spec_summary, created_at, created_by")
         .eq("component_id", component_id),

@@ -1162,3 +1162,90 @@ The value to prove is that drawings-as-entities is the right model. AI is the se
 - **PROP-024 Component Version History** — a version snapshot should cite the released drawing revision it was built against.
 
 **Status:** Raw idea
+
+---
+### Drawing Creation Flow — BOM Node First, System-Owned Identity, AI-Filled Metadata — 2026-09-17
+
+**One sentence:** Invert the drawing creation flow so it starts by choosing the BOM node the drawing belongs to (or explicitly marking it a free/development drawing), then uploads and AI-reads the file in the same modal — while the system, never the user or the supplier, assigns the drawing number and the revision letter.
+
+**Problem it solves:**
+
+PROP-045 built the right *domain* and the wrong *doorway*. Its New drawing modal asks for a drawing number and a title before it will accept a file, which gets three things backwards:
+
+1. **It asks the user to invent an identifier the system should own.** Typing `RR-DWG-0001` by hand guarantees collisions, gaps and personal numbering conventions. `bom_components` already solved this: `part_number` is generated as `RR-{YYYYMM}-{8 random chars}` and never typed. Drawings asking the user to type theirs is the odd one out, not the norm.
+
+2. **It anchors the drawing to the supplier's vocabulary.** If our record's identity *is* the supplier's drawing number, then changing supplier means either carrying a dead supplier's numbering forever or renumbering and breaking the trail. The same problem already has a solved shape in this codebase: `part_number` is ours, `oem_number` is theirs. A drawing needs exactly that split and currently has only one column, which silently means "whatever the supplier called it".
+
+3. **It makes the part an afterthought.** A drawing is created loose and linked later, so nothing stops a drawing existing forever with no part, and the BOM node — the thing the whole compliance trail hangs off — is reached last. The very first question should be the one that matters: *what is this a drawing of?*
+
+There is also a plain usability failure visible in the current modal: it ends with "The file comes next: create the drawing, then add its first revision." Two steps, two screens, for one intention.
+
+**The core idea — two identity systems, ours load-bearing:**
+
+| | Ours (system-assigned, stable) | Theirs (captured, informational) |
+|---|---|---|
+| Drawing identity | `drawing_number` — auto `RR-DWG-{YYYYMM}-{rand}` | `supplier_drawing_number` |
+| Revision | `revision` — A, B, C … | `supplier_revision` |
+| File | `storage_path` | `supplier_file_name` |
+
+Ours never changes when the supplier does. Theirs is recorded because an engineer holding a PDF needs to recognise it, and because a purchase order will quote the supplier's number — but nothing in the system keys off it. This is the `part_number` / `oem_number` split applied one level down, which is the argument for it: the pattern is already proven here and already understood by the team.
+
+**"Its own ID and version per BOM node" — the owner concept:**
+
+`drawings.owner_component_id`, nullable. NULL means a **free drawing**: explicitly tagged as unattached, which is the legitimate development case and must be a deliberate choice in the modal rather than a thing that happens by forgetting.
+
+- The owner is the identity anchor. A drawing also carries `node_sequence` — its index within that node — so a human can say "drawing 2 of this part" without memorising a random suffix.
+- `drawing_components` (many-to-many, from PROP-045) stays, for the assembly drawing that legitimately appears on several parts. Owner = whose drawing it is; links = who else shows it.
+- Revising still audits and bumps **every** linked part, owner or not. A drawing change is a change to everything built from it; that rule from PROP-043 does not weaken here.
+- A free drawing can later be **adopted** by a node. Adoption is an auditable event, not a silent edit — it is the moment a development sketch becomes a controlled document.
+
+**The flow, one modal:**
+
+1. **Belongs to** — pick a BOM node, or tick *Free drawing (development, not attached to a part)*. Nothing else is enabled until this is answered.
+2. **File** — drop or pick. Upload starts immediately with the existing progress bar.
+3. **AI read** — `extractDrawingMeta` returns title, the supplier's drawing number and revision, scale, sheet size, projection angle, material callout, general tolerance, drawn/checked by, date — each with a confidence badge and the verbatim text it read.
+4. **Review** — everything editable, nothing auto-committed. This follows PROP-039's rule exactly: an engineer is right to distrust an AI-read tolerance.
+5. **Save** — the system assigns `drawing_number` and `revision` **A**. Those two fields are not in the form at all.
+
+**The rule that keeps this safe:** AI fills descriptive and supplier fields. It never sets our drawing number or our revision letter. Identity is system-owned, extraction is advisory — so a misread title is a typo, never a broken trail.
+
+**MVP scope:**
+
+The flow is the spine and must work with the AI switched off — if extraction returns nothing, the user types what they can and saves, and the drawing is still correctly numbered and anchored. Build in this order:
+
+1. Migration: `owner_component_id`, `node_sequence`, `supplier_drawing_number` on `drawings`; `supplier_revision`, `supplier_file_name` on `drawing_revisions`. Backfill the one existing row (created during PROP-045 testing) or delete it.
+2. `createDrawingWithRevision` — one action: owner (or free), file, metadata → assigns number + Rev A, writes `drawing_linked` history when owned.
+3. `extractDrawingMeta` in **portal-ai** (never portal-api — heavy work does not belong on the hot path). Structured JSON schema output, confidence per field.
+4. Rebuild the modal as the three-step flow above; delete the old two-step path so it cannot be reached.
+5. `adoptDrawing(drawing_id, component_id)` — free drawing → owned, audited.
+6. Register gains a **Free drawings** filter, so unattached drawings are visible rather than quietly accumulating.
+
+**Tables involved:**
+- Extended: `drawings` (+`owner_component_id` FK→bom_components, +`node_sequence`, +`supplier_drawing_number`), `drawing_revisions` (+`supplier_revision`, +`supplier_file_name`)
+- Read/reuse: `bom_components`, `drawing_components`, `bom_component_history`, `bom_component_versions`
+- Unchanged: `drawing_dimensions` (still empty; the diff-reading AI lands here later)
+- All carry `organization_id NOT NULL` already and are in `TENANT_TABLES`
+
+**Effort estimate:** 16–18 hours
+- Migration + backfill of the single existing row: 2 h
+- `createDrawingWithRevision` + number/sequence assignment: 3 h
+- `extractDrawingMeta` in portal-ai (schema, model call, confidence): 3 h
+- Three-step modal with upload progress and AI review: 5–6 h
+- Adoption flow + Free drawings filter: 2 h
+- Tests + docs: 2 h
+
+**Risks:**
+- **AI extraction must never be load-bearing.** A scanned or rasterised drawing yields little; the flow has to complete with zero extracted fields and say so plainly. If the modal cannot be finished without AI, a bad scan blocks work entirely.
+- **Two ways to relate a drawing to a part** (owner + links) is a real confusion risk. Mitigated by one sentence in the UI and one rule in code: the owner is for identity, links are for visibility, and revisions affect everyone either way.
+- **Free drawings are a drawer that fills up.** Without the filter and a count, "free" becomes where drawings go to be forgotten. That is why the filter is MVP, not follow-on.
+- **Migration timing is easy this once and never again.** `drawings` holds 1 row, `drawing_revisions`, `drawing_components` and `drawing_dimensions` hold 0. The same change after real drawings exist means renumbering live records.
+- **Changing `drawing_number` from typed to generated** must not leave the old input reachable anywhere, or two numbering schemes coexist — the failure PROP-045 avoided by deleting the `drawing` document category rather than deprecating it.
+- **PROP-012 multi-tenancy:** no new tables, so no new `TENANT_TABLES` entries. The generated number must be unique per organization, not globally — the existing `UNIQUE (organization_id, drawing_number)` already says so, and `node_sequence` must be computed per owner within the tenant.
+
+**Related PROPs:**
+- **PROP-045 (Drawings as a First-Class Domain)** — this replaces its creation flow and keeps everything else: tables, register, part-panel tab, supplier visibility choke point, statuses, letter revisions, audit events. It is a correction to one screen and three columns, not a rewrite. Applied but barely used, which is why now is the moment.
+- **Engineering Drawing Intelligence (2026-09-02)** — its extraction work is exactly step 3 here, arriving earlier than planned and narrower: metadata only, not dimensions or GD&T. The revision-diff half stays future work, as the user noted it is not critical now.
+- **PROP-039 (AI Field Extraction)** — the pattern to copy: structured output, per-field confidence, verbatim evidence, review before save, never auto-commit.
+- **PROP-043 / PROP-044** — the revision-bump and audit semantics are untouched by this.
+
+**Status:** Raw idea

@@ -1727,7 +1727,13 @@
       el("div", { class: "viewer-head" }, [el("h3", { class: "viewer-title" }, title), el("span", { class: "spacer" }), closeBtn]),
       el("div", { class: "modal-body" }, contentEl),
     ]);
-    const overlay = el("div", { class: "viewer-overlay", onclick: (e) => { if (e.target === overlay) closeModal(); } }, dialog);
+    // data-modal-overlay marks "a modal is stacked above the detail panel, so the
+    // panel must not consume the paste" (v213). Every openModal dialog is exactly
+    // that, and the attribute was missing here — so pasting a screenshot while any
+    // of these dialogs was open silently uploaded it to the component's Images tab
+    // instead of the dialog in front of the user. Found while adding drag & drop
+    // to the drawing flow (PROP-046).
+    const overlay = el("div", { "data-modal-overlay": "", class: "viewer-overlay", onclick: (e) => { if (e.target === overlay) closeModal(); } }, dialog);
     document.body.appendChild(overlay);
     document.addEventListener("keydown", onKey);
     return closeModal;
@@ -8632,7 +8638,11 @@
   function newDrawingModal(role, onDone, presetComponent = null) {
     const token = API.getToken(role);
     const box = el("div", {});
-    const close = openModal("New drawing", box);
+    // A document-level paste listener must not outlive the modal that added it —
+    // that is the leak that made two screens fight over the same paste in v213.
+    let pasteOff = null;
+    const closeModal_ = openModal("New drawing", box);
+    const close = () => { if (pasteOff) { pasteOff(); pasteOff = null; } closeModal_(); };
 
     const state = {
       step: presetComponent ? 2 : 1,
@@ -8661,6 +8671,7 @@
     // ---- Step 1: what is this a drawing of? --------------------------------
     function renderStep1() {
       state.step = 1;
+      if (pasteOff) { pasteOff(); pasteOff = null; }
       box.replaceChildren(stepHeader(), el("div", { class: "loading" }, "Loading parts…"));
       API.post(token, "listComponents", {}).then(({ components }) => {
         const parts = (components || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
@@ -8708,73 +8719,108 @@
     }
 
     // ---- Step 2: the file, read as soon as it lands ------------------------
+    //
+    // uploadZone gives drag-and-drop, the animated bar and the upload → AI-read
+    // phasing for free, and it posts to docUploadUrl — the same endpoint this
+    // modal was calling by hand. Reusing it deletes code and makes the drawing
+    // upload behave like every other upload in the portal.
     function renderStep2() {
       state.step = 2;
-      const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
-      const barFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.2s" });
-      const progress = el("div", { style: "display:none;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden;margin:0.5rem 0" }, barFill);
-      const fileLabel = el("span", { class: "muted", style: "font-size:0.8rem;display:block;margin-top:2px" }, "No file chosen");
-      const fileInp = el("input", { type: "file", accept: ".pdf,.png,.jpg,.jpeg,.tif,.tiff", style: "margin-top:4px" });
-      const go = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true }, "Upload and read");
-      fileInp.onchange = () => {
-        state.file = fileInp.files?.[0] || null;
-        fileLabel.textContent = state.file ? state.file.name : "No file chosen";
-        go.disabled = !state.file;
-      };
+      if (pasteOff) { pasteOff(); pasteOff = null; }
+      const status = el("span", { role: "status", style: "font-size:0.8rem;display:block;min-height:1.2em" }, "");
+      const zone = uploadZone(role, "documents", {
+        ariaLabel: "Choose or drop the drawing file",
+        hint: "Drag & drop the drawing here, or",
+        processing: true,
+      });
 
-      go.onclick = async () => {
-        go.disabled = true; status.textContent = "Uploading…"; progress.style.display = "";
-        try {
-          const { signedUrl, path } = await API.post(token, "docUploadUrl", { fileName: state.file.name });
-          await xhrPut(signedUrl, state.file, (p) => { barFill.style.width = `${p * 0.6}%`; });
-          state.path = path;
-          barFill.style.width = "60%";
-          status.style.color = "var(--muted,#8b93a1)";
-          status.textContent = "Reading the drawing…";
-          // Not ephemeral: this file IS the revision, unlike the spec-extraction
-          // flow where the upload is only evidence and is deleted after reading.
-          let res = { fields: [] };
+      // Coming back from Review: the file is already up, so do not make the user
+      // upload it again just to change a field.
+      const continueBtn = state.path
+        ? el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => renderStep3() }, "Continue to review →")
+        : null;
+
+      // Paste is the sibling gesture to drop — a drawing is as often a screenshot
+      // as a file on disk. Fed through the zone's own input so upload, progress
+      // and the AI read all behave identically however the file arrived.
+      const onPasteDrawing = (ev) => {
+        // Self-evicting: openModal owns its ✕ button and closes without telling
+        // us, so relying on the close path alone would leave this listener
+        // attached to a dead modal — which is precisely how two screens ended up
+        // fighting over one paste before.
+        if (!box.isConnected || state.step !== 2) {
+          document.removeEventListener("paste", onPasteDrawing);
+          if (pasteOff) pasteOff = null;
+          return;
+        }
+        const items = ev.clipboardData?.items || [];
+        for (const item of items) {
+          if (item.kind !== "file") continue;
+          const f = item.getAsFile();
+          if (!f) continue;
+          ev.preventDefault();
+          const input = zone.el.querySelector(".up-file");
           try {
-            res = await API.post(token, "extractDrawingMeta", { storage_path: path, file_name: state.file.name });
-          } catch (ex) {
-            state.aiNote = `The drawing could not be read automatically (${ex.message}). Fill the fields in by hand — nothing is lost.`;
-          }
-          barFill.style.width = "100%";
-          state.aiRan = true;
-          (res.fields || []).forEach((f) => { state.extracted[f.key] = f; });
-          if (!state.aiNote) {
-            if (res.is_engineering_drawing === false) state.aiNote = res.note || "This does not look like an engineering drawing. Check the file, or continue and fill the fields in by hand.";
-            else if (!(res.fields || []).length) state.aiNote = "Nothing could be read from this file — often a scan or a flattened image. Fill the fields in by hand.";
-          }
-          renderStep3();
-        } catch (ex) {
-          status.style.color = "#e05454";
-          status.textContent = ex.message;
-          go.disabled = false; barFill.style.width = "0%"; progress.style.display = "none";
+            const dt = new DataTransfer(); dt.items.add(f);
+            input.files = dt.files;
+            input.dispatchEvent(new Event("change"));
+          } catch { /* Safari blocks DataTransfer construction; drop and picker still work */ }
+          return;
         }
       };
+      document.addEventListener("paste", onPasteDrawing);
+      pasteOff = () => document.removeEventListener("paste", onPasteDrawing);
+
+      zone.onReady(async (uploaded, file) => {
+        state.path = uploaded.path;
+        state.file = file;
+        state.extracted = {};
+        state.aiNote = "";
+        try {
+          // Not ephemeral: this file IS the revision. The spec-extraction flow
+          // deletes its source because there the upload is only evidence.
+          const res = await API.post(token, "extractDrawingMeta", { storage_path: uploaded.path, file_name: file.name });
+          (res.fields || []).forEach((f) => { state.extracted[f.key] = f; });
+          if (res.is_engineering_drawing === false) {
+            state.aiNote = res.note || "This does not look like an engineering drawing. Check the file, or continue and fill the fields in by hand.";
+          } else if (!(res.fields || []).length) {
+            state.aiNote = "Nothing could be read from this file — often a scan or a flattened image. Fill the fields in by hand.";
+          }
+          zone.finishProcessing(!state.aiNote, state.aiNote ? `✓ ${file.name} — uploaded, nothing readable` : undefined);
+        } catch (ex) {
+          state.aiNote = `The drawing could not be read automatically (${ex.message}). Fill the fields in by hand — nothing is lost.`;
+          zone.finishProcessing(false);
+        }
+        state.aiRan = true;
+        renderStep3();
+      });
 
       box.replaceChildren(
         stepHeader(),
         el("div", { class: "notice", style: "font-size:0.82rem;margin-bottom:0.8rem" },
           state.free ? "Free drawing — not attached to a part." : `Drawing for ${state.ownerName}`),
         el("div", { class: "form-label" }, "Drawing file"),
-        fileInp, fileLabel,
+        zone.el,
         el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.4rem" },
           "PDF or image. It is uploaded and read in one step — what can be found in the title block is filled in for you to check."),
-        progress, status,
+        state.path
+          ? el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.4rem" },
+              `Already uploaded: ${state.file ? state.file.name : "your file"}. Drop a new one to replace it.`)
+          : null,
+        status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.9rem" }, [
           presetComponent
             ? el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel")
             : el("button", { class: "btn btn-sm", type: "button", onclick: () => renderStep1() }, "← Back"),
-          go,
-        ]),
+          continueBtn,
+        ].filter(Boolean)),
       );
     }
 
     // ---- Step 3: check what it read, then save -----------------------------
     function renderStep3() {
       state.step = 3;
+      if (pasteOff) { pasteOff(); pasteOff = null; }
       const val = (k) => (state.extracted[k]?.value || "");
       const conf = (k) => state.extracted[k]?.confidence;
       const confBadge = (k) => {

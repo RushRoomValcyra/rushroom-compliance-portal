@@ -209,3 +209,28 @@ test("the creation modal asks for the part before the file, and never for a numb
   assert.ok(!/Drawing number/.test(block), "the modal still asks for a drawing number");
   assert.ok(!/RR-DWG-0001/.test(block), "the old drawing-number placeholder is still present");
 });
+
+test("the drawing file step supports drag & drop, and reuses the shared upload zone", () => {
+  const app = read("assets/app.js");
+  const start = app.indexOf("function newDrawingModal(");
+  const block = app.slice(start, app.indexOf("function adoptDrawingModal("));
+  // uploadZone carries drag & drop, the animated bar and the upload → AI-read
+  // phasing. Hand-rolling a second file input here would mean the drawing
+  // upload behaved differently from every other upload in the portal.
+  assert.ok(/uploadZone\(role, "documents"/.test(block), "step 2 does not use the shared uploadZone");
+  assert.ok(/finishProcessing\(/.test(block), "the AI-read phase never lands the progress bar");
+  assert.ok(/addEventListener\("paste"/.test(block), "pasting a drawing is not supported");
+  assert.ok(/removeEventListener\("paste"/.test(block), "the paste listener is never removed");
+});
+
+test("openModal dialogs suppress the component panel's image paste", () => {
+  const app = read("assets/app.js");
+  const i = app.indexOf('class: "viewer-overlay"');
+  assert.ok(i > 0, "openModal overlay not found");
+  const line = app.slice(app.lastIndexOf("\n", i), app.indexOf("\n", i));
+  // Without this marker, pasting a screenshot while any openModal dialog is open
+  // uploads it to the component's Images tab instead of the dialog in front of
+  // the user — a silent wrong destination.
+  assert.ok(/data-modal-overlay/.test(line),
+    "openModal's overlay lacks data-modal-overlay, so a paste leaks to the detail panel behind it");
+});

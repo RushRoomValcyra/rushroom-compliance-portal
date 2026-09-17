@@ -37,6 +37,20 @@
   --fs-d2:  1.5rem;     /* 24px */
   --fs-d3:  1.75rem;    /* 28px */
   --fs-d4:  2rem;       /* 32px */
+
+  /* ---- Stacking order ---------------------------------------------------
+     Layers were picked ad hoc: 50, 100, 150, 200, 900, 1001, 1002, 2000,
+     10000. The viewer overlay sat at 200 and the component detail panel at
+     900, so EVERY openModal dialog opened from inside a part — the drawing
+     detail, adopt, link, new drawing, and the PDF viewer itself — rendered
+     behind the panel that launched it. Named layers so the order is a
+     decision rather than an accident.                                       */
+  --z-sticky:   50;    /* sticky table heads, filter bars                    */
+  --z-nav:     150;    /* sticky tab bar                                     */
+  --z-panel:   900;    /* the component detail panel                         */
+  --z-modal:  1000;    /* dialogs, which must sit above the panel            */
+  --z-viewer: 1100;    /* the file viewer, above the dialog that opened it   */
+  --z-toast:  1200;    /* transient messages, above everything interactive   */
   --focus: #ffd34d;
 }
 
@@ -85,7 +99,7 @@ a:hover { text-decoration: underline; }
 .site-header {
   position: sticky;
   top: 0;
-  z-index: 150;   /* above content + tabs, below the viewer modal (200) */
+  z-index: var(--z-nav);   /* above content and tabs, below every dialog */
   background: rgba(18, 22, 30, 0.82);
   -webkit-backdrop-filter: saturate(1.4) blur(14px);
   backdrop-filter: saturate(1.4) blur(14px);
@@ -207,7 +221,7 @@ main {
   display: flex; gap: 0.2rem; margin-bottom: 1.2rem; flex-wrap: wrap;
   position: sticky;
   top: var(--header-h, 64px);  /* stick just below the sticky header */
-  z-index: 50;                 /* above content, below modals (viewer overlay = 200) */
+  z-index: var(--z-sticky);    /* above content, below every dialog */
   background: var(--bg);
   padding: 0.45rem 0 0.3rem;
   box-shadow: 0 6px 12px -6px rgba(0, 0, 0, 0.45);
@@ -692,7 +706,9 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 
 /* ---- in-portal document viewer (modal) ---- */
 .viewer-overlay {
-  position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.6);
+  /* Above --z-panel. At 200 this rendered behind the component detail panel,
+     which is what made "Open" on a drawing look like nothing had happened. */
+  position: fixed; inset: 0; z-index: var(--z-modal); background: rgba(0,0,0,0.6);
   display: flex; align-items: center; justify-content: center; padding: 2vh 2vw;
 }
 .viewer-dialog {

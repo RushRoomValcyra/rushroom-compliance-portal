@@ -3532,7 +3532,7 @@
     document.getElementById("pis-detail-overlay")?.remove();
     const detailOverlay = el("div", {
       id: "pis-detail-overlay",
-      style: "display:none;position:fixed;inset:0;background:#0007;z-index:900;align-items:flex-start;justify-content:center;padding:2.5vh 1rem",
+      style: "display:none;position:fixed;inset:0;background:#0007;z-index:var(--z-panel);align-items:flex-start;justify-content:center;padding:2.5vh 1rem",
       onclick: (ev) => { if (ev.target === detailOverlay) hideDetail(); },
     }, [detailPanel]);
     document.body.append(detailOverlay);
@@ -3606,7 +3606,7 @@
     const tooltipImg = el("img", { style: "width:200px;height:200px;object-fit:cover;display:block" });
     const imgTooltip = el("div", {
       id: "bom-thumb-tooltip",
-      style: "position:fixed;z-index:9999;display:none;pointer-events:none;border-radius:8px;overflow:hidden;box-shadow:0 6px 28px #0004;border:1px solid var(--border,#e2e8f0)",
+      style: "position:fixed;z-index:var(--z-toast);display:none;pointer-events:none;border-radius:8px;overflow:hidden;box-shadow:0 6px 28px #0004;border:1px solid var(--border,#e2e8f0)",
     }, tooltipImg);
     document.body.append(imgTooltip);
 
@@ -3901,7 +3901,7 @@
             if (e.key === "Escape") lbClose();
           }
           function lbClose() { lbOver.remove(); document.removeEventListener("keydown", lbOnKey); }
-          const lbOver = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#000c;z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center", onclick: lbClose });
+          const lbOver = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#000c;z-index:var(--z-modal)0;display:flex;flex-direction:column;align-items:center;justify-content:center", onclick: lbClose });
           lbOver.append(el("div", { style: "display:flex;align-items:center;gap:1rem" }, [lbPrev, lbImg, lbNext].filter(Boolean)), lbCount);
           document.addEventListener("keydown", lbOnKey);
           lbShow(0);
@@ -3974,7 +3974,7 @@
             try {
               const { parents } = await API.post(token, "listParentsOf", { component_id: comp.id });
               const confirmed = await new Promise((resolve) => {
-                const mo = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#00000080;z-index:2000;display:flex;align-items:center;justify-content:center" });
+                const mo = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#00000080;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
                 const close = (v) => { mo.remove(); resolve(v); };
                 mo.onclick = (e) => { if (e.target === mo) close(false); };
                 const rows = [
@@ -4318,7 +4318,7 @@
                     const { parents } = await API.post(token, "listParentsOf", { component_id: n.id });
                     const childCount = (childrenOf[n.id] || []).length;
                     const confirmed = await new Promise((resolve) => {
-                      const mo = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#00000080;z-index:2000;display:flex;align-items:center;justify-content:center" });
+                      const mo = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#00000080;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
                       const close = (v) => { mo.remove(); resolve(v); };
                       mo.onclick = (e) => { if (e.target === mo) close(false); };
                       const rows = [
@@ -4414,7 +4414,7 @@
   const categoryRequiredFor = (type) => type !== "sub_assembly" && type !== "product_family";
 
   function openCategoryManager(token, onRefresh) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1002;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(560px,96vw);max-height:88vh;display:flex;flex-direction:column;gap:0.6rem" });
     const listEl = el("div", { style: "flex:1;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px;min-height:120px" });
     const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.1rem" }, "");
@@ -4520,7 +4520,7 @@
       return p && p.length ? p.join(", ") : null;   // null = lives in another assembly
     }
 
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1001;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(860px,96vw);max-height:90vh;display:flex;flex-direction:column;gap:0.6rem" });
 
     const listEl = el("div", { style: "flex:1;min-height:180px;max-height:46vh;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px" });
@@ -4650,7 +4650,7 @@
   // --- Add-child modal: link existing OR create new and link ---------------
   function openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, opts) {
     const linkExistingOnly = !!(opts && opts.linkExistingOnly);
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1001;display:flex;align-items:center;justify-content:center" });
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
 
     let mode = "existing"; // "existing" | "new"
@@ -4910,7 +4910,7 @@
   // makes it a labelled field on every component's Specifications tab; the
   // values already captured stay exactly where they are, in custom_specs.
   function openPromoteFieldModal(fieldKey, suggestedLabel, sampleValue, token, onDone) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1003;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(520px,96vw);display:flex;flex-direction:column;gap:0.7rem" });
     const close = () => overlay.remove();
     const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
@@ -5010,7 +5010,7 @@
   };
 
   function openAiFillModal(componentId, token, panel, nodeData, role, existingImages) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1002;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(920px,96vw);max-height:92vh;display:flex;flex-direction:column;gap:0.7rem" });
     const body = el("div", { style: "flex:1;overflow-y:auto;min-height:150px" });
     const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;min-height:1.1rem;display:block" }, "");
@@ -5472,7 +5472,7 @@
       // screen saying so. Revising is now a row action, so the part is the only
       // screen you need.
       function openNewVersionModal(d) {
-        const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:2000;display:flex;align-items:center;justify-content:center" });
+        const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
         const box = el("div", { style: "background:var(--bg,#fff);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
         overlay.append(box);
@@ -5585,7 +5585,7 @@
         ]));
 
       function openAddDocModal() {
-        const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:2000;display:flex;align-items:center;justify-content:center" });
+        const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
         const box = el("div", { style: "background:var(--bg,#fff);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
         overlay.append(box);
@@ -6018,7 +6018,7 @@
               onRefresh();
             } catch (ex) { errSpan.textContent = ex.message; submitBtn.disabled = false; }
           } }, "Create Stocked Variant");
-          const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0007;z-index:2000;display:flex;align-items:center;justify-content:center", onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, [
+          const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0007;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center", onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, [
             el("div", { style: "background:var(--surface,#fff);border-radius:8px;padding:1.25rem;width:min(440px,95vw);display:flex;flex-direction:column;gap:0.6rem", onclick: (ev) => ev.stopPropagation() }, [
               el("h4", { style: "margin:0;font-size:1rem" }, `Materialise "${cfg.name}" as Stocked Variant`),
               el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, Object.entries(cfg.selections || {}).map(([k, v]) => `${k}: ${v}`).join("  ·  ")),
@@ -6119,7 +6119,7 @@
 
         const over = el("div", {
           "data-modal-overlay": "",
-          style: "position:fixed;inset:0;background:#000c;z-index:3000;display:flex;flex-direction:column;align-items:center;justify-content:center",
+          style: "position:fixed;inset:0;background:#000c;z-index:var(--z-viewer);display:flex;flex-direction:column;align-items:center;justify-content:center",
           onclick: close,
         });
         over.append(
@@ -7084,7 +7084,7 @@
 
   // --- Add component dialog --------------------------------------------------
   function openAddComponent(token, onCreated) {
-    const overlay = el("div", { class: "modal-overlay", "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0008;z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { class: "modal-overlay", "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0008;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog = el("div", { class: "modal-dialog", style: "background:var(--bg,#fff);border-radius:8px;padding:1.5rem;width:min(540px,95vw);max-height:90vh;overflow-y:auto" });
 
     // --- Part-number generator ------------------------------------------------
@@ -7311,7 +7311,7 @@
 
   // --- Configure modal: resolve a variant from a product family -------------
   function openConfigureModal(familyNode, token, onRefresh) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:1001;display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
     const dialog  = el("div", { style: "background:var(--bg,#fff);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(600px,95vw);max-height:90vh;overflow-y:auto" });
 
     let attributes = [];

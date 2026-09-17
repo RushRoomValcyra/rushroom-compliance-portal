@@ -1249,3 +1249,51 @@ The flow is the spine and must work with the AI switched off — if extraction r
 - **PROP-043 / PROP-044** — the revision-bump and audit semantics are untouched by this.
 
 **Status:** Raw idea
+
+---
+### Drawing Viewing — One Surface Instead of Stacked Modals, With Inline PDF Preview — 2026-09-17
+
+**One sentence:** Replace the stacked overlays you get when opening a drawing from a part with a single drawing surface that shows the PDF itself, and give every drawing row a preview so the file can be recognised without opening anything.
+
+**Problem it solves:**
+
+Opening a drawing from a part currently stacks overlays. Part panel → drawing detail → (per revision) the file. Each is full-screen; closing one drops you into another you may have forgotten was open. The user's words: *"the modal from the drawings section opens on top or behind. It just gets very confusing."*
+
+Three distinct faults sit underneath that sentence, and only the first was a bug:
+
+1. **A stacking bug, fixed 2026-09-17 (v246).** `.viewer-overlay` was `z-index: 200`; the component detail panel is `900`. Every `openModal` dialog opened from inside a part — drawing detail, adopt, link, new drawing, and the PDF viewer — rendered *behind* the panel that launched it. Nothing errored, so it read as "the button does nothing". Named layers (`--z-panel` 900, `--z-modal` 1000, `--z-viewer` 1100) now make the order a decision.
+
+2. **No preview, although a viewer already exists.** `assets/viewer.js` renders PDF, .docx and .xlsx inline, client-side, already used by the document Library — and drawings do not use it. The per-revision *Open* calls `window.open(url, "_blank")`, which leaves the portal for a browser PDF tab. For a drawing, the file **is** the record; sending it to another tab is backwards.
+
+3. **Two buttons named "Open" meaning different things.** In the part panel's Drawings row, *Open* opens the drawing's **detail overlay**. Inside that overlay, *Open* on a revision opens the **file**. Same word, two destinations, one nested inside the other.
+
+**What to build:**
+
+A drawing is mostly its drawing. The metadata is a caption, not the content, and the current design has that inverted — a full screen of fields with the file one more click away in another tab.
+
+- **Row preview.** Each drawing row in the part panel and the register carries a small rendered thumbnail of the current revision. Recognising the right drawing should not need a click at all.
+- **One drawing surface.** Opening a drawing shows the PDF large, with number, revision, status, owner and supplier reference in a side rail, and the revision list beneath it. Not a dialog over a dialog: a surface that *replaces* what you were looking at, with a breadcrumb back (`← Adjustable Legs · Rekord TECH`).
+- **Revisions switch the page, not the window.** Selecting Rev B swaps the rendered file in place. Comparing revisions is the single most common reason to open a drawing at all.
+- **Rename the row action** to `Preview` or make the drawing number itself the link, so *Open* means one thing.
+
+**MVP scope:**
+
+1. Wire `drawingFileUrl` into `window.PortalViewer.open({...})` so the file renders in the portal instead of a browser tab. Small, and it removes the worst of the confusion on its own.
+2. Replace `openDrawingDetail`'s overlay with the file-first layout (viewer + side rail + revision list).
+3. Breadcrumb back to the originating part when opened from a part panel.
+4. Row thumbnails last — it needs a render-and-cache step and is the only part with real cost.
+
+**Tables involved:** none new. `drawings`, `drawing_revisions`, `drawing_components` already carry everything; `drawingFileUrl` already returns a signed URL that respects supplier visibility.
+
+**Effort estimate:** 10–14 hours
+- Viewer wiring: 1 h · File-first drawing surface: 5–6 h · Breadcrumb/return path: 2 h · Row thumbnails incl. caching: 3–4 h
+
+**Risks:**
+- **Large drawings.** `viewer.js` fetches bytes into the browser and renders client-side. An A0 assembly PDF is tens of megabytes; a thumbnail per row multiplies that. Thumbnails need generating and caching, not naive rendering, which is why they are last.
+- **Scanned drawings** render as images with no text layer — fine to view, useless to search. Not a regression, but worth not implying otherwise.
+- **The breadcrumb must not lie.** Opened from the register there is no part to go back to; the control has to reflect where the user actually came from rather than assume.
+- **Supplier visibility already holds** — `drawingFileUrl` re-checks the parent drawing — but any thumbnail cache must respect the same rule or it becomes a way to see withheld drawings.
+
+**Related PROPs:** PROP-045 (the drawings domain), PROP-046 (the creation flow). This is the *viewing* half, which neither covered. Engineering Drawing Intelligence (2026-09-02) wants to diff two revisions — a file-first surface showing one revision is the natural place to later show two.
+
+**Status:** Raw idea — deferred by the user until the drawings workflow and its embedded logic are settled.

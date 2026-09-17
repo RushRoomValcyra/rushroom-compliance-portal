@@ -75,3 +75,19 @@ test("interactive controls stay within reach of the WCAG target size", () => {
   // A row action below 24px would fail outright.
   assert.ok(h >= 24, `.btn-xs min-height is ${h}px, below the 24px AA target size`);
 });
+
+test("a category can be created from the picker, not only from the manager", () => {
+  const src = readFileSync(join(root, "assets/app.js"), "utf8");
+  const i = src.indexOf("function categorySelect(");
+  assert.ok(i > 0, "categorySelect not found");
+  const block = src.slice(i, src.indexOf("const categoryRequiredFor", i));
+  // The moment a missing category is discovered is while filling this field in.
+  // Sending the user to another screen to come back and start the form again is
+  // how a required field ends up holding the wrong value.
+  assert.ok(/NEW_CATEGORY/.test(block), "the picker offers no way to add a category");
+  assert.ok(/createPartCategory/.test(block), "the picker does not call createPartCategory");
+  // The sentinel must never survive a cancel: it is not a category id, and
+  // saving it would write nonsense into component.category_id.
+  assert.ok(/sel\.value = lastValid/.test(block),
+    "cancelling the new-category prompt can leave the sentinel selected");
+});

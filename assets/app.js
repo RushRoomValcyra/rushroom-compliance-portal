@@ -4369,12 +4369,46 @@
   // Shared picker for both create paths and the detail panel. `typeEl`, when
   // given, drives the required-ness: assemblies and Dynamic BOMs are grouped by
   // their own tabs and are exempt.
+  // Choosing this adds a category without leaving the form. The manager on the
+  // Parts tab can already create them, but the moment you discover a category is
+  // missing is while filling this field in — being sent to another screen to
+  // come back and start again is how a required field becomes a wrong one.
+  const NEW_CATEGORY = "__new_category__";
   function categorySelect(currentId, opts) {
-    const sel = el("select", { class: "up-text" }, [
+    const options = () => [
       el("option", { value: "" }, (opts && opts.placeholder) || "— pick a category —"),
       ...partCategories.map((c) => el("option", { value: c.id }, c.name)),
-    ]);
+      el("option", { value: NEW_CATEGORY }, "＋ New category…"),
+    ];
+    const sel = el("select", { class: "up-text" }, options());
     sel.value = currentId || "";
+    let lastValid = sel.value;
+
+    sel.addEventListener("change", async () => {
+      if (sel.value !== NEW_CATEGORY) { lastValid = sel.value; return; }
+      // Never leave the sentinel selected: if the user cancels, the field must
+      // return to what it was, not sit on a value that is not a category.
+      sel.value = lastValid;
+      const name = (window.prompt("New category name") || "").trim();
+      if (!name) return;
+      const token = API.getToken();
+      sel.disabled = true;
+      try {
+        await API.post(token, "createPartCategory", { name });
+        const { categories } = await API.post(token, "listPartCategories", {});
+        partCategories = categories || [];
+        const created = partCategories.find((c) => (c.name || "").toLowerCase() === name.toLowerCase());
+        sel.replaceChildren(...options());
+        sel.value = created ? created.id : lastValid;
+        lastValid = sel.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      } catch (ex) {
+        alert(`Couldn't add that category: ${ex.message}`);
+        sel.value = lastValid;
+      } finally {
+        sel.disabled = false;
+      }
+    });
     return sel;
   }
   const categoryRequiredFor = (type) => type !== "sub_assembly" && type !== "product_family";

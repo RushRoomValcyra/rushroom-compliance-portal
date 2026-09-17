@@ -624,6 +624,26 @@ async function recordDocumentRevision(
   return { audited, bumped };
 }
 
+/**
+ * PROP-046: the system's own drawing number, never the supplier's.
+ * Same alphabet as part_number — no I, O, 0 or 1 — because these get read off a
+ * printed sheet and typed back in. Retries on the (vanishingly unlikely) clash
+ * rather than trusting 32^8 blindly; the unique index is per organization.
+ */
+async function generateDrawingNumber(tdb: any): Promise<string> {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const d = new Date();
+  const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const rand = new Uint8Array(8);
+    crypto.getRandomValues(rand);
+    const candidate = `RR-DWG-${ym}-${Array.from(rand).map((b) => chars[b % chars.length]).join("")}`;
+    const { data } = await tdb("drawings").select("id").eq("drawing_number", candidate);
+    if (!(data || []).length) return candidate;
+  }
+  return `RR-DWG-${ym}-${Date.now().toString(36).toUpperCase()}`;
+}
+
 // ---- PROP-045: drawings helpers -------------------------------------------
 
 /**
@@ -1731,6 +1751,13 @@ Deno.serve(async (req) => {
   if (action === "suggestFileMetadata") {
     // Moved to portal-ai (2026-09-16). A client still posting it here is stale.
     return json({ error: "Action 'suggestFileMetadata' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
+  }
+
+  if (action === "extractDrawingMeta") {
+    // Never lived here, but answered anyway: if portal-ai is behind the frontend
+    // during a deploy, "served elsewhere" is a far more useful reply than
+    // "unknown action", which reads as a bug in the client.
+    return json({ error: "Action 'extractDrawingMeta' is served by portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
   }
 
   if (action === "deleteStandardVersion") {
@@ -3502,7 +3529,8 @@ Deno.serve(async (req) => {
   if (action === "listDrawings") {
     if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
     let q = tdb("drawings").select(
-      "id, drawing_number, title, status, current_revision_id, projection_angle, sheet_size, scale, is_supplier_visible, created_at");
+      "id, drawing_number, title, status, current_revision_id, projection_angle, sheet_size, scale, is_supplier_visible, created_at, "
+      + "owner_component_id, node_sequence, supplier_drawing_number");
     q = supplierDrawingScope(q, role);
     if (body.status) q = q.eq("status", String(body.status));
     const { data: rows, error } = await q;
@@ -3529,12 +3557,28 @@ Deno.serve(async (req) => {
     const partsCount: Record<string, number> = {};
     links.forEach((l: any) => { partsCount[l.drawing_id] = (partsCount[l.drawing_id] || 0) + 1; });
 
+    // PROP-046: free drawings must be findable, or "free" becomes where drawings
+    // go to be forgotten.
+    if (body.free_only === true) drawings = drawings.filter((d: any) => !d.owner_component_id);
+
+    const ownerIds = [...new Set(drawings.map((d: any) => d.owner_component_id).filter(Boolean))];
+    const ownerMap: Record<string, any> = {};
+    if (ownerIds.length) {
+      const { data: owners } = await tdb("bom_components").select("id, name, part_number").in("id", ownerIds);
+      (owners || []).forEach((c: any) => { ownerMap[c.id] = c; });
+    }
+
     const result = drawings.map((d: any) => ({
       id: d.id, drawing_number: d.drawing_number, title: d.title, status: d.status,
       revision: d.current_revision_id ? (revMap[d.current_revision_id] || "") : "",
       projection_angle: d.projection_angle, sheet_size: d.sheet_size, scale: d.scale,
       is_supplier_visible: d.is_supplier_visible,
       parts_count: partsCount[d.id] || 0,
+      owner_component_id: d.owner_component_id || null,
+      owner_name: d.owner_component_id ? (ownerMap[d.owner_component_id]?.name || "") : "",
+      node_sequence: d.node_sequence || null,
+      supplier_drawing_number: d.supplier_drawing_number || "",
+      is_free: !d.owner_component_id,
     })).sort((a: any, b: any) => a.drawing_number.localeCompare(b.drawing_number, undefined, { numeric: true, sensitivity: "base" }));
 
     return json({ drawings: result, count: result.length });
@@ -3766,6 +3810,131 @@ Deno.serve(async (req) => {
     const { data: signed, error } = await db.storage.from(DOC_BUCKET).createSignedUrl(rev.storage_path, 60 * 60);
     if (error) return json({ error: error.message }, 500);
     return json({ url: signed?.signedUrl });
+  }
+
+
+  // PROP-046: the whole New-drawing modal in one action.
+  //
+  // The node comes first and the file comes with it, so a drawing cannot exist
+  // half-made. The system assigns BOTH the drawing number and the revision
+  // letter — neither is accepted from the request, because an identity the
+  // caller can choose is an identity that collides, drifts, and ends up being
+  // the supplier's rather than ours.
+  if (action === "createDrawingWithRevision") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const storage_path = String(body.storage_path ?? "");
+    const file_name = String(body.file_name ?? "");
+    const title = String(body.title ?? "").trim();
+    if (!storage_path || !file_name) return json({ error: "storage_path and file_name required" }, 400);
+    if (!title) return json({ error: "title required" }, 400);
+
+    // Free drawing = no owner. Explicit, not a default: the modal makes the
+    // user choose, so an unattached drawing is a decision, not an oversight.
+    const ownerId = String(body.owner_component_id ?? "").trim() || null;
+    let owner: any = null;
+    if (ownerId) {
+      const { data: comps } = await tdb("bom_components").select("id, name, part_number").eq("id", ownerId);
+      owner = (comps || [])[0];
+      if (!owner) return json({ error: "That part was not found" }, 404);
+    }
+
+    // Same alphabet as part_number: no I, O, 0 or 1, because these numbers get
+    // read off a printed drawing and typed back in.
+    const drawing_number = await generateDrawingNumber(tdb);
+
+    // "Drawing 2 of this part" — a handle a human can hold. Per owner; free
+    // drawings have none, since there is nothing to be the second of.
+    let node_sequence: number | null = null;
+    if (ownerId) {
+      const { data: siblings } = await tdb("drawings").select("node_sequence").eq("owner_component_id", ownerId);
+      const used = (siblings || []).map((d: any) => d.node_sequence || 0);
+      node_sequence = (used.length ? Math.max(...used) : 0) + 1;
+    }
+
+    const { data: created, error } = await tdb("drawings").insert({
+      drawing_number, title: title.slice(0, 200),
+      owner_component_id: ownerId, node_sequence,
+      supplier_drawing_number: body.supplier_drawing_number ? String(body.supplier_drawing_number).slice(0, 120) : null,
+      projection_angle: body.projection_angle ? String(body.projection_angle).slice(0, 10) : null,
+      sheet_size: body.sheet_size ? String(body.sheet_size).slice(0, 10) : null,
+      scale: body.scale ? String(body.scale).slice(0, 20) : null,
+      is_supplier_visible: body.is_supplier_visible === false ? false : true,
+      created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (error) return json({ error: error.message }, 400);
+    const drawingId = created?.id;
+
+    const { data: rev, error: revErr } = await tdb("drawing_revisions").insert({
+      drawing_id: drawingId, revision: "A",
+      storage_path, file_name: file_name.slice(0, 200),
+      supplier_revision: body.supplier_revision ? String(body.supplier_revision).slice(0, 40) : null,
+      supplier_file_name: file_name.slice(0, 500),
+      notes: body.notes ? String(body.notes).slice(0, 1000) : null,
+      created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (revErr) {
+      // The drawing row without its file is worse than nothing — it is a record
+      // that looks complete and is not. Roll it back rather than leave a stub.
+      await tdb("drawings").delete().eq("id", drawingId);
+      return json({ error: revErr.message }, 400);
+    }
+    await tdb("drawings").update({ current_revision_id: rev?.id }).eq("id", drawingId);
+
+    let audited = 0;
+    if (ownerId) {
+      // The owner is also a link, so every existing query that walks
+      // drawing_components sees it without knowing about ownership.
+      await tdb("drawing_components").insert({
+        drawing_id: drawingId, component_id: ownerId, role: "depicts", linked_by: session.uid || null,
+      });
+      if (await writeBomHistory(tdb, session, ownerId, "drawing_linked",
+        `Drawing created: ${drawing_number} ${title} Rev A`)) audited++;
+    }
+
+    return json({ ok: true, id: drawingId, drawing_number, revision: "A", node_sequence, audited });
+  }
+
+  // A development drawing becoming a controlled one. An event, not a quiet edit.
+  if (action === "adoptDrawing") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "");
+    const component_id = String(body.component_id ?? "");
+    if (!drawing_id || !component_id) return json({ error: "drawing_id and component_id required" }, 400);
+
+    const { data: rows } = await tdb("drawings")
+      .select("id, drawing_number, title, owner_component_id").eq("id", drawing_id);
+    const drawing = (rows || [])[0];
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+    // Re-homing a drawing that already belongs to a part rewrites what a
+    // released revision was built against. That is a different and riskier
+    // operation and must not hide inside adoption.
+    if (drawing.owner_component_id) {
+      return json({ error: "That drawing already belongs to a part. Re-homing an owned drawing is not supported here." }, 400);
+    }
+
+    const { data: comps } = await tdb("bom_components").select("id, name").eq("id", component_id);
+    if (!(comps || []).length) return json({ error: "That part was not found" }, 404);
+
+    const { data: siblings } = await tdb("drawings").select("node_sequence").eq("owner_component_id", component_id);
+    const used = (siblings || []).map((d: any) => d.node_sequence || 0);
+    const node_sequence = (used.length ? Math.max(...used) : 0) + 1;
+
+    const { error } = await tdb("drawings")
+      .update({ owner_component_id: component_id, node_sequence }).eq("id", drawing_id);
+    if (error) return json({ error: error.message }, 400);
+
+    // Adopting also links, unless the link is somehow already there.
+    const { data: existing } = await tdb("drawing_components")
+      .select("id").eq("drawing_id", drawing_id).eq("component_id", component_id);
+    if (!(existing || []).length) {
+      await tdb("drawing_components").insert({
+        drawing_id, component_id, role: "depicts", linked_by: session.uid || null,
+      });
+    }
+    const audited = await writeBomHistory(tdb, session, component_id, "drawing_adopted",
+      `Drawing adopted: ${drawing.drawing_number} ${drawing.title} (was a free drawing)`) ? 1 : 0;
+
+    return json({ ok: true, node_sequence, audited });
   }
 
   // PROP-019: COGS/cost action blocks removed — financial analysis belongs in ERP, not compliance portal.

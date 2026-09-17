@@ -11,6 +11,11 @@ export const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 export const TOKEN_SECRET = Deno.env.get("TOKEN_SECRET") ?? "";
 export const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 export const SCAN_MODEL = "claude-opus-4-8";
+// PROP-046: reading a title block is the metadata task CLAUDE.md says must not
+// use opus. Kept as its own constant so cheap calls can be moved over one at a
+// time — today only extractDrawingMeta uses it; the older metadata actions
+// still run on SCAN_MODEL and are recorded in ROADMAP as worth migrating.
+export const META_MODEL = "claude-haiku-4-5-20251001";
 
 export const PW_HASH: Record<string, string | undefined> = {
   rushroom: Deno.env.get("RUSHROOM_PW_HASH")?.toLowerCase(),

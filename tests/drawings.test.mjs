@@ -130,3 +130,82 @@ test("the drawings tab exists on both the portal and the supplier page", () => {
     assert.ok(src.includes('id="drawings-panel"'), `${page} has no Drawings panel`);
   }
 });
+
+// --- PROP-046: node-first creation, system-owned identity -------------------
+
+test("createDrawingWithRevision and adoptDrawing reject unauthenticated calls", async () => {
+  for (const action of ["createDrawingWithRevision", "adoptDrawing"]) {
+    const r = await call(action);
+    assert.notEqual(r.status, 200, `${action} answered 200 without a session`);
+  }
+});
+
+test("createDrawingWithRevision requires a file and a title, but not an owner", async (t) => {
+  if (!CREDS.rushroomPassword) return t.skip("TEST_RUSHROOM_PASSWORD not set");
+  const token = await loginShared("rushroom", CREDS.rushroomPassword);
+  const noFile = await call("createDrawingWithRevision", { token, title: "x" });
+  if (notDeployed(noFile)) return t.skip("PROP-046 not deployed yet");
+  assert.equal(noFile.status, 400, "a drawing without a file must be refused");
+  const noTitle = await call("createDrawingWithRevision", { token, storage_path: "p", file_name: "f.pdf" });
+  assert.equal(noTitle.status, 400, "a drawing without a title must be refused");
+});
+
+test("the caller cannot choose the drawing number or the revision", () => {
+  const src = read("supabase/functions/portal-api/index.ts");
+  const start = src.indexOf('action === "createDrawingWithRevision"');
+  assert.ok(start > 0, "createDrawingWithRevision not found");
+  const block = src.slice(start, src.indexOf('action === "adoptDrawing"'));
+  // An identity the caller can supply is one that collides and drifts. The
+  // number comes from the generator and the first revision is always "A".
+  assert.ok(!/body\.drawing_number/.test(block), "drawing_number is read from the request body");
+  assert.ok(!/body\.revision/.test(block), "revision is read from the request body");
+  assert.ok(/generateDrawingNumber\(/.test(block), "the number is not generated server-side");
+  assert.ok(/revision: "A"/.test(block), 'the first revision is not pinned to "A"');
+});
+
+test("the AI extractor never returns our identity fields", () => {
+  const src = read("supabase/functions/portal-ai/index.ts");
+  const start = src.indexOf('action === "extractDrawingMeta"');
+  assert.ok(start > 0, "extractDrawingMeta not found");
+  const block = src.slice(start, start + 6000);
+  const keys = block.match(/const KEYS = \[([\s\S]*?)\];/);
+  assert.ok(keys, "the extractor's key list was not found");
+  // It may read the SUPPLIER's number and revision; it must never produce ours.
+  assert.ok(!/"drawing_number"/.test(keys[1]), "the extractor can return drawing_number — identity must be system-assigned");
+  assert.ok(!/"revision"(?!_)/.test(keys[1].replace(/"supplier_revision"/g, "")), "the extractor can return revision");
+  assert.ok(/"supplier_drawing_number"/.test(keys[1]) && /"supplier_revision"/.test(keys[1]),
+    "the extractor should capture the supplier's identifiers");
+});
+
+test("drawing metadata extraction runs on haiku, not opus", () => {
+  const env = read("supabase/functions/_shared/env.ts");
+  assert.ok(/META_MODEL = "claude-haiku/.test(env), "META_MODEL is not a haiku model");
+  const src = read("supabase/functions/portal-ai/index.ts");
+  const start = src.indexOf('action === "extractDrawingMeta"');
+  const block = src.slice(start, start + 6000);
+  assert.ok(/model: META_MODEL/.test(block), "extractDrawingMeta does not use META_MODEL");
+  assert.ok(!/model: SCAN_MODEL/.test(block), "extractDrawingMeta still uses the opus scan model");
+});
+
+test("adoption refuses a drawing that already belongs to a part", () => {
+  const src = read("supabase/functions/portal-api/index.ts");
+  const start = src.indexOf('action === "adoptDrawing"');
+  const block = src.slice(start, start + 4000);
+  // Re-homing rewrites what a released revision was built against; it must not
+  // hide inside adoption.
+  assert.ok(/if \(drawing\.owner_component_id\)/.test(block), "adoptDrawing does not check for an existing owner");
+  assert.ok(/already belongs to a part/i.test(block), "adoptDrawing does not refuse an owned drawing");
+});
+
+test("the creation modal asks for the part before the file, and never for a number", () => {
+  const app = read("assets/app.js");
+  const start = app.indexOf("function newDrawingModal(");
+  assert.ok(start > 0, "newDrawingModal not found");
+  const block = app.slice(start, app.indexOf("async function openDrawingDetail("));
+  assert.ok(/renderStep1/.test(block) && /renderStep2/.test(block) && /renderStep3/.test(block),
+    "the three-step flow is missing");
+  assert.ok(/free/i.test(block), "there is no free-drawing option");
+  // The old modal's number field must be gone, or two numbering schemes coexist.
+  assert.ok(!/Drawing number/.test(block), "the modal still asks for a drawing number");
+  assert.ok(!/RR-DWG-0001/.test(block), "the old drawing-number placeholder is still present");
+});

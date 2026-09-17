@@ -40,7 +40,7 @@
       "suggestStandardMetadata", "suggestComponentMetadata", "suggestFileMetadata",
       "suggestDocumentVersion", "runDeviationScan", "extractStandardClauses",
       "generateInterpretations", "suggestRequirementLinks", "generateComplianceNarrative",
-      "suggestClassifications", "extractComponentSpecs",
+      "suggestClassifications", "extractComponentSpecs", "extractDrawingMeta",
     ]),
     "portal-cellar": new Set([
       "addDirective", "syncDirectiveRelations", "inferDirectiveRelations",

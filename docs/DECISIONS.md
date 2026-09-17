@@ -927,3 +927,63 @@ badges, drawing removed from CATS), index.html, supplier.html,
 tests/tenant-tables.test.mjs, tests/drawings.test.mjs,
 docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, reset.html, verify.html,
 CLAUDE.md (v235 → v236)
+
+---
+**Date:** 2026-09-17
+**Feature:** PROP-046 — Node-first drawings, system-owned identity
+
+**Decision:** The drawing creation flow starts from the BOM node (or an explicit
+"free drawing"), takes the file in the same modal, and has the system assign both
+the drawing number and the revision letter. The supplier's number, revision and
+file name are recorded alongside, and nothing keys off them.
+
+**Why:** PROP-045's modal asked the user to type a drawing number before it would
+accept a file. Two consequences, both structural rather than cosmetic. Our
+record's identity became whatever the supplier called the drawing, so changing
+supplier meant carrying a dead supplier's numbering forever or renumbering and
+breaking the trail. And the BOM node — the thing the entire compliance trail
+hangs from — was reached last, after the drawing already existed.
+
+Inverting it makes the first question the one that matters, and makes the
+identity fields disappear from the form entirely. This is not a new pattern:
+`bom_components` has always generated `part_number` and recorded `oem_number`
+as the supplier's. Drawings were the outlier. Applying the same split one level
+down means the team already understands it.
+
+**Why adoption refuses an owned drawing:** re-homing a controlled drawing from
+one part to another rewrites what a released revision was built against. That is
+a real operation with real consequences and it deserves its own deliberate path;
+letting it happen quietly inside "adopt" would make a destructive change look
+like a tidy-up.
+
+**Why AI cannot be load-bearing here:** `extractDrawingMeta`'s key enum has no
+entry for our drawing number or our revision, so it is structurally incapable of
+setting them — a misread is a typo, never a broken trail. The flow also
+completes with zero extracted fields, which is the property that matters most:
+drawings arrive as scans often enough that an AI-dependent modal would block
+work outright. Extraction makes saving faster; it is never the reason saving is
+possible.
+
+**Why haiku:** reading a title block is exactly the metadata task CLAUDE.md says
+opus must not be used for. Introducing `META_MODEL` also surfaced that *every*
+AI call in the codebase has been running on opus, including several the same
+rule covers. Those are recorded in ROADMAP rather than retrofitted here, because
+changing five call sites while building a sixth is how two changes become one
+unreviewable diff.
+
+**On the existing row:** one drawing was created while testing PROP-045, with a
+hand-typed number. The migration preserves that number as
+`supplier_drawing_number` and makes it a free drawing rather than deleting it.
+Discarding a user's row to tidy a migration is not a trade this system should
+make, even for obvious test data.
+
+**Files changed:** supabase/migrations/0033_drawing_ownership.sql,
+supabase/functions/_shared/env.ts (META_MODEL),
+supabase/functions/portal-ai/index.ts (extractDrawingMeta),
+supabase/functions/portal-api/index.ts (createDrawingWithRevision, adoptDrawing,
+generateDrawingNumber, listDrawings, moved-action guard),
+assets/api.js (HEAVY_ROUTES), assets/app.js (three-step newDrawingModal,
+adoptDrawingModal, register free filter + owner/supplier columns, detail
+identity block, part-panel entry point, drawing_adopted badge),
+tests/drawings.test.mjs, docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md,
+index.html, supplier.html, reset.html, verify.html, CLAUDE.md (v236 → v237)

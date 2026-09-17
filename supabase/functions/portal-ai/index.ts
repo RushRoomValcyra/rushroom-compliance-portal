@@ -17,7 +17,7 @@ const JSZip: any = (JSZipNS as any).default ?? JSZipNS;
 import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 
 import { serve, json, type Ctx } from "../_shared/handler.ts";
-import { db, enc, ANTHROPIC_API_KEY, SCAN_MODEL, BUCKET, DOC_BUCKET, STD_BUCKET } from "../_shared/env.ts";
+import { db, enc, ANTHROPIC_API_KEY, SCAN_MODEL, META_MODEL, BUCKET, DOC_BUCKET, STD_BUCKET } from "../_shared/env.ts";
 import { eq } from "../_shared/auth.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 
@@ -1138,6 +1138,134 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
       matched_part: parsed.matched_part || "",
       confident_part_match: !!parsed.confident_part_match,
       summary: parsed.summary || "",
+    });
+  }
+
+
+  // PROP-046: read a drawing's title block.
+  //
+  // Deliberately narrow. It fills descriptive fields and the SUPPLIER's
+  // identifiers; it never returns our drawing number or our revision letter,
+  // because those are assigned by the system. That boundary is what makes a
+  // misread here a typo rather than a broken trail.
+  //
+  // Runs on META_MODEL (haiku), not SCAN_MODEL (opus): reading a title block is
+  // exactly the metadata task CLAUDE.md says opus must not be used for.
+  if (action === "extractDrawingMeta") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    if (!ANTHROPIC_API_KEY) return json({ error: "AI is not configured — set ANTHROPIC_API_KEY in the function secrets." }, 400);
+    const path = String(body.storage_path ?? "").trim();
+    const fname = String(body.file_name ?? "drawing").trim();
+    if (!path) return json({ error: "storage_path required" }, 400);
+
+    const KEYS = [
+      "title", "supplier_drawing_number", "supplier_revision", "scale", "sheet_size",
+      "projection_angle", "material_callout", "general_tolerance", "drawn_by", "checked_by", "drawing_date",
+    ];
+
+    const system = `You are reading an engineering drawing and extracting what its title block and notes state.
+
+Rules that matter more than coverage:
+- Extract ONLY what the drawing actually shows. Never infer, never complete from general knowledge of similar parts. An omitted field is correct; a guessed one is a defect.
+- Put the value exactly as printed in \`as_printed\`, and a normalised form in \`value\`.
+- \`supplier_revision\` is whatever the drawing itself calls its revision or issue — "B", "02", "Rev 3", "Issue C". Report it verbatim. Do NOT translate it into a letter sequence.
+- \`supplier_drawing_number\` is the number printed ON the drawing, the supplier's or designer's own. There is no other drawing number to find.
+- \`projection_angle\` is "first" or "third" only, and only if the drawing shows the projection symbol or states it in words.
+- \`sheet_size\` is a paper size such as A0, A1, A2, A3 or A4.
+- \`general_tolerance\` is the tolerance block statement (for example "ISO 2768-m" or "±0.2 unless stated"), not an individual dimension's tolerance.
+- \`title\` is the part or assembly name as the drawing names it.
+- Set confidence honestly: "high" only when the text is unambiguous and clearly legible. A scanned or rotated drawing you are reading with effort is "low".
+- If the file is not an engineering drawing at all, return an empty fields array and say so in \`note\`.
+
+You must never invent an internal drawing number or revision letter for the recipient's own system. Those are assigned elsewhere and are not your concern.`;
+
+    const SCHEMA = {
+      type: "object",
+      properties: {
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string", enum: KEYS },
+              value: { type: "string" },
+              as_printed: { type: "string" },
+              confidence: { type: "string", enum: ["high", "medium", "low"] },
+              evidence: { type: "string", description: "The verbatim text this was read from" },
+            },
+            required: ["key", "value", "as_printed", "confidence"],
+            additionalProperties: false,
+          },
+        },
+        is_engineering_drawing: { type: "boolean" },
+        note: { type: "string" },
+      },
+      required: ["fields", "is_engineering_drawing"],
+      additionalProperties: false,
+    };
+
+    // Read the bytes first, then drop an ephemeral source immediately — the file
+    // is already in the request payload, and a scan that was only ever evidence
+    // must not linger in storage. Same rule as extractComponentSpecs.
+    let sourceBlock: any;
+    try {
+      sourceBlock = await fileBlock(DOC_BUCKET, path, fname);
+    } catch (e: any) {
+      return json({ error: `Couldn't read the uploaded file: ${e?.message || e}` }, 400);
+    }
+    if (body.ephemeral) {
+      try { await db.storage.from(DOC_BUCKET).remove([path]); } catch { /* best effort */ }
+    }
+
+    let apiJson: any;
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: META_MODEL,
+          max_tokens: 2000,
+          output_config: { format: { type: "json_schema", schema: SCHEMA } },
+          system,
+          messages: [{ role: "user", content: [
+            { type: "text", text: "Extract what this drawing's title block states." },
+            sourceBlock,
+          ] }],
+        }),
+      });
+      apiJson = await res.json();
+      if (!res.ok) return json({ error: apiJson?.error?.message || "AI request failed" }, 400);
+    } catch (e: any) {
+      return json({ error: `AI request failed: ${e?.message || e}` }, 400);
+    }
+    await meterAi(apiJson);
+
+    let parsed: any;
+    try {
+      const txt = (apiJson.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+      parsed = JSON.parse(txt);
+    } catch {
+      // Extraction is advisory, so an unreadable reply is not an error the user
+      // must resolve — it is simply no suggestions, and the form still saves.
+      return json({ fields: [], is_engineering_drawing: true, note: "The AI reply could not be read; fill the fields in by hand." });
+    }
+
+    const fields = (parsed.fields || [])
+      .filter((f: any) => KEYS.includes(String(f.key || "")))
+      .map((f: any) => ({
+        key: String(f.key),
+        value: String(f.value ?? "").trim(),
+        as_printed: String(f.as_printed ?? "").trim(),
+        confidence: ["high", "medium", "low"].includes(f.confidence) ? f.confidence : "low",
+        evidence: String(f.evidence ?? "").slice(0, 300),
+      }))
+      .filter((f: any) => f.value);
+
+    return json({
+      fields,
+      is_engineering_drawing: parsed.is_engineering_drawing !== false,
+      note: String(parsed.note ?? ""),
+      usage: usageOf(apiJson),
     });
   }
 

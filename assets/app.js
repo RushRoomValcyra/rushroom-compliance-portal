@@ -5662,7 +5662,12 @@
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem;flex-wrap:wrap" }, [
           el("h4", { style: "margin:0" }, "Drawings"),
           role === "rushroom"
-            ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: openLinkDrawingModal }, "+ Link drawing")
+            ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px",
+                onclick: () => newDrawingModal(role, () => openComponentDetail(componentId, token, panel, nodeData, role),
+                  { id: componentId, name: (nodeData && nodeData.name) || "this part" }) }, "+ New drawing")
+            : null,
+          role === "rushroom"
+            ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: openLinkDrawingModal }, "+ Link an existing drawing")
             : null,
         ].filter(Boolean)),
         drawingRows.length
@@ -5749,9 +5754,10 @@
           drawing_linked:   ["#0ea5e920", "#0ea5e9"],
           drawing_revised:  ["#0ea5e920", "#0ea5e9"],
           drawing_released: ["#15803d20", "#15803d"],
+          drawing_adopted:  ["#a855f720", "#a855f7"],
         };
         const [bg, fg] = BADGE_COLORS[entry.change_type] || ["#8b93a120", "#8b93a1"];
-        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document", document_revised: "doc revision", drawing_linked: "drawing", drawing_revised: "drawing rev", drawing_released: "drawing released" }[entry.change_type] || entry.change_type;
+        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document", document_revised: "doc revision", drawing_linked: "drawing", drawing_revised: "drawing rev", drawing_released: "drawing released", drawing_adopted: "drawing adopted" }[entry.change_type] || entry.change_type;
 
         let changeCell;
         if (diffs.length) {
@@ -8512,7 +8518,7 @@
   // ==========================================================================
   async function renderDrawings(role, mount) {
     const token = API.getToken(role);
-    const state = { q: "", status: "", sort: "drawing_number", dir: 1 };
+    const state = { q: "", status: "", freeOnly: false, sort: "drawing_number", dir: 1 };
 
     async function load() {
       mount.replaceChildren(el("div", { class: "loading" }, "Loading drawings…"));
@@ -8535,10 +8541,18 @@
       const chips = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" },
         [{ id: "", label: "All" }, ...DRAWING_STATUSES.map((s) => ({ id: s, label: s }))].map((s) =>
           el("button", {
-            class: `btn btn-sm${state.status === s.id ? " btn-primary" : ""}`, type: "button",
+            class: `btn btn-sm${state.status === s.id && !state.freeOnly ? " btn-primary" : ""}`, type: "button",
             style: "font-size:0.75rem;padding:2px 10px",
-            onclick: () => { state.status = s.id; repaint(); },
+            onclick: () => { state.status = s.id; state.freeOnly = false; repaint(); },
           }, s.label)));
+      // PROP-046: free drawings must be findable, or "free" is just where
+      // drawings go to be forgotten.
+      const freeCount = all.filter((d) => d.is_free).length;
+      const freeChip = el("button", {
+        class: `btn btn-sm${state.freeOnly ? " btn-primary" : ""}`, type: "button",
+        style: "font-size:0.75rem;padding:2px 10px",
+        onclick: () => { state.freeOnly = !state.freeOnly; if (state.freeOnly) state.status = ""; repaint(); },
+      }, freeCount ? `Free drawings (${freeCount})` : "Free drawings");
 
       const tbody = el("tbody", {});
       const head = (label, key) => el("th", {
@@ -8549,6 +8563,7 @@
       function repaint() {
         const q = state.q.trim().toLowerCase();
         const rows = all
+          .filter((d) => !state.freeOnly || d.is_free)
           .filter((d) => !state.status || d.status === state.status)
           .filter((d) => !q || `${d.drawing_number} ${d.title}`.toLowerCase().includes(q))
           .sort((a, b) => {
@@ -8561,13 +8576,18 @@
             el("td", {}, d.title),
             el("td", {}, d.revision || el("span", { class: "muted" }, "no revision yet")),
             el("td", {}, drawingStatusChip(d.status)),
+            el("td", {}, d.is_free
+              ? el("span", { class: "muted", title: "Not attached to a part — adopt it when it is ready" }, "free drawing")
+              : el("span", { title: d.node_sequence ? `Drawing ${d.node_sequence} of this part` : "" },
+                  `${d.owner_name || "—"}${d.node_sequence ? ` · #${d.node_sequence}` : ""}`)),
+            el("td", {}, d.supplier_drawing_number || el("span", { class: "muted" }, "—")),
             el("td", {}, d.parts_count ? `${d.parts_count} part${d.parts_count === 1 ? "" : "s"}` : el("span", { class: "muted" }, "unlinked")),
             role === "rushroom"
               ? el("td", {}, d.is_supplier_visible
                   ? el("span", { title: "Manufacturing partners can see this drawing" }, "Yes")
                   : el("span", { class: "muted", title: "Withheld from suppliers" }, "No"))
               : null,
-          ])) : [el("tr", {}, el("td", { colspan: role === "rushroom" ? 6 : 5, class: "muted", style: "padding:1rem" },
+          ])) : [el("tr", {}, el("td", { colspan: role === "rushroom" ? 8 : 7, class: "muted", style: "padding:1rem" },
             all.length ? "No drawings match those filters." : "No drawings yet."))]));
       }
 
@@ -8584,11 +8604,11 @@
           role === "rushroom" ? actionBtn("New drawing", "plus", { primary: true, onClick: () => newDrawingModal(role, load) }) : null,
           actionBtn("Refresh", "refresh", { onClick: load }),
         ]),
-        el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips]),
+        el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips, freeChip]),
         el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.88rem" }, [
           el("thead", {}, el("tr", {}, [
             head("Number", "drawing_number"), head("Title", "title"), head("Revision", "revision"),
-            head("Status", "status"), head("Used on", "parts_count"),
+            head("Status", "status"), head("Belongs to", "owner_name"), head("Supplier no.", "supplier_drawing_number"), head("Used on", "parts_count"),
             role === "rushroom" ? head("Supplier") : null,
           ].filter(Boolean))),
           tbody,
@@ -8601,45 +8621,251 @@
     await load();
   }
 
-  function newDrawingModal(role, onDone) {
+  // PROP-046: one modal, three steps — node, file, review.
+  //
+  // The order is the point. The first question is what the drawing is OF,
+  // because that is what the compliance trail hangs from; the file comes with
+  // it, so a drawing cannot exist half-made; and the identity fields are absent
+  // from the form entirely, because the system assigns them. AI fills what it
+  // can read, and the flow must complete without it — a bad scan is a slower
+  // save, never a blocked one.
+  function newDrawingModal(role, onDone, presetComponent = null) {
     const token = API.getToken(role);
-    const num = el("input", { class: "up-text", type: "text", placeholder: "RR-DWG-0001" });
-    const title = el("input", { class: "up-text", type: "text", placeholder: "45 mm steel pin" });
-    const proj = el("select", { class: "up-text" }, [
-      el("option", { value: "" }, "—"), el("option", { value: "first" }, "First angle"), el("option", { value: "third" }, "Third angle")]);
-    const sheet = el("select", { class: "up-text" }, ["", "A0", "A1", "A2", "A3", "A4"].map((s) => el("option", { value: s }, s || "—")));
-    const scale = el("input", { class: "up-text", type: "text", placeholder: "1:1" });
-    const supVis = el("input", { type: "checkbox", checked: "checked" });
-    const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
-    const row = (label, input) => el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, label), input]);
+    const box = el("div", {});
+    const close = openModal("New drawing", box);
 
-    const save = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
-      if (!num.value.trim()) { status.textContent = "Drawing number is required."; return; }
-      if (!title.value.trim()) { status.textContent = "Title is required."; return; }
-      ev.target.disabled = true; status.textContent = "Saving…";
-      try {
-        await API.post(token, "createDrawing", {
-          drawing_number: num.value.trim(), title: title.value.trim(),
-          projection_angle: proj.value || null, sheet_size: sheet.value || null,
-          scale: scale.value.trim() || null, is_supplier_visible: supVis.checked,
-        });
-        close(); await onDone();
-      } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
-    } }, "Create drawing");
+    const state = {
+      step: presetComponent ? 2 : 1,
+      ownerId: presetComponent ? presetComponent.id : null,
+      ownerName: presetComponent ? presetComponent.name : "",
+      free: false,
+      file: null, path: null,
+      extracted: {},        // key -> {value, as_printed, confidence, evidence}
+      aiNote: "",
+      aiRan: false,
+    };
 
-    const close = openModal("New drawing", el("div", {}, [
-      row("Drawing number", num), row("Title", title),
-      el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap" }, [row("Projection", proj), row("Sheet size", sheet), row("Scale", scale)]),
-      el("div", { style: "display:flex;align-items:center;gap:0.4rem;margin-bottom:0.8rem" }, [
-        supVis, el("span", { style: "font-size:0.85rem" }, "Visible to manufacturing partners"),
-      ]),
-      el("div", { class: "muted", style: "font-size:0.78rem;margin-bottom:0.8rem" },
-        "The file comes next: create the drawing, then add its first revision. It will be Rev A."),
-      status,
-      el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
-        el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"), save,
-      ]),
-    ]));
+    const stepHeader = () => {
+      const label = (n, text) => el("span", {
+        style: `font-size:0.78rem;padding:2px 9px;border-radius:999px;${state.step === n
+          ? "background:var(--accent,#2fa564);color:#fff;font-weight:600"
+          : state.step > n ? "color:var(--accent,#2fa564);border:1px solid var(--accent,#2fa564)44" : "color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)"}`,
+      }, `${n}. ${text}`);
+      return el("div", { style: "display:flex;gap:6px;margin-bottom:0.9rem;flex-wrap:wrap" },
+        [label(1, "Belongs to"), label(2, "File"), label(3, "Review")]);
+    };
+
+    const identityNote = () => el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.7rem" },
+      "The drawing number and revision letter are assigned by the system — you will not be asked for them. Whatever the supplier calls this drawing is recorded separately, so changing supplier never changes our reference.");
+
+    // ---- Step 1: what is this a drawing of? --------------------------------
+    function renderStep1() {
+      state.step = 1;
+      box.replaceChildren(stepHeader(), el("div", { class: "loading" }, "Loading parts…"));
+      API.post(token, "listComponents", {}).then(({ components }) => {
+        const parts = (components || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        const search = el("input", { class: "up-text", type: "search", placeholder: "Search parts…", style: "width:100%;margin-bottom:0.4rem" });
+        const list = el("div", { style: "max-height:260px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px" });
+        const paint = () => {
+          const q = search.value.trim().toLowerCase();
+          const shown = parts.filter((p) => !q || `${p.name} ${p.part_number || ""}`.toLowerCase().includes(q));
+          list.replaceChildren(...(shown.length ? shown.map((p) => el("button", {
+            class: "btn", type: "button",
+            style: `display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--border,#e2e8f0);border-radius:0;padding:0.45rem 0.6rem;${state.ownerId === p.id ? "background:var(--accent,#2fa564)18;font-weight:600" : ""}`,
+            onclick: () => { state.ownerId = p.id; state.ownerName = p.name; state.free = false; paint(); gate(); },
+          }, [
+            el("span", {}, p.name),
+            el("span", { class: "muted", style: "font-size:0.78rem;margin-left:0.5rem" }, p.part_number || ""),
+          ])) : [el("div", { class: "muted", style: "padding:0.6rem;font-size:0.85rem" }, "No parts match.")]));
+        };
+        search.oninput = paint;
+
+        const freeBox = el("input", { type: "checkbox", onchange: (e) => {
+          state.free = e.target.checked;
+          if (state.free) { state.ownerId = null; state.ownerName = ""; }
+          paint(); gate();
+        } });
+        const next = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true,
+          onclick: () => renderStep2() }, "Next — add the file");
+        function gate() { next.disabled = !(state.ownerId || state.free); }
+
+        box.replaceChildren(
+          stepHeader(),
+          el("div", { class: "form-label" }, "What is this a drawing of?"),
+          search, list,
+          el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin-top:0.7rem;font-size:0.85rem" }, [
+            freeBox, el("span", {}, "Free drawing — development work, not attached to a part yet"),
+          ]),
+          el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.2rem" },
+            "A free drawing can be adopted onto a part later. Until then it is listed under Free drawings so it is not forgotten."),
+          identityNote(),
+          el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.9rem" }, [
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"), next,
+          ]),
+        );
+        paint(); gate();
+      }).catch((ex) => box.replaceChildren(stepHeader(), el("div", { class: "error" }, `Couldn't load parts: ${ex.message}`)));
+    }
+
+    // ---- Step 2: the file, read as soon as it lands ------------------------
+    function renderStep2() {
+      state.step = 2;
+      const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+      const barFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.2s" });
+      const progress = el("div", { style: "display:none;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden;margin:0.5rem 0" }, barFill);
+      const fileLabel = el("span", { class: "muted", style: "font-size:0.8rem;display:block;margin-top:2px" }, "No file chosen");
+      const fileInp = el("input", { type: "file", accept: ".pdf,.png,.jpg,.jpeg,.tif,.tiff", style: "margin-top:4px" });
+      const go = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true }, "Upload and read");
+      fileInp.onchange = () => {
+        state.file = fileInp.files?.[0] || null;
+        fileLabel.textContent = state.file ? state.file.name : "No file chosen";
+        go.disabled = !state.file;
+      };
+
+      go.onclick = async () => {
+        go.disabled = true; status.textContent = "Uploading…"; progress.style.display = "";
+        try {
+          const { signedUrl, path } = await API.post(token, "docUploadUrl", { fileName: state.file.name });
+          await xhrPut(signedUrl, state.file, (p) => { barFill.style.width = `${p * 0.6}%`; });
+          state.path = path;
+          barFill.style.width = "60%";
+          status.style.color = "var(--muted,#8b93a1)";
+          status.textContent = "Reading the drawing…";
+          // Not ephemeral: this file IS the revision, unlike the spec-extraction
+          // flow where the upload is only evidence and is deleted after reading.
+          let res = { fields: [] };
+          try {
+            res = await API.post(token, "extractDrawingMeta", { storage_path: path, file_name: state.file.name });
+          } catch (ex) {
+            state.aiNote = `The drawing could not be read automatically (${ex.message}). Fill the fields in by hand — nothing is lost.`;
+          }
+          barFill.style.width = "100%";
+          state.aiRan = true;
+          (res.fields || []).forEach((f) => { state.extracted[f.key] = f; });
+          if (!state.aiNote) {
+            if (res.is_engineering_drawing === false) state.aiNote = res.note || "This does not look like an engineering drawing. Check the file, or continue and fill the fields in by hand.";
+            else if (!(res.fields || []).length) state.aiNote = "Nothing could be read from this file — often a scan or a flattened image. Fill the fields in by hand.";
+          }
+          renderStep3();
+        } catch (ex) {
+          status.style.color = "#e05454";
+          status.textContent = ex.message;
+          go.disabled = false; barFill.style.width = "0%"; progress.style.display = "none";
+        }
+      };
+
+      box.replaceChildren(
+        stepHeader(),
+        el("div", { class: "notice", style: "font-size:0.82rem;margin-bottom:0.8rem" },
+          state.free ? "Free drawing — not attached to a part." : `Drawing for ${state.ownerName}`),
+        el("div", { class: "form-label" }, "Drawing file"),
+        fileInp, fileLabel,
+        el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.4rem" },
+          "PDF or image. It is uploaded and read in one step — what can be found in the title block is filled in for you to check."),
+        progress, status,
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.9rem" }, [
+          presetComponent
+            ? el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel")
+            : el("button", { class: "btn btn-sm", type: "button", onclick: () => renderStep1() }, "← Back"),
+          go,
+        ]),
+      );
+    }
+
+    // ---- Step 3: check what it read, then save -----------------------------
+    function renderStep3() {
+      state.step = 3;
+      const val = (k) => (state.extracted[k]?.value || "");
+      const conf = (k) => state.extracted[k]?.confidence;
+      const confBadge = (k) => {
+        const c = conf(k);
+        if (!c) return null;
+        const tone = { high: "#15803d", medium: "#b45309", low: "#b91c1c" }[c];
+        const ev = state.extracted[k]?.as_printed || state.extracted[k]?.evidence || "";
+        return el("span", {
+          title: ev ? `Read from the drawing as: ${ev}` : "",
+          style: `font-size:0.68rem;font-weight:600;color:${tone};border:1px solid ${tone}44;background:${tone}12;padding:0px 6px;border-radius:999px;margin-left:0.4rem`,
+        }, c);
+      };
+      const field = (k, label, placeholder) => {
+        const inp = el("input", { class: "up-text", type: "text", value: val(k), placeholder: placeholder || "" });
+        inputs[k] = inp;
+        return el("div", { style: "margin-bottom:0.55rem" }, [
+          el("div", { class: "form-label" }, [el("span", {}, label), confBadge(k)].filter(Boolean)),
+          inp,
+        ]);
+      };
+      const inputs = {};
+      const projSel = el("select", { class: "up-text" }, [
+        el("option", { value: "" }, "—"), el("option", { value: "first" }, "First angle"), el("option", { value: "third" }, "Third angle")]);
+      projSel.value = ["first", "third"].includes(val("projection_angle")) ? val("projection_angle") : "";
+      const sheetSel = el("select", { class: "up-text" }, ["", "A0", "A1", "A2", "A3", "A4"].map((s) => el("option", { value: s }, s || "—")));
+      sheetSel.value = ["A0", "A1", "A2", "A3", "A4"].includes(val("sheet_size").toUpperCase()) ? val("sheet_size").toUpperCase() : "";
+      const supVis = el("input", { type: "checkbox", checked: "checked" });
+      const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+
+      const save = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+        const title = inputs.title.value.trim();
+        if (!title) { status.textContent = "Title is required — it is how the drawing is recognised in the register."; return; }
+        ev.target.disabled = true; status.textContent = "Saving…";
+        try {
+          const res = await API.post(token, "createDrawingWithRevision", {
+            owner_component_id: state.free ? null : state.ownerId,
+            storage_path: state.path, file_name: state.file.name,
+            title,
+            supplier_drawing_number: inputs.supplier_drawing_number.value.trim() || null,
+            supplier_revision: inputs.supplier_revision.value.trim() || null,
+            projection_angle: projSel.value || null,
+            sheet_size: sheetSel.value || null,
+            scale: inputs.scale.value.trim() || null,
+            is_supplier_visible: supVis.checked,
+          });
+          box.replaceChildren(
+            el("h3", { style: "margin:0 0 0.6rem;font-size:1rem" }, "Drawing created"),
+            el("div", { class: "notice", style: "font-size:0.88rem" }, [
+              el("div", { style: "font-weight:600;font-size:1rem" }, `${res.drawing_number} · Rev ${res.revision}`),
+              el("div", { style: "margin-top:0.3rem" }, state.free
+                ? "Free drawing — adopt it onto a part when it is ready."
+                : `Drawing ${res.node_sequence} of ${state.ownerName}. Its Change Log now records this.`),
+            ]),
+            el("div", { class: "muted", style: "font-size:0.78rem;margin:0.6rem 0" },
+              "This number is ours and will not change if you change supplier."),
+            el("div", { style: "display:flex;justify-content:flex-end" },
+              el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => { close(); await onDone(); } }, "Done")),
+          );
+        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+      } }, "Create drawing");
+
+      box.replaceChildren(
+        stepHeader(),
+        state.aiNote ? el("div", { class: "notice warn", style: "font-size:0.82rem;margin-bottom:0.7rem" }, state.aiNote) : null,
+        state.aiRan && !state.aiNote
+          ? el("div", { class: "notice", style: "font-size:0.82rem;margin-bottom:0.7rem" },
+              `Read from the drawing — check each value before saving. Hover a badge to see the text it came from.`)
+          : null,
+        field("title", "Title", "45 mm steel pin"),
+        el("div", { class: "form-label", style: "margin-top:0.6rem" }, "What the supplier calls it"),
+        el("div", { class: "muted", style: "font-size:0.76rem;margin-bottom:0.4rem" },
+          "Recorded for recognition and purchase orders. Nothing in the system keys off these."),
+        field("supplier_drawing_number", "Supplier drawing number", "e.g. 4711-02"),
+        field("supplier_revision", "Supplier revision", "e.g. Rev 3, Issue B, 02"),
+        el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:0.6rem" }, [
+          el("div", {}, [el("div", { class: "form-label" }, [el("span", {}, "Projection"), confBadge("projection_angle")].filter(Boolean)), projSel]),
+          el("div", {}, [el("div", { class: "form-label" }, [el("span", {}, "Sheet size"), confBadge("sheet_size")].filter(Boolean)), sheetSel]),
+          el("div", { style: "flex:1;min-width:120px" }, [field("scale", "Scale", "1:1")]),
+        ]),
+        el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin:0.6rem 0;font-size:0.85rem" }, [
+          supVis, el("span", {}, "Visible to manufacturing partners"),
+        ]),
+        status,
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => renderStep2() }, "← Back"),
+          save,
+        ]),
+      );
+    }
+
+    if (presetComponent) renderStep2(); else renderStep1();
   }
 
   /** Upload a new revision. Shared by the register and the part panel, so the
@@ -8709,6 +8935,58 @@
     const close = openModal("New revision", body);
   }
 
+  // PROP-046: a development drawing becoming a controlled one. Deliberately its
+  // own action rather than an edit field — the moment a free drawing is adopted
+  // is the moment it starts mattering, and that belongs in the part's trail.
+  function adoptDrawingModal(drawing, role, onDone) {
+    const token = API.getToken(role);
+    const box = el("div", {}, el("div", { class: "loading" }, "Loading parts…"));
+    const close = openModal("Adopt drawing onto a part", box);
+    let chosen = null;
+    const status = el("span", { role: "status", style: "font-size:0.8rem;color:#e05454;display:block;min-height:1.2em" }, "");
+
+    API.post(token, "listComponents", {}).then(({ components }) => {
+      const parts = (components || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      const search = el("input", { class: "up-text", type: "search", placeholder: "Search parts…", style: "width:100%;margin-bottom:0.4rem" });
+      const list = el("div", { style: "max-height:240px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px" });
+      const save = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true, onclick: async (ev) => {
+        ev.target.disabled = true; status.textContent = "Adopting…";
+        try {
+          const res = await API.post(token, "adoptDrawing", { drawing_id: drawing.id, component_id: chosen.id });
+          close();
+          await onDone();
+          alert(`${drawing.drawing_number} is now drawing ${res.node_sequence} of ${chosen.name}. Its Change Log records the adoption.`);
+        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+      } }, "Adopt");
+      const paint = () => {
+        const q = search.value.trim().toLowerCase();
+        const shown = parts.filter((p) => !q || `${p.name} ${p.part_number || ""}`.toLowerCase().includes(q));
+        list.replaceChildren(...(shown.length ? shown.map((p) => el("button", {
+          class: "btn", type: "button",
+          style: `display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--border,#e2e8f0);border-radius:0;padding:0.45rem 0.6rem;${chosen && chosen.id === p.id ? "background:var(--accent,#2fa564)18;font-weight:600" : ""}`,
+          onclick: () => { chosen = p; save.disabled = false; paint(); },
+        }, [
+          el("span", {}, p.name),
+          el("span", { class: "muted", style: "font-size:0.78rem;margin-left:0.5rem" }, p.part_number || ""),
+        ])) : [el("div", { class: "muted", style: "padding:0.6rem;font-size:0.85rem" }, "No parts match.")]));
+      };
+      search.oninput = paint;
+      box.replaceChildren(
+        el("div", { class: "muted", style: "font-size:0.82rem;margin-bottom:0.6rem" },
+          `${drawing.drawing_number} — ${drawing.title}`),
+        el("div", { class: "form-label" }, "Adopt onto which part?"),
+        search, list,
+        el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.5rem" },
+          "The drawing keeps its number and revision. From then on, revising it advances that part's revision letter."),
+        status,
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.8rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"), save,
+        ]),
+      );
+      paint();
+    }).catch((ex) => box.replaceChildren(el("div", { class: "error" }, `Couldn't load parts: ${ex.message}`)));
+  }
+
   async function openDrawingDetail(drawingId, role, onChange) {
     const token = API.getToken(role);
     const body = el("div", {}, el("div", { class: "loading" }, "Loading…"));
@@ -8724,6 +9002,7 @@
       catch (ex) { body.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`)); return; }
       const { drawing, revisions = [], components = [] } = d;
       const current = revisions.find((r) => r.id === drawing.current_revision_id);
+      const ownerName = (components.find((c) => c.component_id === drawing.owner_component_id) || {}).name || "";
       const summary = { id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title, revision: current?.revision || "", parts_count: components.length };
 
       const openFile = async (rev) => {
@@ -8732,7 +9011,10 @@
       };
 
       const revRows = revisions.map((r) => el("tr", {}, [
-        el("td", {}, el("strong", {}, `Rev ${r.revision}`)),
+        el("td", {}, [
+          el("strong", {}, `Rev ${r.revision}`),
+          r.supplier_revision ? el("span", { class: "muted", style: "font-size:0.76rem;margin-left:0.4rem" }, `(their ${r.supplier_revision})`) : null,
+        ].filter(Boolean)),
         el("td", {}, drawingStatusChip(r.status)),
         el("td", {}, r.file_name),
         el("td", {}, r.notes || el("span", { class: "muted" }, "—")),
@@ -8777,6 +9059,25 @@
           ...statusActions,
           role === "rushroom" ? el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => addDrawingRevisionModal(summary, role, done) }, "+ New revision") : null,
         ].filter(Boolean)),
+        // PROP-046: ours first, theirs second, clearly separated — the whole
+        // point is that one of these is stable and the other is not.
+        el("div", { style: "font-size:0.82rem;margin-bottom:0.5rem" }, [
+          el("span", { class: "muted" }, "Belongs to: "),
+          drawing.owner_component_id
+            ? el("span", {}, `${ownerName || "a part"}${drawing.node_sequence ? ` · drawing ${drawing.node_sequence} of that part` : ""}`)
+            : el("span", { style: "color:#b45309;font-weight:600" }, "Free drawing — not attached to a part"),
+          role === "rushroom" && !drawing.owner_component_id
+            ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px;margin-left:0.5rem",
+                onclick: () => adoptDrawingModal(drawing, role, done) }, "Adopt onto a part")
+            : null,
+        ].filter(Boolean)),
+        drawing.supplier_drawing_number
+          ? el("div", { style: "font-size:0.82rem;margin-bottom:0.5rem" }, [
+              el("span", { class: "muted" }, "Supplier calls it: "),
+              el("span", {}, drawing.supplier_drawing_number),
+              el("span", { class: "muted", style: "margin-left:0.4rem;font-size:0.76rem" }, "(recorded only — nothing keys off it)"),
+            ])
+          : null,
         el("div", { class: "muted", style: "font-size:0.8rem;margin-bottom:0.8rem" },
           [drawing.projection_angle ? `${drawing.projection_angle} angle` : null, drawing.sheet_size, drawing.scale ? `scale ${drawing.scale}` : null]
             .filter(Boolean).join(" · ") || "No sheet properties recorded"),

@@ -5393,16 +5393,16 @@
           : "";
         const effect = el("div", { class: isDrawing ? "notice warn" : "notice", style: "font-size:0.8rem;margin-bottom:0.8rem" },
           isDrawing
-            ? `This is a drawing. Uploading a new revision advances this part's revision letter and records it in the Change Log.${shared}`
-            : `This is a ${d.category}. The new revision is recorded in the Change Log, but the part's revision letter does not move — a supplier reissuing their document is not a change to your part.${shared}`);
+            ? `This document is categorised as a drawing, from before drawings moved to their own tab. Uploading a new revision advances this part's revision letter and records it in the Change Log.${shared}`
+            : `This is a ${d.category}. The new version is recorded in the Change Log, but the part's revision letter does not move — a supplier reissuing their document is not a change to your part.${shared}`);
 
         box.replaceChildren(
-          el("h3", { style: "margin:0 0 0.2rem;font-size:1rem" }, "New revision"),
+          el("h3", { style: "margin:0 0 0.2rem;font-size:1rem" }, "New version"),
           el("div", { class: "muted", style: "font-size:0.82rem;margin-bottom:0.8rem" },
             `${d.document_name || d.label || "Document"} — currently ${d.latest_version || d.version || "unversioned"}`),
           effect,
           el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "File"), fileInp, fileLabel]),
-          el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Revision label"), verInp]),
+          el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Version label"), verInp]),
           el("div", { style: "margin-bottom:0.9rem" }, [el("div", { class: "form-label" }, "Notes"), notesInp]),
           progressEl,
           statusEl,
@@ -5430,14 +5430,14 @@
                 const bumped = (res && res.bumped) || [];
                 const audited = (res && res.audited) || 0;
                 box.replaceChildren(
-                  el("h3", { style: "margin:0 0 0.8rem;font-size:1rem" }, `Revision ${res && res.version ? res.version : ""} saved`.trim()),
+                  el("h3", { style: "margin:0 0 0.8rem;font-size:1rem" }, `Version ${res && res.version ? res.version : ""} saved`.trim()),
                   bumped.length
                     ? el("div", { class: "notice warn", style: "font-size:0.85rem" }, [
                         el("div", { style: "font-weight:600;margin-bottom:0.3rem" }, "Part revision advanced"),
                         el("div", {}, bumped.join(" · ")),
                       ])
                     : el("div", { class: "notice", style: "font-size:0.85rem" },
-                        "Recorded in the Change Log. No part revision moved — only drawings advance the revision letter."),
+                        "Recorded in the Change Log. No part revision moved — only drawing revisions advance the revision letter, and drawings live on their own tab."),
                   el("div", { class: "muted", style: "font-size:0.8rem;margin:0.6rem 0" },
                     audited === 1 ? "1 part updated." : `${audited} parts updated.`),
                   el("div", { style: "display:flex;justify-content:flex-end" }, [
@@ -5453,7 +5453,7 @@
                 barFill.style.width = "0%";
                 progressEl.style.display = "none";
               }
-            } }, "Upload revision"),
+            } }, "Upload version"),
           ]),
         );
       }
@@ -5467,12 +5467,12 @@
                 `${d.version} → ${d.latest_version} available`)
             : (d.version || "—")),
           el("td", {}, d.shared_with > 1
-            ? el("span", { title: "This document is linked to more than one part — revising it affects all of them" }, `${d.shared_with} parts`)
+            ? el("span", { title: "This document is linked to more than one part — a new version affects all of them" }, `${d.shared_with} parts`)
             : "this part"),
           el("td", {}, d.is_supplier_visible ? "Yes" : "No"),
           el("td", {}, role === "rushroom" && d.document_id
             ? el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.72rem;padding:1px 8px",
-                onclick: () => openNewVersionModal(d) }, "New revision")
+                onclick: () => openNewVersionModal(d) }, "New version")
             : ""),
         ]));
 
@@ -5625,7 +5625,7 @@
             box.replaceChildren(
               el("p", { class: "notice" }, (drawings || []).length
                 ? "Every drawing is already linked to this part."
-                : "No drawings exist yet. Create one in the Drawings tab, then come back."),
+                : "No drawings exist yet. Use + New drawing to create one for this part directly."),
               el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.8rem" },
                 el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Close")));
             return;
@@ -5693,7 +5693,7 @@
               el("div", {}, "No drawings on this part yet."),
               el("div", { style: "margin-top:0.35rem" },
                 role === "rushroom"
-                  ? "Create the drawing in the Drawings tab, then link it here. A linked drawing's revisions advance this part's revision letter and land in its Change Log."
+                  ? "Use + New drawing to add one for this part — it is preselected, so you only choose the file. Later revisions advance this part's revision letter and land in its Change Log."
                   : "No drawings have been shared for this part."),
             ]),
       ]);
@@ -5704,15 +5704,17 @@
           el("button", { class: "btn btn-sm btn-primary", type: "button", style: "font-size:0.72rem;padding:1px 8px", onclick: () => openAddDocModal() }, "+ Add document"),
         ]),
         docRows.length ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.85rem" }, [
-          el("thead", {}, el("tr", {}, ["Category", "Name", "Revision", "Used on", "Supplier visible", ""].map((h) => el("th", {}, h)))),
+          el("thead", {}, el("tr", {}, ["Category", "Name", "Version", "Used on", "Supplier visible", ""].map((h) => el("th", {}, h)))),
           el("tbody", {}, docRows),
         ])) : el("div", { class: "muted", style: "font-size:0.85rem" }, [
           el("div", {}, "No documents attached yet."),
           el("div", { style: "margin-top:0.35rem" },
-            "Drawings, datasheets, test reports and declarations all attach here. Use + Add document → Upload & link, and set the category to drawing for a production drawing."),
+            "Datasheets, test reports, declarations and quality certificates attach here — use + Add document → Upload & link."),
+          el("div", { style: "margin-top:0.35rem" },
+            "Production drawings do not live here. They have their own Drawings tab, with drawing numbers, revision letters and an approval state."),
         ]),
         el("div", { class: "muted", style: "font-size:0.78rem;margin-top:0.5rem" },
-          "Revising a drawing from here advances this part's revision letter. Other categories are logged without a bump."),
+          "A new revision of a document here is recorded in the Change Log. It does not move this part's revision letter — a supplier reissuing their datasheet is not a change to your part. Drawing revisions, which do move it, are on the Drawings tab."),
       ]);
 
       // Materials section
@@ -5810,7 +5812,7 @@
       const changelogSection = el("div", { style: "margin-top:1.25rem" }, [
         el("h4", { style: "margin-bottom:0.4rem" }, "Change Log"),
         el("p", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin:0 0 0.5rem" },
-          "Immutable audit trail — every field change captured automatically by the database."),
+          "Immutable audit trail. Field changes are captured by database triggers; revisions, documents and drawing events are recorded by the actions that cause them."),
         // An audit trail that under-reports silently is worse than one that
         // admits a gap. Before PROP-043 a failed source degraded to an empty
         // list and the timeline looked complete; now it says so.
@@ -8607,7 +8609,7 @@
 
       const emptyHelp = all.length ? null : el("div", { class: "notice", style: "font-size:0.85rem;margin-top:0.6rem" },
         role === "rushroom"
-          ? "Create a drawing with + New drawing, upload its first revision (it becomes Rev A), then link it to the parts it depicts. Revising a linked drawing advances those parts' revision letters and is recorded in their Change Log."
+          ? "+ New drawing asks which part the drawing is for, then takes the file and reads what it can from the title block. The drawing number and Rev A are assigned for you. Revising a drawing later advances the revision letter of every part it is on, and is recorded in their Change Log."
           : "No drawings have been shared with you yet.");
 
       mount.replaceChildren(el("div", { class: "card" }, [
@@ -8941,7 +8943,7 @@
     const effect = el("div", { class: parts ? "notice warn" : "notice", style: "font-size:0.8rem;margin-bottom:0.8rem" },
       parts
         ? `This drawing is on ${parts} part${parts === 1 ? "" : "s"}. A new revision advances ${parts === 1 ? "its" : "each of their"} revision letter${parts === 1 ? "" : "s"} and is recorded in ${parts === 1 ? "its" : "their"} Change Log.`
-        : "This drawing is not linked to any part yet, so nothing else changes. Link it to a part and future revisions will advance that part's revision letter.");
+        : "This is a free drawing, so nothing else changes. Adopt it onto a part and future revisions will advance that part's revision letter.");
 
     const upload = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
       if (!file) { status.textContent = "Pick a file first."; return; }
@@ -8964,7 +8966,7 @@
                 el("div", { style: "font-weight:600;margin-bottom:0.3rem" }, "Part revisions advanced"),
                 el("div", {}, bumped.join(" · ")),
               ])
-            : el("div", { class: "notice", style: "font-size:0.85rem" }, "Recorded. No part revision moved — this drawing is not linked to a part."),
+            : el("div", { class: "notice", style: "font-size:0.85rem" }, "Recorded. No part revision moved — this is a free drawing."),
           el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.8rem" },
             el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => { close(); await onDone(); } }, "Done")),
         );

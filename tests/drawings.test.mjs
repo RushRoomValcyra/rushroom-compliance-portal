@@ -266,3 +266,40 @@ test("no replaceChildren call passes a bare null child", () => {
   assert.deepEqual(offenders, [],
     `these pass a conditional null straight to the DOM and will render "null":\n  ${offenders.join("\n  ")}`);
 });
+
+test("the Documents tab does not describe drawings as belonging to it", () => {
+  const app = read("assets/app.js");
+  const start = app.indexOf("const docsSection = el(");
+  assert.ok(start > 0, "docsSection not found");
+  const block = app.slice(start, app.indexOf("// Materials section", start));
+  // The category was removed in PROP-045, so telling a user to pick it is
+  // instructing them to do something the UI no longer allows.
+  assert.ok(!/category to drawing/i.test(block),
+    "the Documents empty state still tells the user to set the category to drawing");
+  assert.ok(/Drawings tab/.test(block),
+    "the Documents tab should point at the Drawings tab rather than leaving the user to find it");
+});
+
+test("documents have versions and drawings have revisions, consistently", () => {
+  const app = read("assets/app.js");
+  // openNewVersionModal is the DOCUMENT flow. Borrowing the drawing word here
+  // makes two genuinely different things read as one.
+  const docStart = app.indexOf("function openNewVersionModal(");
+  assert.ok(docStart > 0, "openNewVersionModal not found");
+  const docBlock = app.slice(docStart, app.indexOf("const docRows = ", docStart));
+  for (const wrong of ['"New revision"', '"Revision label"', '"Upload revision"']) {
+    assert.ok(!docBlock.includes(wrong), `the document version flow still says ${wrong}`);
+  }
+  // …and the drawing flow must keep saying revision.
+  const drawStart = app.indexOf("function addDrawingRevisionModal(");
+  const drawBlock = app.slice(drawStart, app.indexOf("function adoptDrawingModal(", drawStart));
+  assert.ok(/Revision letter/.test(drawBlock), "the drawing flow no longer asks for a revision letter");
+});
+
+test("the Change Log does not claim the database captures everything", () => {
+  const app = read("assets/app.js");
+  // Four sources feed this trail and only one of them is a database trigger.
+  // Overclaiming completeness is precisely the failure this trail has had twice.
+  assert.ok(!/every field change captured automatically by the database/.test(app),
+    "the Change Log still describes itself as capturing everything automatically");
+});

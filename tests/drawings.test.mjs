@@ -234,3 +234,35 @@ test("openModal dialogs suppress the component panel's image paste", () => {
   assert.ok(/data-modal-overlay/.test(line),
     "openModal's overlay lacks data-modal-overlay, so a paste leaks to the detail panel behind it");
 });
+
+test("no replaceChildren call passes a bare null child", () => {
+  // Node.replaceChildren() stringifies non-Nodes, so a conditional child that
+  // evaluates to null renders the literal word "null" on the page. el() forgives
+  // this in its children array; the raw DOM method does not, and the difference
+  // is invisible until a user reads "null" in a form.
+  const src = read("assets/app.js");
+  const offenders = [];
+  const re = /(\w+)\.replaceChildren\(/g;
+  let m;
+  while ((m = re.exec(src))) {
+    let depth = 1, j = re.lastIndex;
+    while (j < src.length && depth > 0) {
+      const ch = src[j];
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      j++;
+    }
+    // Keep only depth-0 text, so nested el(... : null) calls are not counted.
+    let d = 0, top = "";
+    for (const ch of src.slice(re.lastIndex, j - 1)) {
+      if (ch === "(" || ch === "[") d++;
+      else if (ch === ")" || ch === "]") d--;
+      if (d === 0) top += ch;
+    }
+    if (/:\s*null\s*(,|$)/m.test(top)) {
+      offenders.push(`line ${src.slice(0, m.index).split("\n").length}: ${m[1]}.replaceChildren(...)`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `these pass a conditional null straight to the DOM and will render "null":\n  ${offenders.join("\n  ")}`);
+});

@@ -5165,6 +5165,14 @@
   }
 
   // --- Component detail panel (slide-in below the tree) ----------------------
+  // Node.replaceChildren() stringifies anything that is not a Node, so a
+  // conditional child that evaluates to null renders the literal text "null" on
+  // the page. el() tolerates nulls in its children array; the raw DOM method
+  // does not. Conditional children go through here instead.
+  function setChildren(node, ...kids) {
+    node.replaceChildren(...kids.flat(Infinity).filter((k) => k !== null && k !== undefined && k !== false && k !== ""));
+  }
+
   // PROP-045: drawing vocabulary. Declared above first use on purpose —
   // these are const, not hoisted, and the component panel reads them well
   // before the register is defined further down.
@@ -8795,7 +8803,7 @@
         renderStep3();
       });
 
-      box.replaceChildren(
+      setChildren(box,
         stepHeader(),
         el("div", { class: "notice", style: "font-size:0.82rem;margin-bottom:0.8rem" },
           state.free ? "Free drawing — not attached to a part." : `Drawing for ${state.ownerName}`),
@@ -8882,7 +8890,7 @@
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Create drawing");
 
-      box.replaceChildren(
+      setChildren(box,
         stepHeader(),
         state.aiNote ? el("div", { class: "notice warn", style: "font-size:0.82rem;margin-bottom:0.7rem" }, state.aiNote) : null,
         state.aiRan && !state.aiNote
@@ -9095,7 +9103,7 @@
         el("span", {}, "Visible to manufacturing partners"),
       ]) : null;
 
-      body.replaceChildren(
+      setChildren(body,
         d.partial ? el("div", { class: "notice warn", style: "font-size:0.82rem;margin-bottom:0.6rem" },
           `Some of this record could not be loaded (${(d.sources_failed || []).join(", ")}). What you see below is incomplete.`) : null,
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.8rem" }, [

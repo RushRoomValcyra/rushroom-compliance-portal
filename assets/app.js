@@ -5772,7 +5772,13 @@
           : "this part"),
         el("td", {}, el("div", { style: "display:flex;gap:4px" }, [
           el("button", { class: "btn btn-xs", type: "button",
-            onclick: () => openDrawingDetail(d.id, role, () => openComponentDetail(componentId, token, panel, nodeData, role)) }, "Open"),
+            onclick: () => openDrawingSurface(d.id, role, {
+              mount: panel,
+              onBack: {
+                label: (nodeData && nodeData.name) || "this part",
+                go: () => openComponentDetail(componentId, token, panel, nodeData, role),
+              },
+            }) }, "View"),
           role === "rushroom"
             ? el("button", { class: "btn btn-xs", type: "button",
                 onclick: () => addDrawingRevisionModal(d, role, () => openComponentDetail(componentId, token, panel, nodeData, role)) }, "New revision")
@@ -8749,7 +8755,7 @@
             return av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" }) * state.dir;
           });
         tbody.replaceChildren(...(rows.length ? rows.map((d) =>
-          el("tr", { style: "cursor:pointer", onclick: () => openDrawingDetail(d.id, role, load) }, [
+          el("tr", { style: "cursor:pointer", onclick: () => openDrawingSurface(d.id, role, { onChange: load }) }, [
             el("td", {}, el("strong", {}, d.drawing_number)),
             el("td", {}, d.title),
             el("td", {}, d.revision || el("span", { class: "muted" }, "no revision yet")),
@@ -9205,121 +9211,184 @@
     }).catch((ex) => box.replaceChildren(el("div", { class: "error" }, `Couldn't load parts: ${ex.message}`)));
   }
 
-  async function openDrawingDetail(drawingId, role, onChange) {
+  /**
+   * PROP-047: the drawing surface — the file first, the metadata as a caption.
+   *
+   * It REPLACES what you were looking at rather than stacking on it. Opened from
+   * a part, it renders into that part's own panel and offers a breadcrumb back;
+   * opened from the register it gets its own overlay and no breadcrumb, because
+   * there is nothing behind it to return to. Before this, opening a drawing from
+   * a part put a dialog over a panel and the file in a third place entirely — a
+   * browser tab outside the portal.
+   *
+   * opts:
+   *   mount   — element to render into. Omitted, it opens its own overlay.
+   *   onBack  — { label, go } for the breadcrumb, or null.
+   *   onChange— called after anything that alters the drawing, so the caller
+   *             can refresh whatever list it came from.
+   */
+  async function openDrawingSurface(drawingId, role, opts = {}) {
     const token = API.getToken(role);
-    const body = el("div", {}, el("div", { class: "loading" }, "Loading…"));
-    const close = openModal("Drawing", body);
-    // Refresh the register as soon as something changes rather than on close:
-    // openModal owns its own Close button, so a close-time hook would be missed
-    // whenever the user dismisses the overlay the obvious way.
-    const done = async () => { await refresh(); if (onChange) await onChange(); };
+    const mount = opts.mount || null;
+    let close = () => {};
+    let host = mount;
+    if (!host) {
+      host = el("div", {});
+      close = openModal("Drawing", host);
+    }
 
-    async function refresh() {
+    // Every rendered file holds a blob URL. Swapping revisions without disposing
+    // the last one leaks them for as long as the page lives.
+    let disposeFile = () => {};
+    const disposeCurrent = () => { try { disposeFile(); } catch { /* already gone */ } disposeFile = () => {}; };
+
+    const reload = async () => { await paint(); if (opts.onChange) await opts.onChange(); };
+
+    async function paint(selectedRevisionId) {
+      setChildren(host, el("div", { class: "loading" }, "Loading drawing…"));
       let d;
       try { d = await API.post(token, "getDrawing", { drawing_id: drawingId }); }
-      catch (ex) { body.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`)); return; }
-      const { drawing, revisions = [], components = [] } = d;
-      const current = revisions.find((r) => r.id === drawing.current_revision_id);
-      const ownerName = (components.find((c) => c.component_id === drawing.owner_component_id) || {}).name || "";
-      const summary = { id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title, revision: current?.revision || "", parts_count: components.length };
+      catch (ex) { setChildren(host, el("div", { class: "error" }, `Couldn't load: ${ex.message}`)); return; }
 
-      const openFile = async (rev) => {
-        try { const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: rev.id }); window.open(url, "_blank", "noopener"); }
-        catch (ex) { alert(`Couldn't open: ${ex.message}`); }
+      const { drawing, revisions = [], components = [] } = d;
+      const ownerName = (components.find((c) => c.component_id === drawing.owner_component_id) || {}).name || "";
+      const current = revisions.find((r) => r.id === (selectedRevisionId || drawing.current_revision_id)) || revisions[0] || null;
+      const summary = {
+        id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title,
+        revision: current?.revision || "", parts_count: components.length,
       };
 
-      const revRows = revisions.map((r) => el("tr", {}, [
-        el("td", {}, [
-          el("strong", {}, `Rev ${r.revision}`),
-          r.supplier_revision ? el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, `(their ${r.supplier_revision})`) : null,
-        ].filter(Boolean)),
-        el("td", {}, drawingStatusChip(r.status)),
-        el("td", {}, r.file_name),
-        el("td", {}, r.notes || el("span", { class: "muted" }, "—")),
-        el("td", {}, new Date(r.created_at).toLocaleDateString()),
-        el("td", {}, el("button", { class: "btn btn-xs", type: "button", onclick: () => openFile(r) }, "Open")),
-      ]));
+      // ---- the file itself ------------------------------------------------
+      const filePane = el("div", { class: "drawing-file" },
+        el("div", { class: "loading" }, current ? "Loading the drawing…" : ""));
+      if (!current) {
+        setChildren(filePane, el("div", { class: "viewer-msg" }, [
+          el("p", {}, "No revision has been added yet, so there is no file to show."),
+          role === "rushroom"
+            ? el("button", { class: "btn btn-sm btn-primary", type: "button",
+                onclick: () => addDrawingRevisionModal(summary, role, reload) }, "Add the first revision")
+            : null,
+        ].filter(Boolean)));
+      }
 
-      const partRows = components.map((c) => el("tr", {}, [
-        el("td", {}, c.name || "—"), el("td", {}, c.part_number || "—"), el("td", {}, c.role),
-        el("td", {}, role === "rushroom"
-          ? el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
-              if (!confirm(`Unlink “${c.name}” from ${drawing.drawing_number}? The drawing itself is kept.`)) return;
-              try { await API.post(token, "unlinkDrawingFromComponent", { drawing_id: drawing.id, component_id: c.component_id, role: c.role }); await done(); }
-              catch (ex) { alert(ex.message); }
-            } }, "Unlink")
-          : ""),
-      ]));
+      async function showRevision(rev) {
+        if (!rev) return;
+        disposeCurrent();
+        setChildren(filePane, el("div", { class: "loading" }, `Loading Rev ${rev.revision}…`));
+        try {
+          const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: rev.id });
+          // The file name carries the extension the renderer switches on; the
+          // signed URL's query string would otherwise be read as one.
+          disposeFile = await window.PortalViewer.render(filePane, {
+            name: `${drawing.drawing_number} Rev ${rev.revision}`,
+            open_url: url,
+            storage_path: rev.file_name || "",
+          });
+        } catch (ex) {
+          setChildren(filePane, el("div", { class: "viewer-msg" },
+            el("p", { class: "error" }, `Couldn't open this revision: ${ex.message}`)));
+        }
+      }
 
+      // ---- the side rail ----------------------------------------------------
       const NEXT = { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: ["superseded"], superseded: [] };
       const statusActions = role === "rushroom" ? (NEXT[drawing.status] || []).map((s) =>
-        el("button", { class: `btn btn-sm${s === "released" ? " btn-primary" : ""}`, type: "button", style: "font-size:0.75rem", onclick: async () => {
+        el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
           if (s === "released" && !confirm(`Release ${drawing.drawing_number}? This supersedes the previously released revision and is recorded on every linked part.`)) return;
-          try { await API.post(token, "setDrawingStatus", { drawing_id: drawing.id, status: s }); await done(); }
+          try { await API.post(token, "setDrawingStatus", { drawing_id: drawing.id, status: s }); await reload(); }
           catch (ex) { alert(ex.message); }
         } }, `Mark ${s}`)) : [];
 
-      const supToggle = role === "rushroom" ? el("label", { style: "display:flex;align-items:center;gap:0.4rem;font-size:0.8125rem" }, [
-        el("input", { type: "checkbox", checked: drawing.is_supplier_visible ? "checked" : null, onchange: async (e) => {
-          try { await API.post(token, "setDrawingSupplierVisibility", { drawing_id: drawing.id, is_supplier_visible: e.target.checked }); if (onChange) await onChange(); }
-          catch (ex) { alert(ex.message); e.target.checked = !e.target.checked; }
-        } }),
-        el("span", {}, "Visible to manufacturing partners"),
-      ]) : null;
+      const revisionList = revisions.length
+        ? el("div", { class: "drawing-revlist" }, revisions.map((r) => {
+            const active = current && r.id === current.id;
+            return el("button", {
+              class: `drawing-rev${active ? " is-active" : ""}`, type: "button",
+              onclick: () => { if (!active) { paint(r.id); } },
+            }, [
+              el("span", { class: "drawing-rev-name" }, `Rev ${r.revision}`),
+              r.supplier_revision ? el("span", { class: "muted t-2xs" }, `their ${r.supplier_revision}`) : null,
+              drawingStatusChip(r.status),
+            ].filter(Boolean));
+          }))
+        : el("div", { class: "muted t-sm" }, "No revisions yet.");
 
-      setChildren(body,
-        d.partial ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.6rem" },
-          `Some of this record could not be loaded (${(d.sources_failed || []).join(", ")}). What you see below is incomplete.`) : null,
-        el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.8rem" }, [
-          el("h3", { style: "margin:0;font-size:1rem" }, `${drawing.drawing_number} — ${drawing.title}`),
+      const rail = el("div", { class: "drawing-rail" }, [
+        el("div", { class: "drawing-rail-head" }, [
+          el("span", { class: "drawing-rev-big" }, current ? `Rev ${current.revision}` : "No revision"),
           drawingStatusChip(drawing.status),
-          el("span", { style: "flex:1" }),
-          ...statusActions,
-          role === "rushroom" ? el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => addDrawingRevisionModal(summary, role, done) }, "+ New revision") : null,
-        ].filter(Boolean)),
-        // PROP-046: ours first, theirs second, clearly separated — the whole
-        // point is that one of these is stable and the other is not.
-        el("div", { style: "font-size:0.8125rem;margin-bottom:0.5rem" }, [
-          el("span", { class: "muted" }, "Belongs to: "),
-          drawing.owner_component_id
-            ? el("span", {}, `${ownerName || "a part"}${drawing.node_sequence ? ` · drawing ${drawing.node_sequence} of that part` : ""}`)
-            : el("span", { style: "color:#b45309;font-weight:600" }, "Free drawing — not attached to a part"),
-          role === "rushroom" && !drawing.owner_component_id
-            ? el("button", { class: "btn btn-xs btn-primary", type: "button", style: "margin-left:0.5rem",
-                onclick: () => adoptDrawingModal(drawing, role, done) }, "Adopt onto a part")
-            : null,
-        ].filter(Boolean)),
-        drawing.supplier_drawing_number
-          ? el("div", { style: "font-size:0.8125rem;margin-bottom:0.5rem" }, [
-              el("span", { class: "muted" }, "Supplier calls it: "),
-              el("span", {}, drawing.supplier_drawing_number),
-              el("span", { class: "muted", style: "margin-left:0.4rem;font-size:0.75rem" }, "(recorded only — nothing keys off it)"),
-            ])
+        ]),
+        el("dl", { class: "drawing-meta" }, [
+          el("dt", {}, "Belongs to"),
+          el("dd", {}, drawing.owner_component_id
+            ? `${ownerName || "a part"}${drawing.node_sequence ? ` · drawing ${drawing.node_sequence}` : ""}`
+            : el("span", { style: "color:#b45309;font-weight:600" }, "Free drawing")),
+          ...(drawing.supplier_drawing_number
+            ? [el("dt", {}, "Supplier calls it"), el("dd", {}, drawing.supplier_drawing_number)] : []),
+          el("dt", {}, "Sheet"),
+          el("dd", {}, [drawing.sheet_size, drawing.scale ? `scale ${drawing.scale}` : null,
+                        drawing.projection_angle ? `${drawing.projection_angle} angle` : null]
+                        .filter(Boolean).join(" · ") || "—"),
+          el("dt", {}, "Used on"),
+          el("dd", {}, components.length
+            ? `${components.length} part${components.length === 1 ? "" : "s"}`
+            : "not linked to a part"),
+        ]),
+        role === "rushroom" ? el("label", { class: "drawing-supvis t-sm" }, [
+          el("input", { type: "checkbox", checked: drawing.is_supplier_visible ? "checked" : null, onchange: async (e) => {
+            try { await API.post(token, "setDrawingSupplierVisibility", { drawing_id: drawing.id, is_supplier_visible: e.target.checked }); if (opts.onChange) await opts.onChange(); }
+            catch (ex) { alert(ex.message); e.target.checked = !e.target.checked; }
+          } }),
+          el("span", {}, "Visible to manufacturing partners"),
+        ]) : null,
+        statusActions.length ? el("div", { class: "drawing-rail-actions" }, statusActions) : null,
+        el("h4", { class: "drawing-rail-h" }, `Revisions (${revisions.length})`),
+        revisionList,
+        role === "rushroom"
+          ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "width:100%",
+              onclick: () => addDrawingRevisionModal(summary, role, reload) }, "+ New revision")
           : null,
-        el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          [drawing.projection_angle ? `${drawing.projection_angle} angle` : null, drawing.sheet_size, drawing.scale ? `scale ${drawing.scale}` : null]
-            .filter(Boolean).join(" · ") || "No sheet properties recorded"),
-        supToggle,
-        el("h4", { style: "margin:0.9rem 0 0.3rem" }, `Revisions (${revisions.length})`),
-        revisions.length
-          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
-              el("thead", {}, el("tr", {}, ["Revision", "Status", "File", "Notes", "Created", ""].map((h) => el("th", {}, h)))),
-              el("tbody", {}, revRows),
-            ]))
-          : el("div", { class: "muted", style: "font-size:0.875rem" }, "No revisions yet — add one to attach the drawing file."),
-        el("h4", { style: "margin:0.9rem 0 0.3rem" }, `Used on (${components.length})`),
-        components.length
-          ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
-              el("thead", {}, el("tr", {}, ["Part", "Part number", "Role", ""].map((h) => el("th", {}, h)))),
-              el("tbody", {}, partRows),
-            ]))
-          : el("div", { class: "muted", style: "font-size:0.875rem" },
-              "Not linked to any part. Link it from the part's Drawings tab — revisions then advance that part's revision letter."),
+        role === "rushroom" && !drawing.owner_component_id
+          ? el("button", { class: "btn btn-sm", type: "button", style: "width:100%",
+              onclick: () => adoptDrawingModal(drawing, role, reload) }, "Adopt onto a part")
+          : null,
+      ].filter(Boolean));
+
+      // ---- header ------------------------------------------------------------
+      const header = el("div", { class: "drawing-head" }, [
+        opts.onBack
+          ? el("button", { class: "btn btn-xs", type: "button", onclick: () => { disposeCurrent(); opts.onBack.go(); } },
+              `← ${opts.onBack.label}`)
+          : null,
+        el("div", { class: "drawing-title" }, [
+          el("strong", {}, drawing.drawing_number),
+          el("span", { class: "muted" }, drawing.title),
+        ]),
+        el("span", { style: "flex:1" }),
+        current
+          ? el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
+              try {
+                const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: current.id });
+                window.open(url, "_blank", "noopener");
+              } catch (ex) { alert(ex.message); }
+            } }, "⤓ Download")
+          : null,
+        mount ? null : el("button", { class: "btn btn-sm", type: "button", onclick: () => { disposeCurrent(); close(); } }, "Close"),
+      ].filter(Boolean));
+
+      setChildren(host,
+        d.partial
+          ? el("div", { class: "notice warn t-sm", style: "margin-bottom:0.6rem" },
+              `Some of this record could not be loaded (${(d.sources_failed || []).join(", ")}). What you see below is incomplete.`)
+          : null,
+        header,
+        el("div", { class: "drawing-surface" }, [filePane, rail]),
       );
+      if (current) showRevision(current);
     }
 
-    await refresh();
-    return close;
+    await paint();
+    return () => { disposeCurrent(); close(); };
   }
 
   // Hide tabs/panels the signed-in user isn't entitled to.

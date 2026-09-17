@@ -48,6 +48,7 @@
   }
 
   const extOf = (s) => (s || "").split("?")[0].split("#")[0].split(".").pop().toLowerCase();
+  const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]);
 
   let cleanup = null, lastFocus = null;
   function close() {
@@ -69,15 +70,85 @@
     }
   }
 
+  /**
+   * Render a document into ANY element and return a disposer.
+   *
+   * This used to live inside open(), which meant the only way to show a file
+   * was to put a full-screen modal over whatever you were already looking at.
+   * PROP-047 needs the same rendering embedded in the drawing surface, so the
+   * chain moved here and open() became a wrapper around it.
+   *
+   * The disposer is RETURNED rather than written to the module-level `cleanup`:
+   * an embedded render and the modal can now exist at once, and if the embedded
+   * one stole that slot, closing the modal would revoke the embedded blob URL
+   * and the drawing would silently go blank.
+   */
+  async function render(target, doc) {
+    const url = doc.open_url || doc.url;
+    if (!url) return () => {};
+    const ext = extOf(doc.storage_path || doc.name || url);
+    let dispose = () => {};
+    const fallback = (msgEl) => target.replaceChildren(h("div", { class: "viewer-msg" }, msgEl));
+
+    try {
+      if (ext === "pdf") {
+        const buf = await fetchBytes(url);
+        const blobUrl = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }));
+        dispose = () => URL.revokeObjectURL(blobUrl);
+        target.replaceChildren(h("iframe", { class: "viewer-frame", src: blobUrl, title: doc.name || "PDF preview" }));
+      } else if (IMAGE_EXT.has(ext)) {
+        // Drawings arrive as scans and photographs at least as often as PDFs.
+        // Without this branch those fell through to "no inline preview", which
+        // is the one case where a preview matters most.
+        const buf = await fetchBytes(url);
+        const blobUrl = URL.createObjectURL(new Blob([buf]));
+        dispose = () => URL.revokeObjectURL(blobUrl);
+        target.replaceChildren(h("img", {
+          class: "viewer-frame viewer-image", src: blobUrl,
+          alt: doc.name || "Drawing", loading: "lazy",
+        }));
+      } else if (ext === "docx") {
+        const buf = await fetchBytes(url);
+        await loadScript(CDN.mammoth);
+        const result = await window.mammoth.convertToHtml({ arrayBuffer: buf });
+        target.replaceChildren(h("div", { class: "doc-render", html: result.value || "<p>(empty document)</p>" }));
+      } else if (ext === "md" || ext === "markdown") {
+        const buf = await fetchBytes(url);
+        const text = unescapeUnicode(new TextDecoder().decode(new Uint8Array(buf)));
+        await loadScript(CDN.marked);
+        const html = window.marked.parse(text || "");
+        target.replaceChildren(h("div", { class: "doc-render markdown-render", html: html || "<p>(empty document)</p>" }));
+      } else if (ext === "txt") {
+        const buf = await fetchBytes(url);
+        const text = unescapeUnicode(new TextDecoder().decode(new Uint8Array(buf)));
+        target.replaceChildren(h("pre", { class: "viewer-text", style: "white-space:pre-wrap; word-break:break-word; padding:1rem; background:#f7f9fc; border-radius:8px" }, text));
+      } else if (ext === "xlsx" || ext === "xls" || ext === "csv") {
+        const buf = await fetchBytes(url);
+        await loadScript(CDN.xlsx);
+        renderSheets(target, window.XLSX.read(new Uint8Array(buf), { type: "array" }));
+      } else {
+        fallback([
+          h("p", {}, `No inline preview for \u201c.${ext}\u201d files.`),
+          h("a", { class: "btn btn-primary", href: url, target: "_blank", rel: "noopener", download: doc.name || "" }, "Download to open"),
+        ]);
+      }
+    } catch (err) {
+      fallback([
+        h("p", { class: "error" }, `Couldn't render this document: ${err.message}`),
+        h("a", { class: "btn btn-primary", href: url, target: "_blank", rel: "noopener", download: doc.name || "" }, "Download instead"),
+      ]);
+    }
+    return dispose;
+  }
+
   async function open(doc) {
     const url = doc.open_url || doc.url;
     if (!url) return;
     lastFocus = document.activeElement;
-    const ext = extOf(doc.storage_path || doc.name || url);
 
-    const body = h("div", { class: "viewer-body" }, h("div", { class: "loading" }, "Loading preview…"));
-    const closeBtn = h("button", { class: "btn btn-sm", type: "button", onclick: close, "aria-label": "Close preview" }, "✕ Close");
-    const dl = h("a", { class: "btn btn-sm", href: url, target: "_blank", rel: "noopener", download: doc.name || "" }, "⤓ Download");
+    const body = h("div", { class: "viewer-body" }, h("div", { class: "loading" }, "Loading preview\u2026"));
+    const closeBtn = h("button", { class: "btn btn-sm", type: "button", onclick: close, "aria-label": "Close preview" }, "\u2715 Close");
+    const dl = h("a", { class: "btn btn-sm", href: url, target: "_blank", rel: "noopener", download: doc.name || "" }, "\u2913 Download");
     const dialog = h("div", { class: "viewer-dialog", role: "dialog", "aria-modal": "true", "aria-label": `Preview: ${doc.name || "document"}` }, [
       h("div", { class: "viewer-head" }, [
         h("h3", { class: "viewer-title" }, doc.name || "Document"),
@@ -91,43 +162,7 @@
     document.addEventListener("keydown", onKey);
     closeBtn.focus();
 
-    try {
-      if (ext === "pdf") {
-        const buf = await fetchBytes(url);
-        const blobUrl = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }));
-        cleanup = () => URL.revokeObjectURL(blobUrl);
-        body.replaceChildren(h("iframe", { class: "viewer-frame", src: blobUrl, title: doc.name || "PDF preview" }));
-      } else if (ext === "docx") {
-        const buf = await fetchBytes(url);
-        await loadScript(CDN.mammoth);
-        const result = await window.mammoth.convertToHtml({ arrayBuffer: buf });
-        body.replaceChildren(h("div", { class: "doc-render", html: result.value || "<p>(empty document)</p>" }));
-      } else if (ext === "md" || ext === "markdown") {
-        const buf = await fetchBytes(url);
-        const text = unescapeUnicode(new TextDecoder().decode(new Uint8Array(buf)));
-        await loadScript(CDN.marked);
-        const html = window.marked.parse(text || "");
-        body.replaceChildren(h("div", { class: "doc-render markdown-render", html: html || "<p>(empty document)</p>" }));
-      } else if (ext === "txt") {
-        const buf = await fetchBytes(url);
-        const text = unescapeUnicode(new TextDecoder().decode(new Uint8Array(buf)));
-        body.replaceChildren(h("pre", { class: "viewer-text", style: "white-space:pre-wrap; word-break:break-word; padding:1rem; background:#f7f9fc; border-radius:8px; max-height:70vh; overflow:auto;" }, text || "(empty document)"));
-      } else if (ext === "xlsx" || ext === "xls" || ext === "csv") {
-        const buf = await fetchBytes(url);
-        await loadScript(CDN.xlsx);
-        renderSheets(body, window.XLSX.read(new Uint8Array(buf), { type: "array" }));
-      } else {
-        body.replaceChildren(h("div", { class: "viewer-msg" }, [
-          h("p", {}, `No inline preview for “.${ext}” files.`),
-          h("a", { class: "btn btn-primary", href: url, target: "_blank", rel: "noopener", download: doc.name || "" }, "Download to open"),
-        ]));
-      }
-    } catch (err) {
-      body.replaceChildren(h("div", { class: "viewer-msg" }, [
-        h("p", { class: "error" }, `Couldn't render this document: ${err.message}`),
-        h("a", { class: "btn btn-primary", href: url, target: "_blank", rel: "noopener", download: doc.name || "" }, "Download instead"),
-      ]));
-    }
+    cleanup = await render(body, doc);
   }
 
   async function fetchBytes(url) {
@@ -152,5 +187,5 @@
     show(names[0]);
   }
 
-  window.PortalViewer = { open };
+  window.PortalViewer = { open, render };
 })();

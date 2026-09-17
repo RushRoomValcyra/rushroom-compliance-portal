@@ -987,3 +987,49 @@ adoptDrawingModal, register free filter + owner/supplier columns, detail
 identity block, part-panel entry point, drawing_adopted badge),
 tests/drawings.test.mjs, docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md,
 index.html, supplier.html, reset.html, verify.html, CLAUDE.md (v236 → v237)
+
+---
+**Date:** 2026-09-17
+**Feature:** PROP-047 — Drawing viewing, one surface, file first
+
+**Decision:** A drawing opened from a part replaces that part's panel rather
+than opening over it, with a breadcrumb back. The file renders inside the
+portal, taking the column that grows, and selecting a revision swaps it in
+place. `viewer.js` gained `render(target, doc)` so one renderer serves both the
+Library modal and the embedded surface.
+
+**Why replace instead of stack:** three surfaces existed for one object — the
+part panel, a drawing dialog over it, and the file in a browser tab outside the
+portal. Each was full-screen, so closing one dropped the user into another they
+had forgotten was open. Stacking is only coherent when the thing on top is
+subordinate to the thing beneath; a drawing is not subordinate to a part, it is
+a different subject, so it takes the surface and offers a way back.
+
+**Why the file gets the space:** a drawing is mostly its drawing. The previous
+layout gave a full screen to fields and put the file one more click away, in
+another tab — which is backwards for a record whose entire content is the
+image. The metadata became a 300px rail, collapsing below the drawing under
+900px, because a fixed rail beside a shrinking viewer leaves neither usable.
+
+**Why `render()` returns its disposer rather than storing it:** `viewer.js`
+keeps a module-level `cleanup` slot on the assumption of one viewer at a time.
+An embedded render writing to that slot would mean closing the Library modal
+revokes the embedded drawing's blob URL, and the drawing goes blank with no
+error. Returning the disposer lets both exist, and lets the surface dispose the
+previous revision on every swap instead of leaking a blob per revision viewed.
+
+**Image support was not an extra:** png/jpg/tiff fell through to "no inline
+preview". Supplier drawings arrive as scans and photographs at least as often
+as PDFs, so the format most likely to need a preview was the one that had none.
+
+**Deliberately excluded:** row thumbnails. They need generation and caching — an
+A0 assembly PDF is tens of megabytes, and a naive per-row render would fetch
+every drawing on every list paint. Doing them properly means a migration and a
+cache; doing them badly would make the list slower than the problem they solve.
+
+**Files changed:** assets/viewer.js (render extracted, images, both exported),
+assets/app.js (openDrawingSurface replaces openDrawingDetail; part panel mounts
+it in place with a breadcrumb; register opens it standalone; row action renamed
+to View), assets/styles.css (.drawing-surface and rail, .viewer-image),
+tests/drawing-viewing.test.mjs, docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md,
+index.html, supplier.html, reset.html, verify.html, CLAUDE.md (v246 → v247)

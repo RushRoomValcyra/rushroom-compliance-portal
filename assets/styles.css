@@ -721,6 +721,60 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .viewer-body { overflow: auto; padding: 0; background: var(--panel-2); flex: 1; min-height: 50vh; }
 .viewer-frame { width: 100%; height: 82vh; border: 0; background: #fff; }
 .viewer-msg { padding: 2rem; text-align: center; display: grid; gap: 1rem; place-items: center; }
+/* Scans and photographs of drawings render as images, not iframes. */
+.viewer-image { height: auto; max-height: 82vh; object-fit: contain; display: block; margin: 0 auto; }
+
+/* ---- drawing surface (PROP-047) --------------------------------------------
+   A drawing is mostly its drawing. The metadata is a caption, so the file takes
+   the column that grows and the rail stays a fixed, readable width. Opened from
+   a part this renders INTO that part's panel rather than over it — stacking one
+   full-screen overlay on another was the thing that made drawings confusing. */
+.drawing-head {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); margin-bottom: 0.8rem;
+}
+.drawing-title { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.drawing-title strong { font-size: var(--fs-lg); }
+.drawing-title .muted { font-size: var(--fs-sm); }
+
+.drawing-surface { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; align-items: start; }
+.drawing-file {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  overflow: auto; min-height: 60vh;
+}
+.drawing-file .viewer-frame { height: 70vh; }
+
+.drawing-rail { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.drawing-rail-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.drawing-rev-big { font-size: var(--fs-lg); font-weight: 700; }
+.drawing-rail-h { margin: 0.4rem 0 0; font-size: var(--fs-sm); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.drawing-rail-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.drawing-supvis { display: flex; align-items: center; gap: 0.4rem; }
+
+.drawing-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.6rem; margin: 0; font-size: var(--fs-sm); }
+.drawing-meta dt { color: var(--muted); white-space: nowrap; }
+.drawing-meta dd { margin: 0; }
+
+/* The revision list is the navigation: selecting one swaps the file in place,
+   which is the single most common reason to open a drawing at all. */
+.drawing-revlist { display: flex; flex-direction: column; gap: 0.25rem; }
+.drawing-rev {
+  display: flex; align-items: center; gap: 0.45rem; width: 100%; text-align: left;
+  padding: 0.35rem 0.55rem; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+  font: inherit; font-size: var(--fs-sm); min-height: 32px;
+}
+.drawing-rev:hover { border-color: var(--accent); color: var(--accent); }
+.drawing-rev.is-active { border-color: var(--accent); background: var(--panel); font-weight: 600; }
+.drawing-rev-name { font-weight: 600; }
+
+@media (max-width: 900px) {
+  /* The rail below the drawing, not beside it — a 300px column next to a
+     shrinking viewer leaves neither usable. */
+  .drawing-surface { grid-template-columns: minmax(0, 1fr); }
+  .drawing-file { min-height: 45vh; }
+  .drawing-file .viewer-frame { height: 55vh; }
+}
 
 /* Rendered Word document — light "paper" for readability */
 .doc-render {

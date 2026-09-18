@@ -3920,7 +3920,7 @@
             if (e.key === "Escape") lbClose();
           }
           function lbClose() { lbOver.remove(); document.removeEventListener("keydown", lbOnKey); }
-          const lbOver = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#000c;z-index:var(--z-viewer);display:flex;flex-direction:column;align-items:center;justify-content:center", onclick: lbClose });
+          const lbOver = el("div", { "data-modal-overlay": "", class: "modal-scrim is-dark", onclick: lbClose });
           lbOver.append(el("div", { style: "display:flex;align-items:center;gap:1rem" }, [lbPrev, lbImg, lbNext].filter(Boolean)), lbCount);
           document.addEventListener("keydown", lbOnKey);
           lbShow(0);
@@ -3993,7 +3993,7 @@
             try {
               const { parents } = await API.post(token, "listParentsOf", { component_id: comp.id });
               const confirmed = await new Promise((resolve) => {
-                const mo = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#00000080;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
+                const mo = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
                 const close = (v) => { mo.remove(); resolve(v); };
                 mo.onclick = (e) => { if (e.target === mo) close(false); };
                 const rows = [
@@ -4337,7 +4337,7 @@
                     const { parents } = await API.post(token, "listParentsOf", { component_id: n.id });
                     const childCount = (childrenOf[n.id] || []).length;
                     const confirmed = await new Promise((resolve) => {
-                      const mo = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#00000080;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
+                      const mo = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
                       const close = (v) => { mo.remove(); resolve(v); };
                       mo.onclick = (e) => { if (e.target === mo) close(false); };
                       const rows = [
@@ -4581,7 +4581,7 @@
   const categoryRequiredFor = (type) => type !== "sub_assembly" && type !== "product_family";
 
   function openCategoryManager(token, onRefresh) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(560px,96vw);max-height:88vh;display:flex;flex-direction:column;gap:0.6rem" });
     const listEl = el("div", { style: "flex:1;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px;min-height:120px" });
     const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.1rem" }, "");
@@ -4687,7 +4687,7 @@
       return p && p.length ? p.join(", ") : null;   // null = lives in another assembly
     }
 
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(860px,96vw);max-height:90vh;display:flex;flex-direction:column;gap:0.6rem" });
 
     const listEl = el("div", { style: "flex:1;min-height:180px;max-height:46vh;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px" });
@@ -4817,7 +4817,7 @@
   // --- Add-child modal: link existing OR create new and link ---------------
   function openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, opts) {
     const linkExistingOnly = !!(opts && opts.linkExistingOnly);
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
 
     let mode = "existing"; // "existing" | "new"
@@ -5077,7 +5077,7 @@
   // makes it a labelled field on every component's Specifications tab; the
   // values already captured stay exactly where they are, in custom_specs.
   function openPromoteFieldModal(fieldKey, suggestedLabel, sampleValue, token, onDone) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(520px,96vw);display:flex;flex-direction:column;gap:0.7rem" });
     const close = () => overlay.remove();
     const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
@@ -5177,7 +5177,7 @@
   };
 
   function openAiFillModal(componentId, token, panel, nodeData, role, existingImages) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(920px,96vw);max-height:92vh;display:flex;flex-direction:column;gap:0.7rem" });
     const body = el("div", { style: "flex:1;overflow-y:auto;min-height:150px" });
     const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;min-height:1.1rem;display:block" }, "");
@@ -5639,9 +5639,9 @@
       // screen saying so. Revising is now a row action, so the part is the only
       // screen you need.
       function openNewVersionModal(d) {
-        const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
+        const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-        const box = el("div", { style: "background:var(--bg,#fff);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
+        const box = el("div", { class: "modal-box" });
         overlay.append(box);
         document.body.append(overlay);
 
@@ -5752,9 +5752,9 @@
         ]));
 
       function openAddDocModal() {
-        const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center" });
+        const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-        const box = el("div", { style: "background:var(--bg,#fff);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
+        const box = el("div", { class: "modal-box" });
         overlay.append(box);
         document.body.append(overlay);
 
@@ -5902,7 +5902,7 @@
                 ? "Every drawing is already linked to this part."
                 : "No drawings exist yet. Use + New drawing to create one for this part directly."),
               el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.8rem" },
-                el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Close")));
+                el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "✕ Close")));
             return;
           }
           const sel = el("select", { class: "up-text", style: "width:100%;margin-top:4px" },
@@ -6191,7 +6191,7 @@
               onRefresh();
             } catch (ex) { errSpan.textContent = ex.message; submitBtn.disabled = false; }
           } }, "Create Stocked Variant");
-          const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0007;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center", onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, [
+          const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim", onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, [
             el("div", { style: "background:var(--surface,#fff);border-radius:8px;padding:1.25rem;width:min(440px,95vw);display:flex;flex-direction:column;gap:0.6rem", onclick: (ev) => ev.stopPropagation() }, [
               el("h4", { style: "margin:0;font-size:1rem" }, `Materialise "${cfg.name}" as Stocked Variant`),
               el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, Object.entries(cfg.selections || {}).map(([k, v]) => `${k}: ${v}`).join("  ·  ")),
@@ -7241,7 +7241,7 @@
               title: "Read a datasheet, drawing or screenshot and fill these fields",
               onclick: () => openAiFillModal(componentId, token, panel, nodeData, role, imgData?.images || []),
             }, "✨ AI fill"),
-            el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.__hide ? panel.__hide() : (panel.style.display = "none"); } }, "Close"),
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => { panel.__hide ? panel.__hide() : (panel.style.display = "none"); } }, "✕ Close"),
           ]),
         ]),
         tabBar,
@@ -7257,8 +7257,8 @@
 
   // --- Add component dialog --------------------------------------------------
   function openAddComponent(token, onCreated) {
-    const overlay = el("div", { class: "modal-overlay", "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0008;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
-    const dialog = el("div", { class: "modal-dialog", style: "background:var(--bg,#fff);border-radius:8px;padding:1.5rem;width:min(540px,95vw);max-height:90vh;overflow-y:auto" });
+    const overlay = el("div", { class: "modal-overlay", "data-modal-overlay": "", class: "modal-scrim" });
+    const dialog = el("div", { class: "modal-dialog", class: "modal-box" });
 
     // --- Part-number generator ------------------------------------------------
     function genPN() {
@@ -7484,7 +7484,7 @@
 
   // --- Configure modal: resolve a variant from a product family -------------
   function openConfigureModal(familyNode, token, onRefresh) {
-    const overlay = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#0009;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:1rem" });
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const dialog  = el("div", { style: "background:var(--bg,#fff);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(600px,95vw);max-height:90vh;overflow-y:auto" });
 
     let attributes = [];
@@ -8686,7 +8686,7 @@
       if (state.cell === "__unc__") { inCell = items.filter((i) => !i.effective_phase || !i.effective_scope); title = "Unclassified"; }
       else { const [phase, scope] = state.cell.split("|"); inCell = items.filter((i) => i.effective_phase === phase && i.effective_scope === scope); title = `${PHASE_LABEL[phase]} · ${SCOPE_LABEL[scope]}`; }
       listMount.replaceChildren(el("div", { class: "card" }, [
-        el("div", { style: "display:flex; align-items:center; gap:0.5rem" }, [el("h3", { style: "margin:0" }, `${title} — ${inCell.length} item(s)`), el("span", { class: "spacer" }), el("button", { class: "btn btn-sm", type: "button", onclick: () => { state.cell = null; render(); } }, "Close")]),
+        el("div", { style: "display:flex; align-items:center; gap:0.5rem" }, [el("h3", { style: "margin:0" }, `${title} — ${inCell.length} item(s)`), el("span", { class: "spacer" }), el("button", { class: "btn btn-sm", type: "button", onclick: () => { state.cell = null; render(); } }, "✕ Close")]),
         inCell.length ? el("div", { class: "cs-list", style: "margin-top:0.6rem" }, inCell.map((it) => el("div", { class: "cs-row" }, [
           el("div", { class: "cs-row-main" }, [
             el("div", { class: "cs-row-label" }, [el("span", { class: `cs-type cs-type-${it.entityType}` }, it.entityType === "document" ? "DOC" : it.entityType === "step" ? "ACTION" : "CLAUSE"), " ", it.label]),
@@ -9537,10 +9537,12 @@
           ? el("button", { class: "btn btn-xs", type: "button", onclick: () => { disposeCurrent(); opts.onBack.go(); } },
               `← ${opts.onBack.label}`)
           : null,
-        el("div", { class: "drawing-title" }, [
-          el("strong", {}, drawing.drawing_number),
-          el("span", { class: "muted" }, drawing.title),
-        ]),
+        mount
+          ? el("div", { class: "drawing-title" }, [
+              el("strong", {}, drawing.drawing_number),
+              el("span", { class: "muted" }, drawing.title),
+            ])
+          : null,
         el("span", { style: "flex:1" }),
         current
           ? el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
@@ -9550,8 +9552,23 @@
               } catch (ex) { alert(ex.message); }
             } }, "⤓ Download")
           : null,
-        mount ? null : el("button", { class: "btn btn-sm", type: "button", onclick: () => { disposeCurrent(); close(); } }, "Close"),
+        // In its own modal, openModal already renders the one Close. Mounted in
+        // the detail panel, this view has replaced that panel's header, so it
+        // owns the only way out.
+        mount
+          ? el("button", { class: "btn btn-sm", type: "button", onclick: () => {
+              disposeCurrent();
+              if (mount.__hide) mount.__hide(); else close();
+            } }, "✕ Close")
+          : null,
       ].filter(Boolean));
+
+      // The dialog's own header is the title bar; repeating the drawing number
+      // one row below it was the other half of the doubled chrome.
+      if (!mount) {
+        const t = host.closest(".viewer-dialog")?.querySelector(".viewer-title");
+        if (t) t.textContent = `${drawing.drawing_number} — ${drawing.title}`;
+      }
 
       setChildren(host,
         d.partial

@@ -717,6 +717,26 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .src-row:first-of-type { border-top: none; padding-top: 0.1rem; }
 .src-row .form-label { color: var(--text); }
 
+/* ---- shared dialog chrome ---------------------------------------------------
+   Dialogs were built two ways: openModal (.viewer-overlay/.viewer-dialog) and
+   thirteen hand-rolled overlays with inline styles. Between them the scrim came
+   in six different darknesses — #0007, #0008, #0009, #00000080, #000c and
+   rgba(0,0,0,0.6) — so dialogs dimmed the page by visibly different amounts
+   depending on which one you happened to open. One scrim, one box. */
+.modal-scrim {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center; padding: 1rem;
+}
+/* The image lightbox wants the page gone, not merely dimmed. */
+.modal-scrim.is-dark { background: rgba(0, 0, 0, 0.82); z-index: var(--z-viewer); flex-direction: column; }
+.modal-box {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1.25rem 1.5rem; width: min(560px, 95vw); max-height: 90vh; overflow-y: auto;
+}
+.modal-box.is-wide { width: min(880px, 96vw); }
+
 /* ---- in-portal document viewer (modal) ---- */
 .viewer-overlay {
   /* Above --z-panel. At 200 this rendered behind the component detail panel,

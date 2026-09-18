@@ -3524,7 +3524,7 @@
     // scrolling past every row to reach it — and worse as the list grows. It is
     // now a centred overlay: it opens where you are looking, regardless of
     // scroll position or list length.
-    const detailPanel = el("div", { class: "pis-detail-panel", style: "background:var(--bg,#fff);border-radius:10px;padding:1.25rem 1.5rem;width:min(1180px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 48px #0004" });
+    const detailPanel = el("div", { class: "pis-detail-panel", style: "background:var(--bg,#fff);border-radius:10px;padding:1.25rem 1.5rem;width:min(1560px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 48px #0004" });
     // NOTE: deliberately no data-modal-overlay here. That attribute means "a
     // modal is stacked above the detail panel, so the panel must not consume the
     // paste" (v213). This IS the detail panel, and tagging it would break
@@ -3920,7 +3920,7 @@
             if (e.key === "Escape") lbClose();
           }
           function lbClose() { lbOver.remove(); document.removeEventListener("keydown", lbOnKey); }
-          const lbOver = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#000c;z-index:var(--z-modal)0;display:flex;flex-direction:column;align-items:center;justify-content:center", onclick: lbClose });
+          const lbOver = el("div", { "data-modal-overlay": "", style: "position:fixed;inset:0;background:#000c;z-index:var(--z-viewer);display:flex;flex-direction:column;align-items:center;justify-content:center", onclick: lbClose });
           lbOver.append(el("div", { style: "display:flex;align-items:center;gap:1rem" }, [lbPrev, lbImg, lbNext].filter(Boolean)), lbCount);
           document.addEventListener("keydown", lbOnKey);
           lbShow(0);

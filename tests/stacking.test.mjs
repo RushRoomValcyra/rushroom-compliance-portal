@@ -40,6 +40,19 @@ test(".viewer-overlay uses the named layer, not a bare number", () => {
     ".viewer-overlay does not use --z-modal, so it can drift below the panel again");
 });
 
+test("no z-index declaration is malformed", () => {
+  // A blunt string migration replaced the "1000" prefix inside "10000" and left
+  // a stray digit: `z-index:var(--z-modal)0`. That is not a valid declaration,
+  // so the element silently had no z-index at all — and the previous test,
+  // which only looked for bare numbers, saw nothing wrong.
+  const bad = [...app.matchAll(/z-index:\s*var\(--z-[a-z]+\)[^;"'`,\s]/g)].map((m) => m[0]);
+  assert.deepEqual(bad, [], `malformed z-index declarations: ${bad.join(", ")}`);
+  const tokens = [...app.matchAll(/z-index:\s*var\((--z-[a-z]+)\)/g)].map((m) => m[1]);
+  const defined = new Set([...css.matchAll(/(--z-[a-z]+):/g)].map((m) => m[1]));
+  const missing = tokens.filter((t) => !defined.has(t));
+  assert.deepEqual([...new Set(missing)], [], `undefined layer tokens: ${missing.join(", ")}`);
+});
+
 test("no overlay in app.js carries a hand-picked z-index", () => {
   // 1 is a local stacking context inside a scroll container, not a layer.
   const raw = [...app.matchAll(/z-index:(\d+)/g)].map((m) => Number(m[1])).filter((n) => n > 1);

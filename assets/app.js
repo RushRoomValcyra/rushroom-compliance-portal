@@ -3651,11 +3651,26 @@
     // that requirement is what made the Status Overview unusable — and it widens
     // as subtrees are expanded, so it always describes what you are looking at.
     const summaryEl = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.4rem 0" });
+    let exportSet = [];
 
     wrap.replaceChildren(
       el("div", { class: "pis-toolbar", style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap" }, [
         el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => openAddComponent(token, (id, type) => { activeTab = type === "sub_assembly" ? "assemblies" : "components"; refreshTree(); }) }, "+ New BOM Node"),
         el("button", { class: "btn btn-sm", type: "button", onclick: () => refreshTree() }, "↺ Refresh"),
+        ...exportButtons(
+          () => exportSet,
+          () => BOM_EXPORT_COLUMNS((id) => (partCategories.find((c) => c.id === id) || {}).name || ""),
+          () => {
+            // Name the file after what is actually in it, so three exports in a
+            // downloads folder are still tellable apart.
+            const tab = { components: "parts", assemblies: "assemblies", dynamic: "dynamic-boms" }[activeTab] || "bom";
+            const cat = activeTab === "components" && activeCategory !== "all"
+              ? "-" + (activeCategory === "none" ? "uncategorised"
+                  : ((partCategories.find((c) => c.id === activeCategory) || {}).name || "category")
+                      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))
+              : "";
+            return `rushroom-${tab}${cat}`;
+          }),
         searchInp,
       ]),
       tabBarEl,
@@ -3760,6 +3775,10 @@
       // order of what is actually shown. Copy first — `items` may be the array
       // held in allComponents and sorting in place would reorder the source.
       items = items.slice().sort(sortComparator);
+      // What the export writes: the whole filtered and sorted set, not the
+      // paginated slice below. Exporting only the loaded page would silently
+      // truncate, and a short export looks exactly like a short BOM.
+      exportSet = items;
 
       // Column bar. Rebuilt per render because the active key and direction
       // are part of it, and because Category is meaningless outside Parts.
@@ -4364,6 +4383,154 @@
 
     render();
   }
+
+  // ---- Export (PROP-048) -----------------------------------------------------
+  // CSV and Excel from the same rows and the same column definition, so the two
+  // formats can never disagree about what was exported.
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: filename, style: "display:none" });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    // Revoking immediately can cancel the download in some browsers; a tick is
+    // enough for the navigation to have started.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /**
+   * RFC 4180 CSV. Three details that decide whether Excel opens it correctly:
+   *  - a UTF-8 BOM, or Excel on Windows mangles å, ä and ö in part names;
+   *  - CRLF line endings, which Excel expects;
+   *  - a leading apostrophe on values Excel would silently convert — a part
+   *    number like "1-2" becomes a date otherwise, and that corruption is
+   *    invisible until someone tries to match it back.
+   */
+  function toCSV(rows, columns) {
+    const risky = (v) => /^[=+\-@\t\r]/.test(v);            // also blocks formula injection
+    const cell = (v) => {
+      let s = v === null || v === undefined ? "" : String(v);
+      if (risky(s)) s = "'" + s;
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const head = columns.map((c) => cell(c.label)).join(",");
+    const body = rows.map((r) => columns.map((c) => cell(c.get(r))).join(",")).join("\r\n");
+    return "﻿" + head + "\r\n" + body + "\r\n";
+  }
+
+  async function exportRows(rows, columns, basename, format) {
+    if (!rows.length) { alert("There is nothing to export with the current filters."); return; }
+    const stamp = new Date().toISOString().slice(0, 10);
+    const name = `${basename}-${stamp}`;
+    if (format === "csv") {
+      downloadBlob(new Blob([toCSV(rows, columns)], { type: "text/csv;charset=utf-8" }), `${name}.csv`);
+      return;
+    }
+    // SheetJS is already a dependency of the document viewer, and already
+    // lazy-loaded from the same CDN — writing costs no new library.
+    await loadScript(XLSX_CDN);
+    const aoa = [columns.map((c) => c.label), ...rows.map((r) => columns.map((c) => {
+      const v = c.get(r);
+      return v === null || v === undefined ? "" : v;
+    }))];
+    const ws = window.XLSX.utils.aoa_to_sheet(aoa);
+    // Column widths from the content, so nothing opens as ####.
+    ws["!cols"] = columns.map((c, i) => ({
+      wch: Math.min(60, Math.max(c.label.length + 2, ...aoa.slice(1).map((r) => String(r[i] ?? "").length + 2))),
+    }));
+    ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, "BOM");
+    const out = window.XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    downloadBlob(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `${name}.xlsx`);
+  }
+
+  /** Two buttons rather than a format dropdown: one click instead of two. */
+  function exportButtons(getRows, getColumns, getBasename) {
+    const run = async (format, btn) => {
+      const label = btn.textContent;
+      btn.disabled = true; btn.textContent = "…";
+      try { await exportRows(getRows(), getColumns(), getBasename(), format); }
+      catch (ex) { alert(`Export failed: ${ex.message}`); }
+      finally { btn.disabled = false; btn.textContent = label; }
+    };
+    const csv = el("button", { class: "btn btn-sm", type: "button", title: "Download the rows below as CSV",
+      onclick: () => run("csv", csv) }, "⤓ CSV");
+    const xls = el("button", { class: "btn btn-sm", type: "button", title: "Download the rows below as an Excel workbook",
+      onclick: () => run("xlsx", xls) }, "⤓ Excel");
+    return [csv, xls];
+  }
+
+  // The fundamental record: what a part IS, and the two ways to refer to it.
+  // `id` is the stable system identifier integrations need; `part_number` is the
+  // one humans read off a drawing.
+  const BOM_EXPORT_COLUMNS = (categoryName) => [
+    { label: "ID", get: (c) => c.id },
+    { label: "Part number", get: (c) => c.part_number || "" },
+    { label: "Name", get: (c) => c.name || "" },
+    { label: "Type", get: (c) => c.type || "" },
+    { label: "Category", get: (c) => categoryName(c.category_id) },
+    { label: "Sourcing", get: (c) => c.make_or_buy || "" },
+    { label: "Status", get: (c) => c.lifecycle_status || "" },
+    { label: "OEM number", get: (c) => c.oem_number || "" },
+    { label: "Description", get: (c) => c.description || "" },
+  ];
+
+  /**
+   * An indented BOM from getBom's flat {nodes, edges}: one row per OCCURRENCE,
+   * in tree order, with a 1.2.3 position and the quantity from the edge.
+   *
+   * Per occurrence, not per component, on purpose: a screw used in four places
+   * is four lines in a bill of materials, and collapsing them to one would
+   * understate what has to be bought.
+   */
+  function flattenBomForExport(rootId, nodes, edges) {
+    const byId = {};
+    (nodes || []).forEach((n) => { byId[n.id] = n; });
+    const children = {};
+    (edges || []).forEach((e) => { (children[e.parent_id] ||= []).push(e); });
+    Object.values(children).forEach((list) => list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)));
+
+    const rows = [];
+    const walk = (id, level, position, parentId, edge, seen) => {
+      const n = byId[id];
+      if (!n) return;
+      rows.push({
+        level, position,
+        id: n.id, part_number: n.part_number, name: n.name, type: n.type,
+        quantity: edge ? edge.quantity : "", unit: n.unit_of_measure || "",
+        reference: edge ? (edge.reference_designator || "") : "",
+        lifecycle_status: n.lifecycle_status,
+        parent_id: parentId || "", parent_name: parentId ? (byId[parentId]?.name || "") : "",
+      });
+      // The database forbids cycles, but a malformed edge set must not hang the
+      // browser: a node already on this branch is not walked again.
+      if (seen.has(id) || level > 12) return;
+      const next = new Set(seen); next.add(id);
+      (children[id] || []).forEach((e, i) =>
+        walk(e.child_id, level + 1, position ? `${position}.${i + 1}` : String(i + 1), id, e, next));
+    };
+    walk(rootId, 0, "", null, null, new Set());
+    return rows;
+  }
+
+  const BOM_TREE_COLUMNS = [
+    { label: "Level", get: (r) => r.level },
+    { label: "Position", get: (r) => r.position },
+    { label: "ID", get: (r) => r.id },
+    { label: "Part number", get: (r) => r.part_number || "" },
+    // Indented so the structure survives in a spreadsheet, where there are no
+    // expand arrows to show it.
+    { label: "Name", get: (r) => `${"    ".repeat(r.level)}${r.name || ""}` },
+    { label: "Type", get: (r) => r.type || "" },
+    { label: "Qty", get: (r) => r.quantity },
+    { label: "Unit", get: (r) => r.unit },
+    { label: "Ref", get: (r) => r.reference },
+    { label: "Status", get: (r) => r.lifecycle_status || "" },
+    { label: "Parent", get: (r) => r.parent_name },
+    { label: "Parent ID", get: (r) => r.parent_id },
+  ];
 
   // --- Part categories (PROP-038) -------------------------------------------
   // Shared picker for both create paths and the detail panel. `typeEl`, when
@@ -7446,7 +7613,7 @@
     async function analyse(rootId, rootName) {
       resultArea.replaceChildren(el("div", { class: "loading" }, "Analysing…"));
       try {
-        const { nodes } = await API.post(token, "getBom", { root_component_id: rootId, max_depth: 99 });
+        const { nodes, edges } = await API.post(token, "getBom", { root_component_id: rootId, max_depth: 99 });
         if (!nodes || !nodes.length) {
           resultArea.replaceChildren(el("div", { class: "notice" },
             `${rootName} has no components beneath it, so there is nothing to summarise.`));
@@ -7460,8 +7627,18 @@
           .map((n) => [n.id, n])).values()]
           .sort((a, b) => (a.lifecycle_status || "").localeCompare(b.lifecycle_status || "") || (a.name || "").localeCompare(b.name || ""));
 
+        const treeRows = flattenBomForExport(rootId, nodes, edges);
         resultArea.replaceChildren(
-          el("h4", { style: "margin:0 0 0.5rem" }, `Lifecycle status beneath ${rootName}`),
+          el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.5rem" }, [
+            el("h4", { style: "margin:0" }, `Lifecycle status beneath ${rootName}`),
+            el("span", { style: "flex:1" }),
+            // The indented BOM for this root — the tree as a spreadsheet, with a
+            // line per occurrence and the quantity from each edge.
+            ...exportButtons(
+              () => treeRows,
+              () => BOM_TREE_COLUMNS,
+              () => `rushroom-bom-${(rootName || "product").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`),
+          ]),
           summary.el,
           el("p", { class: "muted", style: "font-size:0.8125rem;margin:0.6rem 0 0" },
             "Every component at every depth, counted once even where it appears under more than one assembly."),

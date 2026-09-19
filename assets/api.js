@@ -1,4 +1,4 @@
-/* Rushroom AB — Compliance Portal API client
+/* Rushroom AB — Engineering & Compliance Platform API client
  * Thin wrapper around the Supabase `portal-api` Edge Function. The function does
  * all auth and authorization; this just sends JSON and stores the session token.
  * Exposes window.PortalAPI. Loaded before app.js.

@@ -1,4 +1,4 @@
-# Rushroom AB — Compliance Portal
+# Rushroom AB — Engineering & Compliance Platform
 
 A small, accessible static website that gives all parties — the internal team, component
 suppliers, installers and reviewers — one place to see **live compliance readiness** and

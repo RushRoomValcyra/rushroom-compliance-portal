@@ -1,4 +1,4 @@
-The Rushroom Compliance Portal frontend is live at:
+The Rushroom Engineering & Compliance Platform frontend is live at:
 
 **https://rushroomvalcyra.github.io/rushroom-compliance-portal/**
 

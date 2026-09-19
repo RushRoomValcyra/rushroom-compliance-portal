@@ -1,4 +1,4 @@
-# Rushroom Compliance Portal — External API
+# Rushroom Engineering & Compliance Platform — External API
 
 For integrations and manual calls (Postman, scripts). The portal's own frontend
 uses the same endpoints through `assets/api.js`.

@@ -1,6 +1,6 @@
 -- REFERENCE ONLY. Apply via supabase/migrations/ not this file.
 -- ============================================================================
--- Rushroom Compliance Portal — Supabase schema
+-- Rushroom Engineering & Compliance Platform — Supabase schema
 -- Run this once in your Supabase project: SQL Editor → New query → paste → Run.
 -- Safe to re-run: it uses "if not exists" / "on conflict do nothing".
 --

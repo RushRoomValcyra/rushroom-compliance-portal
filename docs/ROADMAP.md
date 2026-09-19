@@ -1,4 +1,4 @@
-# Rushroom Compliance Portal — Roadmap
+# Rushroom Engineering & Compliance Platform — Roadmap
 _Last updated: 2026-09-17 · Auto-maintained by /ship · state map for `/status`_
 
 **Lifecycle:** Backlog → Next → Now → **Built (awaiting deploy)** → Shipped.

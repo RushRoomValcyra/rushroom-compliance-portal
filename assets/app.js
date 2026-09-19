@@ -1,4 +1,4 @@
-/* Rushroom AB — Compliance Portal
+/* Rushroom AB — Engineering & Compliance Platform
  * Shared logic (window.Portal) + full-portal page init.
  * No framework, no build step. Accessibility: see README "Accessibility".
  */
@@ -2211,7 +2211,7 @@
     const status = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");
     const submit = el("button", { class: "btn btn-primary", type: "button" }, "Register");
     const form = el("div", { class: "step-form" }, [
-      el("p", { class: "muted", style: "margin:0 0 0.4rem" }, "Request access to the Rushroom AB Compliance Portal. We'll email you a link to verify your address; an administrator then approves your access and sets your role. You'll sign in with this email and password once approved."),
+      el("p", { class: "muted", style: "margin:0 0 0.4rem" }, "Request access to the Rushroom AB Engineering & Compliance Platform. We'll email you a link to verify your address; an administrator then approves your access and sets your role. You'll sign in with this email and password once approved."),
       el("label", { class: "form-row" }, [el("span", { class: "form-label" }, "Role"), role]),
       el("label", { class: "form-row" }, [el("span", { class: "form-label" }, "Name"), name]),
       el("label", { class: "form-row" }, [el("span", { class: "form-label" }, "Email"), email]),
@@ -9707,7 +9707,7 @@
   };
 
   /* ---------------- full-portal page init ---------------- */
-  // Clicking the brand (logo + "Compliance Portal") jumps to the Compliance
+  // Clicking the brand (logo + "Engineering & Compliance Platform") jumps to the Compliance
   // Status tab, once the portal is unlocked.
   function wireBrandHome() {
     const brand = $(".brand");

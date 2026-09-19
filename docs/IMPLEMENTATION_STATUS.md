@@ -19,7 +19,7 @@
 
 ## Executive Summary
 
-The Rushroom Compliance Portal has a **Level 2 structured interpretation layer** for clause-level compliance data, enabling EU DPP output. (The "faster deviation scanning" was planned but not built — see Phase 3.)
+The Rushroom Engineering & Compliance Platform has a **Level 2 structured interpretation layer** for clause-level compliance data, enabling EU DPP output. (The "faster deviation scanning" was planned but not built — see Phase 3.)
 
 - ✅ **Database Schema:** All 4 tables added with RLS + indexes (applied via SQL Editor)
 - ✅ **API Backend:** 7 actions + passport CRUD — fixed and deployed

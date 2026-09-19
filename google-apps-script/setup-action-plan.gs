@@ -1,5 +1,5 @@
 /**
- * Rushroom Compliance Portal — action-plan sheet helper
+ * Rushroom Engineering & Compliance Platform — action-plan sheet helper
  * ============================================================================
  * Adds dropdowns + colour-coding to the action-plan sheet so the Status column
  * is easy to fill in and always matches what the compliance portal understands.

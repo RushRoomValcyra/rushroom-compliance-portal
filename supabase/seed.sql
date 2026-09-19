@@ -1,5 +1,5 @@
 -- ============================================================================
--- seed.sql — Rushroom Compliance Portal seed & backfill data
+-- seed.sql — Rushroom Engineering & Compliance Platform seed & backfill data
 -- Run AFTER every migration in supabase/migrations/ has been applied.
 -- Contains all data that used to live in the schema: storage buckets, the seed
 -- tenant, action-plan steps, the document library, the EU directive registry,

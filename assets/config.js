@@ -1,5 +1,5 @@
 /*
- * Rushroom AB — Compliance Portal configuration
+ * Rushroom AB — Engineering & Compliance Platform configuration
  * ============================================================================
  * This is the only file you normally edit. See README.md for full instructions.
  *

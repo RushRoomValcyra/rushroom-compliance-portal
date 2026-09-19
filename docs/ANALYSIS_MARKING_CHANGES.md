@@ -214,7 +214,7 @@ NEW: 3 lines (added Level 2 reference)
 
 **Example:**
 ```html
-<h1>Rushroom Compliance Portal</h1>
+<h1>Rushroom Engineering &amp; Compliance Platform</h1>
 <p class="subtitle">System Overview, Architecture & Data Model</p>
 <p class="subtitle">Document Versioning, Standards Management & AI-Assisted Drafting</p>
 <p class="subtitle"><mark>Level 2: Structured Clause-Level Interpretations & DPP Preparation</mark></p>

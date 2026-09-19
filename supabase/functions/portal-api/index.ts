@@ -1,5 +1,5 @@
 // ============================================================================
-// Rushroom Compliance Portal — API gateway (Supabase Edge Function)
+// Rushroom Engineering & Compliance Platform — API gateway (Supabase Edge Function)
 //
 // The browser talks ONLY to this function; it never touches the database or
 // storage directly. This function authenticates the role password server-side,
@@ -116,11 +116,11 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
   } catch { return false; }
 }
 const sendVerificationEmail = (to: string, name: string, url: string) =>
-  sendEmail(to, "Verify your Rushroom Compliance Portal registration",
-    `<p>Hi ${name || "there"},</p><p>Thanks for registering for the Rushroom AB Compliance Portal. Please confirm your email address:</p><p><a href="${url}">Verify my email</a></p><p>This link expires in 7 days. If you didn't request this, you can ignore it.</p>`);
+  sendEmail(to, "Verify your Rushroom Engineering & Compliance Platform registration",
+    `<p>Hi ${name || "there"},</p><p>Thanks for registering for the Rushroom AB Engineering & Compliance Platform. Please confirm your email address:</p><p><a href="${url}">Verify my email</a></p><p>This link expires in 7 days. If you didn't request this, you can ignore it.</p>`);
 const sendPasswordEmail = (to: string, name: string, url: string) =>
-  sendEmail(to, "Set your Rushroom Compliance Portal password",
-    `<p>Hi ${name || "there"},</p><p>Use the link below to set a new password for the Rushroom AB Compliance Portal:</p><p><a href="${url}">Set my password</a></p><p>This link expires in 1 hour. If you didn't request this, you can ignore it.</p>`);
+  sendEmail(to, "Set your Rushroom Engineering & Compliance Platform password",
+    `<p>Hi ${name || "there"},</p><p>Use the link below to set a new password for the Rushroom AB Engineering & Compliance Platform:</p><p><a href="${url}">Set my password</a></p><p>This link expires in 1 hour. If you didn't request this, you can ignore it.</p>`);
 
 // ---- AI deviation monitoring (Claude) ----
 // Insert a document_versions row, tolerating the optional provenance columns
@@ -1026,8 +1026,8 @@ Deno.serve(async (req) => {
     const to = String(body.to ?? session.email ?? "").trim().toLowerCase();
     if (!emailOk(to)) return json({ error: "Enter a valid recipient email address." }, 400);
     if (!Deno.env.get("RESEND_API_KEY")) return json({ error: "Email is not configured yet — set RESEND_API_KEY in the function secrets." }, 400);
-    const emailed = await sendEmail(to, "Rushroom Compliance Portal — test email",
-      `<p>This is a test email from the Rushroom AB Compliance Portal.</p><p>If you can read this, email delivery is working — verification and password links will now reach users automatically.</p>`);
+    const emailed = await sendEmail(to, "Rushroom Engineering & Compliance Platform — test email",
+      `<p>This is a test email from the Rushroom AB Engineering & Compliance Platform.</p><p>If you can read this, email delivery is working — verification and password links will now reach users automatically.</p>`);
     if (!emailed) return json({ error: "Resend rejected the send — check the API key and that the MAIL_FROM domain is verified." }, 502);
     return json({ ok: true, emailed: true, to });
   }

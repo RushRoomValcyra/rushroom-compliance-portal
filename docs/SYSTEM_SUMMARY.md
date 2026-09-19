@@ -1,4 +1,4 @@
-# Rushroom Compliance Portal — System Summary
+# Rushroom Engineering & Compliance Platform — System Summary
 
 **Last updated:** 2026-07-07
 **Status:** Live in production

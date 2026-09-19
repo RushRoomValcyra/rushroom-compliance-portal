@@ -1,4 +1,4 @@
-# Rushroom Compliance Portal — Claude Code Context
+# Rushroom Engineering & Compliance Platform — Claude Code Context
 
 ## What this is
 Compliance portal for Rushroom AB's LED furniture product.
@@ -82,6 +82,6 @@ Manufacturing (PROP-030): family_routing_steps, work_orders,
         work_order_steps, work_order_components
 
 ## Current state
-Frontend cache version: ?v=250
+Frontend cache version: ?v=251
 Last SYSTEM_OVERVIEW audit: 2026-08-29
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

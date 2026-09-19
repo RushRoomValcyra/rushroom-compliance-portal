@@ -1,4 +1,4 @@
-/* Rushroom AB — Compliance Portal: in-portal document viewer
+/* Rushroom AB — Engineering & Compliance Platform: in-portal document viewer
  * Renders PDF / Word (.docx) / Excel (.xlsx) inline in a modal, client-side —
  * the file bytes are fetched from Supabase straight into the browser and rendered
  * locally (nothing is sent to any third-party viewer). The rendering libraries

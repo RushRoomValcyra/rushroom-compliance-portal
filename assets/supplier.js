@@ -1,4 +1,4 @@
-/* Rushroom AB — Compliance Portal (supplier view)
+/* Rushroom AB — Engineering & Compliance Platform (supplier view)
  * Slimmed page: only supplier-relevant documents and supplier step statuses,
  * plus a declaration-upload panel. Reuses shared helpers from window.Portal
  * (app.js). Nothing internal is shown.

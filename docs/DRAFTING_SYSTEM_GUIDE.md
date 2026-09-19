@@ -8,7 +8,7 @@
 
 ## What Is This System?
 
-A comprehensive framework for **proposing, tracking, and implementing** new features and enhancements for the Rushroom Compliance Portal.
+A comprehensive framework for **proposing, tracking, and implementing** new features and enhancements for the Rushroom Engineering & Compliance Platform.
 
 **Core Concept:** Never again lose track of good ideas. Every proposal is documented with its:
 - **Cause:** What problem does it solve?

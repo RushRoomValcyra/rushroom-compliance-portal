@@ -9501,11 +9501,7 @@
             ? `${ownerName || "a part"}${drawing.node_sequence ? ` · drawing ${drawing.node_sequence}` : ""}`
             : el("span", { style: "color:#b45309;font-weight:600" }, "Free drawing")),
           ...(drawing.supplier_drawing_number
-            ? [el("dt", {}, "Supplier calls it"), el("dd", {}, drawing.supplier_drawing_number)] : []),
-          el("dt", {}, "Sheet"),
-          el("dd", {}, [drawing.sheet_size, drawing.scale ? `scale ${drawing.scale}` : null,
-                        drawing.projection_angle ? `${drawing.projection_angle} angle` : null]
-                        .filter(Boolean).join(" · ") || "—"),
+            ? [el("dt", {}, "Supplier ID"), el("dd", {}, drawing.supplier_drawing_number)] : []),
           el("dt", {}, "Used on"),
           el("dd", {}, components.length
             ? `${components.length} part${components.length === 1 ? "" : "s"}`

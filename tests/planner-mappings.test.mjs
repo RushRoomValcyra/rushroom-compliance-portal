@@ -10,12 +10,15 @@ const read = (p) => readFileSync(join(root, p), "utf8");
 
 test("planner mappings have an additive versioned tenant-scoped model", () => {
   const sql = read("supabase/migrations/0034_planner_mappings.sql");
+  const catalogSql = read("supabase/migrations/0035_planner_catalog_entries.sql");
   const tenant = read("supabase/functions/_shared/tenant.ts");
   for (const field of ["organization_id", "source_type", "source_key", "target_component_id", "quantity_rule", "is_active", "mapping_revision", "release_label", "supersedes_id"]) {
     assert.ok(sql.includes(field), `migration is missing ${field}`);
   }
   assert.ok(sql.includes("planner_mappings_one_active_source"), "active source identity is not unique");
   assert.ok(tenant.includes('"planner_mappings"'), "planner mappings are not tenant-scoped");
+  assert.ok(catalogSql.includes("planner_catalog_entries") && catalogSql.includes("organization_id") && catalogSql.includes("ENABLE ROW LEVEL SECURITY"), "planner catalog migration lacks tenant/RLS protection");
+  assert.ok(tenant.includes('"planner_catalog_entries"'), "planner catalog is not tenant-scoped");
 });
 
 test("planner mapping API is Rushroom-only and never resolves Website carts", () => {
@@ -37,15 +40,19 @@ test("editor documents every current Website planner source field", () => {
   assert.ok(ui.includes("Planner mappings"), "Rushroom editor is not reachable from Product BOM");
 });
 
-test("paste-only inspector extracts exact Website cart keys without persisting carts", () => {
+test("PIM saves derived planner keys without receiving Website carts", () => {
   const ui = read("assets/app.js");
+  const api = read("supabase/functions/portal-api/index.ts");
   const docs = read("docs/PLANNER_MAPPINGS.md");
-  for (const fragment of ["inspectPlannerCartConfiguration", "raw?.configuration", "config.modules", "config.sides?.panels", "config.sides?.feet", "config.doors", "config.covers", "config.backCovers", '"BackCover"', "SOURCE_TYPE_LABELS", "Map this item", 'quantity_rule: "cart_quantity", fixed_quantity: null', '"Cart-derived"']) {
-    assert.ok(ui.includes(fragment), `inspector is missing ${fragment}`);
+  for (const fragment of ["inspectPlannerCartConfiguration", "listPlannerCatalog", "importPlannerCatalog", "Import/update planner keys", "SOURCE_TYPE_LABELS", "Map this item", 'quantity_rule: "cart_quantity", fixed_quantity: null', '"Cart-derived"']) {
+    assert.ok(ui.includes(fragment), `PIM catalog UI is missing ${fragment}`);
   }
   assert.ok(!ui.includes("quantity.closest(\"label\")"), "modal must not inspect unattached controls");
-  assert.ok(!ui.includes("current cart qty"), "cart quantities must not be shown in the identity importer");
-  for (const key of ["S`, `M`, `L", "side_middle_color_0", "Door and cover mesh names are dynamic", "inspector's exact emitted key is authoritative", "Wildcards are stored as data but are **not", "not cart configurations"]) {
+  for (const fragment of ['action === "listPlannerCatalog"', 'action === "importPlannerCatalog"', 'tdb("planner_catalog_entries")', "body.items.length > 2_000"]) {
+    assert.ok(api.includes(fragment), `PIM catalog API is missing ${fragment}`);
+  }
+  assert.ok(!api.includes("WEBSITE_PLANNER_CATALOG_URL"), "PIM catalog must not fetch Website");
+  for (const key of ["S`, `M`, `L", "side_middle_color_0", "Door and cover mesh names are dynamic", "planner_catalog_entries", "PIM never receives the raw cart JSON", "does not call\nWebsite or Operations"]) {
     assert.ok(docs.includes(key), `documentation is missing ${key}`);
   }
 });

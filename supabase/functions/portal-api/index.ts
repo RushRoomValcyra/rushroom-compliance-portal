@@ -2671,6 +2671,44 @@ Deno.serve(async (req) => {
     return data;
   }
 
+  // PIM owns this saved source catalog. Import receives derived source keys and
+  // labels only — never raw Website cart JSON, Website credentials, or orders.
+  if (action === "listPlannerCatalog") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const { data, error } = await tdb("planner_catalog_entries")
+      .select("id, source_type, source_key, label, created_at, updated_at")
+      .order("source_type").order("source_key");
+    if (error) return json({ error: error.message }, 400);
+    return json({ catalog: data || [], count: (data || []).length });
+  }
+
+  if (action === "importPlannerCatalog") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    if (!Array.isArray(body.items) || body.items.length > 2_000) return json({ error: "items must be an array of at most 2,000 derived planner source entries" }, 400);
+    const seen = new Set<string>();
+    const now = new Date().toISOString();
+    const items: any[] = [];
+    for (const item of body.items) {
+      const sourceType = String(item?.source_type ?? "");
+      const sourceKey = plannerSourceKey(item?.source_key);
+      const label = String(item?.label ?? sourceKey).trim().slice(0, 160);
+      if (!PLANNER_SOURCE_TYPES.includes(sourceType) || !plannerKeyValid(sourceKey) || !label) {
+        return json({ error: "Every catalog item needs a valid source_type, source_key, and label" }, 400);
+      }
+      const identity = `${sourceType}:${sourceKey}`;
+      if (!seen.has(identity)) {
+        seen.add(identity);
+        items.push({ source_type: sourceType, source_key: sourceKey, label, updated_at: now, created_by: session.uid ?? null, updated_by: session.uid ?? null });
+      }
+    }
+    if (!items.length) return json({ ok: true, imported: 0, catalog: [] });
+    const { data, error } = await tdb("planner_catalog_entries")
+      .upsert(items, { onConflict: "organization_id,source_type,source_key" })
+      .select("id, source_type, source_key, label, created_at, updated_at");
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true, imported: items.length, catalog: data || [] });
+  }
+
   if (action === "listPlannerMappings") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const includeHistory = body.include_history === true;

@@ -8206,9 +8206,8 @@
     return [...found.values()];
   }
 
-  // PIM-owned dictionary from stable Website planner keys to PIM BOM IDs.
-  // It does not read carts remotely or produce an operations order; a pasted
-  // configuration can only prefill a new mapping in this browser session.
+  // PIM-owned source catalog and dictionary from planner keys to PIM BOM IDs.
+  // A pasted cart is used only to derive keys locally during an explicit import.
   async function plannerMappingsView(token) {
     const wrap = el("div", {});
     const list = el("div", { class: "loading" }, "Loading planner mappings…");
@@ -8295,40 +8294,62 @@
 
     const inactive = el("input", { type: "checkbox" });
     inactive.onchange = () => { showInactive = inactive.checked; reload(); };
-    const pastedConfiguration = el("textarea", { class: "up-text", rows: "6", placeholder: 'Paste a cart item ({"configuration": {...}}) or the configuration object. Nothing pasted here is saved.' });
-    const inspectorStatus = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.5rem 0" }, "");
-    const detectedRows = el("div", { class: "muted" }, "Paste a configuration to detect source items.");
-    const inspect = actionBtn("Inspect configuration", "search", { primary: true, onClick: () => {
-      inspectorStatus.textContent = "";
+    const catalogStatus = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.5rem 0" }, "Loading saved planner keys…");
+    const catalogRows = el("div", { class: "muted" }, "");
+    const renderCatalog = (catalog) => {
+      if (!catalog.length) { catalogRows.replaceChildren(el("div", { class: "empty" }, "No planner keys have been imported yet.")); return; }
+      const grouped = new Map();
+      for (const item of catalog) grouped.set(item.source_type, [...(grouped.get(item.source_type) || []), item]);
+      catalogRows.replaceChildren(...SOURCE_TYPES.filter(([type]) => grouped.has(type)).map(([type]) => el("section", { style: "margin:0.75rem 0" }, [
+        el("h4", { style: "margin:0 0 0.35rem" }, SOURCE_TYPE_LABELS[type]),
+        ...grouped.get(type).map((item) => el("div", { class: "row-tools", style: "margin:0.35rem 0;justify-content:space-between" }, [
+          el("span", {}, [el("code", {}, item.source_key), item.label && item.label !== item.source_key ? ` — ${item.label}` : ""]),
+          actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
+        ])),
+      ])));
+    };
+    async function loadCatalog() {
       try {
-        const detected = inspectPlannerCartConfiguration(JSON.parse(pastedConfiguration.value));
-        if (!detected.length) {
-          detectedRows.replaceChildren(el("div", { class: "empty" }, "No supported planner source items were found."));
-          return;
-        }
-        const grouped = new Map();
-        for (const item of detected) grouped.set(item.source_type, [...(grouped.get(item.source_type) || []), item]);
-        detectedRows.replaceChildren(...SOURCE_TYPES.filter(([type]) => grouped.has(type)).map(([type]) => el("section", { style: "margin:0.75rem 0" }, [
-          el("h4", { style: "margin:0 0 0.35rem" }, SOURCE_TYPE_LABELS[type]),
-          ...grouped.get(type).map((item) => el("div", { class: "row-tools", style: "margin:0.35rem 0;justify-content:space-between" }, [
-            el("code", {}, item.source_key), actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
-          ])),
-        ])));
-      } catch (ex) { inspectorStatus.textContent = ex.message || "The pasted JSON could not be inspected."; detectedRows.replaceChildren(); }
-    }});
+        const r = await API.listPlannerCatalog(token); renderCatalog(r.catalog || []); catalogStatus.textContent = "";
+      } catch (ex) { catalogStatus.textContent = ex.message || "The saved planner keys could not be loaded."; catalogRows.replaceChildren(); }
+    }
+    function importCatalogModal() {
+      const pasted = el("textarea", { class: "up-text", rows: "7", placeholder: 'Paste one cart item ({"configuration": {...}}) or its configuration object.' });
+      const preview = el("div", { class: "muted" }, "Inspect the pasted configuration before importing its source keys.");
+      const status = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");
+      let items = [];
+      const inspect = actionBtn("Inspect keys", "search", { onClick: () => {
+        status.textContent = "";
+        try {
+          items = inspectPlannerCartConfiguration(JSON.parse(pasted.value)).map((item) => ({ ...item, label: item.source_key }));
+          if (items.length) preview.replaceChildren(...items.map((item) => el("div", {}, `${SOURCE_TYPE_LABELS[item.source_type]} · ${item.source_key}`)));
+          else preview.replaceChildren(el("div", { class: "empty" }, "No supported planner keys were found."));
+        } catch (ex) { items = []; status.textContent = ex.message || "The pasted JSON could not be inspected."; }
+      }});
+      const save = actionBtn("Import/update keys", "save", { primary: true, onClick: async () => {
+        if (!items.length) { status.textContent = "Inspect at least one planner key first."; return; }
+        save.disabled = true; status.textContent = "Saving planner keys…";
+        try { await API.importPlannerCatalog(token, items); close(); await loadCatalog(); }
+        catch (ex) { status.textContent = ex.message; save.disabled = false; }
+      }});
+      const close = openModal("Import/update planner keys", el("div", {}, [
+        el("p", { class: "muted", style: "margin-top:0" }, "PIM stores only the derived source keys and labels. The pasted cart configuration and quantities are never sent to PIM."),
+        pasted, el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [inspect, save]), status, preview,
+      ]));
+    }
     wrap.replaceChildren(
-      el("p", { class: "muted", style: "max-width:760px" }, "PIM-owned mapping from Website planner source keys to PIM components and assemblies. The optional inspector only reads pasted JSON in this browser; it does not save cart data or create Operations orders."),
+      el("p", { class: "muted", style: "max-width:760px" }, "PIM-owned catalog and mapping from planner source keys to PIM components and assemblies. Import once from a cart configuration; later visits load the saved PIM keys without accessing Website or Operations."),
       el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
-        el("h3", { style: "margin-top:0" }, "Cart-configuration inspector"),
-        el("p", { class: "muted", style: "margin-top:0" }, "Paste a real Website cart item or configuration to select an exact source key. Keys with _color_0 through _color_4 are kept exactly as received."),
-        pastedConfiguration, el("div", { style: "margin-top:0.5rem" }, inspect), inspectorStatus, detectedRows,
+        el("h3", { style: "margin-top:0" }, "Saved planner keys"),
+        el("p", { class: "muted", style: "margin-top:0" }, "Source keys are grouped by type and saved per PIM tenant."),
+        catalogStatus, catalogRows,
       ]),
       el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
-        actionBtn("+ New mapping", "plus", { primary: true, onClick: () => editModal(null) }), actionBtn("Refresh", "refresh", { onClick: reload }),
+        actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }), actionBtn("Refresh mappings", "refresh", { onClick: reload }), actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
         el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
       ]), list,
     );
-    await reload();
+    await Promise.all([reload(), loadCatalog()]);
     return wrap;
   }
 

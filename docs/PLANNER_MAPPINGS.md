@@ -25,20 +25,25 @@ inspector's exact emitted key is authoritative. The suffix is part of the
 current source key. Wildcards are stored as data but are **not resolved** in
 this MVP; the inspector neither creates nor resolves a wildcard.
 
-## Paste-only cart-configuration inspector
+## Saved PIM planner catalog
 
-The **Product BOM → Planner mappings** inspector accepts either a cart item
-containing `{ configuration: { ... } }` or the configuration object itself. It
-detects the source type and exact unique key from the fields above, including
-`BackCover` when numeric `backCovers` is greater than zero.
-`BackCover` is a documented synthetic stable source key and its quantity comes
-from `backCovers`.
+`planner_catalog_entries` (migration `0035`) is a tenant-scoped PIM catalog of
+source keys and labels. It is separate from `planner_mappings`: catalog entries
+identify available planner keys; mappings identify the PIM `target_component_id`
+for one of those keys.
 
-Detected keys are grouped by source type. Selecting **Map this item** pre-fills
-a new identity-only mapping. Its multiplicity is always cart-derived in this
-MVP: a future Operations resolver will use repeated cart rows and the cart's
-existing `qty` fields. The pasted JSON remains only in the browser: the PIM
-registry stores mappings, not cart configurations.
+On a normal **Product BOM → Planner mappings** visit, PIM loads the saved catalog
+and groups keys by source type. The user can select **Map this item** without
+pasting anything. To seed or update the catalog, **Import/update planner keys**
+opens a local paste modal that accepts one cart item containing
+`{ configuration: { ... } }` or the configuration object. The browser derives
+the supported exact source keys, shows a preview, and sends only derived
+`source_type`, `source_key`, and `label` items to PIM.
+
+PIM never receives the raw cart JSON or cart quantities, and it does not call
+Website or Operations. Imports are Rushroom-only, bounded to 2,000 source items,
+and upsert the catalog per tenant/source type/key. Multiplicity remains
+cart-derived in this MVP for a future Operations resolver.
 
 ## PIM editor and API
 
@@ -53,6 +58,9 @@ Actions on `portal-api`:
 
 - `listPlannerMappings` — latest revision per source key by default; pass
   `include_history: true` for all revisions.
+- `listPlannerCatalog` — lists the authenticated tenant's saved source keys.
+- `importPlannerCatalog` — Rushroom-only upsert of bounded, derived source
+  keys and labels; raw cart data is rejected by the API contract.
 - `savePlannerMapping` — creates a mapping or a new revision of an active
   mapping. `mapping_id` is required for an edit.
 - `deactivatePlannerMapping` — stops an active mapping from being resolved.

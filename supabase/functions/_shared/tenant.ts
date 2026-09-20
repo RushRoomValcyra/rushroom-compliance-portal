@@ -45,6 +45,8 @@ export const TENANT_TABLES = new Set([
   // passes through makeTdb UNSCOPED — every tenant sees every row and nothing
   // errors. tests/tenant-tables.test.mjs guards the omission.
   "drawings", "drawing_revisions", "drawing_components", "drawing_dimensions",
+  // PIM-owned Website Planner → PIM BOM registry (migration 0034)
+  "planner_mappings",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

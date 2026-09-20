@@ -2655,6 +2655,99 @@ Deno.serve(async (req) => {
     return json({ assemblies, count: assemblies.length });
   }
 
+  // --- PIM Planner Mapping registry (migration 0034) ------------------------
+  // This PIM-owned registry maps Website cart source keys to PIM BOM IDs. It
+  // never reads the Website cart and does not resolve an order; Operations will
+  // consume this stable contract later.
+  const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
+  const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
+  const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
+
+  async function plannerTarget(targetId: string) {
+    const { data } = await tdb("bom_components")
+      .select("id, name, part_number, type")
+      .eq("id", targetId).maybeSingle();
+    if (!data || data.type === "product_family") return null;
+    return data;
+  }
+
+  if (action === "listPlannerMappings") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const includeHistory = body.include_history === true;
+    const { data, error } = await tdb("planner_mappings")
+      .select("id, source_type, source_key, target_component_id, quantity_rule, fixed_quantity, is_active, mapping_revision, release_label, supersedes_id, created_at, superseded_at, deactivated_at")
+      .order("source_type").order("source_key").order("mapping_revision", { ascending: false });
+    if (error) return json({ error: error.message }, 400);
+    const rows = data || [];
+    const targetIds = [...new Set(rows.map((r: any) => r.target_component_id))];
+    const targetMap: Record<string, any> = {};
+    if (targetIds.length) {
+      const { data: targets } = await tdb("bom_components").select("id, name, part_number, type").in("id", targetIds);
+      for (const target of targets || []) targetMap[target.id] = target;
+    }
+    const latest = includeHistory ? rows : rows.filter((row: any, i: number) =>
+      i === rows.findIndex((other: any) => other.source_type === row.source_type && other.source_key === row.source_key));
+    const mappings = latest.map((row: any) => ({ ...row, target: targetMap[row.target_component_id] ?? null }));
+    return json({ mappings, count: mappings.length, include_history: includeHistory });
+  }
+
+  if (action === "savePlannerMapping") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const sourceType = String(body.source_type ?? "");
+    const sourceKey = plannerSourceKey(body.source_key);
+    const targetId = String(body.target_component_id ?? "");
+    const quantityRule = body.quantity_rule === "cart_quantity" ? "cart_quantity" : body.quantity_rule === "fixed" ? "fixed" : "";
+    const fixedQuantity = quantityRule === "fixed" ? Number(body.fixed_quantity) : null;
+    const releaseLabel = body.release_label == null ? null : String(body.release_label).trim().slice(0, 160) || null;
+    if (!PLANNER_SOURCE_TYPES.includes(sourceType)) return json({ error: "Invalid source_type" }, 400);
+    if (!plannerKeyValid(sourceKey)) return json({ error: "source_key must be a stable key with no spaces (letters, numbers, . _ : * / - only)" }, 400);
+    if (!targetId || !await plannerTarget(targetId)) return json({ error: "Choose an existing PIM component or sub-assembly" }, 400);
+    if (!quantityRule || (quantityRule === "fixed" && (!Number.isFinite(fixedQuantity) || fixedQuantity! <= 0))) {
+      return json({ error: "Choose a quantity rule and enter a fixed quantity greater than zero when required" }, 400);
+    }
+
+    const mappingId = String(body.mapping_id ?? "");
+    let prior: any = null;
+    if (mappingId) {
+      const { data } = await tdb("planner_mappings").select("*").eq("id", mappingId).maybeSingle();
+      if (!data) return json({ error: "Mapping not found" }, 404);
+      if (!data.is_active) return json({ error: "Inactive mappings cannot be edited; create a new mapping instead" }, 400);
+      prior = data;
+      if (prior.source_type !== sourceType || prior.source_key !== sourceKey) {
+        return json({ error: "Source type and source key are immutable; deactivate this mapping and create a new stable source key" }, 400);
+      }
+      const { error: closeError } = await tdb("planner_mappings")
+        .update({ is_active: false, superseded_at: new Date().toISOString() }).eq("id", prior.id);
+      if (closeError) return json({ error: closeError.message }, 400);
+    }
+
+    const { data: created, error } = await tdb("planner_mappings").insert({
+      source_type: sourceType, source_key: sourceKey, target_component_id: targetId,
+      quantity_rule: quantityRule, fixed_quantity: fixedQuantity,
+      mapping_revision: prior ? Number(prior.mapping_revision) + 1 : 1,
+      release_label: releaseLabel, supersedes_id: prior?.id ?? null, created_by: session.uid ?? null,
+    }).select("id, mapping_revision").maybeSingle();
+    if (error) {
+      // An edit is append-only. If the new revision cannot be written, restore
+      // the prior resolver entry so a transient DB failure never creates a gap.
+      if (prior) await tdb("planner_mappings").update({ is_active: true, superseded_at: null }).eq("id", prior.id);
+      if (/planner_mappings_one_active_source/i.test(error.message)) return json({ error: "An active mapping already exists for this source key. Edit or deactivate it first." }, 409);
+      return json({ error: error.message }, 400);
+    }
+    return json({ ok: true, id: created?.id, mapping_revision: created?.mapping_revision });
+  }
+
+  if (action === "deactivatePlannerMapping") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const mappingId = String(body.mapping_id ?? "");
+    if (!mappingId) return json({ error: "mapping_id required" }, 400);
+    const { error } = await tdb("planner_mappings")
+      .update({ is_active: false, deactivated_at: new Date().toISOString(), deactivated_by: session.uid ?? null })
+      .eq("id", mappingId).eq("is_active", true);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
   if (action === "listComponents") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     // Fetch the set of component IDs that are active BOM parents in one indexed query.

@@ -8180,12 +8180,174 @@
     ]));
   }
 
+  // This is deliberately client-only: pasted configuration data is never sent to
+  // the PIM API or persisted in the mapping registry.
+  function inspectPlannerCartConfiguration(raw) {
+    const config = raw?.configuration && typeof raw.configuration === "object" ? raw.configuration : raw;
+    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("Paste a cart item with configuration, or a configuration object.");
+    const found = new Map();
+    const quantityOf = (item, fallback = 1) => {
+      const value = Number(item?.qty ?? item?.quantity ?? fallback);
+      return Number.isFinite(value) && value > 0 ? value : fallback;
+    };
+    const add = (source_type, source_key, cart_quantity = 1) => {
+      if (typeof source_key !== "string" || !source_key.trim()) return;
+      const key = `${source_type}:${source_key.trim()}`;
+      const prior = found.get(key);
+      found.set(key, { source_type, source_key: source_key.trim(), cart_quantity: (prior?.cart_quantity || 0) + cart_quantity });
+    };
+    for (const item of Array.isArray(config.modules) ? config.modules : []) {
+      add("module", item?.module, quantityOf(item));
+      for (const interior of Array.isArray(item?.interior) ? item.interior : []) {
+        add("interior", typeof interior === "string" ? interior : (interior?.name ?? interior?.interior), quantityOf(interior));
+      }
+    }
+    for (const panel of Array.isArray(config.sides?.panels) ? config.sides.panels : []) add("side_panel", panel?.name, quantityOf(panel));
+    if (config.sides?.feet) add("feet", config.sides.feet.name, quantityOf(config.sides.feet));
+    for (const door of Array.isArray(config.doors) ? config.doors : []) add("door", door?.name, quantityOf(door));
+    for (const cover of Array.isArray(config.covers) ? config.covers : []) add("cover", cover?.name, quantityOf(cover));
+    const backCovers = Number(config.backCovers);
+    if (Number.isFinite(backCovers) && backCovers > 0) add("back_cover", "BackCover", backCovers);
+    return [...found.values()];
+  }
+
+  // PIM-owned dictionary from stable Website planner keys to PIM BOM IDs.
+  // It does not read carts remotely or produce an operations order; a pasted
+  // configuration can only prefill a new mapping in this browser session.
+  async function plannerMappingsView(token) {
+    const wrap = el("div", {});
+    const list = el("div", { class: "loading" }, "Loading planner mappings…");
+    let showInactive = false;
+    let targets = [];
+    const SOURCE_TYPES = [
+      ["module", "Module — modules[].module"], ["interior", "Interior — modules[].interior[]"],
+      ["side_panel", "Side panel — sides.panels[]"], ["feet", "Feet — sides.feet"],
+      ["door", "Door — doors[]"], ["cover", "Cover — covers[]"], ["back_cover", "Back cover — backCovers"],
+    ];
+
+    async function loadTargets() {
+      if (targets.length) return targets;
+      const r = await API.post(token, "listComponents");
+      targets = (r.components || []).filter((c) => c.type !== "product_family");
+      return targets;
+    }
+
+    function editModal(mapping, detectedSource = null) {
+      const editing = !!mapping;
+      const source = mapping || detectedSource;
+      const type = el("select", { class: "up-text", disabled: editing ? "" : null },
+        SOURCE_TYPES.map(([value, label]) => el("option", { value, selected: source?.source_type === value ? "" : null }, label)));
+      const key = el("input", { class: "up-text", placeholder: "Exact key, e.g. M, side_left_color_0, Foot", value: source?.source_key || "", disabled: editing ? "" : null });
+      const target = el("select", { class: "up-text" }, [el("option", { value: "" }, "Loading PIM components…")]);
+      const rule = el("select", { class: "up-text" }, [
+        el("option", { value: "fixed", selected: !source || (mapping && mapping.quantity_rule === "fixed") ? "" : null }, "Fixed quantity"),
+        el("option", { value: "cart_quantity", selected: detectedSource || mapping?.quantity_rule === "cart_quantity" ? "" : null }, "Quantity from cart"),
+      ]);
+      const quantity = el("input", { class: "up-text", type: "number", min: "0.001", step: "0.001", value: mapping?.fixed_quantity ?? "1" });
+      const release = el("input", { class: "up-text", placeholder: "Optional release note, e.g. Planner 2026.09", value: mapping?.release_label || "" });
+      const message = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");
+      const save = el("button", { class: "btn btn-primary", type: "button" }, editing ? "Save new revision" : "Create mapping");
+      const fixedVisible = () => { quantity.closest("label").hidden = rule.value !== "fixed"; };
+      rule.onchange = fixedVisible; fixedVisible();
+
+      save.onclick = async () => {
+        message.textContent = "";
+        save.disabled = true; save.textContent = "Saving…";
+        try {
+          await API.post(token, "savePlannerMapping", {
+            mapping_id: mapping?.id, source_type: type.value, source_key: key.value.trim(), target_component_id: target.value,
+            quantity_rule: rule.value, fixed_quantity: rule.value === "fixed" ? quantity.value : null, release_label: release.value.trim() || null,
+          });
+          close(); await reload();
+        } catch (ex) { message.textContent = ex.message; save.disabled = false; save.textContent = editing ? "Save new revision" : "Create mapping"; }
+      };
+      const row = (label, field, hint = "") => el("label", { class: "form-row" }, [el("span", { class: "form-label" }, label), el("span", {}, [field, hint ? el("small", { class: "muted", style: "display:block;margin-top:0.2rem" }, hint) : null].filter(Boolean))]);
+      const close = openModal(editing ? "Edit planner mapping" : "New planner mapping", el("div", {}, [
+        detectedSource ? el("p", { class: "muted", style: "margin-top:0" }, `Detected current cart quantity: ${detectedSource.cart_quantity}. This value is not saved; the mapping will resolve quantity from a future cart.`) : null,
+        row("Source type", type), row("Stable source key", key, "Use the Website planner's exact key, not a display name. Color suffixes such as _color_0 are part of the key. Wildcards are stored but not resolved yet."),
+        row("PIM target", target), row("Quantity rule", rule), row("Fixed quantity", quantity), row("Release note", release), message,
+        el("div", { style: "margin-top:0.75rem;display:flex;justify-content:flex-end" }, save),
+      ].filter(Boolean)));
+      loadTargets().then((items) => {
+        target.replaceChildren(el("option", { value: "" }, "— choose PIM component or assembly —"), ...items.map((c) =>
+          el("option", { value: c.id, selected: mapping?.target_component_id === c.id ? "" : null }, `${c.name}${c.part_number ? ` · ${c.part_number}` : ""} (${c.type})`)));
+      }).catch((ex) => { target.replaceChildren(el("option", { value: "" }, "Could not load targets")); message.textContent = ex.message; });
+    }
+
+    async function deactivate(mapping) {
+      if (!confirm(`Deactivate mapping ${mapping.source_type}:${mapping.source_key}? It will no longer be returned to a future resolver.`)) return;
+      try { await API.post(token, "deactivatePlannerMapping", { mapping_id: mapping.id }); await reload(); }
+      catch (ex) { alert(ex.message); }
+    }
+
+    async function reload() {
+      list.replaceChildren(el("div", { class: "loading" }, "Loading planner mappings…"));
+      try {
+        const r = await API.post(token, "listPlannerMappings");
+        const mappings = (r.mappings || []).filter((m) => showInactive || m.is_active);
+        if (!mappings.length) {
+          list.replaceChildren(el("div", { class: "empty" }, "No planner mappings yet. Add stable Website keys before an Operations resolver is connected."));
+          return;
+        }
+        list.replaceChildren(el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
+          el("thead", {}, el("tr", {}, ["Source", "PIM target", "Quantity", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
+          el("tbody", {}, mappings.map((m) => el("tr", {}, [
+            el("td", {}, [el("strong", {}, m.source_type), el("div", { class: "muted", style: "font-family:monospace;font-size:var(--text-xs)" }, m.source_key)]),
+            el("td", {}, m.target ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}` : "Target no longer exists"),
+            el("td", {}, m.quantity_rule === "cart_quantity" ? "From cart" : `Fixed: ${m.fixed_quantity}`),
+            el("td", {}, `r${m.mapping_revision}${m.release_label ? ` · ${m.release_label}` : ""}`),
+            el("td", {}, m.is_active ? "Active" : "Inactive"),
+            el("td", {}, m.is_active ? el("div", { style: "display:flex;gap:0.35rem" }, [
+              actionBtn("Edit", "edit", { onClick: () => editModal(m) }), actionBtn("Deactivate", "x", { onClick: () => deactivate(m) }),
+            ]) : ""),
+          ]))),
+        ])));
+      } catch (ex) { list.replaceChildren(el("div", { class: "error" }, ex.message)); }
+    }
+
+    const inactive = el("input", { type: "checkbox" });
+    inactive.onchange = () => { showInactive = inactive.checked; reload(); };
+    const pastedConfiguration = el("textarea", { class: "up-text", rows: "6", placeholder: 'Paste a cart item ({"configuration": {...}}) or the configuration object. Nothing pasted here is saved.' });
+    const inspectorStatus = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.5rem 0" }, "");
+    const detectedRows = el("div", { class: "muted" }, "Paste a configuration to detect source items.");
+    const inspect = actionBtn("Inspect configuration", "search", { primary: true, onClick: () => {
+      inspectorStatus.textContent = "";
+      try {
+        const detected = inspectPlannerCartConfiguration(JSON.parse(pastedConfiguration.value));
+        if (!detected.length) {
+          detectedRows.replaceChildren(el("div", { class: "empty" }, "No supported planner source items were found."));
+          return;
+        }
+        detectedRows.replaceChildren(...detected.map((item) => el("div", { class: "row-tools", style: "margin:0.35rem 0;justify-content:space-between" }, [
+          el("span", {}, [el("strong", {}, item.source_type), ` · ${item.source_key} · current cart qty: ${item.cart_quantity}`]),
+          actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
+        ])));
+      } catch (ex) { inspectorStatus.textContent = ex.message || "The pasted JSON could not be inspected."; detectedRows.replaceChildren(); }
+    }});
+    wrap.replaceChildren(
+      el("p", { class: "muted", style: "max-width:760px" }, "PIM-owned mapping from Website planner source keys to PIM components and assemblies. The optional inspector only reads pasted JSON in this browser; it does not save cart data or create Operations orders."),
+      el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
+        el("h3", { style: "margin-top:0" }, "Cart-configuration inspector"),
+        el("p", { class: "muted", style: "margin-top:0" }, "Paste a real Website cart item or configuration to select an exact source key. Keys with _color_0 through _color_4 are kept exactly as received."),
+        pastedConfiguration, el("div", { style: "margin-top:0.5rem" }, inspect), inspectorStatus, detectedRows,
+      ]),
+      el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
+        actionBtn("+ New mapping", "plus", { primary: true, onClick: () => editModal(null) }), actionBtn("Refresh", "refresh", { onClick: reload }),
+        el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
+      ]), list,
+    );
+    await reload();
+    return wrap;
+  }
+
   async function renderProduct(role, mount) {
     const token = API.getToken();
-    mount.replaceChildren(subTabs("product", [
+    const tabs = [
       { id: "bom", label: "BOM Tree", icon: "layers", build: () => { const m = el("div", {}); bomTreeView(token, role).then((v) => m.replaceChildren(v)); return m; } },
       { id: "overview", label: "Status Overview", icon: "eye", build: () => { const m = el("div", {}); statusOverviewView(token).then((v) => m.replaceChildren(v)); return m; } },
-    ]));
+    ];
+    if (role === "rushroom") tabs.push({ id: "planner-mappings", label: "Planner mappings", icon: "link", build: () => { const m = el("div", {}); plannerMappingsView(token).then((v) => m.replaceChildren(v)); return m; } });
+    mount.replaceChildren(subTabs("product", tabs));
   }
 
   /* ---------------- EU Directive Relationship Analyser (D3) ---------------- */

@@ -358,6 +358,9 @@
     // inactive ones, matching what the Assemblies tab shows; pass
     // { include_inactive: false } to narrow it.
     listAssemblies: (token, opts = {}) => call({ action: "listAssemblies", token, ...opts }),
+    listPlannerMappings: (token, opts = {}) => call({ action: "listPlannerMappings", token, ...opts }),
+    savePlannerMapping: (token, fields) => call({ action: "savePlannerMapping", token, ...fields }),
+    deactivatePlannerMapping: (token, mappingId) => call({ action: "deactivatePlannerMapping", token, mapping_id: mappingId }),
 
     // Generic escape hatch for actions not yet named on this object.
     post: (token, action, body = {}) => call({ action, token, ...body }),

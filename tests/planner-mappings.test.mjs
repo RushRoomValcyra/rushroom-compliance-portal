@@ -37,15 +37,19 @@ test("editor documents every current Website planner source field", () => {
   assert.ok(ui.includes("Planner mappings"), "Rushroom editor is not reachable from Product BOM");
 });
 
-test("paste-only inspector extracts exact Website cart keys without persisting carts", () => {
+test("planner catalog is server-fetched, bounded, and keeps Website/PIM ownership separate", () => {
   const ui = read("assets/app.js");
+  const api = read("supabase/functions/portal-api/index.ts");
   const docs = read("docs/PLANNER_MAPPINGS.md");
-  for (const fragment of ["inspectPlannerCartConfiguration", "raw?.configuration", "config.modules", "config.sides?.panels", "config.sides?.feet", "config.doors", "config.covers", "config.backCovers", '"BackCover"', "SOURCE_TYPE_LABELS", "Map this item", 'quantity_rule: "cart_quantity", fixed_quantity: null', '"Cart-derived"']) {
-    assert.ok(ui.includes(fragment), `inspector is missing ${fragment}`);
+  for (const fragment of ["listPlannerCatalog", "SOURCE_TYPE_LABELS", "Website planner catalog", "Map this item", 'quantity_rule: "cart_quantity", fixed_quantity: null', '"Cart-derived"']) {
+    assert.ok(ui.includes(fragment), `catalog UI is missing ${fragment}`);
   }
   assert.ok(!ui.includes("quantity.closest(\"label\")"), "modal must not inspect unattached controls");
-  assert.ok(!ui.includes("current cart qty"), "cart quantities must not be shown in the identity importer");
-  for (const key of ["S`, `M`, `L", "side_middle_color_0", "Door and cover mesh names are dynamic", "inspector's exact emitted key is authoritative", "Wildcards are stored as data but are **not", "not cart configurations"]) {
+  assert.ok(!ui.includes("pastedConfiguration"), "paste-cart importer must be removed");
+  for (const fragment of ['action === "listPlannerCatalog"', "WEBSITE_PLANNER_CATALOG_URL", "PLANNER_CATALOG_MAX_BYTES", "PLANNER_CATALOG_TIMEOUT_MS", "url.protocol !== \"https:\"", "role !== \"rushroom\""]) {
+    assert.ok(api.includes(fragment), `catalog API is missing ${fragment}`);
+  }
+  for (const key of ["S`, `M`, `L", "side_middle_color_0", "Door and cover mesh names are dynamic", "inspector's exact emitted key is authoritative", "WEBSITE_PLANNER_CATALOG_URL", "512 KiB", "credential-free HTTPS", "Website owns only source keys and labels"]) {
     assert.ok(docs.includes(key), `documentation is missing ${key}`);
   }
 });

@@ -25,20 +25,25 @@ inspector's exact emitted key is authoritative. The suffix is part of the
 current source key. Wildcards are stored as data but are **not resolved** in
 this MVP; the inspector neither creates nor resolves a wildcard.
 
-## Paste-only cart-configuration inspector
+## Website planner catalog
 
-The **Product BOM → Planner mappings** inspector accepts either a cart item
-containing `{ configuration: { ... } }` or the configuration object itself. It
-detects the source type and exact unique key from the fields above, including
-`BackCover` when numeric `backCovers` is greater than zero.
-`BackCover` is a documented synthetic stable source key and its quantity comes
-from `backCovers`.
+The **Product BOM → Planner mappings** screen loads source keys automatically
+through the Rushroom-only `listPlannerCatalog` action. PIM server-fetches the
+public Website catalog from the required, nonsecret Edge Function environment
+variable `WEBSITE_PLANNER_CATALOG_URL`; browsers do not call that URL directly.
 
-Detected keys are grouped by source type. Selecting **Map this item** pre-fills
-a new identity-only mapping. Its multiplicity is always cart-derived in this
-MVP: a future Operations resolver will use repeated cart rows and the cart's
-existing `qty` fields. The pasted JSON remains only in the browser: the PIM
-registry stores mappings, not cart configurations.
+The Website response contract is JSON with an `items` array. Each item must
+contain `source_type`, `source_key`, and optional `label`; only the seven
+documented source types and valid stable keys are accepted. PIM caps the
+response at 512 KiB, limits it to 2,000 items, and stops the request after five
+seconds. The configured URL must be credential-free HTTPS.
+
+Catalog keys are grouped by source type. Selecting **Map this item** pre-fills
+a new identity-only mapping. Website owns only source keys and labels; PIM owns
+the selected `target_component_id` and mapping lifecycle. No cart, credentials,
+or Operations data is accepted from or returned to Website. Its multiplicity is
+always cart-derived in this MVP: a future Operations resolver will use repeated
+cart rows and the cart's existing `qty` fields.
 
 ## PIM editor and API
 
@@ -53,6 +58,8 @@ Actions on `portal-api`:
 
 - `listPlannerMappings` — latest revision per source key by default; pass
   `include_history: true` for all revisions.
+- `listPlannerCatalog` — Rushroom-only server fetch of Website source keys and
+  labels; does not return the configured URL or credentials.
 - `savePlannerMapping` — creates a mapping or a new revision of an active
   mapping. `mapping_id` is required for an edit.
 - `deactivatePlannerMapping` — stops an active mapping from being resolved.

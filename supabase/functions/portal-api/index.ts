@@ -31,6 +31,52 @@ import { RUSHROOM_ORG_ID, TENANT_TABLES, makeTdb } from "../_shared/tenant.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 import { startTimer } from "../_shared/timing.ts";
 
+// Website owns this public, key-and-label-only catalog. PIM fetches it through
+// this authenticated action; the browser never calls the Website directly.
+const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
+const PLANNER_CATALOG_MAX_BYTES = 512 * 1024;
+const PLANNER_CATALOG_TIMEOUT_MS = 5_000;
+const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
+
+async function fetchPlannerCatalog() {
+  const configuredUrl = Deno.env.get("WEBSITE_PLANNER_CATALOG_URL")?.trim();
+  if (!configuredUrl) return { error: "Website planner catalog is not configured", status: 503 };
+  let url: URL;
+  try { url = new URL(configuredUrl); }
+  catch { return { error: "Website planner catalog is misconfigured", status: 503 }; }
+  if (url.protocol !== "https:" || url.username || url.password) return { error: "Website planner catalog is misconfigured", status: 503 };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PLANNER_CATALOG_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+    if (!response.ok) return { error: "Website planner catalog is unavailable", status: 502 };
+    const declaredLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > PLANNER_CATALOG_MAX_BYTES) return { error: "Website planner catalog response is too large", status: 502 };
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > PLANNER_CATALOG_MAX_BYTES) return { error: "Website planner catalog response is too large", status: 502 };
+    let payload: any;
+    try { payload = JSON.parse(new TextDecoder().decode(bytes)); }
+    catch { return { error: "Website planner catalog returned invalid JSON", status: 502 }; }
+    const items = payload?.items;
+    if (!Array.isArray(items) || items.length > 2_000) return { error: "Website planner catalog has an invalid shape", status: 502 };
+    const seen = new Set<string>();
+    const catalog: { source_type: string; source_key: string; label: string }[] = [];
+    for (const item of items) {
+      const source_type = String(item?.source_type ?? "");
+      const source_key = String(item?.source_key ?? "").trim();
+      const label = String(item?.label ?? source_key).trim();
+      if (!PLANNER_SOURCE_TYPES.includes(source_type) || !plannerKeyValid(source_key) || !label || label.length > 160) return { error: "Website planner catalog contains an invalid item", status: 502 };
+      const identity = `${source_type}:${source_key}`;
+      if (!seen.has(identity)) { seen.add(identity); catalog.push({ source_type, source_key, label }); }
+    }
+    return { catalog };
+  } catch (error) {
+    console.error("[portal-api] planner catalog fetch failed:", error instanceof Error ? error.name : error);
+    return { error: "Website planner catalog is unavailable", status: 502 };
+  } finally { clearTimeout(timeout); }
+}
+
 
 
 
@@ -2659,9 +2705,7 @@ Deno.serve(async (req) => {
   // This PIM-owned registry maps Website cart source keys to PIM BOM IDs. It
   // never reads the Website cart and does not resolve an order; Operations will
   // consume this stable contract later.
-  const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
   const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
-  const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
 
   async function plannerTarget(targetId: string) {
     const { data } = await tdb("bom_components")
@@ -2669,6 +2713,15 @@ Deno.serve(async (req) => {
       .eq("id", targetId).maybeSingle();
     if (!data || data.type === "product_family") return null;
     return data;
+  }
+
+  // Website is the source of planner source keys/labels. This endpoint is
+  // intentionally Rushroom-only and exposes no configured URL or credentials.
+  if (action === "listPlannerCatalog") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const result = await fetchPlannerCatalog();
+    if ("error" in result) return json({ error: result.error }, result.status);
+    return json({ catalog: result.catalog, count: result.catalog.length });
   }
 
   if (action === "listPlannerMappings") {

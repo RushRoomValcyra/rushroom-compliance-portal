@@ -40,9 +40,11 @@ test("editor documents every current Website planner source field", () => {
 test("paste-only inspector extracts exact Website cart keys without persisting carts", () => {
   const ui = read("assets/app.js");
   const docs = read("docs/PLANNER_MAPPINGS.md");
-  for (const fragment of ["inspectPlannerCartConfiguration", "raw?.configuration", "config.modules", "config.sides?.panels", "config.sides?.feet", "config.doors", "config.covers", "config.backCovers", '"BackCover"', "current cart qty", "Map this item"]) {
+  for (const fragment of ["inspectPlannerCartConfiguration", "raw?.configuration", "config.modules", "config.sides?.panels", "config.sides?.feet", "config.doors", "config.covers", "config.backCovers", '"BackCover"', "SOURCE_TYPE_LABELS", "Map this item", 'quantity_rule: "cart_quantity", fixed_quantity: null', '"Cart-derived"']) {
     assert.ok(ui.includes(fragment), `inspector is missing ${fragment}`);
   }
+  assert.ok(!ui.includes("quantity.closest(\"label\")"), "modal must not inspect unattached controls");
+  assert.ok(!ui.includes("current cart qty"), "cart quantities must not be shown in the identity importer");
   for (const key of ["S`, `M`, `L", "side_middle_color_0", "Door and cover mesh names are dynamic", "inspector's exact emitted key is authoritative", "Wildcards are stored as data but are **not", "not cart configurations"]) {
     assert.ok(docs.includes(key), `documentation is missing ${key}`);
   }

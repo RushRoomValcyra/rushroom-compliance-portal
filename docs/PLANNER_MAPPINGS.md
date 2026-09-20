@@ -29,22 +29,25 @@ this MVP; the inspector neither creates nor resolves a wildcard.
 
 The **Product BOM → Planner mappings** inspector accepts either a cart item
 containing `{ configuration: { ... } }` or the configuration object itself. It
-detects the source type, exact key, and current cart quantity from the fields
-above, including `BackCover` when numeric `backCovers` is greater than zero.
+detects the source type and exact unique key from the fields above, including
+`BackCover` when numeric `backCovers` is greater than zero.
 `BackCover` is a documented synthetic stable source key and its quantity comes
 from `backCovers`.
 
-Selecting **Map this item** pre-fills a new mapping and defaults it to
-`cart_quantity`. The pasted JSON and detected quantity remain only in the
-browser: the PIM registry stores mappings, not cart configurations.
+Detected keys are grouped by source type. Selecting **Map this item** pre-fills
+a new identity-only mapping. Its multiplicity is always cart-derived in this
+MVP: a future Operations resolver will use repeated cart rows and the cart's
+existing `qty` fields. The pasted JSON remains only in the browser: the PIM
+registry stores mappings, not cart configurations.
 
 ## PIM editor and API
 
 Rushroom users open **Product BOM → Planner mappings**. They can create a
-mapping, select an existing PIM component or sub-assembly, choose either a
-fixed quantity or `cart_quantity`, save a new revision, and deactivate a
-mapping. Source type and key are immutable after creation so a source identity
-cannot quietly change its meaning.
+mapping, select an existing PIM component or sub-assembly, save a new revision,
+and deactivate a mapping. Source type and key are immutable after creation so a
+source identity cannot quietly change its meaning. The database/API retain
+quantity-rule support for future advanced use, but this MVP editor always saves
+identity mappings with `cart_quantity`.
 
 Actions on `portal-api`:
 

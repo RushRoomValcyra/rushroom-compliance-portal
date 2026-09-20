@@ -5454,11 +5454,16 @@
   const DRAWING_STATUSES = ["draft", "checked", "approved", "released", "superseded"];
   const DRAWING_ROLES = ["depicts", "installation", "wiring"];
 
+  // The enum values are lowercase in the database and must stay that way; this
+  // is the display spelling, used everywhere a status stands on its own as a
+  // label. Mid-sentence uses ("Mark checked") keep the lowercase form.
+  const drawingStatusLabel = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
   function drawingStatusChip(status) {
     const tone = { draft: "#64748b", checked: "#0369a1", approved: "#7c3aed", released: "#15803d", superseded: "#b45309" }[status] || "#64748b";
     return el("span", {
       style: `display:inline-block;font-size:0.75rem;font-weight:600;padding:1px 8px;border-radius:999px;color:${tone};border:1px solid ${tone}44;background:${tone}12`,
-    }, status);
+    }, drawingStatusLabel(status));
   }
 
   async function openComponentDetail(componentId, token, panel, nodeData, role) {
@@ -8900,7 +8905,7 @@
         oninput: (e) => { state.q = e.target.value; repaint(); },
       });
       const chips = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" },
-        [{ id: "", label: "All" }, ...DRAWING_STATUSES.map((s) => ({ id: s, label: s }))].map((s) =>
+        [{ id: "", label: "All" }, ...DRAWING_STATUSES.map((s) => ({ id: s, label: drawingStatusLabel(s) }))].map((s) =>
           el("button", {
             class: `btn btn-sm${state.status === s.id && !state.freeOnly ? " btn-primary" : ""}`, type: "button",
             style: "font-size:0.75rem;padding:2px 10px",

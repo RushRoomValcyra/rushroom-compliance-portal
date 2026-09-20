@@ -1297,3 +1297,60 @@ A drawing is mostly its drawing. The metadata is a caption, not the content, and
 **Related PROPs:** PROP-045 (the drawings domain), PROP-046 (the creation flow). This is the *viewing* half, which neither covered. Engineering Drawing Intelligence (2026-09-02) wants to diff two revisions — a file-first surface showing one revision is the natural place to later show two.
 
 **Status:** Raw idea — deferred by the user until the drawings workflow and its embedded logic are settled.
+
+---
+### Agent Overview — Unattended Watchers and One Map of What They Concluded — 2026-09-19
+
+**One sentence:** Turn the platform's AI from twelve buttons a human presses into a small set of named agents that run unattended, write findings a human accepts or dismisses, and appear on one screen that shows what each watches, what it found, and where they feed each other.
+
+**Problem it solves:**
+
+Two problems are bundled in this idea, and they are worth separating because only one of them is urgent.
+
+**1. Nothing watches.** Every AI capability here is a button. Twelve actions in `portal-ai`, three in `portal-cellar`, and all fifteen fire only when someone clicks. But compliance failure is a *time* problem: a directive is amended, a harmonised standard is superseded, a supplier revises a drawing — and the portal finds out when a person happens to re-run a scan. There is no "something changed upstream, and here is what it touches" loop anywhere in the system. There is also no scheduler of any kind: no `pg_cron`, no `Deno.cron`, no scheduled function. Confirmed, not assumed.
+
+**2. Nobody can see what the AI concluded.** `ai_usage_events` records tokens per action and nothing else — no input, no output, no verdict, no lineage. `suggestClassifications` writes to `classification_log`, `runDeviationScan` writes to `deviation_findings`, `inferDirectiveRelations` writes to `directive_relations`. Three tables, three unconnected screens, no single answer to *"what did this system decide this month, and on what basis?"* That is the "master overview" half of the request.
+
+The order matters. The map is the second problem; the watcher is the first. A collaboration graph built before there are agents to graph is a diagram of one box.
+
+**What already exists — this is more built than it looks:**
+
+- **Regulation sourcing is half-done.** `portal-cellar` already queries EU CELLAR over SPARQL and maintains `eu_directives`, `directive_relations`, `cellar_cache` and `product_directive_applicability`, through `addDirective`, `syncDirectiveRelations` and `inferDirectiveRelations`. The Regulation Watch agent does not need a new data source — it needs the existing one run **without a click**, **diffed against the last run**, and **connected back to the BOM**.
+- **`deviation_scans` / `deviation_findings` is already the right shape** — a run row plus the rows it produced. `agent_runs` / `agent_findings` is that pattern generalised, not a new invention.
+- **Alert transport is live.** Resend sends from `noreply@valcyra.com` today.
+- **The accept/dismiss discipline exists.** `suggestClassifications` and `suggestRequirementLinks` already propose rather than write. Agents must inherit that, not invent a looser rule.
+
+**What is genuinely missing:** a scheduler, a run ledger, a findings inbox, a tab, and — the real architectural question below — a tenancy answer for a caller with no session.
+
+**MVP scope — one agent, one ledger, one tab:**
+
+1. **`agents` registry** — one row per agent: key, label, what it watches, schedule, model, enabled flag, token ceiling. A registry rather than hardcoded functions, so the overview screen has something to read and an agent can be switched off without a deploy.
+2. **Regulation Watch, the only agent in the MVP.** Runs the existing CELLAR sync, diffs the result against the previous snapshot, and writes one finding per *changed* directive — new, amended, repealed — with the components it plausibly touches.
+3. **`agent_runs` + `agent_findings`.** A run records started/finished, status, tokens, and an error if it failed. A finding records severity, a subject reference (component, directive, drawing, standard), the claim, the evidence, and a state: `open` → `accepted` | `dismissed`.
+4. **An `Agents` tab in the main nav, from day one.** Each agent as a card: last run, next run, findings open. The tab is in the nav in the same commit that creates the tables — see Risks.
+5. **Findings are proposals.** Accepting one is what writes to `product_directive_applicability` or opens an action-plan step. An agent never writes into a compliance table directly.
+
+**Deliberately deferred to a second step:** the collaboration graph, scheduled email digests, and any agent beyond the first. `agent_links` (which agent feeds which) is *derivable* from findings that cite other findings — store it only once the derivation proves insufficient.
+
+**Tables involved:** new — `agents`, `agent_runs`, `agent_findings`. Read — `eu_directives`, `directive_relations`, `product_directive_applicability`, `bom_components`, `standards`, `drawings`. Write on accept — `product_directive_applicability`, `steps`. All three new tables need `organization_id UUID NOT NULL` **and** a `TENANT_TABLES` entry; a table missing from that set reads across every tenant and errors on nothing.
+
+**Effort estimate:** 10–14 hours for the MVP
+- Schema + tenancy: 1 h · Scheduler and the session-less tenancy path: 3 h · Regulation Watch incl. snapshot diff: 3 h · Agents tab and findings inbox: 4 h · Tests: 2 h
+- The graph view is a separate 6–8 h and should not be attempted until three agents exist.
+
+**Risks:**
+
+- **A session-less caller has no organization.** This is the sharp one. `_shared/handler.ts` derives tenancy from the signed session — deliberately, and it is the invariant the whole tenant model rests on. A scheduled run has no session, so there is no org to derive. The scheduler must therefore iterate organizations *explicitly*, with the org passed as an argument on a path that is unreachable from an HTTP request. Getting this wrong is a cross-tenant leak in the one component that runs unattended and unobserved. Note also that `eu_directives` and `cellar_cache` are deliberately **global**: an agent reads global and writes tenant-scoped, and the write side must be stamped.
+- **Autonomous writes into compliance data.** A hallucinated "this directive applies to your product" landing silently in `product_directive_applicability` is worse than no agent at all. Hence findings-as-proposals, without exception.
+- **Cost runs while nobody is looking.** Every AI call in this codebase currently uses `SCAN_MODEL` (opus). An agent sweeping a BOM nightly on opus is real money, and `ai_usage_events` reports it a month late. Per-agent model (haiku as default, per CLAUDE.md), a per-run token ceiling, and a run that aborts at the ceiling rather than a budget alert after the fact.
+- **Edge Function timeouts.** A BOM-wide sweep will not fit one invocation. `agent_runs` must tolerate a `running` state across several invocations, with a cursor — not a single long call that dies at 80% and leaves no trace of what it had already done.
+- **Alert fatigue.** An agent that flags forty things flags nothing. Severity has to be earned; the default finding is informational.
+- **The failure mode this repo keeps repeating.** Twice already, audit rows were written correctly and excluded by the query that displays them; Status Overview asked for a UUID the UI never showed. So: the tab ships with the tables, the findings query is tested against a seeded row, and the empty state must distinguish **"ran, found nothing"** from **"never ran"** — an agent silently not running looks exactly like an agent finding nothing.
+
+**Related PROPs:**
+- **PROP-009 Scheduled compliance scans + email alerts** (Backlog) is the scheduling half of this idea. These two must not be built separately — PROP-009 should be absorbed into this one, or this one narrowed to sit on top of it. Two proposals for one problem is worse than none.
+- **PROP-014 Compliance–BOM Integration (Evidence Bridge)** — specced and ready. Regulation Watch's entire value is answering *"which of my parts does this amendment hit"*, and PROP-014 is the linkage that makes that answerable. Without it the agent can say "EMC directive amended" but not which fourteen components care. **Build PROP-014 first.**
+- **PROP-010 ESPR Compliance Path Tracing** — a second natural agent once the framework exists.
+- **Engineering Drawing Intelligence (2026-09-02)** — a Drawing Watch agent (revision diffs, tolerance changes) is the obvious third, and is why the registry is a table rather than a hardcoded list.
+
+**Status:** Raw idea

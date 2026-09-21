@@ -104,6 +104,99 @@ test("both formats share one column definition", () => {
     "CSV and XLSX do not go through one function");
 });
 
-test("Excel reuses the viewer's SheetJS rather than adding a dependency", () => {
+test("both Excel writers are lazy-loaded, so neither costs a page load", () => {
+  // The flat writer reuses the viewer's SheetJS. The picture writer (PROP-049)
+  // adds ExcelJS — deliberately, because SheetJS cannot embed images — and the
+  // 948 KB only downloads when someone presses the button.
   assert.ok(/await loadScript\(XLSX_CDN\)/.test(src), "XLSX is not lazy-loaded from the existing CDN constant");
+  assert.ok(/await loadScript\(EXCELJS_CDN\)/.test(src), "ExcelJS is not lazy-loaded");
+  for (const cdn of ["XLSX_CDN", "EXCELJS_CDN"]) {
+    assert.ok(!new RegExp(`<script[^>]*${cdn}`).test(src), `${cdn} is being loaded eagerly`);
+  }
+});
+
+// ---- Picture workbook (PROP-049) -------------------------------------------
+// The per-part sheets are only as good as the sheet names: Excel rejects the
+// whole file for one bad name, and a 64-part export gives 64 chances to produce
+// one. These run the real function rather than reading it.
+
+const uniqueSheetName = lift("uniqueSheetName\\(base, used\\)");
+const fitBox = lift("fitBox\\(w, h, boxW, boxH\\)");
+
+const SHEET_ILLEGAL = /[\\/?*[\]:]/;
+
+test("sheet names are always legal, however the part is named", () => {
+  const used = new Set();
+  const inputs = ["Summary", "A/B:C*D?E[F]G\\H", "", null, undefined, "'quoted'",
+                  "x".repeat(60), "RR-202609-3FZE3P4Z", 12345];
+  for (const raw of inputs) {
+    const name = uniqueSheetName(raw, used);
+    assert.ok(name, `${JSON.stringify(raw)} produced an empty sheet name`);
+    assert.ok(name.length <= 31, `"${name}" is ${name.length} chars — Excel's limit is 31`);
+    assert.ok(!SHEET_ILLEGAL.test(name), `"${name}" contains a character Excel forbids`);
+  }
+});
+
+test("duplicate part numbers get distinct sheet names, still within 31 chars", () => {
+  const used = new Set();
+  const names = [];
+  // The same long name ten times: the suffix must eat into the name, not the limit.
+  for (let i = 0; i < 10; i++) names.push(uniqueSheetName("y".repeat(31), used));
+  assert.equal(new Set(names.map((n) => n.toLowerCase())).size, names.length,
+    "two sheets share a name — Excel will refuse the workbook");
+  for (const n of names) assert.ok(n.length <= 31, `"${n}" exceeds 31 chars`);
+});
+
+test('"History" is never used as a sheet name', () => {
+  // Excel reserves it; a part called History would otherwise break the file.
+  assert.notEqual(uniqueSheetName("History", new Set()).toLowerCase(), "history");
+  assert.notEqual(uniqueSheetName("history", new Set()).toLowerCase(), "history");
+});
+
+test("images are scaled to fit, never stretched, never enlarged", () => {
+  const tall = fitBox(100, 400, 260, 260);
+  assert.ok(tall.width <= 260 && tall.height <= 260, "image escapes its box");
+  assert.ok(Math.abs(tall.width / tall.height - 100 / 400) < 0.02, "aspect ratio is distorted");
+  const small = fitBox(20, 20, 260, 260);
+  assert.deepEqual(small, { width: 20, height: 20 }, "a small image is being upscaled into a blur");
+  const unknown = fitBox(0, 0, 44, 44);
+  assert.ok(unknown.width > 0 && unknown.height > 0, "unknown dimensions must still produce a box");
+});
+
+test("each picture is embedded once and referenced twice", () => {
+  // ExcelJS appends a new media entry on every addImage(), so registering per
+  // sheet would put identical bytes in the file twice.
+  const m = src.match(/const imageIds = images\.map[\s\S]{0,200}/);
+  assert.ok(m, "imageIds is not built up front — images will be embedded per sheet");
+  const perSheet = src.match(/(summary|ws)\.addImage\(wb\.addImage\(/g);
+  assert.equal(perSheet, null, "a sheet still calls wb.addImage() inline, duplicating the bytes");
+});
+
+test("the Excel writer with pictures is ExcelJS, not SheetJS", () => {
+  // SheetJS cannot write images at any version of the community build. If this
+  // ever flips back, the pictures silently vanish from the export.
+  assert.ok(/EXCELJS_CDN\s*=\s*"https:\/\/cdn\.jsdelivr\.net\/npm\/exceljs@/.test(src),
+    "ExcelJS is not pinned to an exact version on the CDN");
+  const fn = src.match(/async function exportComponentWorkbook[\s\S]*?\n  \}/);
+  assert.ok(fn, "exportComponentWorkbook not found");
+  assert.ok(fn[0].includes("loadScript(EXCELJS_CDN)"), "the workbook writer does not load ExcelJS");
+  assert.ok(!fn[0].includes("window.XLSX"), "the picture workbook is using SheetJS, which cannot embed images");
+});
+
+test("only formats Excel understands reach addImage", () => {
+  const fn = src.match(/async function imageForExcel[\s\S]*?\n  \}/);
+  assert.ok(fn, "imageForExcel not found");
+  for (const sig of ["0x89", "0xff", "0x47"]) {
+    assert.ok(fn[0].includes(sig), `missing magic-byte sniff ${sig} — format is being trusted from the URL`);
+  }
+  assert.ok(/toBlob\(r, "image\/png"\)/.test(fn[0]),
+    "no canvas fallback — a webp upload would produce an empty frame in the sheet with no error");
+});
+
+test("CSV is untouched by the picture workbook", () => {
+  // Pictures cannot live in a CSV, and a column of expiring signed URLs would
+  // be worse than nothing.
+  assert.ok(!/toCSV\([\s\S]{0,400}base64/.test(src), "image data is leaking into the CSV writer");
+  const out = toCSV([{ id: "1", name: "Fäste" }], cols);
+  assert.ok(!out.includes("base64") && !out.includes("http"), "CSV output now carries image data");
 });

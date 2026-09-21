@@ -3670,6 +3670,18 @@
                       .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))
               : "";
             return `rushroom-${tab}${cat}`;
+          },
+          {
+            // PROP-049: the Excel button builds the picture workbook; CSV stays
+            // flat, because a CSV cannot hold an image and pretending otherwise
+            // would just be a column of dead URLs.
+            workbook: (rows, cols, name, progress) => exportComponentWorkbook(rows, cols, name, {
+              imageUrlFor: (c) => thumbMap[c.id] || "",
+              detailColumns: BOM_DETAIL_COLUMNS(
+                (id) => (partCategories.find((x) => x.id === id) || {}).name || "",
+                (id) => parentCountMap[id] || 0),
+              onProgress: progress,
+            }),
           }),
         searchInp,
       ]),
@@ -4446,18 +4458,222 @@
     downloadBlob(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `${name}.xlsx`);
   }
 
+  // ---- Rich workbook export (PROP-049) --------------------------------------
+  // SheetJS writes the flat sheet above and cannot embed images — picture
+  // support is not in the community build at any version. ExcelJS can, so the
+  // parts catalogue uses it. Both are lazy-loaded, so neither costs anything
+  // until a button is pressed.
+  //
+  // Only the *catalogue* export gets pictures. The Status Overview export is a
+  // structure — one row per occurrence, the same screw appearing four times —
+  // where a repeated photo would be noise, so it stays on the flat writer.
+  const EXCELJS_CDN = "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js";
+
+  /** Excel sheet names: ≤31 chars, no \ / ? * [ ] :, unique, and "History" is reserved. */
+  function uniqueSheetName(base, used) {
+    let s = String(base || "").replace(/[\\/?*[\]:]/g, "-").replace(/^'+|'+$/g, "").trim() || "Sheet";
+    if (s.length > 31) s = s.slice(0, 31).trim();
+    if (s.toLowerCase() === "history") s = "History_";
+    let name = s, n = 2;
+    while (used.has(name.toLowerCase())) {
+      const suffix = ` (${n++})`;
+      name = s.slice(0, 31 - suffix.length).trim() + suffix;
+    }
+    used.add(name.toLowerCase());
+    return name;
+  }
+
+  /** Bounded parallelism: 64 image downloads at once is a self-inflicted stall. */
+  async function mapLimit(items, limit, fn, onEach) {
+    const out = new Array(items.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        try { out[i] = await fn(items[i], i); } catch { out[i] = null; }
+        if (onEach) onEach();
+      }
+    }));
+    return out;
+  }
+
+  const blobToDataUrl = (blob) => new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = () => rej(new Error("could not read image"));
+    fr.readAsDataURL(blob);
+  });
+
+  /**
+   * Fetch one component image and return it in a form Excel accepts.
+   *
+   * Excel understands png, jpeg and gif only. A webp or avif upload would
+   * otherwise produce an empty frame in the sheet with no error anywhere, so
+   * anything else is re-encoded to PNG through a canvas. Natural dimensions
+   * come back too — scaling a tall part photo into a square box is the kind of
+   * distortion nobody reports but everybody notices.
+   */
+  async function imageForExcel(url) {
+    if (!url) return null;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    let blob = await res.blob();
+    const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    let extension = null;
+    if (head[0] === 0x89 && head[1] === 0x50) extension = "png";
+    else if (head[0] === 0xff && head[1] === 0xd8) extension = "jpeg";
+    else if (head[0] === 0x47 && head[1] === 0x49) extension = "gif";
+
+    let bmp = null;
+    try { bmp = await createImageBitmap(blob); } catch { /* dimensions unknown */ }
+    if (!extension) {
+      if (!bmp) return null;
+      const c = el("canvas", {});
+      c.width = bmp.width; c.height = bmp.height;
+      c.getContext("2d").drawImage(bmp, 0, 0);
+      const png = await new Promise((r) => c.toBlob(r, "image/png"));
+      if (!png) return null;
+      blob = png;
+      extension = "png";
+    }
+    return {
+      base64: await blobToDataUrl(blob), extension,
+      width: bmp ? bmp.width : 0, height: bmp ? bmp.height : 0,
+    };
+  }
+
+  /** Fit (w,h) inside a box without stretching. Unknown dimensions: assume square. */
+  function fitBox(w, h, boxW, boxH) {
+    if (!w || !h) return { width: Math.min(boxW, boxH), height: Math.min(boxW, boxH) };
+    const k = Math.min(boxW / w, boxH / h, 1);
+    return { width: Math.round(w * k), height: Math.round(h * k) };
+  }
+
+  /**
+   * A workbook of parts: a Summary sheet that mirrors the list on screen, then
+   * one sheet per part carrying its picture and its fields.
+   *
+   * `detailColumns` is a separate seam from `columns` on purpose — per-part
+   * detail is expected to grow (specs, drawings, documents), and it must be
+   * able to grow without making the Summary sheet unreadably wide.
+   */
+  async function exportComponentWorkbook(rows, columns, basename, opts = {}) {
+    const { imageUrlFor = () => "", detailColumns = columns, onProgress = () => {}, perPartSheets = true } = opts;
+    if (!rows.length) { alert("There is nothing to export with the current filters."); return; }
+    if (perPartSheets && rows.length > 150 &&
+        !confirm(`This will build ${rows.length + 1} sheets and download ${rows.length} images. That can take a few minutes. Continue?`)) return;
+
+    onProgress("loading…");
+    await loadScript(EXCELJS_CDN);
+
+    // Images first, so the workbook is assembled in one pass afterwards and a
+    // slow network shows as progress rather than a frozen button.
+    let done = 0;
+    const images = await mapLimit(rows, 6, (r) => imageForExcel(imageUrlFor(r)),
+      () => onProgress(`${++done}/${rows.length}`));
+    onProgress("writing…");
+
+    const wb = new window.ExcelJS.Workbook();
+    wb.creator = "Engineering & Compliance Platform";
+    wb.created = new Date();
+
+    const used = new Set();
+    const summary = wb.addWorksheet(uniqueSheetName("Summary", used), {
+      views: [{ state: "frozen", ySplit: 1 }],
+    });
+    // Picture column first, matching the order on screen; "Sheet" last, because
+    // with dozens of tabs the name of the tab is how you find the part.
+    summary.columns = [
+      { header: "Image", key: "__img", width: 12 },
+      ...columns.map((c) => ({
+        header: c.label, key: `c${c.label}`,
+        width: Math.min(60, Math.max(c.label.length + 2,
+          ...rows.map((r) => String(c.get(r) ?? "").length + 2))),
+      })),
+      { header: "Sheet", key: "__sheet", width: 26 },
+    ];
+    summary.getRow(1).font = { bold: true };
+
+    const sheetNames = rows.map((r) => perPartSheets
+      ? uniqueSheetName(String(r.part_number || r.name || "Part"), used) : "");
+
+    // Register each picture with the workbook ONCE. addImage() appends a new
+    // media entry every call, so embedding per sheet would put identical bytes
+    // in the file twice — verified by reading a generated workbook back.
+    const imageIds = images.map((img) => img
+      ? wb.addImage({ base64: img.base64, extension: img.extension }) : null);
+
+    rows.forEach((r, i) => {
+      const row = summary.addRow(["", ...columns.map((c) => {
+        const v = c.get(r);
+        return v === null || v === undefined ? "" : v;
+      }), sheetNames[i]]);
+      row.height = 36;
+      row.alignment = { vertical: "middle" };
+      const img = images[i];
+      if (img) {
+        const { width, height } = fitBox(img.width, img.height, 44, 44);
+        summary.addImage(imageIds[i], {
+          tl: { col: 0.12, row: row.number - 1 + 0.08 },
+          ext: { width, height },
+        });
+      }
+    });
+
+    if (perPartSheets) {
+      rows.forEach((r, i) => {
+        const ws = wb.addWorksheet(sheetNames[i]);
+        ws.columns = [{ width: 22 }, { width: 62 }, { width: 6 }, { width: 34 }];
+        const title = ws.addRow([String(r.name || r.part_number || "Part")]);
+        title.font = { bold: true, size: 14 };
+        title.height = 22;
+        ws.addRow([]);
+        detailColumns.forEach((c) => {
+          const v = c.get(r);
+          const line = ws.addRow([c.label, v === null || v === undefined ? "" : v]);
+          line.getCell(1).font = { bold: true };
+          line.getCell(1).alignment = { vertical: "top" };
+          line.getCell(2).alignment = { vertical: "top", wrapText: true };
+        });
+        const img = images[i];
+        if (img) {
+          const { width, height } = fitBox(img.width, img.height, 260, 260);
+          ws.addImage(imageIds[i], { tl: { col: 3, row: 1 }, ext: { width, height } });
+        } else {
+          // Say so rather than leaving a blank that reads as "no picture taken".
+          ws.getCell("D2").value = imageUrlFor(r) ? "Image could not be read" : "No image uploaded";
+          ws.getCell("D2").font = { italic: true, color: { argb: "FF888888" } };
+        }
+      });
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadBlob(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+      `${basename}-${stamp}.xlsx`);
+  }
+
   /** Two buttons rather than a format dropdown: one click instead of two. */
-  function exportButtons(getRows, getColumns, getBasename) {
+  function exportButtons(getRows, getColumns, getBasename, opts = {}) {
     const run = async (format, btn) => {
       const label = btn.textContent;
       btn.disabled = true; btn.textContent = "…";
-      try { await exportRows(getRows(), getColumns(), getBasename(), format); }
+      try {
+        if (format === "xlsx" && opts.workbook) {
+          await opts.workbook(getRows(), getColumns(), getBasename(), (t) => { btn.textContent = t; });
+        } else {
+          await exportRows(getRows(), getColumns(), getBasename(), format);
+        }
+      }
       catch (ex) { alert(`Export failed: ${ex.message}`); }
       finally { btn.disabled = false; btn.textContent = label; }
     };
     const csv = el("button", { class: "btn btn-sm", type: "button", title: "Download the rows below as CSV",
       onclick: () => run("csv", csv) }, "⤓ CSV");
-    const xls = el("button", { class: "btn btn-sm", type: "button", title: "Download the rows below as an Excel workbook",
+    const xls = el("button", { class: "btn btn-sm", type: "button",
+      title: opts.workbook
+        ? "Download an Excel workbook: a summary sheet with pictures, then one sheet per part"
+        : "Download the rows below as an Excel workbook",
       onclick: () => run("xlsx", xls) }, "⤓ Excel");
     return [csv, xls];
   }
@@ -4475,6 +4691,23 @@
     { label: "Status", get: (c) => c.lifecycle_status || "" },
     { label: "OEM number", get: (c) => c.oem_number || "" },
     { label: "Description", get: (c) => c.description || "" },
+  ];
+
+  /**
+   * The per-part sheet (PROP-049). Wider than the summary on purpose: this is
+   * where per-part detail is expected to grow, and the seam exists so it can
+   * grow without widening the Summary sheet.
+   *
+   * Every field here comes off the row `listComponents` already returns. A
+   * label with nothing behind it is worse than an absent one — it reads as
+   * "this part has no supplier" rather than "the export never had that field".
+   */
+  const BOM_DETAIL_COLUMNS = (categoryName, parentCount = () => 0) => [
+    ...BOM_EXPORT_COLUMNS(categoryName),
+    { label: "Used on", get: (c) => parentCount(c.id) || 0 },
+    { label: "Has children", get: (c) => (c.has_children ? "yes" : "no") },
+    { label: "Replacement note", get: (c) => c.replacement_note || "" },
+    { label: "Flag reason", get: (c) => c.flag_reason || "" },
   ];
 
   /**

@@ -1033,3 +1033,20 @@ it in place with a breadcrumb; register opens it standalone; row action renamed
 to View), assets/styles.css (.drawing-surface and rail, .viewer-image),
 tests/drawing-viewing.test.mjs, docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md,
 index.html, supplier.html, reset.html, verify.html, CLAUDE.md (v246 → v247)
+
+---
+**Date:** 2026-09-21
+**Feature:** PROP-049 — Parts workbook with pictures
+**Decision:** Add ExcelJS as a second, lazy-loaded Excel writer for the parts catalogue export, and keep SheetJS for the flat/structure exports.
+
+**Why:** The request was pictures in the Excel export. SheetJS cannot write images — not at 0.18.5, not at any version of the community build — so this was never a matter of passing another option to the existing writer. The choices were ExcelJS (948 KB), hand-assembling the xlsx zip with drawing XML, or `=IMAGE()` formulas.
+
+`=IMAGE()` was ruled out first: it is Excel 365 only and needs a publicly reachable URL, while component images live in a private bucket behind signed URLs that expire in an hour. A workbook of dead links after lunch is worse than no pictures. Hand-assembling the zip would avoid the dependency but puts the OOXML drawing relationships in our maintenance path for one feature.
+
+ExcelJS is 948 KB, which is not free — but it is fetched only when the button is pressed, from the same CDN pattern as the four libraries already lazy-loaded here, so it costs nothing on page load and nothing for anyone who never exports. Both writers coexist deliberately: the catalogue export is *a list of parts*, where each part is a thing with a photo; the Status Overview export is *a structure*, one row per occurrence, where a component used four times would carry its photo four times.
+
+Two things were settled by running the code rather than reading the API. Sheet naming is the fragile part — Excel rejects the entire workbook for one illegal, blank, over-31-character or duplicated name, and a 64-part export is 64 chances to produce one — so `uniqueSheetName` was exercised against every forbidden character, blanks, nulls, 60-character names, repeated duplicates and the reserved name "History", and those cases are now tests. And reading a generated workbook back showed `wb.addImage()` appending a fresh media entry per call: embedding per sheet put identical bytes in the file twice. Registering each picture once and referencing the id from both sheets halved it.
+
+`BOM_DETAIL_COLUMNS` exists as a separate seam from `BOM_EXPORT_COLUMNS` so per-part detail can grow without widening the Summary sheet — but it is deliberately limited to fields `listComponents` already returns, because a label with nothing behind it reads as "this part has no supplier" rather than "the export never carried that field". Specs, drawings and documents need a batched `getComponentDetail` action first; that is recorded in ROADMAP.
+
+**Files changed:** assets/app.js, tests/export.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, reset.html, verify.html, supplier.html, CLAUDE.md

@@ -3522,6 +3522,66 @@
   let openDetailComponentId = null;
   const categoryNameOf = (id) => (partCategories.find((c) => c.id === id) || {}).name || null;
 
+  // --- Shared BOM list shaping (PROP-052) ------------------------------------
+  // The BOM list and the add-child picker show the same rows and must offer the
+  // same tabs, category chips and sort order. These live at module scope so
+  // there is one definition of "how a BOM list is grouped and ordered" rather
+  // than a copy per screen that drifts.
+  const BOM_TAB_DEFS = [
+    { id: "components", label: "Parts" },
+    { id: "assemblies", label: "Assemblies" },
+    { id: "dynamic",    label: "Dynamic BOMs" },
+  ];
+  const BOM_SORT_COLS = [
+    { key: "name",             label: "Name" },
+    { key: "part_number",      label: "Part no." },
+    { key: "category",         label: "Category" },
+    { key: "make_or_buy",      label: "Sourcing" },
+    { key: "lifecycle_status", label: "Status" },
+  ];
+
+  const bomTabOf = (c) => c.type === "product_family" ? "dynamic"
+    : c.type === "sub_assembly" ? "assemblies" : "components";
+
+  function bomGroupByType(list) {
+    const grouped = { components: [], assemblies: [], dynamic: [] };
+    (list || []).forEach((c) => grouped[bomTabOf(c)].push(c));
+    return grouped;
+  }
+
+  const bomSortValue = (c, key) =>
+    key === "category" ? (categoryNameOf(c.category_id) || "") : (c[key] ?? "");
+
+  /** Comparator factory: the list and the picker order rows identically. */
+  function bomSortComparator(sortKey, sortDir) {
+    const dir = sortDir === "asc" ? 1 : -1;
+    return (a, b) => {
+      const av = String(bomSortValue(a, sortKey)), bv = String(bomSortValue(b, sortKey));
+      // Empty values sort last in BOTH directions — an unset category is not
+      // "before A", it is missing, and flipping direction should not parade it
+      // to the top.
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      // numeric:true so "S Shelf 2" sorts before "S Shelf 10".
+      const primary = av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+      if (primary !== 0) return primary * dir;
+      // Stable tiebreak, so equal values never shuffle between renders.
+      return String(a.part_number ?? "").localeCompare(String(b.part_number ?? ""), undefined, { numeric: true });
+    };
+  }
+
+  /** A pill used by both the category chips and the sort controls. */
+  function bomChip(label, { active, dim, title, onClick }) {
+    return el("button", {
+      type: "button", title: title || "",
+      style: "padding:0.28rem 0.7rem;font-size:0.75rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;"
+        + (active
+          ? "background:var(--accent,#2fa564);color:#fff;border:1px solid var(--accent,#2fa564)"
+          : `background:transparent;color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)${dim ? ";opacity:0.45" : ""}`),
+      onclick: onClick,
+    }, label);
+  }
+
   async function bomTreeView(token, role) {
     const wrap = el("div", { class: "pis-tree-wrap" });
     // The panel used to sit under the component list, so opening anything meant
@@ -3560,43 +3620,15 @@
     detailPanel.__show = showDetail;
     detailPanel.__hide = hideDetail;
 
-    const TAB_DEFS = [
-      { id: "components", label: "Parts" },
-      { id: "assemblies", label: "Assemblies" },
-      { id: "dynamic",    label: "Dynamic BOMs" },
-    ];
+    const TAB_DEFS = BOM_TAB_DEFS;
 
     let activeTab = "components";
     let activeCategory = "all";   // "all" | "none" | <category_id>
     let sortKey = "name";         // any SORT_COLS key
     let sortDir = "asc";
     // What the list actually shows per row, so every visible column is sortable.
-    const SORT_COLS = [
-      { key: "name",             label: "Name" },
-      { key: "part_number",      label: "Part no." },
-      { key: "category",         label: "Category" },
-      { key: "make_or_buy",      label: "Sourcing" },
-      { key: "lifecycle_status", label: "Status" },
-    ];
-
-    function sortValue(c, key) {
-      if (key === "category") return categoryNameOf(c.category_id) || "";
-      return c[key] ?? "";
-    }
-    function sortComparator(a, b) {
-      const dir = sortDir === "asc" ? 1 : -1;
-      const av = String(sortValue(a, sortKey)), bv = String(sortValue(b, sortKey));
-      // Empty values sort last in BOTH directions — an unset category is not
-      // "before A", it is missing, and flipping direction should not parade it
-      // to the top.
-      if (!av && bv) return 1;
-      if (av && !bv) return -1;
-      // numeric:true so "S Shelf 2" sorts before "S Shelf 10".
-      const primary = av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
-      if (primary !== 0) return primary * dir;
-      // Stable tiebreak, so equal values never shuffle between renders.
-      return String(a.part_number ?? "").localeCompare(String(b.part_number ?? ""), undefined, { numeric: true });
-    }
+    // Shared with the add-child picker — see BOM_SORT_COLS at module scope.
+    const SORT_COLS = BOM_SORT_COLS;
     let allComponents = [];
     thumbMap = {};                      // module-scoped (see the declaration above)
     let searchQuery = "";
@@ -3722,13 +3754,7 @@
       const filtered = q
         ? allComponents.filter((c) => (c.name || "").toLowerCase().includes(q) || (c.part_number || "").toLowerCase().includes(q))
         : allComponents;
-      const grouped = { components: [], assemblies: [], dynamic: [] };
-      filtered.forEach((c) => {
-        if (c.type === "product_family") grouped.dynamic.push(c);
-        else if (c.type === "sub_assembly") grouped.assemblies.push(c);
-        else grouped.components.push(c);
-      });
-      return grouped;
+      return bomGroupByType(filtered);
     }
 
     function renderAll() {
@@ -3757,15 +3783,10 @@
           : parts.filter((c) => c.category_id === id).length;
         const chip = (id, label) => {
           const count = countFor(id);
-          const active = activeCategory === id;
-          return el("button", {
-            type: "button",
-            style: `padding:0.28rem 0.7rem;font-size:0.75rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;`
-              + (active
-                ? "background:var(--accent,#2fa564);color:#fff;border:1px solid var(--accent,#2fa564)"
-                : `background:transparent;color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)${count ? "" : ";opacity:0.45"}`),
-            onclick: () => { activeCategory = id; tabPageShown.components = PAGE_SIZE; renderAll(); },
-          }, `${label} (${count})`);
+          return bomChip(`${label} (${count})`, {
+            active: activeCategory === id, dim: !count,
+            onClick: () => { activeCategory = id; tabPageShown.components = PAGE_SIZE; renderAll(); },
+          });
         };
         const chips = [chip("all", "All")];
         partCategories.forEach((c) => chips.push(chip(c.id, c.name)));
@@ -3790,7 +3811,7 @@
       // Sort the filtered set, not the whole list, so the order you see is the
       // order of what is actually shown. Copy first — `items` may be the array
       // held in allComponents and sorting in place would reorder the source.
-      items = items.slice().sort(sortComparator);
+      items = items.slice().sort(bomSortComparator(sortKey, sortDir));
       // What the export writes: the whole filtered and sorted set, not the
       // paginated slice below. Exporting only the loaded page would silently
       // truncate, and a short export looks exactly like a short BOM.
@@ -5043,7 +5064,7 @@
       try {
         const res = await API.post(token, "listMoveTargets", { edge_id: edgeId });
         targets = res.targets || [];
-        buildList("");
+        buildList();
         searchInput.focus();
       } catch (ex) {
         listEl.replaceChildren(el("div", { style: "padding:0.9rem 0.7rem;color:#e05454;font-size:0.875rem" }, ex.message));
@@ -5122,7 +5143,7 @@
     // The picker is the reason this dialog is resizable. A fixed 200px list of
     // 64 parts shows four at a time, and the window it is in has plenty of room
     // — so the size is the user's to set, and it is remembered.
-    const size = loadDialogSize("addChild", { w: 640, h: 640 });
+    const size = loadDialogSize("addChild", { w: 760, h: 720 });
     const dialog = el("div", {
       style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;"
         + "padding:1.25rem;display:flex;flex-direction:column;overflow:hidden;resize:both;"
@@ -5151,8 +5172,83 @@
     const tabBar = el("div", { style: `display:${linkExistingOnly ? "none" : "flex"};border:1px solid var(--border,#2d3748);border-radius:4px;overflow:hidden;margin-bottom:0.9rem` }, [tabExisting, tabNew]);
 
     // Existing component section
-    const candidates = (allComponents || []).filter((c) => c.id !== parentNode.id).sort((a, b) => a.part_number.localeCompare(b.part_number));
+    const candidates = (allComponents || []).filter((c) => c.id !== parentNode.id);
     const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search by part # or name…", style: "width:100%;margin-bottom:0.5rem;flex-shrink:0" });
+
+    // PROP-052: the same tabs, category chips and sort order as the BOM list.
+    // The picker shows the same rows, so it has to offer the same ways through
+    // them — finding one part among 64 by scrolling an alphabetical list is
+    // what the main view stopped asking of people some time ago.
+    const pickState = { tab: "components", category: "all", sortKey: "name", sortDir: "asc" };
+    const pickTabBar  = el("div", { style: "display:flex;gap:0;border-bottom:2px solid var(--border,#e2e8f0);flex-shrink:0;margin-bottom:0.4rem" });
+    const pickCatBar  = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;flex-shrink:0;margin-bottom:0.4rem" });
+    const pickSortBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;flex-shrink:0;margin-bottom:0.4rem" });
+
+    /** Rows for the active tab and category, searched and sorted. */
+    function visibleCandidates() {
+      const q = (searchInput.value || "").trim().toLowerCase();
+      let items = bomGroupByType(candidates)[pickState.tab] || [];
+      if (pickState.tab === "components" && pickState.category !== "all") {
+        items = items.filter((c) => pickState.category === "none" ? !c.category_id : c.category_id === pickState.category);
+      }
+      if (q) items = items.filter((c) => `${c.part_number} ${c.name}`.toLowerCase().includes(q));
+      return items.slice().sort(bomSortComparator(pickState.sortKey, pickState.sortDir));
+    }
+
+    function paintFilters() {
+      const grouped = bomGroupByType(candidates);
+      pickTabBar.replaceChildren(...BOM_TAB_DEFS.map((td) => {
+        const active = pickState.tab === td.id;
+        return el("button", {
+          type: "button",
+          style: `padding:0.3rem 0.8rem;font-size:0.75rem;font-weight:600;border:none;background:transparent;cursor:pointer;color:${active ? "var(--accent,#2fa564)" : "var(--muted,#888)"};border-bottom:${active ? "2px solid var(--accent,#2fa564)" : "2px solid transparent"};margin-bottom:-2px`,
+          onclick: () => { pickState.tab = td.id; if (td.id !== "components") pickState.category = "all"; paintFilters(); buildList(); },
+        }, `${td.label} (${(grouped[td.id] || []).length})`);
+      }));
+
+      // Categories apply to Parts only, exactly as in the BOM list. Counts come
+      // from the unfiltered Parts group, so a chip says how many it would
+      // reveal rather than how many are showing.
+      if (pickState.tab !== "components") {
+        pickCatBar.style.display = "none";
+        pickCatBar.replaceChildren();
+      } else {
+        pickCatBar.style.display = "flex";
+        const parts = grouped.components || [];
+        const countFor = (id) => id === "all" ? parts.length
+          : id === "none" ? parts.filter((c) => !c.category_id).length
+          : parts.filter((c) => c.category_id === id).length;
+        const chip = (id, label) => {
+          const count = countFor(id);
+          return bomChip(`${label} (${count})`, {
+            active: pickState.category === id, dim: !count,
+            onClick: () => { pickState.category = id; paintFilters(); buildList(); },
+          });
+        };
+        const chips = [chip("all", "All")];
+        partCategories.forEach((c) => chips.push(chip(c.id, c.name)));
+        if (countFor("none")) chips.push(chip("none", "Uncategorised"));
+        // No "⚙ Categories" here: managing categories from inside an add-child
+        // dialog would stack a second modal over this one.
+        pickCatBar.replaceChildren(...chips);
+      }
+
+      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || pickState.tab === "components");
+      pickSortBar.replaceChildren(
+        el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "SORT"),
+        ...cols.map((c) => {
+          const active = pickState.sortKey === c.key;
+          return bomChip(active ? `${c.label} ${pickState.sortDir === "asc" ? "▲" : "▼"}` : c.label, {
+            active,
+            onClick: () => {
+              if (pickState.sortKey === c.key) pickState.sortDir = pickState.sortDir === "asc" ? "desc" : "asc";
+              else { pickState.sortKey = c.key; pickState.sortDir = "asc"; }
+              paintFilters(); buildList();
+            },
+          });
+        }),
+      );
+    }
     // flex:1 rather than a fixed max-height: dragging the dialog bigger must
     // make the LIST taller, not add whitespace under it.
     const listEl = el("div", { style: "flex:1;min-height:140px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
@@ -5229,15 +5325,15 @@
               qty, ref,
               el("button", {
                 class: "btn btn-xs", type: "button", title: `Remove ${c.name}`, "aria-label": `Remove ${c.name}`,
-                onclick: () => { picked.delete(c.id); paintTray(); buildList(searchInput.value); },
+                onclick: () => { picked.delete(c.id); paintTray(); buildList(); },
               }, "✕"),
             ]);
           })),
       );
     }
 
-    function buildList(filter) {
-      const filtered = filter ? candidates.filter((c) => (c.part_number + " " + c.name).toLowerCase().includes(filter.toLowerCase())) : candidates;
+    function buildList() {
+      const filtered = visibleCandidates();
       listEl.replaceChildren(...filtered.map((c) => {
         const isPicked = picked.has(c.id);
         const row = el("div", {
@@ -5248,7 +5344,7 @@
             if (picked.has(c.id)) picked.delete(c.id);
             else picked.set(c.id, { comp: c, qty: "1", ref: "" });
             paintTray();
-            buildList(searchInput.value);
+            buildList();
           },
         }, [
           // A tick rather than a checkbox: the whole row is the control, and a
@@ -5273,14 +5369,51 @@
         ]);
         return row;
       }));
-      if (!filtered.length) listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:var(--muted,#8b93a1);font-size:0.875rem" }, "No components match."));
+      if (!filtered.length) {
+        // Name the filter that is hiding everything, and say where the matches
+        // actually are. The picker used to be one flat list; now that it has
+        // tabs, "no match" while five rows sit one tab away is exactly the dead
+        // end this project keeps producing.
+        const tabLabel = (BOM_TAB_DEFS.find((t) => t.id === pickState.tab) || {}).label || "components";
+        const catLabel = pickState.tab === "components" && pickState.category !== "all"
+          ? (pickState.category === "none" ? "Uncategorised" : categoryNameOf(pickState.category)) : null;
+        const q = (searchInput.value || "").trim().toLowerCase();
+        const elsewhere = BOM_TAB_DEFS
+          .filter((t) => t.id !== pickState.tab)
+          .map((t) => ({
+            tab: t,
+            n: (bomGroupByType(candidates)[t.id] || [])
+              .filter((c) => !q || `${c.part_number} ${c.name}`.toLowerCase().includes(q)).length,
+          }))
+          .filter((x) => x.n > 0);
+        // A category chip can hide rows just as effectively as a tab can.
+        const hiddenByCategory = pickState.tab === "components" && pickState.category !== "all"
+          ? (bomGroupByType(candidates).components || [])
+              .filter((c) => !q || `${c.part_number} ${c.name}`.toLowerCase().includes(q)).length
+          : 0;
+        listEl.replaceChildren(el("div", { style: "padding:0.6rem;color:var(--muted,#8b93a1);font-size:0.875rem;display:flex;flex-direction:column;gap:0.4rem;align-items:flex-start" }, [
+          el("span", {},
+            q ? `No ${tabLabel}${catLabel ? ` in ${catLabel}` : ""} match “${searchInput.value.trim()}”.`
+              : catLabel ? `No ${tabLabel} in ${catLabel}.`
+              : `No ${tabLabel} available to link.`),
+          hiddenByCategory ? bomChip(`${hiddenByCategory} in all categories`, {
+            active: false,
+            onClick: () => { pickState.category = "all"; paintFilters(); buildList(); },
+          }) : null,
+          ...elsewhere.map((x) => bomChip(`${x.n} in ${x.tab.label}`, {
+            active: false,
+            onClick: () => { pickState.tab = x.tab.id; pickState.category = "all"; paintFilters(); buildList(); },
+          })),
+        ].filter(Boolean)));
+      }
     }
-    buildList("");
+    paintFilters();
+    buildList();
     paintTray();   // after submitBtn exists — paintTray sets its label
-    searchInput.oninput = () => buildList(searchInput.value);
+    searchInput.oninput = () => buildList();
     const existingSection = el("div", { style: "flex:1;min-height:0;display:flex;flex-direction:column" }, [
       el("label", { style: "display:block;margin-bottom:0.25rem;font-size:0.8125rem;font-weight:600;flex-shrink:0" }, "Select child"),
-      levelNote, searchInput, listEl, trayEl, sharedWarn,
+      levelNote, pickTabBar, pickCatBar, pickSortBar, searchInput, listEl, trayEl, sharedWarn,
     ]);
 
     // Create-new section
@@ -5455,7 +5588,7 @@
             : ex.message;
           submitBtn.disabled = false;
           submitBtn.textContent = submitLabel();
-          if (added.length) { paintTray(); buildList(searchInput.value); if (onRefresh) onRefresh(); }
+          if (added.length) { paintTray(); buildList(); if (onRefresh) onRefresh(); }
         }
       },
     });

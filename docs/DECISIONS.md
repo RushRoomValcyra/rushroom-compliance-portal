@@ -1088,3 +1088,24 @@ Partial failure is reported rather than swallowed: the dialog says how many of h
 Still open, recorded in ROADMAP: the picker offers parts that are already children of this parent. The server rejects the duplicate edge and the per-row error now surfaces it, but marking them unpickable needs the parent's current edges, which the modal is not given.
 
 **Files changed:** assets/app.js, tests/dialog-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+
+---
+**Date:** 2026-09-24
+**Feature:** PROP-052 — One definition of how a BOM list is grouped and ordered
+**Decision:** Extract the tab definitions, sort columns, grouping, comparator and chip to module scope and have both the BOM list and the add-child picker consume them, rather than giving the picker its own copy.
+
+**Why:** The request was to sort and filter the picker the way the main list does. The fast answer is to write a second set of tabs, chips and a comparator inside the modal. This repository has a long record of what that produces — two screens that agree until one is changed — and the duplication would have been of the exact logic most likely to change next (categories are user-managed and already grow).
+
+So the pure pieces moved out: `BOM_TAB_DEFS`, `BOM_SORT_COLS`, `bomTabOf` / `bomGroupByType`, `bomSortComparator` as a factory, and `bomChip`. `bomTreeView` now consumes all five, which means the refactor's blast radius is the main BOM list and not only the new feature — stated plainly in ROADMAP so it gets checked first. The comparator and the grouper are now lifted and *executed* by tests (numeric ordering, empty-last in both directions, stable tiebreak, a row with no `type` landing in Parts rather than vanishing) instead of pattern-matched.
+
+Two consequences that needed deciding rather than defaulting:
+
+*The picker was one flat list and is now tabbed,* which means its default Parts tab hides assemblies that used to be visible. Matching the main list is what was asked, and the tab counts are right there — but a search for an assembly from the Parts tab would otherwise return "no match" while five rows sat one tab away. The empty state therefore names the filter that is hiding things and offers the way out as a clickable count, for the category chips as well as the tabs.
+
+*Selections survive a tab change,* so one batch can mix parts and sub-assemblies. The tray is what makes that safe: the picks stay visible even when the current filter would hide them.
+
+The category manager is deliberately **not** offered in the picker's chip row, though the main list has it there — opening it would stack a second modal over this one, which is the problem PROP-047 was raised to remove.
+
+One defect was introduced and caught during this change: a file-wide replace of `buildList(searchInput.value)` also hit the *move-child* modal, which has its own `buildList(filter)`, silently disabling its search. Restored, and a test now pins that modal's wiring because the two functions share a name and differ in signature.
+
+**Files changed:** assets/app.js, tests/dialog-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md

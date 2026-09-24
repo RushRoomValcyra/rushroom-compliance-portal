@@ -152,7 +152,8 @@ test("the dialog says the children land on the same level", () => {
   const fn = addChildModal();
   assert.ok(/function paintLevelNote/.test(fn), "there is no same-level explanation");
   assert.ok(/siblings on the same level/.test(fn), "the note does not say they are siblings");
-  assert.ok(/levelNote, searchInput, listEl, trayEl/.test(fn), "the note is not mounted above the picker");
+  assert.ok(/levelNote, pickTabBar, pickCatBar, pickSortBar, searchInput, listEl, trayEl/.test(fn),
+    "the note is not mounted above the picker, or the filter bars are missing from it");
 });
 
 test("nothing is written until every row validates", () => {
@@ -192,4 +193,107 @@ test("submitBtn is declared before paintTray, which sets its label", () => {
   assert.ok(decl < use, "submitBtn is used before it is declared — temporal dead zone");
   const picked = fn.indexOf("const picked = new Map()");
   assert.ok(picked < use, "picked is read by submitLabel before it is declared");
+});
+
+// ---- Shared list shaping (PROP-052) ----------------------------------------
+// The BOM list and the add-child picker show the same rows. The tabs, category
+// chips and sort order are defined once so the two cannot disagree.
+
+/**
+ * Lift module-scope helpers out of the app IIFE and run them for real, rather
+ * than pattern-matching their source. They reference each other, so they are
+ * evaluated together with the one module value they read.
+ */
+function liftApp(name) {
+  const grab = (re, what) => {
+    const m = app.match(re);
+    assert.ok(m, `${what} not found in assets/app.js`);
+    return m[0];
+  };
+  const src = [
+    "let partCategories = [];",
+    grab(/const categoryNameOf = \(id\) => [^\n]+/, "categoryNameOf"),
+    grab(/const bomTabOf = \(c\) => [\s\S]*?;\n/, "bomTabOf"),
+    grab(/function bomGroupByType\(list\) \{[\s\S]*?\n  \}/, "bomGroupByType"),
+    grab(/const bomSortValue = \(c, key\) =>[\s\S]*?;\n/, "bomSortValue"),
+    grab(/function bomSortComparator\(sortKey, sortDir\) \{[\s\S]*?\n  \}/, "bomSortComparator"),
+  ].join("\n");
+  return eval(`(function () { ${src}; return ${name}; })()`);
+}
+
+test("grouping and sorting are defined once, not per screen", () => {
+  for (const name of ["BOM_TAB_DEFS", "BOM_SORT_COLS"]) {
+    const defs = [...app.matchAll(new RegExp(`const ${name} = \\[`, "g"))];
+    assert.equal(defs.length, 1, `${name} is defined ${defs.length} times`);
+  }
+  // bomTreeView must consume them rather than keep its own copy.
+  assert.ok(/const TAB_DEFS = BOM_TAB_DEFS;/.test(app), "the BOM list still declares its own tab defs");
+  assert.ok(/const SORT_COLS = BOM_SORT_COLS;/.test(app), "the BOM list still declares its own sort columns");
+  assert.ok(/sort\(bomSortComparator\(sortKey, sortDir\)\)/.test(app), "the BOM list does not use the shared comparator");
+  assert.ok(/return bomGroupByType\(filtered\);/.test(app), "the BOM list still groups by type inline");
+});
+
+test("the picker offers the same tabs, categories and sort as the list", () => {
+  const fn = addChildModal();
+  assert.ok(/BOM_TAB_DEFS\.map/.test(fn), "the picker has no type tabs");
+  assert.ok(/partCategories\.forEach/.test(fn), "the picker has no category chips");
+  assert.ok(/BOM_SORT_COLS\.filter/.test(fn), "the picker has no sort controls");
+  assert.ok(/bomSortComparator\(pickState\.sortKey, pickState\.sortDir\)/.test(fn),
+    "the picker sorts differently from the list");
+  // Categories belong to Parts in both places.
+  assert.ok(/c\.key !== "category" \|\| pickState\.tab === "components"/.test(fn),
+    "the picker offers a Category sort on tabs that have no categories");
+  // Managing categories from inside this dialog would stack a second modal.
+  assert.ok(!/openCategoryManager/.test(fn), "the picker opens the category manager over itself");
+});
+
+test("the shared comparator orders rows the way the list promises", () => {
+  const cmp = liftApp("bomSortComparator");
+  const rows = [
+    { name: "S Shelf 10", part_number: "B" },
+    { name: "S Shelf 2",  part_number: "A" },
+    { name: "",           part_number: "C" },
+  ];
+  const asc = rows.slice().sort(cmp("name", "asc")).map((r) => r.name);
+  assert.deepEqual(asc, ["S Shelf 2", "S Shelf 10", ""], "numeric ordering or empty-last is broken");
+  const desc = rows.slice().sort(cmp("name", "desc")).map((r) => r.name);
+  assert.equal(desc[desc.length - 1], "", "an empty value is paraded to the top when the direction flips");
+  // Equal values must not shuffle between renders.
+  const ties = [{ name: "X", part_number: "B" }, { name: "X", part_number: "A" }];
+  assert.deepEqual(ties.slice().sort(cmp("name", "asc")).map((r) => r.part_number), ["A", "B"],
+    "equal values have no stable tiebreak");
+});
+
+test("bomGroupByType puts every row in exactly one tab", () => {
+  const group = liftApp("bomGroupByType");
+  const out = group([
+    { id: 1, type: "part" }, { id: 2, type: "sub_assembly" },
+    { id: 3, type: "product_family" }, { id: 4, type: "finished_good" }, { id: 5 },
+  ]);
+  assert.deepEqual(out.assemblies.map((c) => c.id), [2]);
+  assert.deepEqual(out.dynamic.map((c) => c.id), [3]);
+  // Anything else lands in Parts — including a row with no type at all, which
+  // must not vanish from every tab.
+  assert.deepEqual(out.components.map((c) => c.id), [1, 4, 5]);
+  assert.equal(group([]).components.length, 0, "an empty list should not throw");
+});
+
+test("an empty picker says where the matches actually are", () => {
+  // Now that the picker has tabs, "no match" while rows sit one tab away is
+  // the dead end this project keeps producing.
+  const fn = addChildModal();
+  assert.ok(/in \$\{x\.tab\.label\}/.test(fn), "the empty state does not point at the other tabs");
+  assert.ok(/in all categories/.test(fn), "a category chip can hide everything with no way back offered");
+});
+
+test("the move-child picker keeps its own search wiring", () => {
+  // Both modals have a function called buildList with different signatures:
+  // the move picker takes a filter string, the add picker reads shared state.
+  // A blind rename across the file silently disables search in one of them.
+  const move = app.match(/function openMoveComponentModal[\s\S]*?\n  \}\n/)
+    || app.match(/listMoveTargets[\s\S]{0,6000}/);
+  assert.ok(move, "the move-child modal was not found");
+  assert.ok(/searchInput\.oninput = \(\) => buildList\(searchInput\.value\);/.test(app),
+    "the move picker's search no longer passes its query — typing filters nothing");
+  assert.ok(/function buildList\(filter\) \{/.test(app), "the move picker's filtered buildList is gone");
 });

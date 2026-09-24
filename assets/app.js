@@ -3499,6 +3499,10 @@
   // PROP-038 — part categories, module-scoped for the same reason as
   // parentCountMap: the create modals are sibling functions, not nested ones.
   let partCategories = [];
+  // component_id → signed thumbnail URL. Module-scoped for the same reason
+  // again: bomTreeView fills it, and the add-child picker reads it so a part
+  // can be recognised by its picture rather than by an eight-character code.
+  let thumbMap = {};
   // Set by bomTreeView so the detail panel — a sibling function, not a nested
   // one — can refresh the list behind it after an edit that changes a list row
   // (name, part no., type, status, category, sourcing). Without this the row
@@ -3594,7 +3598,7 @@
       return String(a.part_number ?? "").localeCompare(String(b.part_number ?? ""), undefined, { numeric: true });
     }
     let allComponents = [];
-    let thumbMap = {}; // component_id → signed thumbnail URL
+    thumbMap = {};                      // module-scoped (see the declaration above)
     let searchQuery = "";
     const PAGE_SIZE = 50;
     const tabPageShown = { components: PAGE_SIZE, assemblies: PAGE_SIZE, dynamic: PAGE_SIZE };
@@ -5047,11 +5051,85 @@
     })();
   }
 
+  // --- Resizable dialogs ----------------------------------------------------
+  // A dialog someone has sized should stay that size. This is a per-browser
+  // convenience, so localStorage is the right home for it — and every access is
+  // guarded, because a private window or blocked site data makes both the read
+  // and the write throw rather than return nothing.
+  const THUMB_PX = 32;
+  const DIALOG_SIZE_KEY = "rr.dialogSize";
+
+  /**
+   * A fixed-size picture cell for a list row. Falls back to a dashed box
+   * marked "No image" — used both when a part has no picture and when its
+   * signed URL has expired, so a row never collapses or shows a broken glyph.
+   */
+  function thumbBox(url) {
+    const box = el("span", {
+      title: url ? "" : "No image",
+      style: `width:${THUMB_PX}px;height:${THUMB_PX}px;border-radius:4px;flex-shrink:0;overflow:hidden;`
+        + `display:flex;align-items:center;justify-content:center;color:var(--muted,#8b93a1);font-size:0.75rem;`
+        + `border:1px ${url ? "solid" : "dashed"} var(--border,#e2e8f0);background:var(--bg,#fff)`,
+    }, url ? [] : "—");
+    if (url) {
+      // Lazy: a long list must not fetch every image (~220 KB each) before the
+      // first row is visible.
+      const img = el("img", {
+        src: url, loading: "lazy", decoding: "async", alt: "",
+        style: "width:100%;height:100%;object-fit:cover;display:block",
+        onerror: () => { img.remove(); box.style.borderStyle = "dashed"; box.title = "No image"; box.textContent = "—"; },
+      });
+      box.append(img);
+    }
+    return box;
+  }
+
+  function loadDialogSize(key, fallback) {
+    try {
+      const all = JSON.parse(localStorage.getItem(DIALOG_SIZE_KEY) || "{}");
+      const s = all[key];
+      // A saved size from a bigger screen must not open a dialog off-screen;
+      // the CSS min()/max-width caps handle that, but nonsense is rejected here.
+      if (s && s.w > 200 && s.h > 200) return { w: Math.round(s.w), h: Math.round(s.h) };
+    } catch { /* unreadable or absent — the default is fine */ }
+    return fallback;
+  }
+
+  function rememberDialogSize(key, node) {
+    if (typeof ResizeObserver !== "function") return;
+    let timer = null;
+    const save = () => {
+      try {
+        const all = JSON.parse(localStorage.getItem(DIALOG_SIZE_KEY) || "{}");
+        all[key] = { w: node.offsetWidth, h: node.offsetHeight };
+        localStorage.setItem(DIALOG_SIZE_KEY, JSON.stringify(all));
+      } catch { /* storage unavailable — resizing still works, it just won't persist */ }
+    };
+    const ro = new ResizeObserver(() => { clearTimeout(timer); timer = setTimeout(save, 250); });
+    ro.observe(node);
+    // Stop observing when the dialog leaves the document, or the observer and
+    // its timer outlive every modal the user ever opened.
+    const mo = new MutationObserver(() => {
+      if (!node.isConnected) { clearTimeout(timer); ro.disconnect(); mo.disconnect(); }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
+
   // --- Add-child modal: link existing OR create new and link ---------------
   function openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, opts) {
     const linkExistingOnly = !!(opts && opts.linkExistingOnly);
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
-    const dialog = el("div", { style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;padding:1.5rem;width:min(520px,95vw);max-height:90vh;overflow-y:auto" });
+    // The picker is the reason this dialog is resizable. A fixed 200px list of
+    // 64 parts shows four at a time, and the window it is in has plenty of room
+    // — so the size is the user's to set, and it is remembered.
+    const size = loadDialogSize("addChild", { w: 640, h: 640 });
+    const dialog = el("div", {
+      style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:8px;"
+        + "padding:1.25rem;display:flex;flex-direction:column;overflow:hidden;resize:both;"
+        + `width:min(${size.w}px,96vw);height:min(${size.h}px,94vh);`
+        + "min-width:340px;min-height:320px;max-width:96vw;max-height:94vh",
+    });
+    rememberDialogSize("addChild", dialog);
 
     let mode = "existing"; // "existing" | "new"
 
@@ -5067,8 +5145,10 @@
 
     // Existing component section
     const candidates = (allComponents || []).filter((c) => c.id !== parentNode.id).sort((a, b) => a.part_number.localeCompare(b.part_number));
-    const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search by part # or name…", style: "width:100%;margin-bottom:0.5rem" });
-    const listEl = el("div", { style: "max-height:200px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
+    const searchInput = el("input", { class: "up-text", type: "text", placeholder: "Search by part # or name…", style: "width:100%;margin-bottom:0.5rem;flex-shrink:0" });
+    // flex:1 rather than a fixed max-height: dragging the dialog bigger must
+    // make the LIST taller, not add whitespace under it.
+    const listEl = el("div", { style: "flex:1;min-height:140px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
     let selectedId = null;
     const selectedLabel = el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;min-height:1.2rem" }, "");
     const sharedWarn = el("p", { style: "display:none;margin:4px 0 6px;font-size:0.8125rem;color:#d97706;background:#fef3c715;border:1px solid #d9770640;border-radius:4px;padding:4px 8px" }, "");
@@ -5091,6 +5171,15 @@
             buildList(searchInput.value);
           },
         }, [
+          // A part number is eight random characters; a photo is what people
+          // actually recognise a part by.
+          //
+          // The box is always drawn, so the text columns line up whether or not
+          // a part has been photographed — and it is what remains if the image
+          // fails, which it eventually will: these URLs are signed and expire
+          // after an hour, so a page left open overnight would otherwise show a
+          // column of broken-image glyphs.
+          thumbBox(thumbMap[c.id]),
           el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
           el("span", { style: "flex:1" }, c.name),
           lifecycleBadge(c.lifecycle_status),
@@ -5101,8 +5190,8 @@
     }
     buildList("");
     searchInput.oninput = () => buildList(searchInput.value);
-    const existingSection = el("div", {}, [
-      el("label", { style: "display:block;margin-bottom:0.25rem;font-size:0.8125rem;font-weight:600" }, "Select child"),
+    const existingSection = el("div", { style: "flex:1;min-height:0;display:flex;flex-direction:column" }, [
+      el("label", { style: "display:block;margin-bottom:0.25rem;font-size:0.8125rem;font-weight:600;flex-shrink:0" }, "Select child"),
       searchInput, listEl, selectedLabel, sharedWarn,
     ]);
 
@@ -5200,7 +5289,9 @@
       tabExisting.style.color      = isExisting ? "#fff" : "";
       tabNew.style.background      = !isExisting ? "var(--accent,#2fa564)" : "";
       tabNew.style.color           = !isExisting ? "#fff" : "";
-      existingSection.style.display = isExisting ? "" : "none";
+      // "flex", not "": the section IS a flex column so the list can grow with
+      // the dialog, and clearing the property would drop it back to block.
+      existingSection.style.display = isExisting ? "flex" : "none";
       newSection.style.display      = !isExisting ? "" : "none";
       submitBtn.textContent = isExisting ? "Add to BOM" : "Create & add";
     }
@@ -5209,6 +5300,7 @@
     syncTabs();
 
     const form = el("form", {
+      style: "flex:1;min-height:0;display:flex;flex-direction:column",
       onsubmit: async (e) => {
         e.preventDefault();
         const qty = parseFloat(qtyInput.value);
@@ -5280,23 +5372,31 @@
       } catch { /* the count above is still shown; names are a nicety */ }
     })();
 
+    // Header and buttons stay put; everything between them scrolls, and the
+    // picker inside it stretches to whatever height the dialog is dragged to.
     form.append(
-      el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
-        el("h3", { style: "margin:0;font-size:1rem" }, "Add child component"),
-        el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
+      el("div", { style: "flex-shrink:0" }, [
+        el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
+          el("h3", { style: "margin:0;font-size:1rem" }, "Add child component"),
+          el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
+        ]),
+        el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),
+        blastPanel,
+        tabBar,
       ]),
-      el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),
-      blastPanel,
-      tabBar,
-      existingSection,
-      newSection,
-      qtyRefRow,
-      condToggle,
-      condSection,
-      errEl,
-      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
-        el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
-        submitBtn,
+      el("div", { style: "flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column" }, [
+        existingSection,
+        newSection,
+        // flex-shrink:0 — these must keep their height while the picker above
+        // takes the slack, not be squeezed by it.
+        el("div", { style: "flex-shrink:0" }, [qtyRefRow, condToggle, condSection]),
+      ]),
+      el("div", { style: "flex-shrink:0" }, [
+        errEl,
+        el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
+          submitBtn,
+        ]),
       ]),
     );
     dialog.append(form);

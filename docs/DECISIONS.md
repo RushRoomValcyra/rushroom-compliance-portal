@@ -1050,3 +1050,20 @@ Two things were settled by running the code rather than reading the API. Sheet n
 `BOM_DETAIL_COLUMNS` exists as a separate seam from `BOM_EXPORT_COLUMNS` so per-part detail can grow without widening the Summary sheet — but it is deliberately limited to fields `listComponents` already returns, because a label with nothing behind it reads as "this part has no supplier" rather than "the export never carried that field". Specs, drawings and documents need a batched `getComponentDetail` action first; that is recorded in ROADMAP.
 
 **Files changed:** assets/app.js, tests/export.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, reset.html, verify.html, supplier.html, CLAUDE.md
+
+---
+**Date:** 2026-09-24
+**Feature:** PROP-050 — Add-child picker: pictures and a resizable dialog
+**Decision:** Promote `thumbMap` to module scope and give the dialog CSS `resize: both` with a flex layout, rather than passing thumbnails in as an argument or building a custom drag handle.
+
+**Why:** Both halves of this had an obvious heavy answer and a cheaper correct one.
+
+For the pictures, `thumbMap` was declared inside `bomTreeView`, and `openAddChildModal` is a sibling function rather than a nested one — so it could not see it. This codebase has already hit and solved exactly this, twice: `parentCountMap` and `partCategories` are module-scoped with a comment saying why. Threading thumbnails through the call site would have made a third pattern for the same problem. A test now pins the single declaration, because a re-introduced local would shadow the shared map and the picker would silently show no pictures at all — working code, empty result.
+
+For the resizing, the native CSS handle is free and behaves the way people expect, so the work was not the dragging but making the extra height go somewhere useful: the dialog is a flex column, the picker is `flex: 1` instead of `max-height: 200px`, and the header and buttons are pinned. Dragging the dialog taller now lengthens the list rather than adding whitespace. One trap: `syncTabs` toggled the section with `style.display = ""`, which clears the property and drops it back to `block` — switching to *Create new* and back would have quietly broken the stretch. It sets `"flex"` explicitly, and that is a test.
+
+Size is remembered in `localStorage` — a per-viewer convenience, which is what that store is for — with every read and write guarded, because it throws outright in a private window or with site data blocked, and an unguarded read would stop the dialog opening at all. The `ResizeObserver` disconnects when the dialog leaves the document.
+
+`thumbBox()` also handles the case nobody would have reported until it looked broken: these are signed URLs that expire after an hour, so a page left open overnight would have shown a column of broken-image glyphs. The box is drawn first and the image placed inside it, so the fallback is the same cell either way.
+
+**Files changed:** assets/app.js, tests/dialog-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md

@@ -62,3 +62,66 @@ test("the drawing title appears once, not above itself", () => {
   assert.ok(/mount\s*\n?\s*\? el\("div", \{ class: "drawing-title" \}/.test(block),
     "the in-surface title is not limited to mounted mode");
 });
+
+// ---- Resizable add-child picker (PROP-050) ---------------------------------
+
+/** The body of openAddChildModal, so assertions cannot match some other dialog. */
+function addChildModal() {
+  const m = app.match(/function openAddChildModal\([\s\S]*?\n  \}\n/);
+  assert.ok(m, "openAddChildModal not found in assets/app.js");
+  return m[0];
+}
+
+test("the add-child dialog can be resized, and the picker takes the extra height", () => {
+  const fn = addChildModal();
+  assert.ok(/resize:both/.test(fn), "the dialog is not resizable");
+  assert.ok(/overflow:hidden/.test(fn), "resize does nothing on an element with overflow:visible");
+  assert.ok(/min-width:340px/.test(fn) && /min-height:320px/.test(fn),
+    "no minimum size — the dialog can be dragged down to an unusable sliver");
+  assert.ok(/max-width:96vw/.test(fn) && /max-height:94vh/.test(fn),
+    "no maximum — a saved size from a larger screen would open off-screen");
+  // The point of resizing is a longer list. A fixed max-height would mean the
+  // extra height becomes whitespace instead.
+  assert.ok(!/max-height:200px;overflow-y:auto;border/.test(fn), "the picker still has its fixed 200px height");
+  assert.ok(/flex:1;min-height:140px;overflow-y:auto/.test(fn), "the picker does not grow with the dialog");
+});
+
+test("switching back from Create new restores the picker's flex layout", () => {
+  // `style.display = ""` clears the property and the section falls back to
+  // block, which silently breaks the stretch-to-fit list.
+  const fn = addChildModal();
+  assert.ok(/existingSection\.style\.display = isExisting \? "flex" : "none"/.test(fn),
+    'existingSection is toggled with "" instead of "flex"');
+});
+
+test("the picker shows a picture for every row, including parts without one", () => {
+  assert.ok(/thumbMap\[c\.id\]/.test(addChildModal()), "the picker does not read thumbMap");
+  const box = app.match(/function thumbBox\(url\)[\s\S]*?\n  \}/);
+  assert.ok(box, "thumbBox not found");
+  assert.ok(/loading: "lazy"/.test(box[0]), "64 full-size images would be fetched before the first row is visible");
+  assert.ok(/No image/.test(box[0]), "a part without a picture gets nothing, so the text columns misalign");
+  // Signed thumbnail URLs expire after an hour; a page left open overnight
+  // would otherwise show a column of broken-image glyphs.
+  assert.ok(/onerror:/.test(box[0]), "an expired image URL is left to render as a broken glyph");
+});
+
+test("thumbMap is module-scoped, or the picker reads an empty object", () => {
+  // openAddChildModal is a sibling of bomTreeView, not nested in it — the same
+  // reason parentCountMap and partCategories are module-scoped.
+  const decls = [...app.matchAll(/^\s*let thumbMap = \{\};/gm)];
+  assert.equal(decls.length, 1, `thumbMap is declared ${decls.length} times — a nested one shadows the shared map`);
+  assert.ok(/^  let thumbMap = \{\};/m.test(app), "thumbMap is not declared at module scope");
+});
+
+test("dialog size persistence never lets storage break the dialog", () => {
+  // localStorage throws outright in a private window or with site data blocked;
+  // an unguarded read here would stop the modal from opening at all.
+  for (const name of ["loadDialogSize", "rememberDialogSize"]) {
+    const m = app.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n  \\}`));
+    assert.ok(m, `${name} not found`);
+    assert.ok(/try \{/.test(m[0]) && /\} catch/.test(m[0]), `${name} accesses localStorage unguarded`);
+  }
+  const rem = app.match(/function rememberDialogSize\([\s\S]*?\n  \}/)[0];
+  assert.ok(/ro\.disconnect\(\)/.test(rem),
+    "the ResizeObserver is never disconnected — it outlives every modal opened");
+});

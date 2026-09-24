@@ -79,3 +79,14 @@ test('"no keys imported yet" is never shown while the keys are still loading', (
   assert.ok(/catalogLoaded = true;/.test(v), "catalogLoaded is never set");
   assert.ok(/catalogLoaded = false;/.test(v), "a failed reload leaves the flag set, showing a stale empty state");
 });
+
+test("the tab sits second and is named for the Studio, not the planner", () => {
+  const fn = app.match(/async function renderProduct\(role, mount\)[\s\S]*?\n  \}/);
+  assert.ok(fn, "renderProduct not found");
+  assert.ok(/tabs\.splice\(1, 0, \{ id: "planner-mappings", label: "VALCYRA Studio to BOM Link"/.test(fn[0]),
+    "the tab is not inserted second, or carries the old label");
+  assert.ok(!/tabs\.push\(\{ id: "planner-mappings"/.test(fn[0]), "the tab is still appended last");
+  // The id is the persisted sub-tab key; renaming it drops every user back to
+  // BOM Tree the next time they open the screen.
+  assert.ok(/paneSubTab/.test(app), "sub-tab state is no longer persisted — check this assumption");
+});

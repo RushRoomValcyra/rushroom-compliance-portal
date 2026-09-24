@@ -11,18 +11,7 @@
   <script>
     (function () { try { var t = localStorage.getItem("rushroom_theme"); if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; document.documentElement.setAttribute("data-theme", t); } catch (e) {} })();
   </script>
-  <link rel="stylesheet" href="./assets/styles.css?v=261" />
-  <script>
-    (function () {
-      function setHeaderH() {
-        var h = document.querySelector(".site-header");
-        if (h) document.documentElement.style.setProperty("--header-h", h.offsetHeight + "px");
-      }
-      document.addEventListener("DOMContentLoaded", setHeaderH);
-      window.addEventListener("load", setHeaderH);
-      window.addEventListener("resize", setHeaderH);
-    })();
-  </script>
+  <link rel="stylesheet" href="./assets/styles.css?v=262" />
 </head>
 <body data-page="supplier">
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -105,10 +94,10 @@
     </div>
   </footer>
 
-  <script src="./assets/config.js?v=261"></script>
-  <script src="./assets/api.js?v=261"></script>
-  <script src="./assets/viewer.js?v=261"></script>
-  <script src="./assets/app.js?v=261"></script>
-  <script src="./assets/supplier.js?v=261"></script>
+  <script src="./assets/config.js?v=262"></script>
+  <script src="./assets/api.js?v=262"></script>
+  <script src="./assets/viewer.js?v=262"></script>
+  <script src="./assets/app.js?v=262"></script>
+  <script src="./assets/supplier.js?v=262"></script>
 </body>
 </html>

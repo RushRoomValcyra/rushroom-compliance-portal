@@ -360,7 +360,7 @@ tbody tr:hover { background: var(--panel-2); }
 .browser-nav {
   border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
   padding: 0.4rem; max-height: 72vh; overflow: auto;
-  position: sticky; top: calc(var(--header-h, 64px) + 3.6rem);
+  position: sticky; top: calc(var(--header-h, 64px) + var(--tabs-h, 3.4rem) + var(--subtabs-h, 3.4rem) + 0.6rem);
   /* Hide the scrollbar but keep scrolling */
   scrollbar-width: none; -ms-overflow-style: none;
 }
@@ -624,7 +624,30 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .acct-card .form-label { align-self: center; }
 
 /* sub-tabs within a panel (Library vs Add) — segmented control */
-.subtabs { display: inline-flex; gap: 0.25rem; padding: 0.25rem; margin-bottom: 1.1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+/* Sub-tab rows pin under the main tab bar (PROP-054). The sticky element is
+   .subtab-bar — a full-width wrapper — because .subtabs is an inline-flex pill
+   group and content would scroll visibly past either side of it.
+   Offsets are measured into --header-h / --tabs-h / --subtabs-h by
+   measureChrome() in app.js; the fallbacks here only cover the first paint. */
+.subtab-bar {
+  position: sticky;
+  top: calc(var(--header-h, 64px) + var(--tabs-h, 3.4rem));
+  z-index: calc(var(--z-sticky) - 1);   /* below the tab bar it pins under */
+  background: var(--bg);
+  padding: 0.3rem 0 0.5rem;
+  margin-bottom: 0.6rem;
+}
+/* A second-level row (Product BOM's own tabs) clears the first. */
+.subtab-body .subtab-bar {
+  top: calc(var(--header-h, 64px) + var(--tabs-h, 3.4rem) + var(--subtabs-h, 3.4rem));
+  z-index: calc(var(--z-sticky) - 2);
+}
+@media (max-height: 780px) {
+  /* A header and three pinned rows leave too little of a short window for the
+     content they are meant to navigate. The innermost row gives way first. */
+  .subtab-body .subtab-bar { position: static; }
+}
+.subtabs { display: inline-flex; gap: 0.25rem; padding: 0.25rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .subtab {
   display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; font-size: var(--fs-md);
   padding: 0.42rem 0.9rem; border-radius: 7px; background: none; border: none; color: var(--muted); cursor: pointer;

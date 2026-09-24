@@ -33,6 +33,42 @@
   const unescapeUnicode = (s) => (s || "").replace(/\\u([0-9a-fA-F]{4})/g, (_, hx) => String.fromCharCode(parseInt(hx, 16)));
 
   const _scriptCache = {};
+  // --- Sticky chrome (PROP-054) ---------------------------------------------
+  // The header, the tab bar and the sub-tab rows each pin below the one above.
+  // Their heights are measured rather than assumed because every one of them
+  // wraps to a second row on a narrow window, and a hard-coded offset would
+  // overlap or leave a gap exactly when the screen is smallest.
+  function measureChrome() {
+    const root = document.documentElement;
+    const firstVisible = (sel) => {
+      for (const n of document.querySelectorAll(sel)) {
+        // offsetParent is null for anything inside a hidden tab panel, and the
+        // sub-tab bars of six panels exist at once.
+        if (n.offsetParent !== null && n.offsetHeight) return n.offsetHeight;
+      }
+      return 0;
+    };
+    const header = document.querySelector(".site-header");
+    root.style.setProperty("--header-h", ((header && header.offsetHeight) || 64) + "px");
+    root.style.setProperty("--tabs-h", firstVisible("#portal-app > .tabs") + "px");
+    // Document order gives the outermost bar first, which is the one the
+    // nested bar must clear.
+    root.style.setProperty("--subtabs-h", firstVisible('[role="tabpanel"]:not([hidden]) .subtab-bar') + "px");
+  }
+  let chromeFrame = 0;
+  function scheduleChromeMeasure() {
+    if (chromeFrame) return;
+    chromeFrame = requestAnimationFrame(() => { chromeFrame = 0; measureChrome(); });
+  }
+  scheduleChromeMeasure();
+  window.addEventListener("resize", scheduleChromeMeasure);
+  window.addEventListener("load", scheduleChromeMeasure);
+  // Deliberately NOT a DOM-wide MutationObserver. offsetHeight forces layout,
+  // and this app replaces hundreds of rows at a time — one forced reflow per
+  // animation frame during a BOM render is a cost for nothing. Only four things
+  // change the pinned chrome, and each calls scheduleChromeMeasure() directly:
+  // unlocking the gate, switching a tab, switching a sub-tab, and resizing.
+
   function loadScript(src) {
     if (!_scriptCache[src]) _scriptCache[src] = new Promise((res, rej) => {
       const s = document.createElement("script"); s.src = src;
@@ -201,6 +237,7 @@
     const reveal = () => {
       gate.hidden = true;
       appEl.hidden = false;
+      scheduleChromeMeasure();   // the tab bar only has a height once shown
       onUnlock();
     };
     if (sessionStorage.getItem(AUTH_KEY) === "1") { reveal(); return; }
@@ -786,6 +823,8 @@
       for (const k in btns) { const on = k === id; btns[k].classList.toggle("active", on); btns[k].setAttribute("aria-selected", on ? "true" : "false"); }
       const t = tabs.find((x) => x.id === id) || tabs[0];
       body.replaceChildren(t.build());
+      // The new body may itself contain a sub-tab bar — Product BOM does.
+      scheduleChromeMeasure();
     };
     for (const t of tabs) {
       const b = el("button", { class: "subtab", type: "button", role: "tab", onclick: () => show(t.id) }, [
@@ -793,7 +832,11 @@
       ].filter(Boolean));
       btns[t.id] = b; bar.appendChild(b);
     }
-    const wrap = el("div", {}, [bar, body]);
+    // PROP-054: the bar pins under the main tab bar while the panel scrolls.
+    // The sticky element is a full-width wrapper rather than the pill group
+    // itself, because a sticky inline-flex would let content scroll visibly
+    // past either side of the pills.
+    const wrap = el("div", {}, [el("div", { class: "subtab-bar" }, bar), body]);
     show(tabs.some((t) => t.id === paneSubTab[key]) ? paneSubTab[key] : tabs[0].id);
     return wrap;
   }
@@ -960,6 +1003,8 @@
         const panel = document.getElementById(t.getAttribute("aria-controls"));
         if (panel) panel.hidden = !sel;
       }
+      // A different panel means a different sub-tab bar, or none at all.
+      scheduleChromeMeasure();
     };
     tablist.addEventListener("click", (e) => { const t = e.target.closest('[role="tab"]'); if (t) { select(t); t.focus(); } });
     tablist.addEventListener("keydown", (e) => {

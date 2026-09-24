@@ -1128,3 +1128,24 @@ Three things follow from joining them, and only the first was the request:
 Counts are computed from the whole catalogue rather than the filtered view, or the All/Mapped/Unmapped chips would report on themselves. `catalogLoaded` guards the empty state: `reload()` now repaints the key list, and it can resolve before the catalogue request does — without the flag, "No planner keys have been imported yet" would flash on a screen that has forty-seven of them.
 
 **Files changed:** assets/app.js, tests/planner-mappings.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+
+---
+**Date:** 2026-09-24
+**Feature:** PROP-054 — The top menus stay put while you scroll
+**Decision:** Pin each row of top chrome below the one above it, with offsets measured into CSS custom properties rather than hard-coded, and re-measured only at the four moments that change them.
+
+**Why:** The header and main tab bar were already sticky; the sub-tab rows were not, so scrolling slid them under the nav where they rendered as a half-clipped row of buttons — worse than either pinning them or letting them scroll away cleanly.
+
+Three choices inside that.
+
+*Measured, not hard-coded.* `.browser-nav` already carried `calc(var(--header-h) + 3.6rem)` — a magic number standing in for the tab bar's height. Every one of these rows wraps to a second line on a narrow window, and a fixed offset overlaps or leaves a gap exactly when the screen is smallest. `--tabs-h` and `--subtabs-h` join `--header-h`, and `.browser-nav` now uses them instead of its constant.
+
+*The sticky element is a wrapper, not the pill group.* `.subtabs` is `inline-flex`, so sticking it directly would pin the pills but let content scroll visibly past either side of them. The alternative — a full-bleed `::before` — paints above the element's own background and border inside its stacking context, which would have covered the pill group. A plain block wrapper is simpler and correct.
+
+*No DOM-wide MutationObserver.* An observer on the document was the obvious way to catch sub-tab bars appearing and panels toggling `[hidden]`, and it was the first implementation. But `offsetHeight` forces layout, and this app replaces hundreds of rows at a time; even gated to one measurement per animation frame, that is a forced reflow per frame during a BOM render, paid for nothing. Exactly four things change the pinned chrome — unlocking the gate, a tab switch, a sub-tab switch, a resize — and each now calls `scheduleChromeMeasure()` directly. The test asserts the observer has not come back.
+
+Below 780px of viewport height the innermost row reverts to scrolling: a header and three pinned rows leave too little of a short window for the content they exist to navigate.
+
+The per-page inline copies of the header measurement were removed from `index.html` and `supplier.html`. They measured only the header, so keeping them would have left two half-correct duplicates of something that now measures three things.
+
+**Files changed:** assets/app.js, assets/styles.css, index.html, supplier.html, reset.html, verify.html, tests/sticky-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md

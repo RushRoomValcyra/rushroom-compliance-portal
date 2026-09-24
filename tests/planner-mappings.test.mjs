@@ -83,7 +83,7 @@ test('"no keys imported yet" is never shown while the keys are still loading', (
 test("the tab sits second and is named for the Studio, not the planner", () => {
   const fn = app.match(/async function renderProduct\(role, mount\)[\s\S]*?\n  \}/);
   assert.ok(fn, "renderProduct not found");
-  assert.ok(/tabs\.splice\(1, 0, \{ id: "planner-mappings", label: "VALCYRA Studio to BOM Link"/.test(fn[0]),
+  assert.ok(/tabs\.splice\(1, 0, \{ id: "planner-mappings", label: "VALCYRA Studio BOM Link"/.test(fn[0]),
     "the tab is not inserted second, or carries the old label");
   assert.ok(!/tabs\.push\(\{ id: "planner-mappings"/.test(fn[0]), "the tab is still appended last");
   // The id is the persisted sub-tab key; renaming it drops every user back to

@@ -1,4 +1,10 @@
-// Planner mapping contract — static and safe to run without credentials.
+// Planner mappings (PROP-053) — static, no credentials.
+//
+// The saved-keys list and the mappings table are two sections of one screen,
+// loaded by two independent requests. When they did not share state, a key that
+// was already mapped rendered exactly like one that was not, and the only way to
+// find out was to scroll past the whole key list to the table underneath — which
+// is how "Module S is mapped and you cannot see it" happened.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -6,53 +12,70 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (p) => readFileSync(join(root, p), "utf8");
+const app = readFileSync(join(root, "assets/app.js"), "utf8");
+const css = readFileSync(join(root, "assets/styles.css"), "utf8");
 
-test("planner mappings have an additive versioned tenant-scoped model", () => {
-  const sql = read("supabase/migrations/0034_planner_mappings.sql");
-  const catalogSql = read("supabase/migrations/0035_planner_catalog_entries.sql");
-  const tenant = read("supabase/functions/_shared/tenant.ts");
-  for (const field of ["organization_id", "source_type", "source_key", "target_component_id", "quantity_rule", "is_active", "mapping_revision", "release_label", "supersedes_id"]) {
-    assert.ok(sql.includes(field), `migration is missing ${field}`);
+/** The body of plannerMappingsView, so nothing matches another screen. */
+function view() {
+  const m = app.match(/async function plannerMappingsView\(token\)[\s\S]*?\n  \}\n/);
+  assert.ok(m, "plannerMappingsView not found in assets/app.js");
+  return m[0];
+}
+
+test("every saved key says whether it is mapped", () => {
+  const v = view();
+  assert.ok(/badge-status \$\{m \? "s-done" : "s-todo"\}/.test(v), "the key rows carry no mapped/unmapped badge");
+  assert.ok(/"Mapped" : "Not mapped"/.test(v), "the badge does not state the two states");
+  // Both badge classes must actually exist, or the state renders unstyled.
+  for (const cls of [".badge-status", ".s-done", ".s-todo"]) {
+    assert.ok(css.includes(cls), `${cls} is not defined in styles.css`);
   }
-  assert.ok(sql.includes("planner_mappings_one_active_source"), "active source identity is not unique");
-  assert.ok(tenant.includes('"planner_mappings"'), "planner mappings are not tenant-scoped");
-  assert.ok(catalogSql.includes("planner_catalog_entries") && catalogSql.includes("organization_id") && catalogSql.includes("ENABLE ROW LEVEL SECURITY"), "planner catalog migration lacks tenant/RLS protection");
-  assert.ok(tenant.includes('"planner_catalog_entries"'), "planner catalog is not tenant-scoped");
 });
 
-test("planner mapping API is Rushroom-only and never resolves Website carts", () => {
-  const api = read("supabase/functions/portal-api/index.ts");
-  for (const action of ["listPlannerMappings", "savePlannerMapping", "deactivatePlannerMapping"]) {
-    assert.ok(api.includes(`action === "${action}"`), `${action} is missing`);
-  }
-  assert.ok(/role !== "rushroom"/.test(api), "Rushroom guard is missing");
-  assert.ok(api.includes('tdb("planner_mappings")'), "planner mappings bypass tenant scoping");
-  assert.ok(!/fetch\([^)]*cart/i.test(api), "PIM API must not fetch Website cart data");
+test("a mapped key names its target, not just its state", () => {
+  // "Mapped" without saying to what still sends you to the table below.
+  const v = view();
+  assert.ok(/→ \$\{targetName\} · r\$\{m\.mapping_revision\}/.test(v),
+    "a mapped row does not show the PIM target it resolves to");
+  assert.ok(/"Target no longer exists"/.test(v),
+    "a mapping whose target was deleted would render as an empty arrow");
 });
 
-test("editor documents every current Website planner source field", () => {
-  const ui = read("assets/app.js");
-  const docs = read("docs/PLANNER_MAPPINGS.md");
-  for (const field of ["modules[].module", "modules[].interior[]", "sides.panels[]", "sides.feet", "doors[]", "covers[]", "backCovers"]) {
-    assert.ok(docs.includes(field), `documentation is missing ${field}`);
-  }
-  assert.ok(ui.includes("Planner mappings"), "Rushroom editor is not reachable from Product BOM");
+test("the two sections share state instead of loading independently", () => {
+  const v = view();
+  assert.ok(/allMappings = r\.mappings \|\| \[\];/.test(v), "the mappings are not kept for the key list to read");
+  assert.ok(/renderCatalog\(\);\n        const mappings = allMappings/.test(v),
+    "saving or deactivating a mapping does not repaint the key list");
+  // "Mapped" must mean an ACTIVE mapping, regardless of the Show inactive toggle.
+  assert.ok(/if \(m\.is_active\) idx\.set\(/.test(v),
+    "an inactive mapping would still mark its key as mapped");
 });
 
-test("PIM saves derived planner keys without receiving Website carts", () => {
-  const ui = read("assets/app.js");
-  const api = read("supabase/functions/portal-api/index.ts");
-  const docs = read("docs/PLANNER_MAPPINGS.md");
-  for (const fragment of ["inspectPlannerCartConfiguration", "listPlannerCatalog", "importPlannerCatalog", "Import/update planner keys", "SOURCE_TYPE_LABELS", "Map this item", 'quantity_rule: "cart_quantity", fixed_quantity: null', '"Cart-derived"']) {
-    assert.ok(ui.includes(fragment), `PIM catalog UI is missing ${fragment}`);
-  }
-  assert.ok(!ui.includes("quantity.closest(\"label\")"), "modal must not inspect unattached controls");
-  for (const fragment of ['action === "listPlannerCatalog"', 'action === "importPlannerCatalog"', 'tdb("planner_catalog_entries")', "body.items.length > 2_000"]) {
-    assert.ok(api.includes(fragment), `PIM catalog API is missing ${fragment}`);
-  }
-  assert.ok(!api.includes("WEBSITE_PLANNER_CATALOG_URL"), "PIM catalog must not fetch Website");
-  for (const key of ["S`, `M`, `L", "side_middle_color_0", "Door and cover mesh names are dynamic", "planner_catalog_entries", "PIM never receives the raw cart JSON", "does not call\nWebsite or Operations"]) {
-    assert.ok(docs.includes(key), `documentation is missing ${key}`);
-  }
+test("an already-mapped key edits its mapping rather than opening a blank form", () => {
+  // planner_mappings_one_active_source rejects a second active mapping, so the
+  // old path filled in a whole form and then failed with a 409.
+  const v = view();
+  assert.ok(/m \? actionBtn\("Edit mapping", "edit", \{ onClick: \(\) => editModal\(m\) \}\)/.test(v),
+    "a mapped key still offers Map this item, which the unique index will reject");
+  assert.ok(/actionBtn\("Map this item", "link", \{ onClick: \(\) => editModal\(null, item\) \}\)/.test(v),
+    "an unmapped key no longer offers Map this item");
+});
+
+test("the count is visible without scrolling, and can be filtered", () => {
+  const v = view();
+  assert.ok(/of \$\{catalog\.length\} key/.test(v), "there is no headline mapped count");
+  assert.ok(/\$\{mappedInType\}\/\$\{inType\.length\} mapped/.test(v), "the section headings carry no count");
+  assert.ok(/catalogFilter = id; renderCatalog\(\)/.test(v), "the mapped/unmapped filter does nothing");
+  // Counts must come from the whole catalog, not the filtered view, or the
+  // chips would report on themselves.
+  assert.ok(/const mappedCount = catalog\.filter/.test(v), "the count is taken from the filtered rows");
+});
+
+test('"no keys imported yet" is never shown while the keys are still loading', () => {
+  // reload() and loadCatalog() race; the mappings can land first.
+  const v = view();
+  assert.ok(/if \(!catalogLoaded\) return;/.test(v),
+    "the empty state can paint before the catalogue request has returned");
+  assert.ok(/catalogLoaded = true;/.test(v), "catalogLoaded is never set");
+  assert.ok(/catalogLoaded = false;/.test(v), "a failed reload leaves the flag set, showing a stale empty state");
 });

@@ -1109,3 +1109,22 @@ The category manager is deliberately **not** offered in the picker's chip row, t
 One defect was introduced and caught during this change: a file-wide replace of `buildList(searchInput.value)` also hit the *move-child* modal, which has its own `buildList(filter)`, silently disabling its search. Restored, and a test now pins that modal's wiring because the two functions share a name and differ in signature.
 
 **Files changed:** assets/app.js, tests/dialog-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+
+---
+**Date:** 2026-09-24
+**Feature:** PROP-053 — Planner keys show whether they are mapped
+**Decision:** Give the saved-key list and the mappings table one shared state, and render the mapped state, the target and the counts on the key rows themselves.
+
+**Why:** The two sections were loaded by two independent requests that never met, so the key list had no idea any of its keys were mapped. Module S was mapped and looked identical to every unmapped key above it. That is this codebase's most persistent failure mode in a new form — the data was correct, written, and displayed on a screen you had to go and find.
+
+Three things follow from joining them, and only the first was the request:
+
+*The badge names the target, not just the state.* "Mapped" on its own would still send someone to the table below to find out what it resolves to, which is the scroll the change exists to remove.
+
+*"Mapped" means an **active** mapping,* deliberately independent of the *Show inactive* toggle beneath. A deactivated mapping is not a mapping, and letting the toggle change what the badge says would make the key list disagree with the resolver.
+
+*A mapped key now offers "Edit mapping".* This turned out to fix a real dead end rather than just relabel a button: `planner_mappings_one_active_source` is a partial unique index, so *Map this item* on an already-mapped key opened a blank form, took a target and a release note, and then returned a 409 after it was all filled in.
+
+Counts are computed from the whole catalogue rather than the filtered view, or the All/Mapped/Unmapped chips would report on themselves. `catalogLoaded` guards the empty state: `reload()` now repaints the key list, and it can resolve before the catalogue request does — without the flag, "No planner keys have been imported yet" would flash on a screen that has forty-seven of them.
+
+**Files changed:** assets/app.js, tests/planner-mappings.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md

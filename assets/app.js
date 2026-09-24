@@ -8792,6 +8792,23 @@
     const list = el("div", { class: "loading" }, "Loading planner mappings…");
     let showInactive = false;
     let targets = [];
+    // PROP-053: the saved-keys list and the mappings table were loaded
+    // independently, so a key that was already mapped looked identical to one
+    // that was not — the only way to find out was to scroll to the table below
+    // and read it. Both now share state and the key rows say which they are.
+    let allMappings = [];   // unfiltered; "mapped" means an ACTIVE mapping exists
+    let catalog = [];
+    let catalogLoaded = false;   // reload() repaints the key list too; until the
+                                 // keys have actually been fetched, "none imported
+                                 // yet" would be a lie rather than an empty state.
+    let catalogFilter = "all";   // "all" | "mapped" | "unmapped"
+
+    const mapKeyOf = (type, key) => `${type}\u0000${key}`;
+    function activeMappingIndex() {
+      const idx = new Map();
+      for (const m of allMappings) if (m.is_active) idx.set(mapKeyOf(m.source_type, m.source_key), m);
+      return idx;
+    }
     const SOURCE_TYPES = [
       ["module", "Module — modules[].module"], ["interior", "Interior — modules[].interior[]"],
       ["side_panel", "Side panel — sides.panels[]"], ["feet", "Feet — sides.feet"],
@@ -8850,7 +8867,11 @@
       list.replaceChildren(el("div", { class: "loading" }, "Loading planner mappings…"));
       try {
         const r = await API.post(token, "listPlannerMappings");
-        const mappings = (r.mappings || []).filter((m) => showInactive || m.is_active);
+        allMappings = r.mappings || [];
+        // Repaint the key list too: saving or deactivating a mapping changes
+        // what those rows should say, and they are a separate section.
+        renderCatalog();
+        const mappings = allMappings.filter((m) => showInactive || m.is_active);
         if (!mappings.length) {
           list.replaceChildren(el("div", { class: "empty" }, "No planner mappings yet. Add stable Website keys before an Operations resolver is connected."));
           return;
@@ -8875,22 +8896,84 @@
     inactive.onchange = () => { showInactive = inactive.checked; reload(); };
     const catalogStatus = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.5rem 0" }, "Loading saved planner keys…");
     const catalogRows = el("div", { class: "muted" }, "");
-    const renderCatalog = (catalog) => {
+    const catalogSummary = el("div", { style: "display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;margin:0.5rem 0" });
+
+    function renderCatalog() {
+      const idx = activeMappingIndex();
+      const mappedCount = catalog.filter((i) => idx.has(mapKeyOf(i.source_type, i.source_key))).length;
+      const counts = { all: catalog.length, mapped: mappedCount, unmapped: catalog.length - mappedCount };
+
+      // The headline answer to "is any of this mapped?", before any scrolling.
+      catalogSummary.replaceChildren(...(catalog.length ? [
+        el("span", { style: "font-size:var(--fs-sm);color:var(--muted,#8b93a1)" },
+          `${mappedCount} of ${catalog.length} key${catalog.length === 1 ? "" : "s"} mapped`),
+        ...[["all", "All"], ["mapped", "Mapped"], ["unmapped", "Unmapped"]].map(([id, label]) =>
+          bomChip(`${label} (${counts[id]})`, {
+            active: catalogFilter === id, dim: !counts[id],
+            onClick: () => { catalogFilter = id; renderCatalog(); },
+          })),
+      ] : []));
+
+      if (!catalogLoaded) return;
       if (!catalog.length) { catalogRows.replaceChildren(el("div", { class: "empty" }, "No planner keys have been imported yet.")); return; }
+
+      const visible = catalog.filter((i) => {
+        if (catalogFilter === "all") return true;
+        const isMapped = idx.has(mapKeyOf(i.source_type, i.source_key));
+        return catalogFilter === "mapped" ? isMapped : !isMapped;
+      });
+      if (!visible.length) {
+        catalogRows.replaceChildren(el("div", { class: "empty" },
+          catalogFilter === "mapped" ? "None of the saved keys are mapped yet." : "Every saved key is mapped."));
+        return;
+      }
+
       const grouped = new Map();
-      for (const item of catalog) grouped.set(item.source_type, [...(grouped.get(item.source_type) || []), item]);
-      catalogRows.replaceChildren(...SOURCE_TYPES.filter(([type]) => grouped.has(type)).map(([type]) => el("section", { style: "margin:0.75rem 0" }, [
-        el("h4", { style: "margin:0 0 0.35rem" }, SOURCE_TYPE_LABELS[type]),
-        ...grouped.get(type).map((item) => el("div", { class: "row-tools", style: "margin:0.35rem 0;justify-content:space-between" }, [
-          el("span", {}, [el("code", {}, item.source_key), item.label && item.label !== item.source_key ? ` — ${item.label}` : ""]),
-          actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
-        ])),
-      ])));
-    };
+      for (const item of visible) grouped.set(item.source_type, [...(grouped.get(item.source_type) || []), item]);
+      catalogRows.replaceChildren(...SOURCE_TYPES.filter(([type]) => grouped.has(type)).map(([type]) => {
+        const rows = grouped.get(type);
+        const inType = catalog.filter((i) => i.source_type === type);
+        const mappedInType = inType.filter((i) => idx.has(mapKeyOf(i.source_type, i.source_key))).length;
+        return el("section", { style: "margin:0.75rem 0" }, [
+          el("h4", { style: "margin:0 0 0.35rem;display:flex;gap:0.5rem;align-items:baseline" }, [
+            el("span", {}, SOURCE_TYPE_LABELS[type]),
+            el("span", { style: "font-size:var(--fs-xs);font-weight:500;color:var(--muted,#8b93a1)" },
+              `${mappedInType}/${inType.length} mapped`),
+          ]),
+          ...rows.map((item) => {
+            const m = idx.get(mapKeyOf(item.source_type, item.source_key));
+            const targetName = m && m.target
+              ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}`
+              : m ? "Target no longer exists" : "";
+            return el("div", { class: "row-tools", style: "margin:0.35rem 0;justify-content:space-between;align-items:center;gap:0.5rem" }, [
+              el("span", { style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;min-width:0" }, [
+                el("span", { class: `badge-status ${m ? "s-done" : "s-todo"}` }, m ? "Mapped" : "Not mapped"),
+                el("code", {}, item.source_key),
+                item.label && item.label !== item.source_key ? el("span", {}, `— ${item.label}`) : null,
+                // The target is the point: "mapped" without saying to what
+                // still sends you to the table below to find out.
+                m ? el("span", { style: "color:var(--muted,#8b93a1)" }, `→ ${targetName} · r${m.mapping_revision}`) : null,
+              ].filter(Boolean)),
+              // Routed to the existing mapping when there is one. "Map this
+              // item" on a mapped key used to open a blank form and fail with
+              // a 409 from the one-active-source index only after it was
+              // filled in.
+              m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
+                : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
+            ]);
+          }),
+        ]);
+      }));
+    }
+
     async function loadCatalog() {
       try {
-        const r = await API.listPlannerCatalog(token); renderCatalog(r.catalog || []); catalogStatus.textContent = "";
-      } catch (ex) { catalogStatus.textContent = ex.message || "The saved planner keys could not be loaded."; catalogRows.replaceChildren(); }
+        const r = await API.listPlannerCatalog(token);
+        catalog = r.catalog || [];
+        catalogLoaded = true;
+        renderCatalog();
+        catalogStatus.textContent = "";
+      } catch (ex) { catalogStatus.textContent = ex.message || "The saved planner keys could not be loaded."; catalog = []; catalogLoaded = false; catalogRows.replaceChildren(); catalogSummary.replaceChildren(); }
     }
     function importCatalogModal() {
       const pasted = el("textarea", { class: "up-text", rows: "7", placeholder: 'Paste one cart item ({"configuration": {...}}) or its configuration object.' });
@@ -8921,7 +9004,7 @@
       el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
         el("h3", { style: "margin-top:0" }, "Saved planner keys"),
         el("p", { class: "muted", style: "margin-top:0" }, "Source keys are grouped by type and saved per PIM tenant."),
-        catalogStatus, catalogRows,
+        catalogStatus, catalogSummary, catalogRows,
       ]),
       el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
         actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }), actionBtn("Refresh mappings", "refresh", { onClick: reload }), actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),

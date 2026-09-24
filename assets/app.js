@@ -33,6 +33,15 @@
   const unescapeUnicode = (s) => (s || "").replace(/\\u([0-9a-fA-F]{4})/g, (_, hx) => String.fromCharCode(parseInt(hx, 16)));
 
   const _scriptCache = {};
+  // A row that opens something on double-click must not do so when the double
+  // click landed on one of the row's own controls. Each control stops `click`,
+  // but `dblclick` is a separate event — two quick presses on a quantity
+  // spinner, an expand arrow or a reorder button are exactly that, and they
+  // used to open the detail panel over what the user was doing.
+  // [data-row-control] marks the interactive bits that are not form elements.
+  const ROW_CONTROLS = "input, button, select, textarea, a, [data-row-control]";
+  const hitRowControl = (ev) => !!(ev.target && ev.target.closest && ev.target.closest(ROW_CONTROLS));
+
   // --- Sticky chrome (PROP-054) ---------------------------------------------
   // The header, the tab bar and the sub-tab rows each pin below the one above.
   // Their heights are measured rather than assumed because every one of them
@@ -3972,7 +3981,7 @@
         // Stored images are full-size (≈220 KB each) and rendered here at 40 px.
         // Lazy + async keeps rows below the fold from being fetched at all and
         // stops decoding from blocking the first paint of the list.
-        loading: "lazy", decoding: "async",
+        loading: "lazy", decoding: "async", "data-row-control": "",
         style: "width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border,#e2e8f0);flex-shrink:0;cursor:zoom-in",
         onclick: async (ev) => {
           ev.stopPropagation();
@@ -4023,7 +4032,11 @@
 
       const row = el("div", {
         style: "display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;user-select:none",
-        ondblclick: (ev) => { ev.stopPropagation(); openComponentDetail(comp.id, token, detailPanel, comp, role); },
+        ondblclick: (ev) => {
+          if (hitRowControl(ev)) return;
+          ev.stopPropagation();
+          openComponentDetail(comp.id, token, detailPanel, comp, role);
+        },
       }, [
         expandBtn,
         thumbEl,
@@ -4277,7 +4290,9 @@
         // is never confused with the number being displayed.
         const qtyCell = () => {
           const own = Number(edgeQty);
-          const box = el("div", { style: "text-align:center;font-size:0.8125rem;color:var(--muted,#8b93a1);line-height:1.15" });
+          // data-row-control: the row opens the detail panel on double-click,
+          // and clicking a number input's spinner twice IS a double-click.
+          const box = el("div", { "data-row-control": "", style: "text-align:center;font-size:0.8125rem;color:var(--muted,#8b93a1);line-height:1.15" });
           const show = () => {
             const kids = [
               el("span", {
@@ -4379,13 +4394,17 @@
           style: `display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
           onmouseenter: (ev) => { ev.currentTarget.style.background = "var(--bg-2,rgba(0,0,0,0.03))"; },
           onmouseleave: (ev) => { ev.currentTarget.style.background = ""; },
-          ondblclick: (ev) => { ev.stopPropagation(); openComponentDetail(n.id, token, detailPanel, n, role); },
+          ondblclick: (ev) => {
+            if (hitRowControl(ev)) return;
+            ev.stopPropagation();
+            openComponentDetail(n.id, token, detailPanel, n, role);
+          },
         }, [
           el("span", { style: "font-family:monospace;font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1)" }, posNum),
           compCell,
           qtyCell(),
           el("div", { style: "display:flex;justify-content:center" }, lifecycleBadge(n.lifecycle_status)),
-          el("div", { style: "display:flex;gap:0.2rem;flex-shrink:0;flex-wrap:nowrap" }, [
+          el("div", { "data-row-control": "", style: "display:flex;gap:0.2rem;flex-shrink:0;flex-wrap:nowrap" }, [
             // ⚙ variant-configure button hidden until import integration is built (PROP-018)
 
             canReorder ? reorderBtn("up") : null,

@@ -1149,3 +1149,18 @@ Below 780px of viewport height the innermost row reverts to scrolling: a header 
 The per-page inline copies of the header measurement were removed from `index.html` and `supplier.html`. They measured only the header, so keeping them would have left two half-correct duplicates of something that now measures three things.
 
 **Files changed:** assets/app.js, assets/styles.css, index.html, supplier.html, reset.html, verify.html, tests/sticky-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-24
+**Feature:** PROP-055 — Changing a quantity no longer opens the part panel
+**Decision:** Guard the row's double-click handler once, at the row, against events originating in its own controls — rather than adding a `dblclick` stopper to each control.
+
+**Why:** A BOM row opens the component detail panel on `ondblclick`. Every control inside it already called `stopPropagation` on `click` — the quantity input, the reorder arrows, the row buttons. But `dblclick` is a separate event with its own propagation, and pressing a number input's spinner twice to get from 10 to 12 *is* a double-click. It bubbled to the row and opened the detail panel over the field being edited.
+
+Fixing it control by control would have meant a second handler on each, and the next control added to a row would arrive without one — the bug is structural, not local to the quantity cell. `hitRowControl(ev)` checks `ev.target.closest("input, button, select, textarea, a, [data-row-control]")` at the one place that opens the panel, and the same helper now guards the Parts list row, which had the identical defect on its expand arrow and its thumbnail.
+
+`data-row-control` exists for the two interactive parts that are not form elements: the quantity cell (spans with a click-to-edit handler) and the list thumbnail (an `img` that opens a lightbox). Marking them is explicit about what is a control; widening the selector to `img` or `span` would have caught decorative elements and quietly disabled opening the panel from most of the row.
+
+The existing `click` and `keydown` stoppers on the quantity input stay and are now pinned by tests — removing them would put the single-click paths back on the row.
+
+**Files changed:** assets/app.js, tests/row-controls.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md

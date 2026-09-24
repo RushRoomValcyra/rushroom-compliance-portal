@@ -1067,3 +1067,24 @@ Size is remembered in `localStorage` — a per-viewer convenience, which is what
 `thumbBox()` also handles the case nobody would have reported until it looked broken: these are signed URLs that expire after an hour, so a page left open overnight would have shown a column of broken-image glyphs. The box is drawn first and the image placed inside it, so the fallback is the same cell either way.
 
 **Files changed:** assets/app.js, tests/dialog-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+
+---
+**Date:** 2026-09-24
+**Feature:** PROP-051 — Add several children at once
+**Decision:** Multi-select with a per-part tray carrying its own quantity and reference designator; validate the whole batch before writing anything; write the edges sequentially.
+
+**Why:** Three choices in this, and each had a tempting cheaper version.
+
+*Per-part quantity.* The obvious implementation keeps the existing single Quantity box and applies it to everything selected. That is wrong for the actual work: two legs and eight screws under the same panel is the normal case, and a shared quantity would have made multi-select produce incorrect BOMs rather than merely limited ones. Quantity and reference designator describe the **edge**, not the part, so they moved into the tray rows. The shared pair still exists, but now belongs to the *Create new* tab alone — two quantity boxes disagreeing about one edge is worse than one in an awkward place.
+
+*Validate everything first.* A loop that validates each row as it writes would create three edges and then reject the fourth for a blank quantity, leaving the tree half-changed with the dialog still open over it and no clear way to tell what happened. The batch is now checked in full before the first request.
+
+*Sequential writes.* This is correctness, not taste, and it was worth reading the server to establish: `addBomEdge` derives `sort_order` by selecting the current maximum among siblings and adding ten. `Promise.all` would have every call read the same maximum and land several children on the same position. Sequential writing also means children appear in the order they were picked.
+
+Partial failure is reported rather than swallowed: the dialog says how many of how many were added, names the one that failed, and removes the successful ones from the tray — otherwise the natural retry (press the button again) duplicates every edge that already succeeded.
+
+`submitBtn` moved above its old position beside the footer, because `paintTray()` sets its label during setup and a `const` used before its declaration throws. That ordering is a test; this file has hit the temporal dead zone three times.
+
+Still open, recorded in ROADMAP: the picker offers parts that are already children of this parent. The server rejects the duplicate edge and the per-row error now surfaces it, but marking them unpickable needs the parent's current edges, which the modal is not given.
+
+**Files changed:** assets/app.js, tests/dialog-chrome.test.mjs, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md

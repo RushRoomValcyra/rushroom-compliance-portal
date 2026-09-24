@@ -125,3 +125,71 @@ test("dialog size persistence never lets storage break the dialog", () => {
   assert.ok(/ro\.disconnect\(\)/.test(rem),
     "the ResizeObserver is never disconnected — it outlives every modal opened");
 });
+
+// ---- Multi-select add-child (PROP-051) -------------------------------------
+
+test("the picker selects many parts, and clicking a row again removes it", () => {
+  const fn = addChildModal();
+  assert.ok(/const picked = new Map\(\)/.test(fn), "selection is still a single id, not a set");
+  assert.ok(/if \(picked\.has\(c\.id\)\) picked\.delete\(c\.id\);/.test(fn),
+    "a row does not toggle — a mis-click cannot be undone the way it was made");
+  assert.ok(!/\bselectedId\b/.test(fn), "the old single-selection variable is still referenced");
+  // Insertion order is the add order; a plain object would not guarantee it.
+  assert.ok(/\[\.\.\.picked\.values\(\)\]/.test(fn), "the tray does not iterate the map in order");
+});
+
+test("quantity is per selected part, not one box for all of them", () => {
+  // Two legs and eight screws is the normal case. A single shared quantity
+  // would make multi-select actively wrong rather than merely limited.
+  const fn = addChildModal();
+  assert.ok(/entry\.qty = qty\.value/.test(fn), "the tray rows have no own quantity");
+  assert.ok(/entry\.ref = ref\.value/.test(fn), "the tray rows have no own reference designator");
+  assert.ok(/qtyRefRow\.style\.display = isExisting \? "none" : "flex"/.test(fn),
+    "the shared quantity row is still shown alongside the per-part ones");
+});
+
+test("the dialog says the children land on the same level", () => {
+  const fn = addChildModal();
+  assert.ok(/function paintLevelNote/.test(fn), "there is no same-level explanation");
+  assert.ok(/siblings on the same level/.test(fn), "the note does not say they are siblings");
+  assert.ok(/levelNote, searchInput, listEl, trayEl/.test(fn), "the note is not mounted above the picker");
+});
+
+test("nothing is written until every row validates", () => {
+  // A batch that creates three edges and then rejects the fourth for a typo
+  // leaves the tree half-changed with the dialog still open over it.
+  const fn = addChildModal();
+  const firstWrite = fn.indexOf('"addBomEdge"');
+  const validation = fn.indexOf("must be greater than 0.`");
+  assert.ok(firstWrite > 0 && validation > 0, "validation or write not found");
+  assert.ok(validation < firstWrite, "per-row quantity is validated after the first edge is written");
+});
+
+test("a partial failure says how far it got", () => {
+  const fn = addChildModal();
+  assert.ok(/Added \$\{added\.length\} of \$\{batch\.length\}/.test(fn),
+    "a failure mid-batch reports only the error, so a retry duplicates the edges already written");
+  assert.ok(/added\.push\(item\)/.test(fn), "successful writes are not tracked");
+  assert.ok(/picked\.delete\(item\.childId\)/.test(fn),
+    "parts already added stay selected, so retrying adds them twice");
+});
+
+test("edges are written in the order they were picked", () => {
+  // The edges carry a sort_order; Promise.all would land them in whatever
+  // order the requests happen to resolve.
+  const fn = addChildModal();
+  assert.ok(/for \(const item of batch\)/.test(fn), "the batch is not written sequentially");
+  assert.ok(!/Promise\.all\([^)]*batch/.test(fn), "the batch is written in parallel, losing the picked order");
+});
+
+test("submitBtn is declared before paintTray, which sets its label", () => {
+  // const is not hoisted: a declaration below its first use throws at runtime,
+  // which has already happened three times in this file.
+  const fn = addChildModal();
+  const decl = fn.indexOf('const submitBtn = el(');
+  const use = fn.indexOf("paintTray();   // after submitBtn exists");
+  assert.ok(decl > 0 && use > 0, "submitBtn declaration or the setup call was not found");
+  assert.ok(decl < use, "submitBtn is used before it is declared — temporal dead zone");
+  const picked = fn.indexOf("const picked = new Map()");
+  assert.ok(picked < use, "picked is read by submitLabel before it is declared");
+});

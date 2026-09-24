@@ -5133,9 +5133,16 @@
 
     let mode = "existing"; // "existing" | "new"
 
-    // Shared qty / ref designator fields
+    // Quantity / reference designator for the Create-new tab. The Link-existing
+    // tab carries them per selected part instead — see `picked` below.
     const qtyInput = el("input", { class: "up-text", type: "number", min: "0.001", step: "any", value: "1", style: "width:100px" });
     const refInput = el("input", { class: "up-text", type: "text", placeholder: "e.g. J1, J2 (optional)", style: "flex:1" });
+    // Declared here rather than beside the footer because paintTray() sets its
+    // label and runs during setup: a `const` used before its declaration is a
+    // temporal dead zone error, not an undefined.
+    const submitBtn = el("button", { class: "btn btn-primary btn-sm", type: "submit" }, "Add to BOM");
+    const submitLabel = () => (mode === "new" ? "Create & add"
+      : picked.size > 1 ? `Add ${picked.size} to BOM` : "Add to BOM");
     const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.2rem;margin-top:0.25rem" }, "");
 
     // Tab bar
@@ -5149,28 +5156,108 @@
     // flex:1 rather than a fixed max-height: dragging the dialog bigger must
     // make the LIST taller, not add whitespace under it.
     const listEl = el("div", { style: "flex:1;min-height:140px;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" });
-    let selectedId = null;
-    const selectedLabel = el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem;min-height:1.2rem" }, "");
+    // PROP-051: several children at once. Insertion-ordered, so the parts land
+    // under the parent in the order they were picked rather than some
+    // arbitrary one. Each entry keeps its own quantity and reference
+    // designator, because those describe the EDGE, not the part — two legs and
+    // eight screws is the normal case, and one shared quantity box would make
+    // multi-select actively wrong rather than merely limited.
+    const picked = new Map();   // component_id → { comp, qty, ref }
     const sharedWarn = el("p", { style: "display:none;margin:4px 0 6px;font-size:0.8125rem;color:#d97706;background:#fef3c715;border:1px solid #d9770640;border-radius:4px;padding:4px 8px" }, "");
+
+    // The thing the user asked to be made obvious: this adds siblings, not a
+    // chain. Always present, because it is true for one child as well as five.
+    const levelNote = el("p", {
+      style: "margin:0 0 0.4rem;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0",
+    }, "");
+    function paintLevelNote() {
+      const n = picked.size;
+      const strong = n > 1;
+      levelNote.style.color = strong ? "#d97706" : "var(--muted,#8b93a1)";
+      levelNote.textContent = strong
+        ? `All ${n} parts are added directly under “${parentNode.name}” — siblings on the same level, not nested in each other. To nest one inside another, add it here first and then use its own + child.`
+        : `Anything you pick is added directly under “${parentNode.name}”, one level down.`;
+    }
+
+    const trayEl = el("div", { style: "flex-shrink:0" });
+
+    function paintTray() {
+      paintLevelNote();
+      submitBtn.textContent = submitLabel();
+      if (!picked.size) {
+        trayEl.replaceChildren(el("div", {
+          style: "font-size:0.8125rem;color:var(--muted,#8b93a1);min-height:1.2rem;margin-bottom:0.5rem",
+        }, "Nothing selected yet — click a part above. Click again to remove it."));
+        sharedWarn.style.display = "none";
+        return;
+      }
+      // One aggregated warning rather than one per row: the message is the same
+      // for each, and repeated five times it stops being read.
+      const shared = [...picked.values()].map((p) => p.comp).filter((c) => parentCountMap[c.id]);
+      if (shared.length) {
+        sharedWarn.textContent = `⚠ ${shared.length === 1
+          ? `“${shared[0].name}” is`
+          : `${shared.length} of these are`} already used in other assemblies — structural changes propagate everywhere they are used.`;
+        sharedWarn.style.display = "";
+      } else {
+        sharedWarn.style.display = "none";
+      }
+
+      const CELL = "font-size:0.8125rem;padding:0.3rem 0.45rem;border:1px solid var(--border,#e2e8f0);border-radius:5px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
+      trayEl.replaceChildren(
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-bottom:0.25rem" },
+          `Selected (${picked.size})`),
+        el("div", { style: "max-height:30vh;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:4px;margin-bottom:0.5rem" },
+          [...picked.values()].map((entry) => {
+            const c = entry.comp;
+            const qty = el("input", {
+              class: "up-text", type: "number", min: "0.001", step: "any", value: String(entry.qty),
+              "aria-label": `Quantity for ${c.name}`, style: `${CELL};width:72px;flex-shrink:0`,
+              oninput: () => { entry.qty = qty.value; },
+            });
+            const ref = el("input", {
+              class: "up-text", type: "text", value: entry.ref, placeholder: "Ref (opt.)",
+              "aria-label": `Reference designator for ${c.name}`, style: `${CELL};width:104px;flex-shrink:0`,
+              oninput: () => { entry.ref = ref.value; },
+            });
+            return el("div", {
+              style: "padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap",
+            }, [
+              thumbBox(thumbMap[c.id]),
+              el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
+              el("span", { style: "flex:1;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: c.name }, c.name),
+              qty, ref,
+              el("button", {
+                class: "btn btn-xs", type: "button", title: `Remove ${c.name}`, "aria-label": `Remove ${c.name}`,
+                onclick: () => { picked.delete(c.id); paintTray(); buildList(searchInput.value); },
+              }, "✕"),
+            ]);
+          })),
+      );
+    }
 
     function buildList(filter) {
       const filtered = filter ? candidates.filter((c) => (c.part_number + " " + c.name).toLowerCase().includes(filter.toLowerCase())) : candidates;
       listEl.replaceChildren(...filtered.map((c) => {
+        const isPicked = picked.has(c.id);
         const row = el("div", {
-          style: `padding:0.35rem 0.6rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.5rem;align-items:center;${selectedId === c.id ? "background:var(--accent,#2fa564)22;" : ""}`,
+          role: "button", "aria-pressed": isPicked ? "true" : "false",
+          style: `padding:0.35rem 0.6rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.5rem;align-items:center;${isPicked ? "background:var(--accent,#2fa564)22;" : ""}`,
           onclick: () => {
-            selectedId = c.id;
-            selectedLabel.textContent = `Selected: ${c.part_number} — ${c.name}`;
-            const pc = parentCountMap[c.id];
-            if (pc) {
-              sharedWarn.textContent = `⚠ Already used in ${pc} other assembl${pc === 1 ? "y" : "ies"} — linking it here means structural changes propagate everywhere it is used.`;
-              sharedWarn.style.display = "";
-            } else {
-              sharedWarn.style.display = "none";
-            }
+            // Toggle, so a mis-click is undone the same way it was made.
+            if (picked.has(c.id)) picked.delete(c.id);
+            else picked.set(c.id, { comp: c, qty: "1", ref: "" });
+            paintTray();
             buildList(searchInput.value);
           },
         }, [
+          // A tick rather than a checkbox: the whole row is the control, and a
+          // real checkbox invites clicking the box alone and wondering why the
+          // row highlight moved too.
+          el("span", {
+            "aria-hidden": "true",
+            style: `width:16px;flex-shrink:0;text-align:center;font-weight:700;color:${isPicked ? "var(--accent,#2fa564)" : "transparent"}`,
+          }, "✓"),
           // A part number is eight random characters; a photo is what people
           // actually recognise a part by.
           //
@@ -5189,10 +5276,11 @@
       if (!filtered.length) listEl.replaceChildren(el("div", { style: "padding:0.5rem;color:var(--muted,#8b93a1);font-size:0.875rem" }, "No components match."));
     }
     buildList("");
+    paintTray();   // after submitBtn exists — paintTray sets its label
     searchInput.oninput = () => buildList(searchInput.value);
     const existingSection = el("div", { style: "flex:1;min-height:0;display:flex;flex-direction:column" }, [
       el("label", { style: "display:block;margin-bottom:0.25rem;font-size:0.8125rem;font-weight:600;flex-shrink:0" }, "Select child"),
-      searchInput, listEl, selectedLabel, sharedWarn,
+      levelNote, searchInput, listEl, trayEl, sharedWarn,
     ]);
 
     // Create-new section
@@ -5231,8 +5319,6 @@
       el("label", { style: "display:flex;flex-direction:column;gap:0.2rem;font-size:0.8125rem;font-weight:600" }, ["Quantity", qtyInput]),
       el("label", { style: "display:flex;flex-direction:column;gap:0.2rem;font-size:0.8125rem;font-weight:600;flex:1" }, ["Reference designator", refInput]),
     ]);
-
-    const submitBtn = el("button", { class: "btn btn-primary btn-sm", type: "submit" }, "Add to BOM");
 
     // Condition picker — shown only when root is a product_family
     let conditionMap = {};
@@ -5293,7 +5379,11 @@
       // the dialog, and clearing the property would drop it back to block.
       existingSection.style.display = isExisting ? "flex" : "none";
       newSection.style.display      = !isExisting ? "" : "none";
-      submitBtn.textContent = isExisting ? "Add to BOM" : "Create & add";
+      // Link-existing carries quantity per selected part, so the shared pair
+      // belongs to Create-new only. Two quantity boxes disagreeing about the
+      // same edge is worse than one in the wrong place.
+      qtyRefRow.style.display = isExisting ? "none" : "flex";
+      submitBtn.textContent = submitLabel();
     }
     tabExisting.onclick = () => { mode = "existing"; syncTabs(); searchInput.focus(); };
     tabNew.onclick      = () => { mode = "new";      syncTabs(); newName.focus(); };
@@ -5303,46 +5393,69 @@
       style: "flex:1;min-height:0;display:flex;flex-direction:column",
       onsubmit: async (e) => {
         e.preventDefault();
-        const qty = parseFloat(qtyInput.value);
-        if (!qty || qty <= 0) { errEl.textContent = "Quantity must be greater than 0."; return; }
         errEl.textContent = "";
+        const stop = (msg) => { errEl.textContent = msg; submitBtn.disabled = false; submitBtn.textContent = submitLabel(); };
+
+        // Validate everything BEFORE writing anything. A batch that creates
+        // three edges and then rejects the fourth for a typo leaves the tree
+        // half-changed and the dialog still open over it.
+        let batch;
+        if (mode === "new") {
+          const qty = parseFloat(qtyInput.value);
+          if (!qty || qty <= 0) return stop("Quantity must be greater than 0.");
+          if (!newName.value.trim()) return stop("Name is required.");
+          if (categoryRequiredFor(newType.value) && !newCat.value) return stop("Pick a category for this part.");
+          batch = [{ qty, ref: refInput.value.trim() || null }];
+        } else {
+          if (!picked.size) return stop("Select at least one component first.");
+          batch = [];
+          for (const entry of picked.values()) {
+            const qty = parseFloat(entry.qty);
+            if (!qty || qty <= 0) return stop(`Quantity for “${entry.comp.name}” must be greater than 0.`);
+            batch.push({ childId: entry.comp.id, name: entry.comp.name, qty, ref: (entry.ref || "").trim() || null });
+          }
+        }
+
         submitBtn.disabled = true;
-        submitBtn.textContent = mode === "new" ? "Creating…" : "Adding…";
+        const cond = Object.keys(conditionMap).length > 0 ? { ...conditionMap } : null;
+        const added = [];
         try {
-          let childId = selectedId;
           if (mode === "new") {
-            if (!newName.value.trim()) {
-              errEl.textContent = "Name is required.";
-              submitBtn.disabled = false; submitBtn.textContent = "Create & add";
-              return;
-            }
-            if (categoryRequiredFor(newType.value) && !newCat.value) {
-              errEl.textContent = "Pick a category for this part.";
-              submitBtn.disabled = false; submitBtn.textContent = "Create & add";
-              return;
-            }
+            submitBtn.textContent = "Creating…";
             const r = await API.post(token, "addComponent", {
               part_number: newPN.value.trim() || null,
               name:        newName.value.trim(),
               type:        newType.value,
               category_id: newCat.value || null,
             });
-            childId = r.id;
-          } else {
-            if (!childId) {
-              errEl.textContent = "Select a component first.";
-              submitBtn.disabled = false; submitBtn.textContent = "Add to BOM";
-              return;
-            }
+            batch[0].childId = r.id;
           }
-          const cond = Object.keys(conditionMap).length > 0 ? { ...conditionMap } : null;
-          await API.post(token, "addBomEdge", { parent_id: parentNode.id, child_id: childId, quantity: qty, reference_designator: refInput.value.trim() || null, variant_condition: cond });
+          // Sequential, not Promise.all — and this is correctness, not taste.
+          // addBomEdge derives sort_order by reading the current maximum and
+          // adding ten, so concurrent calls all read the same maximum and land
+          // several siblings on the same position. Sequential also means the
+          // children appear in the order they were picked.
+          for (const item of batch) {
+            submitBtn.textContent = batch.length > 1 ? `Adding ${added.length + 1}/${batch.length}…` : "Adding…";
+            await API.post(token, "addBomEdge", {
+              parent_id: parentNode.id, child_id: item.childId,
+              quantity: item.qty, reference_designator: item.ref, variant_condition: cond,
+            });
+            added.push(item);
+            if (item.childId) picked.delete(item.childId);
+          }
           overlay.remove();
           if (onRefresh) onRefresh();
         } catch (ex) {
-          errEl.textContent = ex.message;
+          // Say what DID happen. Silently reporting only the failure, after
+          // three of five edges were written, is how a BOM ends up with
+          // duplicates the next time someone retries the whole batch.
+          errEl.textContent = added.length
+            ? `Added ${added.length} of ${batch.length}, then failed on “${batch[added.length].name || newName.value.trim()}”: ${ex.message}. The ones already added have been removed from the list.`
+            : ex.message;
           submitBtn.disabled = false;
-          submitBtn.textContent = mode === "new" ? "Create & add" : "Add to BOM";
+          submitBtn.textContent = submitLabel();
+          if (added.length) { paintTray(); buildList(searchInput.value); if (onRefresh) onRefresh(); }
         }
       },
     });

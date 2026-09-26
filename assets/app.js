@@ -57,13 +57,38 @@
       }
       return 0;
     };
+    // `header.offsetHeight` of 0 is a real answer when focus mode has hidden it;
+    // the 64px fallback is only for "there is no header element".
     const header = document.querySelector(".site-header");
-    root.style.setProperty("--header-h", ((header && header.offsetHeight) || 64) + "px");
+    root.style.setProperty("--header-h", (header ? header.offsetHeight : 64) + "px");
     root.style.setProperty("--tabs-h", firstVisible("#portal-app > .tabs") + "px");
     // Document order gives the outermost bar first, which is the one the
     // nested bar must clear.
     root.style.setProperty("--subtabs-h", firstVisible('[role="tabpanel"]:not([hidden]) .subtab-bar') + "px");
   }
+  // --- Focus mode (PROP-057) -------------------------------------------------
+  // The BOM tree sizes itself to `innerHeight - its own top`, so every pinned
+  // row above it is height the tree does not get. On a laptop the header and
+  // the three menu rows are ~240px — a quarter of the workspace. Focus mode
+  // gives that back.
+  //
+  // The MAIN tab bar deliberately stays: hiding it too would leave no way out
+  // of the screen whose toolbar holds the only toggle.
+  const CHROME_FOCUS_KEY = "rr.bomFocus";
+  const chromeFocusOn = () => document.documentElement.classList.contains("chrome-focus");
+  const chromeFocusPref = () => { try { return localStorage.getItem(CHROME_FOCUS_KEY) === "1"; } catch { return false; } };
+  function setChromeFocus(on, remember) {
+    document.documentElement.classList.toggle("chrome-focus", !!on);
+    // Remembered as a preference, not as page state: navigating away clears the
+    // class (see wireTabs and subTabs) so the header can never be hidden on a
+    // screen with no way to bring it back, but coming back to the tree restores
+    // what the user chose.
+    if (remember) { try { localStorage.setItem(CHROME_FOCUS_KEY, on ? "1" : "0"); } catch { /* private window */ } }
+    scheduleChromeMeasure();
+    // The tree measures its own top; it has just moved.
+    if (window.__pisSizeTreeArea) requestAnimationFrame(window.__pisSizeTreeArea);
+  }
+
   let chromeFrame = 0;
   function scheduleChromeMeasure() {
     if (chromeFrame) return;
@@ -831,6 +856,9 @@
       paneSubTab[key] = id;
       for (const k in btns) { const on = k === id; btns[k].classList.toggle("active", on); btns[k].setAttribute("aria-selected", on ? "true" : "false"); }
       const t = tabs.find((x) => x.id === id) || tabs[0];
+      // Cleared before the build, so a view that wants focus mode can turn it
+      // back on as it mounts (the BOM tree does).
+      setChromeFocus(false, false);
       body.replaceChildren(t.build());
       // The new body may itself contain a sub-tab bar — Product BOM does.
       scheduleChromeMeasure();
@@ -1012,7 +1040,9 @@
         const panel = document.getElementById(t.getAttribute("aria-controls"));
         if (panel) panel.hidden = !sel;
       }
-      // A different panel means a different sub-tab bar, or none at all.
+      // A different panel means a different sub-tab bar, or none at all — and
+      // focus mode must never survive into a screen that cannot undo it.
+      setChromeFocus(false, false);
       scheduleChromeMeasure();
     };
     tablist.addEventListener("click", (e) => { const t = e.target.closest('[role="tab"]'); if (t) { select(t); t.focus(); } });
@@ -3738,6 +3768,25 @@
     window.__pisSizeTreeArea = sizeTreeArea;
     window.addEventListener("resize", sizeTreeArea);
 
+    // PROP-057. Declared here rather than inline in the toolbar because it
+    // refers to itself in its own handler; a const used before its declaration
+    // throws, which this file has hit four times.
+    const focusToggle = el("button", {
+      class: "btn btn-sm", type: "button",
+      onclick: () => { setChromeFocus(!chromeFocusOn(), true); paintFocusToggle(); },
+    });
+    function paintFocusToggle() {
+      const on = chromeFocusOn();
+      focusToggle.textContent = on ? "⤡ Show menus" : "⤢ Hide menus";
+      focusToggle.title = on
+        ? "Bring back the header and the menu rows"
+        : "Hide the header and menu rows to give the tree their height. The section tabs stay.";
+      focusToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    // Restore what the user last chose, now that the tree is the thing on screen.
+    setChromeFocus(chromeFocusPref(), false);
+    paintFocusToggle();
+
     let searchTimer = null;
     const searchInp = el("input", { type: "search", placeholder: "Search by name or part number…", class: "up-text",
       style: "flex:1;min-width:140px;max-width:280px",
@@ -3761,6 +3810,7 @@
       el("div", { class: "pis-toolbar", style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap" }, [
         el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => openAddComponent(token, (id, type) => { activeTab = type === "sub_assembly" ? "assemblies" : "components"; refreshTree(); }) }, "+ New BOM Node"),
         el("button", { class: "btn btn-sm", type: "button", onclick: () => refreshTree() }, "↺ Refresh"),
+        focusToggle,
         ...exportButtons(
           () => exportSet,
           () => BOM_EXPORT_COLUMNS((id) => (partCategories.find((c) => c.id === id) || {}).name || ""),

@@ -101,3 +101,68 @@ test("the header height is measured in one place, not once per page", () => {
   }
   assert.ok(/root\.style\.setProperty\("--header-h"/.test(app), "app.js does not set --header-h");
 });
+
+// ---- Focus mode (PROP-057) -------------------------------------------------
+// The BOM tree sizes itself to `innerHeight - its own top`, so every pinned row
+// above it is height the tree does not get. Focus mode hands that back.
+
+test("focus mode hides the header and the menu rows", () => {
+  assert.ok(/:root\.chrome-focus \.site-header,\s*\n:root\.chrome-focus \.subtab-bar \{ display: none; \}/.test(css),
+    "the focus-mode rule does not hide the header and sub-tab rows");
+  // display:none, not a transform — a translated sticky element still occupies
+  // its slot, and measureChrome would need a special case to read it as 0.
+  assert.ok(!/:root\.chrome-focus[^}]*transform/.test(css), "focus mode translates instead of removing");
+});
+
+test("the section tabs are never hidden — the only toggle is inside the BOM", () => {
+  // Hiding .tabs too would leave no way off the screen that holds the button.
+  assert.ok(!/:root\.chrome-focus[^{]*\.tabs\s*[,{]/.test(css),
+    "focus mode hides the main tab bar, trapping the user on the BOM screen");
+});
+
+test("navigating anywhere restores the chrome", () => {
+  // Otherwise the header stays hidden on a screen with no way to bring it back.
+  const wire = app.match(/function wireTabs\(tablist\)[\s\S]*?\n  \}/);
+  assert.ok(wire, "wireTabs not found");
+  assert.ok(/setChromeFocus\(false, false\)/.test(wire[0]), "a top-level tab switch does not clear focus mode");
+  const sub = app.match(/function subTabs\(key, tabs\)[\s\S]*?\n  \}/);
+  assert.ok(sub, "subTabs not found");
+  assert.ok(/setChromeFocus\(false, false\)/.test(sub[0]), "a sub-tab switch does not clear focus mode");
+  // Cleared BEFORE the new view builds, so a view that wants it can re-apply.
+  assert.ok(sub[0].indexOf("setChromeFocus(false, false)") < sub[0].indexOf("body.replaceChildren(t.build())"),
+    "focus is cleared after the new view has mounted, undoing its own preference");
+});
+
+test("the preference survives, the hidden state does not", () => {
+  const fn = app.match(/function setChromeFocus\(on, remember\)[\s\S]*?\n  \}/);
+  assert.ok(fn, "setChromeFocus not found");
+  assert.ok(/classList\.toggle\("chrome-focus"/.test(fn[0]), "focus mode is not a class on the root");
+  assert.ok(/if \(remember\)/.test(fn[0]), "every call writes the preference, so navigating away would clear it");
+  assert.ok(/try \{[\s\S]*?localStorage\.setItem[\s\S]*?\} catch/.test(fn[0]),
+    "localStorage is written unguarded — it throws outright in a private window");
+  const pref = app.match(/const chromeFocusPref = [^\n]+/);
+  assert.ok(pref && /try \{[\s\S]*?\} catch/.test(pref[0]), "the preference is read unguarded");
+});
+
+test("toggling re-measures the chrome and re-sizes the tree", () => {
+  const fn = app.match(/function setChromeFocus\(on, remember\)[\s\S]*?\n  \}/)[0];
+  assert.ok(/scheduleChromeMeasure\(\)/.test(fn), "the sticky offsets are not recomputed");
+  // The tree measures its own top; it has just moved by ~240px.
+  assert.ok(/__pisSizeTreeArea/.test(fn), "the tree keeps its old height, so the reclaimed space stays empty");
+});
+
+test("a hidden header measures zero, not the first-paint fallback", () => {
+  const fn = app.match(/function measureChrome\(\)[\s\S]*?\n  \}/)[0];
+  assert.ok(/header \? header\.offsetHeight : 64/.test(fn),
+    "a header hidden by focus mode would fall through to 64px, leaving a gap above the tab bar");
+  assert.ok(!/\(\(header && header\.offsetHeight\) \|\| 64\)/.test(fn), "the old || fallback is back");
+});
+
+test("the toggle is declared before the toolbar that mounts it", () => {
+  // const is not hoisted; this file has hit the temporal dead zone four times.
+  const decl = app.indexOf("const focusToggle = el(");
+  const use = app.indexOf("        focusToggle,");
+  assert.ok(decl > 0 && use > 0, "focusToggle declaration or use not found");
+  assert.ok(decl < use, "focusToggle is used before it is declared — temporal dead zone");
+  assert.ok(/aria-pressed/.test(app.slice(decl, use + 200)), "the toggle does not expose its pressed state");
+});

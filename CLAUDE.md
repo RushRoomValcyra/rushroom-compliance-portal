@@ -84,6 +84,6 @@ Manufacturing (PROP-030): family_routing_steps, work_orders,
 Fitting stage (PROP-056): bom_edges.fitting_stage (hub / site / NULL)
 
 ## Current state
-Frontend cache version: ?v=266
+Frontend cache version: ?v=267
 Last SYSTEM_OVERVIEW audit: 2026-09-24
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

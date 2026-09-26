@@ -1189,3 +1189,20 @@ The change is audited as `change_type: "updated"` with a descriptive note, match
 **Deployment has a hard order.** `getBom` selects the new column, so deploying `portal-api` before the migration makes every BOM tree fail to load rather than degrade.
 
 **Files changed:** supabase/migrations/0036_edge_fitting_stage.sql, supabase/functions/portal-api/index.ts, assets/app.js, tests/fitting-stage.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-057 — Hide the menus while working in the BOM
+**Decision:** An explicit toggle that hides the header and both sub-tab rows, keeping the main section tabs, cleared by navigation and remembered as a preference.
+
+**Why:** The obvious implementation was scroll-direction auto-hide — header out on scroll down, back on scroll up. It cannot work here, and the reason is worth recording: `treeArea` sets its own `maxHeight` to `innerHeight - its top - 24` and scrolls internally, so the window never scrolls and there is no gesture to listen for. That also restates the problem precisely — every pinned row above the tree is height the tree does not get, which is why PROP-054's stack, correct in itself, made this screen worse.
+
+*The main tab bar stays.* The only toggle lives in the BOM toolbar, so hiding the section tabs as well would leave no way off the screen except reloading. Keeping them costs ~50px of the ~290px available and removes the trap entirely.
+
+*Navigation clears the mode.* Otherwise a user could hide the chrome, switch to Drawings, and find the header gone with no control anywhere to restore it. `wireTabs` and `subTabs` both clear it — and `subTabs` clears it *before* building the new view, so a view that wants focus mode can re-apply it as it mounts. The BOM tree does exactly that.
+
+*The preference persists, the state does not.* Clearing on navigation and persisting the choice are not in conflict: the class is page state, the localStorage flag is what the user asked for. Both reads and writes are guarded, because localStorage throws outright in a private window.
+
+*`display: none`, not a transform.* A translated sticky element still occupies its sticky slot, so the rows below would keep their offsets and leave a gap. Removing them from layout also means `measureChrome()` reads them as zero with no special case — the single change needed was making a hidden header measure `0` instead of falling through to the 64px first-paint fallback.
+
+**Files changed:** assets/app.js, assets/styles.css, tests/sticky-chrome.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md

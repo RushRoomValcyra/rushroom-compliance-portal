@@ -624,6 +624,17 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .acct-card .form-label { align-self: center; }
 
 /* sub-tabs within a panel (Library vs Add) — segmented control */
+/* Focus mode (PROP-057) — the BOM tree sizes itself to the height left below
+   the pinned chrome, so on a laptop the header and the two menu rows are about
+   a quarter of the workspace. Hiding them hands that back.
+
+   display:none rather than a transform, so the rows stop occupying their
+   sticky slots and measureChrome() reads them as 0 with no special case.
+   The MAIN tab bar stays visible on purpose: the only toggle lives in the BOM
+   toolbar, so hiding the section tabs too would leave no way off the screen. */
+:root.chrome-focus .site-header,
+:root.chrome-focus .subtab-bar { display: none; }
+
 /* Sub-tab rows pin under the main tab bar (PROP-054). The sticky element is
    .subtab-bar — a full-width wrapper — because .subtabs is an inline-flex pill
    group and content would scroll visibly past either side of it.

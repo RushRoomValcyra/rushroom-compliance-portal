@@ -82,8 +82,10 @@ Manufacturing (PROP-030): family_routing_steps, work_orders,
         work_order_steps, work_order_components
 
 Fitting stage (PROP-056): bom_edges.fitting_stage (hub / site / NULL)
+Component types (PROP-058): part | raw_material | sub_assembly |
+        phantom_assembly (structural only) | finished_good | spare_part | product_family
 
 ## Current state
-Frontend cache version: ?v=267
+Frontend cache version: ?v=268
 Last SYSTEM_OVERVIEW audit: 2026-09-24
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

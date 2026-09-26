@@ -213,6 +213,7 @@ function liftApp(name) {
   const src = [
     "let partCategories = [];",
     grab(/const categoryNameOf = \(id\) => [^\n]+/, "categoryNameOf"),
+    grab(/const ASSEMBLY_TYPES = \[[^\]]*\];/, "ASSEMBLY_TYPES"),
     grab(/const bomTabOf = \(c\) => [\s\S]*?;\n/, "bomTabOf"),
     grab(/function bomGroupByType\(list\) \{[\s\S]*?\n  \}/, "bomGroupByType"),
     grab(/const bomSortValue = \(c, key\) =>[\s\S]*?;\n/, "bomSortValue"),

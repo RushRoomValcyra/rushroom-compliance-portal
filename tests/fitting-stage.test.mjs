@@ -103,8 +103,12 @@ test("the front end and the function agree on the vocabulary", () => {
   assert.deepEqual(ids, ["hub", "site"], "the UI offers stages the database will reject");
 });
 
-test("the migration is the newest one, so db push applies it before the deploy", () => {
+test("one migration owns the column, and it runs before the function needs it", () => {
   const files = readdirSync(join(root, "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
-  assert.equal(files[files.length - 1], "0036_edge_fitting_stage.sql",
-    "a later migration exists — check the ordering of this deploy");
+  const owning = files.filter((f) => /fitting_stage/.test(read(`supabase/migrations/${f}`)));
+  assert.deepEqual(owning, ["0036_edge_fitting_stage.sql"],
+    `fitting_stage is touched by ${owning.length} migrations — there should be one`);
+  // getBom selects the column, so the migration must sort before nothing that
+  // matters — but it must exist, and `supabase db push` applies in name order.
+  assert.ok(files.includes("0036_edge_fitting_stage.sql"), "the migration is missing");
 });

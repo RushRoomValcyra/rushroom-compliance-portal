@@ -134,6 +134,30 @@ To narrow it explicitly:
 { "action": "listAssemblies", "include_inactive": false }
 ```
 
+### Phantom assemblies are excluded — and why
+
+A **phantom assembly** (`type = 'phantom_assembly'`, PROP-058) is a grouping
+node: it carries structure and gives the storefront something stable to point
+at, but is never built, stocked or picked. Only its children are real.
+
+They are **not returned by default**. An integration asking for "the
+assemblies" and acting on the answer should not be handed a node that cannot
+be made. This is the one place the endpoint deliberately differs from the
+Assemblies tab, which does show them.
+
+```json
+{ "action": "listAssemblies", "include_phantom": true }
+```
+
+With the flag, each row gains a `type` field so the two can be told apart:
+
+```json
+{ "assemblies": [ { "id": "…", "name": "S Module Common Parts", "type": "phantom_assembly" } ], "count": 1 }
+```
+
+Without it the response is byte-identical to what it was before PROP-058 —
+`id` and `name` only.
+
 ### From the portal frontend
 
 ```js

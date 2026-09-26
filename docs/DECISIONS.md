@@ -1206,3 +1206,20 @@ The change is audited as `change_type: "updated"` with a descriptive note, match
 *`display: none`, not a transform.* A translated sticky element still occupies its sticky slot, so the rows below would keep their offsets and leave a gap. Removing them from layout also means `measureChrome()` reads them as zero with no special case — the single change needed was making a hidden header measure `0` instead of falling through to the 64px first-paint fallback.
 
 **Files changed:** assets/app.js, assets/styles.css, tests/sticky-chrome.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-058 — Phantom assemblies
+**Decision:** A new value in the existing `type` CHECK, not a boolean flag; grouped with assemblies everywhere; excluded from `listAssemblies` unless asked for.
+
+**Why:** The user proposed it as a type and that is right for this codebase specifically. Five screens already branch on `type` — the tab grouping, the Status Overview picker, the category requirement, the type badges, the three type pickers. A parallel `is_phantom BOOLEAN` would have to be remembered at each of them, and the one that forgot would be the one nobody noticed. One CHECK widening reaches all of them.
+
+Adding the type exposed a latent defect rather than creating one. The Status Overview picker bucketed its "Parts" group by *exclusion* — `type !== 'sub_assembly' && type !== 'product_family'` — so any type added later falls silently into Parts. It now groups through `bomTabOf`, the same function the list tabs use. The server's two `validTypes` array literals were also independent copies; they are now one `COMPONENT_TYPES`.
+
+*Grouped with assemblies, badged in the tree.* On a root row the type badge already names the type, so a phantom is identifiable there. Inside a tree it would be indistinguishable from a sub-assembly, which is exactly where the difference matters, so it carries a dashed `PHANTOM` badge — the same treatment `DYNAMIC BOM` already has.
+
+*`listAssemblies` excludes them by default.* The endpoint is documented as mirroring the Assemblies tab, and this is the one place it deliberately does not. An integration asking for "the assemblies" and acting on the answer must not be handed a node that cannot be built. `include_phantom: true` opts in and adds a `type` field; without it the response is byte-identical to what every existing caller receives.
+
+**The gap that is not implemented, deliberately.** In every other PLM a phantom is *blow-through*: exploding a BOM skips the phantom level and attaches its children to the phantom's parent, so nothing ever tries to pick or build it. Nothing here flattens phantoms — `getBom`, the tree, the exports and the roll-up quantities all treat one as an ordinary level. That is correct while a phantom is only a grouping label for storefront logic, and becomes wrong the moment anything explodes a BOM to pick from. Recorded in the migration, in ROADMAP and in a test that fails if half-built blow-through logic appears.
+
+**Files changed:** supabase/migrations/0037_phantom_assembly_type.sql, supabase/functions/portal-api/index.ts, assets/app.js, tests/phantom-assembly.test.mjs, tests/dialog-chrome.test.mjs, tests/fitting-stage.test.mjs, docs/API.md, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md

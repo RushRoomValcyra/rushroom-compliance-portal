@@ -74,6 +74,12 @@ const APP_BASE = (Deno.env.get("APP_BASE_URL") ?? "https://ziirvass.github.io/ru
 // PROP-056: where an occurrence is fitted. Kept in step with the CHECK in
 // migration 0036 — a value accepted here that the constraint rejects would
 // surface as a raw Postgres error rather than a usable message.
+// PROP-058: phantom_assembly is structural only — never built, stocked or
+// picked. Declared once; the two call sites used to carry their own copies.
+// Kept in step with the CHECK in migration 0037.
+const COMPONENT_TYPES = ["part", "raw_material", "sub_assembly", "phantom_assembly", "finished_good", "spare_part", "product_family"];
+// Types with no physical identity of their own, so no part category applies.
+const CATEGORYLESS_TYPES = ["sub_assembly", "phantom_assembly", "product_family"];
 const FITTING_STAGES = ["hub", "site"];
 const FITTING_STAGE_LABEL: Record<string, string> = {
   hub: "at the logistics hub", site: "on site during installation",
@@ -2647,18 +2653,30 @@ Deno.serve(async (req) => {
   // portal today shows `inactive` and is still listed. Filtering here would make
   // the endpoint disagree with the screen it mirrors. Pass
   // `include_inactive: false` to narrow it explicitly.
+  //
+  // PHANTOM ASSEMBLIES ARE EXCLUDED by default (PROP-058), and that is also a
+  // decision. A phantom is structural only — never built, stocked or picked —
+  // so an integration asking for "the assemblies" and acting on the answer
+  // should not be handed one. The portal's Assemblies tab does show them, so
+  // this is the one place the endpoint deliberately differs from that screen;
+  // pass `include_phantom: true` to get both.
   if (action === "listAssemblies") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     // tdb() scopes to the caller's organization, which comes from the signed
     // session — a body organization_id has no effect here or anywhere else.
     let q = tdb("bom_components")
-      .select("id, name")
-      .eq("type", "sub_assembly")
+      .select("id, name, type")
       .order("name", { ascending: true });
+    q = body.include_phantom === true
+      ? (q as any).in("type", ["sub_assembly", "phantom_assembly"])
+      : q.eq("type", "sub_assembly");
     if (body.include_inactive === false) q = q.neq("lifecycle_status", "inactive");
     const { data, error } = await q;
     if (error) return json({ error: error.message }, 400);
-    const assemblies = (data ?? []).map((a: any) => ({ id: a.id, name: a.name }));
+    // Still id + name only when phantoms are not asked for, so the existing
+    // contract is byte-identical for every caller that predates PROP-058.
+    const assemblies = (data ?? []).map((a: any) =>
+      body.include_phantom === true ? { id: a.id, name: a.name, type: a.type } : { id: a.id, name: a.name });
     return json({ assemblies, count: assemblies.length });
   }
 
@@ -2900,11 +2918,11 @@ Deno.serve(async (req) => {
     const { name, type, oem_number, description, notes, category_id } = body;
     let { part_number } = body;
     if (!name || !type) return json({ error: "name and type are required" }, 400);
-    const validTypes = ["part", "raw_material", "sub_assembly", "finished_good", "spare_part", "product_family"];
+    const validTypes = COMPONENT_TYPES;
     if (!validTypes.includes(type)) return json({ error: "Invalid type" }, 400);
     // PROP-038: a category is required for anything that lands in the Parts tab.
     // Assemblies and Dynamic BOMs are grouped by their own tabs and are exempt.
-    const needsCategory = type !== "sub_assembly" && type !== "product_family";
+    const needsCategory = !CATEGORYLESS_TYPES.includes(type);
     if (needsCategory && !category_id) {
       return json({ error: "A category is required for parts. Pick one, or add a new category first." }, 400);
     }
@@ -3033,7 +3051,7 @@ Deno.serve(async (req) => {
     if (oem_number  !== undefined) patch.oem_number  = oem_number ? String(oem_number).trim() : null;
     if (part_number !== undefined && String(part_number).trim()) patch.part_number = String(part_number).trim();
     if (newType     !== undefined) {
-      const validTypes = ["part", "raw_material", "sub_assembly", "finished_good", "spare_part", "product_family"];
+      const validTypes = COMPONENT_TYPES;
       if (!validTypes.includes(newType)) return json({ error: "Invalid type" }, 400);
       patch.type = newType;
     }

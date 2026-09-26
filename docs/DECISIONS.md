@@ -1164,3 +1164,28 @@ Fixing it control by control would have meant a second handler on each, and the 
 The existing `click` and `keydown` stoppers on the quantity input stay and are now pinned by tests — removing them would put the single-click paths back on the row.
 
 **Files changed:** assets/app.js, tests/row-controls.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-056 — Where a part is fitted (hub or site)
+**Decision:** A `fitting_stage` column on `bom_edges`, with NULL as a meaningful third state, rather than a column on `bom_components` or a reuse of `component_routing_steps`.
+
+**Why:** Three candidates, and the first two were wrong for reasons worth writing down.
+
+*Not `component_routing_steps`.* That table exists and models operations during postponement manufacturing — ordered steps with instruction text, a reference document and a variant condition, scoped to a `family_id`. It answers "what work is performed on this panel for this configuration". The question here is different and much smaller: for one parent→child link, where does the joining happen. Routing steps also require a product family, and there are none — the machinery is unused, and bending it to this would have made both concepts harder to read.
+
+*Not a component column.* The same screw is hub-fitted under one panel and site-fitted under another. A column on `bom_components` cannot express that at all; it would force a single global answer for a part used in six places.
+
+*So: the edge.* That is where `quantity`, `reference_designator`, `sort_order` and `variant_condition` already live, all of them facts about the occurrence rather than the thing. It also means the answer survives a part being reused somewhere with a different arrangement.
+
+`NULL` is a third state and deliberately not defaulted. Every edge that exists today is unset, and a default would invent a decision nobody made. More importantly the counts strip names it out loud — `n not set` — because an unanswered question that renders like an answer is how a part gets left in the van. That is the same discipline as distinguishing "ran, found nothing" from "never ran".
+
+The tally counts **edges, not rendered rows**. `buildRows()` stops at collapsed nodes, so counting rows would make the totals change when someone collapses a sub-assembly that still ships — the strip would be describing the screen rather than the delivery.
+
+A `CHECK` rather than a Postgres enum type, because widening it is one statement and this schema has already widened `bom_component_history.change_type` twice. `factory` (already joined on arrival) and `either` (installer's choice) are the likely additions; the user chose to start with the two stages they actually named.
+
+The change is audited as `change_type: "updated"` with a descriptive note, matching `setEdgeQuantity`. A new change type would have needed both the CHECK widened *and* `HISTORY_EVENTS` in `getComponentChangelog` extended — and this repo has twice written audit rows that the query displaying them filtered out.
+
+**Deployment has a hard order.** `getBom` selects the new column, so deploying `portal-api` before the migration makes every BOM tree fail to load rather than degrade.
+
+**Files changed:** supabase/migrations/0036_edge_fitting_stage.sql, supabase/functions/portal-api/index.ts, assets/app.js, tests/fitting-stage.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md

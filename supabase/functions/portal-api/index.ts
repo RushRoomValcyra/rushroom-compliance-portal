@@ -71,6 +71,13 @@ const safeName = (n: string) => (n || "file").replace(/[^\w.\-]+/g, "_").slice(-
 
 // ---- user accounts: registration, verification, admin --------------------
 const APP_BASE = (Deno.env.get("APP_BASE_URL") ?? "https://ziirvass.github.io/rushroom-compliance-portal").replace(/\/+$/, "");
+// PROP-056: where an occurrence is fitted. Kept in step with the CHECK in
+// migration 0036 — a value accepted here that the constraint rejects would
+// surface as a raw Postgres error rather than a usable message.
+const FITTING_STAGES = ["hub", "site"];
+const FITTING_STAGE_LABEL: Record<string, string> = {
+  hub: "at the logistics hub", site: "on site during installation",
+};
 const USER_ROLES = ["supplier", "reviewer", "installer", "internal"]; // roles a user may REQUEST at registration
 const ASSIGNABLE_ROLES = ["admin", "internal", "reviewer", "supplier", "installer"]; // roles an admin may ASSIGN
 const USER_STATUSES = ["pending", "verified", "approved", "rejected", "disabled"];
@@ -3174,7 +3181,7 @@ Deno.serve(async (req) => {
     const depthLimit = Math.min(Number(max_depth) || 4, 10);
     // BFS: fetch children level by level
     const nodeMap: Record<string, any> = {};
-    const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null; sort_order?: number }> = [];
+    const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null; sort_order?: number; fitting_stage?: string | null }> = [];
     const queue: Array<{ id: string; depth: number }> = [{ id: root_component_id, depth: 0 }];
     const visited = new Set<string>();
     while (queue.length > 0) {
@@ -3186,7 +3193,7 @@ Deno.serve(async (req) => {
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const currentDepth = batch[0].depth;
       if (currentDepth >= depthLimit) continue;
-      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order")
+      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage")
         .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId)
         .order("sort_order", { ascending: true }).order("id", { ascending: true });
       (childEdges || []).forEach((e: any) => {
@@ -4207,6 +4214,48 @@ Deno.serve(async (req) => {
       } catch { /* non-fatal — the quantity is already saved */ }
     }
     return json({ ok: true, changed: true, quantity: qty });
+  }
+
+  // PROP-056: where this occurrence is actually fitted. Edge-scoped, because
+  // the same part can be hub-fitted under one parent and site-fitted under
+  // another. null clears it back to "not decided".
+  if (action === "setEdgeFittingStage") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { edge_id } = body;
+    if (!edge_id) return json({ error: "edge_id required" }, 400);
+    const raw = body.fitting_stage;
+    const stage = raw === null || raw === undefined || raw === "" ? null : String(raw);
+    if (stage !== null && !FITTING_STAGES.includes(stage)) {
+      return json({ error: `fitting_stage must be one of ${FITTING_STAGES.join(", ")}, or null` }, 400);
+    }
+    const { data: edge } = await tdb("bom_edges")
+      .select("id, parent_id, child_id, fitting_stage").eq("id", edge_id).is("effective_to", null).maybeSingle();
+    if (!edge) return json({ error: "Edge not found or no longer active" }, 404);
+    if ((edge.fitting_stage ?? null) === stage) return json({ ok: true, changed: false, fitting_stage: stage });
+
+    const { error } = await tdb("bom_edges").update({ fitting_stage: stage }).eq("id", edge_id);
+    if (error) return json({ error: error.message }, 400);
+
+    // Audited against the child, the same way a quantity change is — moving a
+    // part from hub to site changes what ships loose, which is exactly the kind
+    // of decision someone will later need to trace.
+    const { data: comp } = await tdb("bom_components")
+      .select("part_number, oem_number, name, description, type, lifecycle_status")
+      .eq("id", edge.child_id).maybeSingle();
+    const { data: parent } = await tdb("bom_components").select("name").eq("id", edge.parent_id).maybeSingle();
+    if (comp) {
+      try {
+        await tdb("bom_component_history").insert({
+          component_id: edge.child_id, changed_at: new Date().toISOString(),
+          changed_by: session.uid || null, change_type: "updated",
+          part_number: comp.part_number, oem_number: comp.oem_number,
+          name: comp.name, description: comp.description,
+          type: comp.type, lifecycle_status: comp.lifecycle_status,
+          notes: `Fitted ${FITTING_STAGE_LABEL[stage as string] ?? "not set"} (was ${FITTING_STAGE_LABEL[edge.fitting_stage as string] ?? "not set"}) in "${parent?.name ?? "assembly"}"`,
+        });
+      } catch { /* non-fatal — the stage is already saved */ }
+    }
+    return json({ ok: true, changed: true, fitting_stage: stage });
   }
 
   if (action === "setEdgeCondition") {

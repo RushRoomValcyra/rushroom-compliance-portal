@@ -3576,6 +3576,20 @@
   let openDetailComponentId = null;
   const categoryNameOf = (id) => (partCategories.find((c) => c.id === id) || {}).name || null;
 
+  // --- Where a part is fitted (PROP-056) -------------------------------------
+  // An EDGE property, not a component one: the same screw can be hub-fitted
+  // under one panel and site-fitted under another. Kept in step with the CHECK
+  // in migration 0036 and with FITTING_STAGES in portal-api.
+  //
+  // null is a third state, not a missing one — "nobody has decided" has to be
+  // distinguishable from "decided: hub", or the counts strip reports a
+  // confidence about the delivery that nobody actually has.
+  const FITTING_STAGES = [
+    { id: "hub",  short: "Hub",  label: "Assembled at the hub",  title: "Assembled at the logistics hub before delivery", colour: "#0369a1" },
+    { id: "site", short: "Site", label: "Installed on site",     title: "Fitted during physical installation on site",    colour: "#b45309" },
+  ];
+  const fittingStage = (id) => FITTING_STAGES.find((x) => x.id === id) || null;
+
   // --- Shared BOM list shaping (PROP-052) ------------------------------------
   // The BOM list and the add-child picker show the same rows and must offer the
   // same tabs, category chips and sort order. These live at module scope so
@@ -4206,20 +4220,20 @@
       // qty is the rolled-up quantity through the tree; edgeQty is what THIS
       // edge carries. The column shows the roll-up, but only edgeQty is editable
       // — editing the roll-up would silently write the wrong number.
-      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty) {
+      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage) {
         const n = nodeMap[nodeId];
         if (!n) return;
         const children = childrenOf[nodeId] || [];
-        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty });
+        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty, edgeStage: edgeStage ?? null });
         if (collapsed.has(posNum)) return;
         children.forEach((e, i) => {
-          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity);
+          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity, e.fitting_stage);
         });
       }
       // Root is already shown as the list-row header — start from its children
       const topEdges = childrenOf[rootId] || [];
       topEdges.forEach((e, i) => {
-        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity);
+        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity, e.fitting_stage);
       });
       return rows;
     }
@@ -4255,16 +4269,41 @@
 
       // Column header
       // Expand / Collapse all controls
-    wrap.append(el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.4rem" }, [
+    // PROP-056: the whole tree, not just the rows currently expanded — a
+    // collapsed sub-assembly still ships, and a count that changed when you
+    // collapsed something would be describing the screen rather than the
+    // delivery. "not set" is counted out loud on purpose: an unanswered
+    // question that looks like an answer is how a part gets left in the van.
+    const stageTally = (() => {
+      const t = { hub: 0, site: 0, unset: 0 };
+      (edges || []).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "unset"] += 1; });
+      return t;
+    })();
+    const stageStrip = el("div", { style: "display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap" },
+      stageTally.hub + stageTally.site + stageTally.unset ? [
+        el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "FITTED"),
+        ...FITTING_STAGES.map((x) => el("span", {
+          title: x.title,
+          style: `font-size:0.6875rem;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap;color:${x.colour};border:1px solid ${x.colour}55;background:${x.colour}12${stageTally[x.id] ? "" : ";opacity:0.45"}`,
+        }, `${stageTally[x.id]} ${x.short.toLowerCase()}`)),
+        stageTally.unset ? el("span", {
+          title: "Nobody has said where these are fitted — they will not appear on either crew's list",
+          style: "font-size:0.6875rem;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
+        }, `${stageTally.unset} not set`) : null,
+      ].filter(Boolean) : []);
+
+    wrap.append(el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.4rem;align-items:center;flex-wrap:wrap" }, [
       el("button", { class: "btn btn-sm", type: "button", onclick: () => { collapsed.clear(); render(); } }, "Expand all"),
       el("button", { class: "btn btn-sm", type: "button", onclick: () => { collapsed.clear(); buildRows().filter((r) => r.hasChildren).forEach((r) => collapsed.add(r.posNum)); render(); } }, "Collapse all"),
+      el("span", { style: "flex:1" }),
+      stageStrip,
     ]));
 
     wrap.append(el("div", {
-        style: "display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
-      }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 3 ? "text-align:center" : "" }, t))));
+        style: "display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
+      }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Fitted", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 4 ? "text-align:center" : "" }, t))));
 
-      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty }) => {
+      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage }) => {
         const isCollapsed = collapsed.has(posNum);
         const isFamily = n.type === "product_family";
         // PROP-036 — guards say what they MEAN. `depth` is positional only (it
@@ -4336,6 +4375,52 @@
           return box;
         };
 
+        // PROP-056: where this occurrence is fitted. Click to change; a select
+        // rather than a cycling badge, because with three states a cycle makes
+        // you click twice to undo a mis-click and gives no hint what comes next.
+        const stageCell = () => {
+          const box = el("div", { "data-row-control": "", style: "display:flex;justify-content:center" });
+          const show = (current) => {
+            const st = fittingStage(current);
+            if (!isTreeRow) { box.replaceChildren(); return; }
+            box.replaceChildren(el("button", {
+              class: "btn btn-xs", type: "button",
+              title: st ? `${st.title} — click to change` : "Nobody has said where this is fitted — click to set",
+              style: "font-size:0.6875rem;padding:1px 7px;border-radius:999px;white-space:nowrap;"
+                + (st ? `color:${st.colour};border-color:${st.colour}55;background:${st.colour}12;font-weight:700`
+                      : "color:var(--muted,#8b93a1);border-style:dashed;opacity:0.8"),
+              onclick: (ev) => { ev.stopPropagation(); edit(current); },
+            }, st ? st.short : "—"));
+          };
+          const edit = (current) => {
+            const sel = el("select", {
+              class: "up-text", "aria-label": "Where this part is fitted",
+              style: "font-size:0.6875rem;padding:1px 3px;max-width:6rem;box-sizing:border-box",
+            }, [
+              el("option", { value: "", selected: current ? null : "selected" }, "— not set —"),
+              ...FITTING_STAGES.map((x) => el("option", { value: x.id, selected: current === x.id ? "selected" : null }, x.label)),
+            ]);
+            let settled = false;
+            const commit = async () => {
+              if (settled) return;
+              settled = true;
+              const next = sel.value || null;
+              if (next === (current ?? null)) { show(current); return; }
+              sel.disabled = true;
+              try { await API.post(token, "setEdgeFittingStage", { edge_id: edgeId, fitting_stage: next }); onRefresh(); }
+              catch (ex) { settled = false; sel.disabled = false; alert(`Failed: ${ex.message}`); show(current); }
+            };
+            sel.onchange = commit;
+            sel.onblur = () => { if (!settled) show(current); };
+            sel.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Escape") { settled = true; show(current); } };
+            sel.onclick = (ev) => ev.stopPropagation();
+            box.replaceChildren(sel);
+            sel.focus();
+          };
+          show(edgeStage);
+          return box;
+        };
+
         const reorderBtn = (dir) => {
           const blocked = sibCount <= 1
             ? "Only child — nothing to reorder"
@@ -4391,7 +4476,7 @@
         ]);
 
         const row = el("div", {
-          style: `display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
+          style: `display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
           onmouseenter: (ev) => { ev.currentTarget.style.background = "var(--bg-2,rgba(0,0,0,0.03))"; },
           onmouseleave: (ev) => { ev.currentTarget.style.background = ""; },
           ondblclick: (ev) => {
@@ -4403,6 +4488,7 @@
           el("span", { style: "font-family:monospace;font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1)" }, posNum),
           compCell,
           qtyCell(),
+          stageCell(),
           el("div", { style: "display:flex;justify-content:center" }, lifecycleBadge(n.lifecycle_status)),
           el("div", { "data-row-control": "", style: "display:flex;gap:0.2rem;flex-shrink:0;flex-wrap:nowrap" }, [
             // ⚙ variant-configure button hidden until import integration is built (PROP-018)

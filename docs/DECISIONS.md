@@ -1223,3 +1223,30 @@ Adding the type exposed a latent defect rather than creating one. The Status Ove
 **The gap that is not implemented, deliberately.** In every other PLM a phantom is *blow-through*: exploding a BOM skips the phantom level and attaches its children to the phantom's parent, so nothing ever tries to pick or build it. Nothing here flattens phantoms — `getBom`, the tree, the exports and the roll-up quantities all treat one as an ordinary level. That is correct while a phantom is only a grouping label for storefront logic, and becomes wrong the moment anything explodes a BOM to pick from. Recorded in the migration, in ROADMAP and in a test that fails if half-built blow-through logic appears.
 
 **Files changed:** supabase/migrations/0037_phantom_assembly_type.sql, supabase/functions/portal-api/index.ts, assets/app.js, tests/phantom-assembly.test.mjs, tests/dialog-chrome.test.mjs, tests/fitting-stage.test.mjs, docs/API.md, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-059 — Copy an assembly with its structure
+**Decision:** Clone the root and every descendant that holds children; reuse the leaves. Preview through the same action under `dry_run`. One clone path shared with the single-node ⧉.
+
+**Why:** `duplicateComponent` copied a row and no edges, so copying an assembly produced an empty shell — the opposite of useful for the job people actually do, which is "the same thing with two parts swapped".
+
+Three ways to define "the sub-structure follows", and the split matters:
+
+*Share everything* — one new component whose children point at the originals. Instant and adds nothing to the registry, but the copy's sub-assemblies **are** the originals, so editing inside one changes both. That is precisely the blast radius the add-child dialog already warns about, and it breaks the stated workflow of deleting a child from the copy.
+
+*Clone everything* — a second Confirmat Screw, a second shelf pin, in a registry people scan by part number. Clutter with no benefit: nobody edits a screw.
+
+*Clone what holds structure, reuse the leaves* — chosen. The copy is independently editable wherever editing is plausible, and the catalogue stays clean.
+
+The rule is **structural, not type-based**, and that distinction is load-bearing here: `S Plinth - White` is typed `part` and holds two children. Deciding on type would have shared it, and the first edit to the copy would have silently changed the original.
+
+The preview dialog runs the same action with `dry_run: true` rather than computing its own plan in the browser. Two implementations of "what will this do" is the shape of defect this repo keeps finding; here it would be a preview that disagrees with the result while writing real registry rows.
+
+`cloneComponentRow()` was extracted so the deep copy and the single-node ⧉ produce identical components — part number, spec record, revision A, audit row. Two clone paths would drift, and the one that drifted would be the rarely-used one.
+
+Two refusals rather than a silently wrong copy: more than 300 nodes, and deeper than 12 levels. The depth one matters most — a node discovered at the limit has no children fetched, so it would look like a leaf and be *reused* despite holding structure.
+
+Known gap, recorded rather than hidden: this is not transactional. Components are written, then the edges in one insert; if that insert fails the components exist and the error says how many, but nothing cleans them up. Supabase's REST client has no multi-statement transaction — doing it properly means a Postgres function.
+
+**Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md

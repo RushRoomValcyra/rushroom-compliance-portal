@@ -4130,23 +4130,8 @@
         role === "rushroom" ? el("button", {
           class: "btn btn-sm", type: "button",
           style: "padding:0 7px;font-size:0.8125rem;line-height:1;flex-shrink:0",
-          title: "Duplicate — copies the spec fields, not documents or images",
-          onclick: async (ev) => {
-            ev.stopPropagation();
-            ev.target.disabled = true; ev.target.textContent = "…";
-            try {
-              const r = await API.post(token, "duplicateComponent", { component_id: comp.id });
-              await refreshTree();
-              // Open the copy straight away: the point of duplicating is to
-              // change something, and without this you have to find it first.
-              openComponentDetail(r.id, token, detailPanel, {
-                ...comp, id: r.id, name: r.name, part_number: r.part_number, lifecycle_status: "inactive",
-              }, role);
-            } catch (ex) {
-              ev.target.disabled = false; ev.target.textContent = "⧉";
-              alert(`Copy failed: ${ex.message}`);
-            }
-          },
+          title: "Copy — takes the structure underneath with it",
+          onclick: (ev) => { ev.stopPropagation(); copyAssemblyModal(comp, token, refreshTree, role, detailPanel); },
         }, "⧉") : null,
         el("button", {
           class: "btn btn-sm", type: "button",
@@ -5348,6 +5333,101 @@
       if (!node.isConnected) { clearTimeout(timer); ro.disconnect(); mo.disconnect(); }
     });
     mo.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // --- Copy an assembly with its structure (PROP-059) ------------------------
+  // Building an assembly by hand is the slow part of this system, and the usual
+  // job is "the same thing with two parts swapped". The old ⧉ copied the node
+  // and nothing else, so copying an assembly handed you an empty shell.
+  //
+  // The dialog exists because a deep copy writes several registry rows and
+  // undoing that by hand is tedious — and because what is cloned versus shared
+  // is a real decision the user should see before it happens, not after.
+  function copyAssemblyModal(comp, token, onRefresh, role, detailPanel) {
+    const box = el("div", {});
+    const close = openModal("Copy assembly", box);
+
+    const nameInput = el("input", { class: "up-text", type: "text", style: "width:100%;box-sizing:border-box" });
+    const err = el("div", { class: "error", style: "min-height:1.2rem;font-size:0.8125rem;margin-top:0.4rem" }, "");
+    const go = el("button", { class: "btn btn-primary btn-sm", type: "button", disabled: true }, "Copy");
+    const body = el("div", { style: "margin:0.6rem 0" }, el("div", { class: "loading" }, "Working out what this will copy…"));
+
+    const listOf = (rows, tone) => el("div", {
+      style: "max-height:30vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem",
+    }, rows.length ? rows.map((r) => el("div", {
+      style: "display:flex;gap:0.5rem;align-items:center;padding:0.28rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem",
+    }, [
+      thumbBox(thumbMap[r.id]),
+      el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, r.part_number || "—"),
+      el("span", { style: "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: r.name }, r.name),
+      el("span", { style: `font-size:0.6875rem;font-weight:700;color:${tone}` }, r.type || ""),
+    ])) : [el("div", { class: "muted", style: "padding:0.5rem;font-size:0.8125rem" }, "None.")]);
+
+    (async () => {
+      let plan;
+      try {
+        plan = await API.post(token, "copyAssembly", { component_id: comp.id, dry_run: true });
+      } catch (ex) {
+        setChildren(body, el("div", { class: "error" }, `Couldn't work out the copy: ${ex.message}`));
+        return;
+      }
+      nameInput.value = plan.suggested_name || `${comp.name} - copy`;
+      go.disabled = false;
+
+      const nClone = (plan.will_clone || []).length;
+      const nShare = (plan.will_share || []).length;
+      setChildren(body,
+        el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, [
+          "Anything holding structure is copied so you can edit it freely. Leaf parts are ",
+          el("strong", {}, "reused"),
+          " — a second Confirmat Screw in the registry helps nobody.",
+        ]),
+        el("div", { style: "display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem" }, [
+          bomChip(`${nClone} new component${nClone === 1 ? "" : "s"}`, { active: true }),
+          bomChip(`${nShare} reused`, {}),
+          bomChip(`${plan.edge_count || 0} link${plan.edge_count === 1 ? "" : "s"}`, {}),
+        ]),
+        el("div", { style: "font-size:0.8125rem;font-weight:600" }, "Copied as new components"),
+        listOf(plan.will_clone || [], "#2fa564"),
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Reused as they are"),
+        listOf(plan.will_share || [], "var(--muted,#8b93a1)"),
+        el("p", { class: "muted", style: "margin:0.6rem 0 0;font-size:0.75rem" },
+          "Specifications come across. Documents, drawings and images do not — they stay on the originals."),
+      );
+    })();
+
+    go.onclick = async () => {
+      err.textContent = "";
+      go.disabled = true; go.textContent = "Copying…";
+      try {
+        const r = await API.post(token, "copyAssembly", { component_id: comp.id, name: nameInput.value.trim() || undefined });
+        close();
+        await onRefresh();
+        // Open the copy straight away: the point of copying is to change
+        // something, and without this you have to find it first.
+        openComponentDetail(r.id, token, detailPanel, {
+          ...comp, id: r.id, name: r.name, part_number: r.part_number, lifecycle_status: "inactive",
+        }, role);
+      } catch (ex) {
+        err.textContent = ex.message;
+        go.disabled = false; go.textContent = "Copy";
+      }
+    };
+
+    setChildren(box,
+      el("p", { class: "muted", style: "margin:0 0 0.6rem;font-size:0.8125rem" },
+        `Copying “${comp.name}” (${comp.part_number || "no part number"}).`),
+      el("label", { style: "display:block;font-size:0.8125rem;font-weight:600;margin-bottom:0.2rem" }, "Name for the copy"),
+      nameInput,
+      body,
+      err,
+      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem" }, [
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+        go,
+      ]),
+    );
+    nameInput.focus();
+    nameInput.select();
   }
 
   // --- Add-child modal: link existing OR create new and link ---------------

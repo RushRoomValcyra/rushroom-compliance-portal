@@ -754,6 +754,100 @@ async function recordDrawingEvent(
   return { audited, bumped };
 }
 
+/**
+ * Decide what a deep assembly copy clones and what it reuses (PROP-059).
+ *
+ * Cloned: the root, and every descendant that HAS CHILDREN.
+ * Reused:  the leaves.
+ *
+ * Structural rather than type-based on purpose. A node typed `part` that holds
+ * children is still structure someone will want to edit in the copy, and
+ * cloning leaves would put a second Confirmat Screw in a registry people scan
+ * by part number. Sharing a node that HAS children would be worse than either:
+ * editing inside it changes the original too.
+ *
+ * Deliberately annotation-free plain JavaScript so tests/copy-assembly.test.mjs
+ * can lift and run it against real tree shapes rather than pattern-match it.
+ */
+function planAssemblyCopy(rootId, childrenOf, visited) {
+  const clones = new Set([rootId]);
+  for (const id of visited) {
+    if ((childrenOf[id] || []).length) clones.add(id);
+  }
+  const shared = [];
+  for (const id of visited) if (!clones.has(id)) shared.push(id);
+  // Only edges whose PARENT is cloned are recreated. An edge under a reused
+  // node already exists there; recreating it would duplicate the original's
+  // own structure.
+  let edgeCount = 0;
+  for (const id of clones) edgeCount += (childrenOf[id] || []).length;
+  return { clones, shared, edgeCount };
+}
+
+/**
+ * Clone one bom_components row: new part number, "- copy" name unless one is
+ * given, spec record carried across, fresh revision A, audited.
+ *
+ * Extracted for PROP-059 so a deep assembly copy produces components
+ * indistinguishable from ones made by the single-node ⧉ — two clone paths
+ * would drift, and the one that drifted would be the rarely-used one.
+ */
+async function cloneComponentRow(tdb: any, session: any, srcId: string, nameOverride?: string) {
+  const { data: src } = await tdb("bom_components")
+    .select("part_number, oem_number, name, description, type, unit_of_measure, notes, make_or_buy, category_id")
+    .eq("id", srcId).maybeSingle();
+  if (!src) return { error: "Component not found" };
+
+  // Always a fresh number: part_number is unique per org and is the thing
+  // people scan for, so a copy must never be mistakable for the original.
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const rand = new Uint8Array(8);
+  crypto.getRandomValues(rand);
+  const d = new Date();
+  const part_number = `RR-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}-${Array.from(rand).map((b) => chars[b % chars.length]).join("")}`;
+  const name = String(nameOverride && nameOverride.trim() ? nameOverride.trim() : `${src.name} - copy`).slice(0, 255);
+
+  const { data: comp, error: ce } = await tdb("bom_components").insert({
+    part_number, name, type: src.type,
+    oem_number: src.oem_number, description: src.description,
+    unit_of_measure: src.unit_of_measure, notes: src.notes,
+    make_or_buy: src.make_or_buy, category_id: src.category_id,
+    // A copy has not been reviewed or sourced, whatever the original's state.
+    lifecycle_status: "inactive",
+    created_by: session?.uid || null,
+  }).select("id").maybeSingle();
+  if (ce || !comp) return { error: ce?.message ?? "Copy failed" };
+
+  const { data: ver, error: ve } = await tdb("bom_component_versions").insert({
+    component_id: comp.id, revision: "A",
+    spec_summary: `Initial revision — copied from ${src.part_number}`,
+    is_current: true, created_by: session?.uid || null,
+  }).select("id").maybeSingle();
+  if (ve || !ver) return { error: ve?.message ?? "Version insert returned no data" };
+
+  // The whole point of the feature: carry the spec record across.
+  const { data: meta } = await tdb("component_metadata").select("*").eq("component_id", srcId).maybeSingle();
+  if (meta) {
+    const copy: Record<string, unknown> = { ...meta };
+    delete copy.id; delete copy.component_id; delete copy.organization_id;
+    delete copy.created_at; delete copy.updated_at;
+    try { await tdb("component_metadata").insert({ ...copy, component_id: comp.id }); }
+    catch { /* non-fatal: the component exists, specs can be re-entered */ }
+  }
+
+  try {
+    await tdb("bom_component_history").insert({
+      component_id: comp.id, changed_at: new Date().toISOString(),
+      changed_by: session?.uid || null, change_type: "created",
+      part_number, oem_number: src.oem_number, name,
+      description: src.description, type: src.type, lifecycle_status: "inactive",
+      notes: `Copied from ${src.name} (${src.part_number})`,
+    });
+  } catch { /* non-fatal */ }
+
+  return { id: comp.id as string, part_number, name, type: src.type as string };
+}
+
 // ---- request handler -------------------------------------------------------
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -2983,60 +3077,120 @@ Deno.serve(async (req) => {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { component_id } = body;
     if (!component_id) return json({ error: "component_id required" }, 400);
+    const r = await cloneComponentRow(tdb, session, component_id, body.name);
+    if ((r as any).error) return json({ error: (r as any).error }, (r as any).error === "Component not found" ? 404 : 400);
+    return json({ id: (r as any).id, part_number: (r as any).part_number, name: (r as any).name });
+  }
 
-    const { data: src } = await tdb("bom_components")
-      .select("part_number, oem_number, name, description, type, unit_of_measure, notes, make_or_buy, category_id")
-      .eq("id", component_id).maybeSingle();
-    if (!src) return json({ error: "Component not found" }, 404);
+  // --- BOM: copy an assembly AND its structure (PROP-059) -------------------
+  // Building an assembly by hand is the slow part of this system, and the usual
+  // job is "the same thing with two parts swapped".
+  //
+  // What gets cloned: the root, and every descendant that HAS CHILDREN. What
+  // gets shared: the leaves. Structural rather than type-based on purpose — a
+  // node typed `part` that holds children is still structure someone will want
+  // to edit in the copy, and cloning screws would put a second Confirmat Screw
+  // in a registry people scan by part number.
+  //
+  // Sharing a node that has children would be worse than either: editing inside
+  // it changes the original too, which is the blast radius the add-child dialog
+  // already warns about.
+  if (action === "copyAssembly") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { component_id, dry_run } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
 
-    // Always a fresh number: part_number is unique per org and is the thing
-    // people scan for, so a copy must never be mistakable for the original.
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const rand = new Uint8Array(8);
-    crypto.getRandomValues(rand);
-    const d = new Date();
-    const part_number = `RR-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}-${Array.from(rand).map((b) => chars[b % chars.length]).join("")}`;
+    const MAX_NODES = 300;
+    const MAX_DEPTH = 12;
 
-    const name = `${src.name} - copy`.slice(0, 255);
-    const { data: comp, error: ce } = await tdb("bom_components").insert({
-      part_number, name, type: src.type,
-      oem_number: src.oem_number, description: src.description,
-      unit_of_measure: src.unit_of_measure, notes: src.notes,
-      make_or_buy: src.make_or_buy, category_id: src.category_id,
-      // A copy has not been reviewed or sourced, whatever the original's state.
-      lifecycle_status: "inactive",
-      created_by: session.uid || null,
-    }).select("id").maybeSingle();
-    if (ce || !comp) return json({ error: ce?.message ?? "Copy failed" }, 400);
-
-    const { data: ver, error: ve } = await tdb("bom_component_versions").insert({
-      component_id: comp.id, revision: "A",
-      spec_summary: `Initial revision — copied from ${src.part_number}`,
-      is_current: true, created_by: session.uid || null,
-    }).select("id").maybeSingle();
-    if (ve || !ver) return json({ error: ve?.message ?? "Version insert returned no data" }, 400);
-
-    // The whole point of the feature: carry the spec record across.
-    const { data: meta } = await tdb("component_metadata").select("*").eq("component_id", component_id).maybeSingle();
-    if (meta) {
-      const copy: Record<string, unknown> = { ...meta };
-      delete copy.id; delete copy.component_id; delete copy.organization_id;
-      delete copy.created_at; delete copy.updated_at;
-      try { await tdb("component_metadata").insert({ ...copy, component_id: comp.id }); }
-      catch { /* non-fatal: the component exists, specs can be re-entered */ }
+    // Breadth-first over ACTIVE edges only. A closed edge is history, not
+    // structure, and copying it would resurrect a part someone removed.
+    const nodeMap: Record<string, any> = {};
+    const childrenOf: Record<string, any[]> = {};
+    const visited = new Set<string>();
+    let queue = [component_id as string];
+    for (let depth = 0; depth < MAX_DEPTH && queue.length; depth++) {
+      const ids = queue.filter((id) => !visited.has(id));
+      if (!ids.length) break;
+      ids.forEach((id) => visited.add(id));
+      if (visited.size > MAX_NODES) {
+        return json({ error: `This assembly has more than ${MAX_NODES} nodes. Copy it in parts.` }, 400);
+      }
+      const { data: comps } = await tdb("bom_components")
+        .select("id, name, part_number, type").in("id", ids);
+      (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
+      const { data: edges } = await tdb("bom_edges")
+        .select("id, parent_id, child_id, quantity, reference_designator, sort_order, fitting_stage, variant_condition")
+        .in("parent_id", ids).is("effective_to", null)
+        .order("sort_order", { ascending: true });
+      const next: string[] = [];
+      (edges || []).forEach((e: any) => {
+        (childrenOf[e.parent_id] ||= []).push(e);
+        if (!visited.has(e.child_id)) next.push(e.child_id);
+      });
+      queue = next;
+    }
+    if (!nodeMap[component_id]) return json({ error: "Component not found" }, 404);
+    // A node discovered at the depth limit has no entry in childrenOf, so it
+    // would be treated as a leaf and REUSED even though it holds structure —
+    // a silently wrong copy. Refuse instead.
+    if (queue.length) {
+      return json({ error: `This assembly is deeper than ${MAX_DEPTH} levels. Copy an inner assembly first, then the outer one.` }, 400);
     }
 
-    try {
-      await tdb("bom_component_history").insert({
-        component_id: comp.id, changed_at: new Date().toISOString(),
-        changed_by: session.uid || null, change_type: "created",
-        part_number, oem_number: src.oem_number, name,
-        description: src.description, type: src.type, lifecycle_status: "inactive",
-        notes: `Copied from ${src.name} (${src.part_number})`,
-      });
-    } catch { /* non-fatal */ }
+    const { clones, shared, edgeCount } = planAssemblyCopy(component_id, childrenOf, visited);
 
-    return json({ id: comp.id, part_number, name });
+    const describe = (id: string) => ({
+      id, name: nodeMap[id]?.name ?? "", part_number: nodeMap[id]?.part_number ?? "", type: nodeMap[id]?.type ?? "",
+    });
+    if (dry_run) {
+      return json({
+        dry_run: true,
+        will_clone: [...clones].map(describe),
+        will_share: shared.map(describe),
+        edge_count: edgeCount,
+        suggested_name: `${nodeMap[component_id].name} - copy`,
+      });
+    }
+
+    // Clone every structural node first, so every edge has both ends by the
+    // time it is written. Root first, so its name override lands on the right one.
+    const idMap: Record<string, string> = {};
+    [...visited].forEach((id) => { idMap[id] = id; });   // shared nodes map to themselves
+    const ordered = [component_id as string, ...[...clones].filter((id) => id !== component_id)];
+    const created: any[] = [];
+    for (const srcId of ordered) {
+      const r: any = await cloneComponentRow(tdb, session, srcId, srcId === component_id ? body.name : undefined);
+      if (r.error) return json({ error: `Copying "${nodeMap[srcId]?.name ?? srcId}" failed: ${r.error}` }, 400);
+      idMap[srcId] = r.id;
+      created.push(r);
+    }
+
+    // One insert rather than one per edge: a 40-row assembly is 40 round trips
+    // otherwise, inside a single function invocation.
+    const rows: any[] = [];
+    for (const parentId of clones) {
+      for (const e of (childrenOf[parentId] || [])) {
+        rows.push({
+          parent_id: idMap[parentId], child_id: idMap[e.child_id],
+          quantity: e.quantity, reference_designator: e.reference_designator,
+          sort_order: e.sort_order ?? 0, fitting_stage: e.fitting_stage ?? null,
+          variant_condition: e.variant_condition ?? null,
+        });
+      }
+    }
+    if (rows.length) {
+      const { error: ee } = await tdb("bom_edges").insert(rows);
+      // The components are already written; say so rather than implying nothing
+      // happened, or the user copies again and gets a second set of orphans.
+      if (ee) return json({ error: `Copied ${created.length} components, but the structure failed: ${ee.message}` }, 400);
+    }
+
+    const rootClone = created[0];
+    return json({
+      id: rootClone.id, part_number: rootClone.part_number, name: rootClone.name,
+      cloned: created.length, shared: shared.length, edges: rows.length,
+    });
   }
 
   // --- BOM: update component metadata (never part_number or type) -----------

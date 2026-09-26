@@ -5335,6 +5335,121 @@
     mo.observe(document.body, { childList: true, subtree: true });
   }
 
+  // --- Pick one component (PROP-060) -----------------------------------------
+  // A single-select picker over the same rows, tabs and sort as the BOM list.
+  // Separate from openAddChildModal, which is a multi-select that also writes
+  // edges — this one only answers "which component?" and hands it back.
+  function pickComponentModal(token, opts = {}) {
+    const { title = "Choose a component", excludeIds = [], hint = "", onPick } = opts;
+    const exclude = new Set(excludeIds);
+    const box = el("div", {});
+    const close = openModal(title, box);
+
+    const state = { tab: "components", category: "all", sortKey: "name", sortDir: "asc" };
+    const search = el("input", { class: "up-text", type: "text", placeholder: "Search by part # or name…", style: "width:100%;margin-bottom:0.4rem;flex-shrink:0" });
+    const tabBar  = el("div", { style: "display:flex;gap:0;border-bottom:2px solid var(--border,#e2e8f0);flex-shrink:0;margin-bottom:0.4rem" });
+    const catBar  = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;flex-shrink:0;margin-bottom:0.4rem" });
+    const sortBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;flex-shrink:0;margin-bottom:0.4rem" });
+    const listEl  = el("div", { style: "flex:1;min-height:180px;max-height:46vh;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px" });
+    let candidates = [];
+
+    const visible = () => {
+      const q = (search.value || "").trim().toLowerCase();
+      let items = bomGroupByType(candidates)[state.tab] || [];
+      if (state.tab === "components" && state.category !== "all") {
+        items = items.filter((c) => state.category === "none" ? !c.category_id : c.category_id === state.category);
+      }
+      if (q) items = items.filter((c) => `${c.part_number} ${c.name}`.toLowerCase().includes(q));
+      return items.slice().sort(bomSortComparator(state.sortKey, state.sortDir));
+    };
+
+    function paintFilters() {
+      const grouped = bomGroupByType(candidates);
+      tabBar.replaceChildren(...BOM_TAB_DEFS.map((td) => {
+        const active = state.tab === td.id;
+        return el("button", {
+          type: "button",
+          style: `padding:0.3rem 0.8rem;font-size:0.75rem;font-weight:600;border:none;background:transparent;cursor:pointer;color:${active ? "var(--accent,#2fa564)" : "var(--muted,#888)"};border-bottom:${active ? "2px solid var(--accent,#2fa564)" : "2px solid transparent"};margin-bottom:-2px`,
+          onclick: () => { state.tab = td.id; if (td.id !== "components") state.category = "all"; paintFilters(); paintList(); },
+        }, `${td.label} (${(grouped[td.id] || []).length})`);
+      }));
+      if (state.tab !== "components") { catBar.style.display = "none"; catBar.replaceChildren(); }
+      else {
+        catBar.style.display = "flex";
+        const parts = grouped.components || [];
+        const countFor = (id) => id === "all" ? parts.length
+          : id === "none" ? parts.filter((c) => !c.category_id).length
+          : parts.filter((c) => c.category_id === id).length;
+        const chip = (id, label) => bomChip(`${label} (${countFor(id)})`, {
+          active: state.category === id, dim: !countFor(id),
+          onClick: () => { state.category = id; paintFilters(); paintList(); },
+        });
+        const chips = [chip("all", "All")];
+        partCategories.forEach((c) => chips.push(chip(c.id, c.name)));
+        if (countFor("none")) chips.push(chip("none", "Uncategorised"));
+        catBar.replaceChildren(...chips);
+      }
+      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || state.tab === "components");
+      sortBar.replaceChildren(
+        el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "SORT"),
+        ...cols.map((c) => bomChip(state.sortKey === c.key ? `${c.label} ${state.sortDir === "asc" ? "▲" : "▼"}` : c.label, {
+          active: state.sortKey === c.key,
+          onClick: () => {
+            if (state.sortKey === c.key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+            else { state.sortKey = c.key; state.sortDir = "asc"; }
+            paintFilters(); paintList();
+          },
+        })),
+      );
+    }
+
+    function paintList() {
+      const rows = visible();
+      if (!rows.length) {
+        const tabLabel = (BOM_TAB_DEFS.find((t) => t.id === state.tab) || {}).label || "components";
+        const elsewhere = BOM_TAB_DEFS.filter((t) => t.id !== state.tab)
+          .map((t) => ({ tab: t, n: (bomGroupByType(candidates)[t.id] || []).length })).filter((x) => x.n);
+        listEl.replaceChildren(el("div", { style: "padding:0.6rem;color:var(--muted,#8b93a1);font-size:0.875rem;display:flex;flex-direction:column;gap:0.4rem;align-items:flex-start" }, [
+          el("span", {}, `No ${tabLabel} match.`),
+          ...elsewhere.map((x) => bomChip(`${x.n} in ${x.tab.label}`, {
+            onClick: () => { state.tab = x.tab.id; state.category = "all"; paintFilters(); paintList(); },
+          })),
+        ]));
+        return;
+      }
+      listEl.replaceChildren(...rows.map((c) => el("div", {
+        role: "button",
+        style: "padding:0.35rem 0.6rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.5rem;align-items:center",
+        onclick: () => { close(); if (onPick) onPick(c); },
+      }, [
+        thumbBox(thumbMap[c.id]),
+        el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
+        el("span", { style: "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: c.name }, c.name),
+        lifecycleBadge(c.lifecycle_status),
+      ])));
+    }
+
+    search.oninput = () => paintList();
+    setChildren(box,
+      hint ? el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, hint) : null,
+      tabBar, catBar, sortBar, search, listEl,
+      el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.6rem" },
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel")),
+    );
+    listEl.replaceChildren(el("div", { class: "loading", style: "padding:0.7rem" }, "Loading components…"));
+    (async () => {
+      try {
+        const r = await API.post(token, "listComponents", {});
+        candidates = (r.components || []).filter((c) => !exclude.has(c.id));
+        paintFilters();
+        paintList();
+        search.focus();
+      } catch (ex) {
+        listEl.replaceChildren(el("div", { class: "error", style: "padding:0.7rem" }, ex.message));
+      }
+    })();
+  }
+
   // --- Copy an assembly with its structure (PROP-059) ------------------------
   // Building an assembly by hand is the slow part of this system, and the usual
   // job is "the same thing with two parts swapped". The old ⧉ copied the node
@@ -5352,55 +5467,99 @@
     const go = el("button", { class: "btn btn-primary btn-sm", type: "button", disabled: true }, "Copy");
     const body = el("div", { style: "margin:0.6rem 0" }, el("div", { class: "loading" }, "Working out what this will copy…"));
 
-    const listOf = (rows, tone) => el("div", {
-      style: "max-height:30vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem",
-    }, rows.length ? rows.map((r) => el("div", {
-      style: "display:flex;gap:0.5rem;align-items:center;padding:0.28rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem",
+    // PROP-060: { sourceId: {id, name, part_number} }. Declared here and applied
+    // by the server as the copy is written, so a replaced branch is never cloned
+    // — the S/M/L job is "copy S, use the M panel and the M plinth", and doing
+    // the swap afterwards would leave the S clones behind as litter.
+    const subs = {};
+    let userNamed = false;
+    nameInput.oninput = () => { userNamed = true; };
+
+    const rowLine = (r, tone, extra) => el("div", {
+      style: "display:flex;gap:0.5rem;align-items:center;padding:0.28rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem;flex-wrap:wrap",
     }, [
       thumbBox(thumbMap[r.id]),
       el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, r.part_number || "—"),
-      el("span", { style: "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: r.name }, r.name),
+      el("span", { style: "flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: r.name }, r.name),
       el("span", { style: `font-size:0.6875rem;font-weight:700;color:${tone}` }, r.type || ""),
-    ])) : [el("div", { class: "muted", style: "padding:0.5rem;font-size:0.8125rem" }, "None.")]);
+      ...(extra || []),
+    ].filter(Boolean));
 
-    (async () => {
+    const replaceBtn = (r) => el("button", {
+      class: "btn btn-xs", type: "button", title: `Use a different component instead of "${r.name}"`,
+      onclick: () => pickComponentModal(token, {
+        title: `Replace “${r.name}”`,
+        hint: "The copy will point at this component instead. The original assembly is not touched.",
+        // Never offer the thing being replaced, nor the assembly being copied.
+        excludeIds: [r.id, comp.id],
+        onPick: (picked) => { subs[r.id] = { id: picked.id, name: picked.name, part_number: picked.part_number }; replan(); },
+      }),
+    }, "Replace…");
+
+    async function replan() {
+      setChildren(body, el("div", { class: "loading" }, "Working out what this will copy…"));
+      go.disabled = true;
       let plan;
       try {
-        plan = await API.post(token, "copyAssembly", { component_id: comp.id, dry_run: true });
+        plan = await API.post(token, "copyAssembly", {
+          component_id: comp.id, dry_run: true,
+          substitutions: Object.fromEntries(Object.entries(subs).map(([from, to]) => [from, to.id])),
+        });
       } catch (ex) {
         setChildren(body, el("div", { class: "error" }, `Couldn't work out the copy: ${ex.message}`));
         return;
       }
-      nameInput.value = plan.suggested_name || `${comp.name} - copy`;
+      if (!userNamed) nameInput.value = plan.suggested_name || `${comp.name} - copy`;
       go.disabled = false;
 
-      const nClone = (plan.will_clone || []).length;
-      const nShare = (plan.will_share || []).length;
+      const clone = plan.will_clone || [], share = plan.will_share || [], swap = plan.will_replace || [];
+      const listOf = (rows, tone, withReplace) => el("div", {
+        style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem",
+      }, rows.length
+        ? rows.map((r) => rowLine(r, tone, withReplace ? [replaceBtn(r)] : null))
+        : [el("div", { class: "muted", style: "padding:0.5rem;font-size:0.8125rem" }, "None.")]);
+
       setChildren(body,
         el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, [
-          "Anything holding structure is copied so you can edit it freely. Leaf parts are ",
+          "Anything holding structure is copied so you can edit it freely; leaf parts are ",
           el("strong", {}, "reused"),
-          " — a second Confirmat Screw in the registry helps nobody.",
+          ". Use ", el("strong", {}, "Replace…"), " to swap one for another — an S assembly becomes an M one without ever creating the S copies.",
         ]),
         el("div", { style: "display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem" }, [
-          bomChip(`${nClone} new component${nClone === 1 ? "" : "s"}`, { active: true }),
-          bomChip(`${nShare} reused`, {}),
+          bomChip(`${clone.length} new component${clone.length === 1 ? "" : "s"}`, { active: true }),
+          bomChip(`${share.length} reused`, {}),
+          swap.length ? bomChip(`${swap.length} replaced`, { active: true }) : null,
           bomChip(`${plan.edge_count || 0} link${plan.edge_count === 1 ? "" : "s"}`, {}),
-        ]),
-        el("div", { style: "font-size:0.8125rem;font-weight:600" }, "Copied as new components"),
-        listOf(plan.will_clone || [], "#2fa564"),
+        ].filter(Boolean)),
+
+        swap.length ? el("div", { style: "font-size:0.8125rem;font-weight:600" }, "Replaced") : null,
+        swap.length ? el("div", { style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem" },
+          swap.map((r) => rowLine(r, "#b45309", [
+            el("span", { style: "font-size:0.8125rem;color:var(--accent,#2fa564);font-weight:600" }, `→ ${r.with?.name ?? ""}`),
+            el("button", {
+              class: "btn btn-xs", type: "button", title: "Undo this replacement",
+              onclick: () => { delete subs[r.id]; replan(); },
+            }, "✕"),
+          ]))) : null,
+
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Copied as new components"),
+        listOf(clone, "#2fa564", true),
         el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Reused as they are"),
-        listOf(plan.will_share || [], "var(--muted,#8b93a1)"),
+        listOf(share, "var(--muted,#8b93a1)", true),
         el("p", { class: "muted", style: "margin:0.6rem 0 0;font-size:0.75rem" },
           "Specifications come across. Documents, drawings and images do not — they stay on the originals."),
       );
-    })();
+    }
+    replan();
 
     go.onclick = async () => {
       err.textContent = "";
       go.disabled = true; go.textContent = "Copying…";
       try {
-        const r = await API.post(token, "copyAssembly", { component_id: comp.id, name: nameInput.value.trim() || undefined });
+        const r = await API.post(token, "copyAssembly", {
+          component_id: comp.id, name: nameInput.value.trim() || undefined,
+          substitutions: Object.fromEntries(Object.entries(subs).map(([from, to]) => [from, to.id])),
+        });
         close();
         await onRefresh();
         // Open the copy straight away: the point of copying is to change

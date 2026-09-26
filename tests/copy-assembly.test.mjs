@@ -15,17 +15,23 @@ const api = read("supabase/functions/portal-api/index.ts");
 
 /** The plan is written annotation-free so it can be run, not just read. */
 const planAssemblyCopy = (() => {
-  const m = api.match(/function planAssemblyCopy\(rootId, childrenOf, visited\) \{[\s\S]*?\n\}/);
+  const m = api.match(/function planAssemblyCopy\(rootId, childrenOf, visited, subs\) \{[\s\S]*?\n\}/);
   assert.ok(m, "planAssemblyCopy not found in portal-api");
   return eval(`(${m[0]})`);
 })();
 
-const plan = (rootId, kids) => {
+const plan = (rootId, kids, subs = {}) => {
+  // Mirrors the walk in copyAssembly: a replaced child is recorded but never
+  // expanded, because whatever sits under it is not coming with the copy.
   const visited = new Set([rootId]);
-  const walk = (id) => (kids[id] || []).forEach((e) => { if (!visited.has(e.child_id)) { visited.add(e.child_id); walk(e.child_id); } });
+  const walk = (id) => (kids[id] || []).forEach((e) => {
+    if (visited.has(e.child_id)) return;
+    visited.add(e.child_id);
+    if (!subs[e.child_id]) walk(e.child_id);
+  });
   walk(rootId);
-  const r = planAssemblyCopy(rootId, kids, visited);
-  return { clones: [...r.clones].sort(), shared: [...r.shared].sort(), edges: r.edgeCount };
+  const r = planAssemblyCopy(rootId, kids, visited, subs);
+  return { clones: [...r.clones].sort(), shared: [...r.shared].sort(), replaced: [...r.replaced].sort(), edges: r.edgeCount };
 };
 
 test("a node holding structure is cloned; a leaf is reused", () => {
@@ -78,7 +84,7 @@ test("edges under a reused node are not recreated", () => {
   // Only edges whose PARENT is cloned. Recreating one under a reused node
   // would duplicate the ORIGINAL's structure, not the copy's.
   const kids = { asm: [{ child_id: "leaf" }] };
-  const r = planAssemblyCopy("asm", kids, new Set(["asm", "leaf", "stranger"]));
+  const r = planAssemblyCopy("asm", kids, new Set(["asm", "leaf", "stranger"]), {});
   assert.equal(r.edgeCount, 1);
   assert.ok(!r.clones.has("stranger"), "an unrelated node was pulled into the clone set");
 });
@@ -136,8 +142,85 @@ test("nothing is written until the user has seen what it will do", () => {
   // And the UI must use it rather than computing its own preview.
   const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/);
   assert.ok(modal, "copyAssemblyModal not found");
-  assert.ok(/"copyAssembly", \{ component_id: comp\.id, dry_run: true \}/.test(modal[0]),
+  // The dry run now carries the substitutions too — the preview and the result
+  // must come from the same code path, or they disagree while writing real rows.
+  assert.ok(/"copyAssembly", \{\s*\n\s*component_id: comp\.id, dry_run: true,/.test(modal[0]),
     "the dialog builds its own preview, which can disagree with what the server does");
   assert.ok(/Documents, drawings and images do not/.test(modal[0]),
     "the dialog does not say what is NOT copied");
+});
+
+
+// ---- Substitution at copy time (PROP-060) ----------------------------------
+// The S/M/L job is "copy S, but use the M panel and the M plinth". Doing the
+// swap after copying would leave the S clones behind as registry litter.
+
+test("a replaced branch is never cloned", () => {
+  // asm → plinth(→ switch, pin), screw.  Replace the plinth.
+  const kids = { asm: [{ child_id: "plinth" }, { child_id: "screw" }], plinth: [{ child_id: "switch" }, { child_id: "pin" }] };
+  const before = plan("asm", kids);
+  assert.deepEqual(before.clones, ["asm", "plinth"]);
+  const after = plan("asm", kids, { plinth: "mPlinth" });
+  assert.deepEqual(after.clones, ["asm"], "the replaced plinth was still cloned");
+  assert.deepEqual(after.replaced, ["plinth"]);
+  // And nothing under it comes along: switch and pin are not in the copy at all.
+  assert.deepEqual(after.shared, ["screw"], "the replaced branch's children followed it into the copy");
+  assert.equal(after.edges, 2, "asm should link to the substitute and the screw");
+});
+
+test("replacing a leaf swaps it without cloning anything extra", () => {
+  const kids = { asm: [{ child_id: "sPanel" }, { child_id: "screw" }] };
+  const r = plan("asm", kids, { sPanel: "mPanel" });
+  assert.deepEqual(r.clones, ["asm"]);
+  assert.deepEqual(r.shared, ["screw"], "the replaced panel is still being reused");
+  assert.deepEqual(r.replaced, ["sPanel"]);
+  assert.equal(r.edges, 2);
+});
+
+test("a part used twice is replaced in both places", () => {
+  // Substitution is by component, so one choice fixes every occurrence.
+  const kids = { asm: [{ child_id: "a" }, { child_id: "b" }], a: [{ child_id: "screw" }], b: [{ child_id: "screw" }] };
+  const r = plan("asm", kids, { screw: "bolt" });
+  assert.deepEqual(r.replaced, ["screw"]);
+  assert.deepEqual(r.shared, [], "the replaced screw is still listed as reused");
+  assert.equal(r.edges, 4, "both links must still be written, pointing at the substitute");
+});
+
+test("the root cannot be replaced", () => {
+  // Replacing the thing you are copying is not a copy. Caught server-side
+  // before anything is walked.
+  const fn = api.match(/if \(action === "copyAssembly"\)[\s\S]*?\n  \}\n/)[0];
+  assert.ok(/from === component_id/.test(fn), "the root can be substituted, which makes no sense");
+  assert.ok(/cannot be replaced by another one/.test(fn), "no message for replacing the root");
+  // And a substitute that has since been deleted must not be written.
+  assert.ok(/A replacement component no longer exists/.test(fn), "replacements are not checked for existence");
+  // Scoped by tdb, so an id from another tenant simply is not found.
+  assert.ok(/await tdb\("bom_components"\)\.select\("id"\)\.in\("id", wanted\)/.test(fn),
+    "the replacement check is not tenant-scoped");
+});
+
+test("the dialog re-plans on every swap instead of guessing", () => {
+  const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
+  assert.ok(/async function replan\(\)/.test(modal), "the preview is built once and never updated");
+  assert.ok(/substitutions: Object\.fromEntries/.test(modal), "substitutions are not sent with the dry run");
+  // Two sends: the preview and the real copy, both from the same map.
+  assert.equal([...modal.matchAll(/substitutions: Object\.fromEntries/g)].length, 2,
+    "the real copy and the preview do not both send the substitutions");
+  assert.ok(/delete subs\[r\.id\]; replan\(\)/.test(modal), "a replacement cannot be undone");
+  // A name the user typed must survive a re-plan.
+  assert.ok(/if \(!userNamed\) nameInput\.value/.test(modal), "re-planning overwrites a name the user typed");
+});
+
+test("the picker never offers the thing being replaced", () => {
+  const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
+  assert.ok(/excludeIds: \[r\.id, comp\.id\]/.test(modal),
+    "the picker offers the component being replaced, or the assembly being copied");
+  const picker = app.match(/function pickComponentModal\(token, opts = \{\}\)[\s\S]*?\n  \}\n/);
+  assert.ok(picker, "pickComponentModal not found");
+  assert.ok(/const exclude = new Set\(excludeIds\)/.test(picker[0]), "excludeIds is accepted but ignored");
+  assert.ok(/filter\(\(c\) => !exclude\.has\(c\.id\)\)/.test(picker[0]), "exclusions are not applied to the list");
+  // Same tabs, chips and ordering as everywhere else (PROP-052).
+  for (const shared of ["BOM_TAB_DEFS", "BOM_SORT_COLS", "bomGroupByType", "bomSortComparator", "bomChip"]) {
+    assert.ok(picker[0].includes(shared), `the picker does not reuse ${shared}`);
+  }
 });

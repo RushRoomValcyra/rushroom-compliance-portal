@@ -769,19 +769,29 @@ async function recordDrawingEvent(
  * Deliberately annotation-free plain JavaScript so tests/copy-assembly.test.mjs
  * can lift and run it against real tree shapes rather than pattern-match it.
  */
-function planAssemblyCopy(rootId, childrenOf, visited) {
+function planAssemblyCopy(rootId, childrenOf, visited, subs) {
+  subs = subs || {};
   const clones = new Set([rootId]);
   for (const id of visited) {
+    // A replaced node is neither cloned nor reused: the substitute stands in
+    // its place, and its own structure is irrelevant to this copy. Not cloning
+    // it is the point — copying S and then replacing the S parts leaves the
+    // clones behind as registry litter.
+    if (subs[id]) continue;
     if ((childrenOf[id] || []).length) clones.add(id);
   }
   const shared = [];
-  for (const id of visited) if (!clones.has(id)) shared.push(id);
+  const replaced = [];
+  for (const id of visited) {
+    if (subs[id]) { if (id !== rootId) replaced.push(id); continue; }
+    if (!clones.has(id)) shared.push(id);
+  }
   // Only edges whose PARENT is cloned are recreated. An edge under a reused
   // node already exists there; recreating it would duplicate the original's
   // own structure.
   let edgeCount = 0;
   for (const id of clones) edgeCount += (childrenOf[id] || []).length;
-  return { clones, shared, edgeCount };
+  return { clones, shared, replaced, edgeCount };
 }
 
 /**
@@ -3103,6 +3113,31 @@ Deno.serve(async (req) => {
     const MAX_NODES = 300;
     const MAX_DEPTH = 12;
 
+    // PROP-060: { sourceComponentId: replacementComponentId }. Applied while
+    // the copy is written, so a replaced branch is never cloned in the first
+    // place — copying S and swapping the S parts afterwards would leave the
+    // clones behind as litter. Substitution is by component, so a part used in
+    // four places is swapped in all four.
+    const subsIn = body.substitutions && typeof body.substitutions === "object" ? body.substitutions : {};
+    const subs: Record<string, string> = {};
+    for (const [from, to] of Object.entries(subsIn)) {
+      if (!from || !to || typeof to !== "string") continue;
+      if (from === to) continue;                       // a no-op, not an error
+      if (from === component_id) {
+        return json({ error: "The assembly being copied cannot be replaced by another one." }, 400);
+      }
+      subs[from] = to;
+    }
+    if (Object.keys(subs).length) {
+      // Every replacement must exist in this tenant. tdb scopes the query, so a
+      // component id from another organization simply will not be found.
+      const wanted = [...new Set(Object.values(subs))];
+      const { data: found } = await tdb("bom_components").select("id").in("id", wanted);
+      const ok = new Set((found || []).map((c: any) => c.id));
+      const missing = wanted.filter((id) => !ok.has(id));
+      if (missing.length) return json({ error: "A replacement component no longer exists." }, 400);
+    }
+
     // Breadth-first over ACTIVE edges only. A closed edge is history, not
     // structure, and copying it would resurrect a part someone removed.
     const nodeMap: Record<string, any> = {};
@@ -3126,8 +3161,19 @@ Deno.serve(async (req) => {
       const next: string[] = [];
       (edges || []).forEach((e: any) => {
         (childrenOf[e.parent_id] ||= []).push(e);
-        if (!visited.has(e.child_id)) next.push(e.child_id);
+        // A replaced child is still recorded (the preview names it) but never
+        // expanded — whatever sits under it is not coming with this copy.
+        if (!visited.has(e.child_id) && !subs[e.child_id]) next.push(e.child_id);
       });
+      // A replaced child is never enqueued, so its row is fetched here — after
+      // this batch's edges are known — or the preview would show a blank line
+      // where the thing being replaced should be named.
+      const namedSubs = [...new Set((edges || [])
+        .map((e: any) => e.child_id).filter((cid: string) => subs[cid] && !nodeMap[cid]))];
+      if (namedSubs.length) {
+        const { data: extra } = await tdb("bom_components").select("id, name, part_number, type").in("id", namedSubs);
+        (extra || []).forEach((c: any) => { nodeMap[c.id] = c; visited.add(c.id); });
+      }
       queue = next;
     }
     if (!nodeMap[component_id]) return json({ error: "Component not found" }, 404);
@@ -3138,7 +3184,15 @@ Deno.serve(async (req) => {
       return json({ error: `This assembly is deeper than ${MAX_DEPTH} levels. Copy an inner assembly first, then the outer one.` }, 400);
     }
 
-    const { clones, shared, edgeCount } = planAssemblyCopy(component_id, childrenOf, visited);
+    const { clones, shared, replaced, edgeCount } = planAssemblyCopy(component_id, childrenOf, visited, subs);
+    // Names for the components being substituted IN — they are outside the
+    // walked tree, so nothing has fetched them.
+    const targetIds = [...new Set(replaced.map((id: string) => subs[id]))];
+    const targetMap: Record<string, any> = {};
+    if (targetIds.length) {
+      const { data: tgts } = await tdb("bom_components").select("id, name, part_number, type").in("id", targetIds);
+      (tgts || []).forEach((c: any) => { targetMap[c.id] = c; });
+    }
 
     const describe = (id: string) => ({
       id, name: nodeMap[id]?.name ?? "", part_number: nodeMap[id]?.part_number ?? "", type: nodeMap[id]?.type ?? "",
@@ -3148,6 +3202,12 @@ Deno.serve(async (req) => {
         dry_run: true,
         will_clone: [...clones].map(describe),
         will_share: shared.map(describe),
+        will_replace: replaced.map((id: string) => ({
+          ...describe(id),
+          with: targetMap[subs[id]]
+            ? { id: subs[id], name: targetMap[subs[id]].name, part_number: targetMap[subs[id]].part_number, type: targetMap[subs[id]].type }
+            : { id: subs[id], name: "(no longer exists)", part_number: "", type: "" },
+        })),
         edge_count: edgeCount,
         suggested_name: `${nodeMap[component_id].name} - copy`,
       });
@@ -3157,6 +3217,7 @@ Deno.serve(async (req) => {
     // time it is written. Root first, so its name override lands on the right one.
     const idMap: Record<string, string> = {};
     [...visited].forEach((id) => { idMap[id] = id; });   // shared nodes map to themselves
+    Object.entries(subs).forEach(([from, to]) => { idMap[from] = to; });   // replaced nodes point at their substitute
     const ordered = [component_id as string, ...[...clones].filter((id) => id !== component_id)];
     const created: any[] = [];
     for (const srcId of ordered) {
@@ -3189,7 +3250,7 @@ Deno.serve(async (req) => {
     const rootClone = created[0];
     return json({
       id: rootClone.id, part_number: rootClone.part_number, name: rootClone.name,
-      cloned: created.length, shared: shared.length, edges: rows.length,
+      cloned: created.length, shared: shared.length, replaced: replaced.length, edges: rows.length,
     });
   }
 

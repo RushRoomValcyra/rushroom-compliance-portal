@@ -1250,3 +1250,22 @@ Two refusals rather than a silently wrong copy: more than 300 nodes, and deeper 
 Known gap, recorded rather than hidden: this is not transactional. Components are written, then the edges in one insert; if that insert fails the components exist and the error says how many, but nothing cleans them up. Supabase's REST client has no multi-statement transaction — doing it properly means a Postgres function.
 
 **Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-060 — Replace parts while copying an assembly
+**Decision:** Substitute during the copy rather than replace after it, applied server-side as the edges are written, previewed through the same `dry_run` path.
+
+**Why:** The request allowed either — replace in the copy dialog, or replace in the tree afterwards. During is strictly better for the job described, and the reason is not convenience:
+
+**A replaced branch is never cloned.** Copying the S assembly and then swapping the S plinth for the M plinth leaves an `S Plinth - White - copy` behind, along with clones of everything under it. On an S→M→L workflow that is three or four discarded components per copy, in a registry people scan by part number. Declaring the swap up front means those rows are never written. The screenshot that prompted this showed exactly that litter: `S Plinth - White - copy`, `Seat to Door Switch - White - copy`, `S Prepared LED Shelf - White - copy`, all about to be replaced.
+
+It also means the replaced branch's *children* never follow. Replacing afterwards would have cloned two levels of S structure and then orphaned them under a component nobody points at any more.
+
+*Substitution is keyed by component, not by edge.* One choice swaps every occurrence, which is what "this is the M version" means. Per-edge substitution would be more precise and much more tedious, and nothing in the stated workflow needs it.
+
+*The preview re-plans through the same action.* Every swap re-runs `copyAssembly` with `dry_run: true` and the current substitutions. The alternative — recomputing the plan in the browser — is two implementations of "what will this do", disagreeing while real registry rows get written. A typed name survives the re-plan; the suggested one does not overwrite it.
+
+`pickComponentModal` was written as a general single-select picker rather than folded into the dialog: it reuses `BOM_TAB_DEFS`, `BOM_SORT_COLS`, `bomGroupByType`, `bomSortComparator` and `bomChip` (PROP-052), so it offers the same tabs, chips and ordering as every other list, and the replace-in-tree feature that is still missing already has its UI.
+
+**Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md

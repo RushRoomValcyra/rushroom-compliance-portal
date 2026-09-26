@@ -435,6 +435,9 @@ tbody tr:hover { background: var(--panel-2); }
 }
 .empty, .loading, .error { padding: 1.25rem; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted); text-align: center; }
 .error { color: var(--red); border-color: var(--red-bd); }
+/* An empty status panel is not a status: .empty/.loading/.error carry padding
+   and a dashed border, so one rendered with no text is a large blank box. */
+.empty:empty, .loading:empty, .error:empty { display: none; }
 .muted { color: var(--muted); }
 .row-tools { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .row-tools .spacer { flex: 1; }

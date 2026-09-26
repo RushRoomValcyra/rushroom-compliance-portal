@@ -1269,3 +1269,22 @@ It also means the replaced branch's *children* never follow. Replacing afterward
 `pickComponentModal` was written as a general single-select picker rather than folded into the dialog: it reuses `BOM_TAB_DEFS`, `BOM_SORT_COLS`, `bomGroupByType`, `bomSortComparator` and `bomChip` (PROP-052), so it offers the same tabs, chips and ordering as every other list, and the replace-in-tree feature that is still missing already has its UI.
 
 **Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-061 — The copy dialog tells the truth about a part
+**Decision:** Title from what the node is, collapse the preview when there is nothing to preview, never offer Replace on the root, and stop empty status panels from rendering.
+
+**Why:** Copying a plain part exposed four things at once, all of them the same mistake — a dialog designed for the interesting case behaving as if every case were interesting.
+
+*The title.* "Copy assembly" over a signal cable. Decided by `has_children || ASSEMBLY_TYPES.includes(type)` rather than type alone, because both edge cases are real here: a node typed `part` that holds children genuinely is copied as an assembly (that is PROP-059's whole rule), and an empty sub-assembly is still an assembly.
+
+*Replace on the root.* The server already refuses to substitute the component being copied, so the button could only ever produce an error — a control whose sole outcome is a rejection.
+
+*The preview for a leaf.* One row under "copied", an empty "reused", "0 links", and a Replace button pointing at itself. Every element was accurate and the whole was noise. A single sentence replaces it.
+
+*The dashed box.* `.empty`, `.loading` and `.error` share a rule carrying `1.25rem` padding and a dashed border, so an `.error` element rendered empty — the normal state of an inline validation slot — draws a large blank box. Fixed both locally (the slot is no longer that class) and globally with `:empty { display: none }`, since an empty status panel is never wanted anywhere.
+
+The last one is worth noting as a class: this dialog was built by reusing a class whose *visible* behaviour was only ever seen with text in it.
+
+**Files changed:** assets/app.js, assets/styles.css, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/DECISIONS.md, CLAUDE.md

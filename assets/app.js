@@ -4130,7 +4130,9 @@
         role === "rushroom" ? el("button", {
           class: "btn btn-sm", type: "button",
           style: "padding:0 7px;font-size:0.8125rem;line-height:1;flex-shrink:0",
-          title: "Copy — takes the structure underneath with it",
+          title: comp.has_children
+            ? "Copy — takes the structure underneath with it, and lets you swap parts as it goes"
+            : "Copy this part",
           onclick: (ev) => { ev.stopPropagation(); copyAssemblyModal(comp, token, refreshTree, role, detailPanel); },
         }, "⧉") : null,
         el("button", {
@@ -5460,10 +5462,16 @@
   // is a real decision the user should see before it happens, not after.
   function copyAssemblyModal(comp, token, onRefresh, role, detailPanel) {
     const box = el("div", {});
-    const close = openModal("Copy assembly", box);
+    // "Copy assembly" over a plain part was simply wrong. Structure OR an
+    // assembly type decides: a `part` that holds children really is being
+    // copied as an assembly, and an empty sub-assembly still is one.
+    const isAssemblyLike = !!comp.has_children || ASSEMBLY_TYPES.includes(comp.type);
+    const close = openModal(isAssemblyLike ? "Copy assembly" : "Copy part", box);
 
     const nameInput = el("input", { class: "up-text", type: "text", style: "width:100%;box-sizing:border-box" });
-    const err = el("div", { class: "error", style: "min-height:1.2rem;font-size:0.8125rem;margin-top:0.4rem" }, "");
+    // Deliberately not class="error": that class carries 1.25rem of padding and
+    // a dashed border, so an empty one renders as a large empty box.
+    const err = el("div", { style: "min-height:1.2rem;font-size:0.8125rem;margin-top:0.4rem;color:#e05454" }, "");
     const go = el("button", { class: "btn btn-primary btn-sm", type: "button", disabled: true }, "Copy");
     const body = el("div", { style: "margin:0.6rem 0" }, el("div", { class: "loading" }, "Working out what this will copy…"));
 
@@ -5516,8 +5524,21 @@
       const listOf = (rows, tone, withReplace) => el("div", {
         style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem",
       }, rows.length
-        ? rows.map((r) => rowLine(r, tone, withReplace ? [replaceBtn(r)] : null))
+        // Never on the root. Replacing the thing you are copying is not a copy,
+        // the server refuses it, and the button offered a dead end.
+        ? rows.map((r) => rowLine(r, tone, withReplace && r.id !== comp.id ? [replaceBtn(r)] : null))
         : [el("div", { class: "muted", style: "padding:0.5rem;font-size:0.8125rem" }, "None.")]);
+
+      // A part with nothing under it gets none of this. One row in the cloned
+      // list, an empty reused list, a zero link count and a Replace button
+      // pointing at the thing being copied is noise dressed as detail.
+      if (!swap.length && clone.length === 1 && !share.length && !plan.edge_count) {
+        setChildren(body,
+          el("p", { class: "muted", style: "margin:0;font-size:0.8125rem" },
+            "Nothing is linked under this part, so the copy is a single new component. Its specifications come across; documents, drawings and images stay on the original."),
+        );
+        return;
+      }
 
       setChildren(body,
         el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, [

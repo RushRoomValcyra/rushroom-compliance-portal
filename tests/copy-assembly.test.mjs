@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
 const app = read("assets/app.js");
+const css = read("assets/styles.css");
 const api = read("supabase/functions/portal-api/index.ts");
 
 /** The plan is written annotation-free so it can be run, not just read. */
@@ -223,4 +224,48 @@ test("the picker never offers the thing being replaced", () => {
   for (const shared of ["BOM_TAB_DEFS", "BOM_SORT_COLS", "bomGroupByType", "bomSortComparator", "bomChip"]) {
     assert.ok(picker[0].includes(shared), `the picker does not reuse ${shared}`);
   }
+});
+
+// ---- Copying a plain part (PROP-061) ---------------------------------------
+// The dialog was built for assemblies and said so over a part with nothing
+// under it, listing the part itself as "copied", an empty "reused", "0 links"
+// and a Replace button pointing at the thing being copied.
+
+test("the dialog is named for what is actually being copied", () => {
+  const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
+  assert.ok(/const isAssemblyLike = !!comp\.has_children \|\| ASSEMBLY_TYPES\.includes\(comp\.type\)/.test(modal),
+    "the title does not consider what the node is");
+  assert.ok(/openModal\(isAssemblyLike \? "Copy assembly" : "Copy part", box\)/.test(modal),
+    "the dialog still calls everything an assembly");
+  // Structure OR type: a `part` holding children really is copied as an
+  // assembly, and an empty sub-assembly is still one.
+  assert.ok(/has_children/.test(modal) && /ASSEMBLY_TYPES/.test(modal), "only one of structure or type is considered");
+});
+
+test("a part with nothing under it gets no assembly preview", () => {
+  const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
+  assert.ok(/if \(!swap\.length && clone\.length === 1 && !share\.length && !plan\.edge_count\)/.test(modal),
+    "there is no short path for a leaf");
+  assert.ok(/Nothing is linked under this part/.test(modal), "the leaf case has no explanation of its own");
+  // And it must stop there rather than fall through into the lists.
+  const shortIdx = modal.indexOf("Nothing is linked under this part");
+  const listsIdx = modal.indexOf('}, "Copied as new components")');   // the heading, not a comment
+  assert.ok(shortIdx < listsIdx, "the leaf message renders after the assembly lists");
+  assert.ok(/return;\n      \}/.test(modal.slice(shortIdx, listsIdx)), "the leaf path does not return early");
+});
+
+test("the root is never offered a Replace button", () => {
+  // Replacing the thing you are copying is not a copy; the server refuses it,
+  // so the button was a dead end.
+  const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
+  assert.ok(/withReplace && r\.id !== comp\.id/.test(modal), "the root row still offers Replace");
+});
+
+test("an empty status panel does not render as a blank box", () => {
+  // .empty/.loading/.error carry 1.25rem of padding and a dashed border.
+  assert.ok(/\.empty:empty, \.loading:empty, \.error:empty \{ display: none; \}/.test(css),
+    "an empty .error still draws a large dashed box");
+  const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
+  assert.ok(!/const err = el\("div", \{ class: "error"/.test(modal),
+    "the dialog's inline error slot is still a full .error panel");
 });

@@ -1305,3 +1305,29 @@ The change also settled something older. The Parts tab was flat because `allowEx
 But `allowExpand` was doing two jobs: it also gated the `+child` button. Reusing it would have put a structure-editing control on all 86 catalogue rows as a side effect of making them expandable. They are now two flags, and the Parts tab keeps exactly the buttons it had. Whether that tab *should* offer `+child` is a separate question, recorded rather than answered.
 
 **Files changed:** assets/app.js, tests/expand-all.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-27
+**Feature:** Documentation audit — PROP-047 to PROP-064
+**Decision:** Establish what is live by querying production rather than by reading the roadmap, and rewrite the roadmap from the answer.
+
+**Why:** The **Built — Awaiting Deploy** section had become a graveyard. It still instructed a `supabase db push` for migrations 0036 and 0037, a `portal-api` deploy, and a `git push` — all of which had already happened. It also listed the edge-function split, `listAssemblies`, PROP-041, PROP-042 and the drawings domain as pending, years of a feature's life after they went live. A list of outstanding work that contains finished work is worse than no list: everything on it stops being read.
+
+So the audit was done against production, not against memory:
+
+- `bom_edges.fitting_stage` exists, **48 edges carry a stage**, **30 audit rows** record the changes — PROP-056 is not merely deployed, it is in daily use, and the Change Log path works.
+- The type CHECK includes `phantom_assembly` and **3 components use it** — PROP-058.
+- **51 `Copied from…` history rows** — PROP-059/060, and PROP-042 with them, since the deep copy and the single-node ⧉ share one clone path.
+- **6 active planner mappings** — PROP-053/064.
+- **2 drawings, 1 revision, 2 part links, 3 `drawing_*` audit rows** — PROP-045/046.
+- `custom_spec_fields.category_id` with 4 fields across 6 categories — PROP-041.
+- All three edge functions answer `health` — the function split.
+- `origin/main` is at v277 with nothing unpushed.
+
+Eleven entries moved to **Shipped** with the evidence that proved each one, and the section was renamed **Built — Awaiting Verification**, because nothing there is waiting on a command any more — only on someone looking at it. Ten entries stayed, all of them frontend behaviour that leaves no trace in the database: the exports, the drawing surface, the picker changes, the spinner fix, the banding. Their lines no longer carry deploy instructions that would be no-ops.
+
+Also brought up to date: Section 2 gained `planner_mappings` and `planner_catalog_entries` (never inventoried, though the user's own migrations 0034/0035 created them) plus the two schema changes of this cycle under *Enums & constraints*; Section 9 gained `setEdgeFittingStage`, `copyAssembly` and the five planner actions; Section 14 gained cards for PROP-048 through PROP-064, each marked with whether production confirms it or verification is still pending.
+
+**No cache bump.** Nothing under `assets/` changed, and forcing every client to re-download the bundle to publish a documentation edit would be a cost with no purpose. The `?v=277` recorded in Section 0 stays accurate because of it.
+
+**Files changed:** docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, docs/DECISIONS.md

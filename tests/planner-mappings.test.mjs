@@ -90,3 +90,19 @@ test("the tab sits second and is named for the Studio, not the planner", () => {
   // BOM Tree the next time they open the screen.
   assert.ok(/paneSubTab/.test(app), "sub-tab state is no longer persisted — check this assumption");
 });
+
+test("the key rows are banded, so the label and its button read as one row", () => {
+  // The label sits far left and its button far right; on a list of sixty the
+  // eye loses the row between them.
+  assert.ok(/\.key-row:nth-child\(even\) \{ background: var\(--panel-2\); \}/.test(css),
+    "the rows are not striped");
+  assert.ok(/\.key-row:hover \{[^}]*inset 3px 0 0 var\(--accent\)/.test(css),
+    "no hover cue on the row you are about to click");
+  // Striping needs contiguous rows: the old layout used a vertical margin, so
+  // bands would have been separated by gaps of page background.
+  assert.ok(!/class: "row-tools", style: "margin:0\.35rem 0;justify-content:space-between/.test(app),
+    "the rows still carry the margin that breaks the banding");
+  assert.ok(/el\("div", \{ class: "key-rows" \}, rows\.map/.test(app),
+    "the rows are not wrapped, so :nth-child would count the section heading");
+  assert.ok(/el\("div", \{ class: "key-row" \}/.test(app), "the rows do not use the banded class");
+});

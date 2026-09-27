@@ -9473,12 +9473,12 @@
             el("span", { style: "font-size:var(--fs-xs);font-weight:500;color:var(--muted,#8b93a1)" },
               `${mappedInType}/${inType.length} mapped`),
           ]),
-          ...rows.map((item) => {
+          el("div", { class: "key-rows" }, rows.map((item) => {
             const m = idx.get(mapKeyOf(item.source_type, item.source_key));
             const targetName = m && m.target
               ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}`
               : m ? "Target no longer exists" : "";
-            return el("div", { class: "row-tools", style: "margin:0.35rem 0;justify-content:space-between;align-items:center;gap:0.5rem" }, [
+            return el("div", { class: "key-row" }, [
               el("span", { style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;min-width:0" }, [
                 el("span", { class: `badge-status ${m ? "s-done" : "s-todo"}` }, m ? "Mapped" : "Not mapped"),
                 el("code", {}, item.source_key),
@@ -9494,7 +9494,7 @@
               m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
                 : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
             ]);
-          }),
+          })),
         ]);
       }));
     }

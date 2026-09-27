@@ -3845,6 +3845,10 @@
     wrap.replaceChildren(
       el("div", { class: "pis-toolbar", style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap" }, [
         el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => openAddComponent(token, (id, type) => { activeTab = bomTabOf({ type }); refreshTree(); }) }, "+ New BOM Node"),
+        // Search sits second: it is what this toolbar is used for most, and it
+        // was last in a row that wraps, so on a narrow window it fell to its
+        // own line behind four buttons nobody was reaching for.
+        searchInp,
         el("button", { class: "btn btn-sm", type: "button", onclick: () => refreshTree() }, "↺ Refresh"),
         focusToggle,
         ...exportButtons(
@@ -3873,7 +3877,6 @@
               onProgress: progress,
             }),
           }),
-        searchInp,
       ]),
       tabBarEl,
       summaryEl,

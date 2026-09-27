@@ -3813,7 +3813,7 @@
     });
     function paintFocusToggle() {
       const on = chromeFocusOn();
-      focusToggle.textContent = on ? "⤡ Show menus" : "⤢ Hide menus";
+      focusToggle.textContent = on ? "⤡ Restore menus" : "⤢ Maximise workspace";
       focusToggle.title = on
         ? "Bring back the header and the menu rows"
         : "Hide the header and menu rows to give the tree their height. The section tabs stay.";

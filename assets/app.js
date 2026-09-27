@@ -3738,6 +3738,26 @@
     const PAGE_SIZE = 50;
     const tabPageShown = { components: PAGE_SIZE, assemblies: PAGE_SIZE, dynamic: PAGE_SIZE };
     const expandedTrees = {}; // compId → bom | "loading" | "error"
+    // The rows currently on screen, so Expand all / Collapse all act on what
+    // you can see rather than on 86 rows behind a "Load more".
+    let expandableShown = [];
+
+    async function expandAllShown() {
+      const targets = expandableShown.filter((c) => !expandedTrees[c.id]);
+      expandableShown.forEach((c) => { if (!expandedTrees[c.id]) expandedTrees[c.id] = "loading"; });
+      renderAll();
+      // In parallel: fifteen assemblies is fifteen getBom calls, and doing them
+      // one after another is fifteen round trips of waiting.
+      await Promise.all(targets.map(async (c) => {
+        try { expandedTrees[c.id] = await API.post(token, "getBom", { root_component_id: c.id, max_depth: 10 }); }
+        catch { expandedTrees[c.id] = "error"; }
+      }));
+      renderAll();
+    }
+    function collapseAllShown() {
+      expandableShown.forEach((c) => { delete expandedTrees[c.id]; });
+      renderAll();
+    }
 
     // Shared hover-preview tooltip — appended to body to avoid stacking-context issues
     // (position:fixed breaks inside any ancestor with transform/filter)
@@ -3755,6 +3775,17 @@
     // The list is cards, not a table, so there is no column header to click.
     // This bar plays that role: one control per sortable field.
     const sortBarEl = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;margin-top:0.6rem" });
+    // PROP-062: opening fifteen assemblies one arrow at a time is the same work
+    // the per-assembly Expand all already removes one level down. Built once
+    // and re-appended, because the bar is rebuilt on every render — and hidden
+    // when nothing on screen can expand, rather than offered as a dead control.
+    const expandAllBtn = el("button", { class: "btn btn-xs", type: "button",
+      title: "Open every row on screen that has something underneath it",
+      onclick: () => expandAllShown() }, "⌄ Expand all");
+    const collapseAllBtn = el("button", { class: "btn btn-xs", type: "button",
+      title: "Close every open row on screen",
+      onclick: () => collapseAllShown() }, "⌃ Collapse all");
+    const expandGroup = el("div", { style: "display:none;gap:0.3rem;margin-left:auto" }, [expandAllBtn, collapseAllBtn]);
     // The list scrolls inside its own region, so the toolbar, type tabs and
     // category chips above it stay put instead of scrolling away. Height is
     // measured rather than hard-coded: the chips row only exists on the Parts
@@ -3964,7 +3995,13 @@
             },
           }, active ? `${c.label} ${sortDir === "asc" ? "▲" : "▼"}` : c.label);
         }),
+        expandGroup,
       );
+      // Reset each render; the row pass below decides whether it is shown. The
+      // list is cleared too, or an empty search would leave the buttons acting
+      // on rows that are no longer on screen.
+      expandGroup.style.display = "none";
+      expandableShown = [];
       if (!items.length) {
         const labels = { components: "parts", assemblies: "assemblies", dynamic: "dynamic BOMs" };
         const catName = activeTab === "components" && activeCategory !== "all"
@@ -3979,8 +4016,21 @@
       }
       requestAnimationFrame(sizeTreeArea);
       const shown = Math.min(tabPageShown[activeTab], items.length);
-      const allowExpand = activeTab !== "components";
-      items.slice(0, shown).forEach((comp) => treeArea.append(renderRootRow(comp, allowExpand)));
+      // Expansion is gated per row by comp.has_children, so this no longer
+      // needs a tab gate. The Parts tab was "always flat" from a time when a
+      // part could not hold structure — now one can (S Plinth holds two
+      // children), and keeping it flat left that structure with no door on the
+      // tab where the part actually lives.
+      const shownItems = items.slice(0, shown);
+      expandableShown = shownItems.filter((c) => c.has_children);
+      const allowAddChild = activeTab !== "components";
+      shownItems.forEach((comp) => treeArea.append(renderRootRow(comp, true, allowAddChild)));
+      // "flex", not "": the group is a flex row, and clearing the property
+      // would drop it back to block and stack the two buttons.
+      expandGroup.style.display = expandableShown.length ? "flex" : "none";
+      const openCount = expandableShown.filter((c) => expandedTrees[c.id]).length;
+      expandAllBtn.disabled = openCount === expandableShown.length;
+      collapseAllBtn.disabled = openCount === 0;
       if (items.length > shown) {
         const remaining = items.length - shown;
         treeArea.append(el("div", { style: "text-align:center;padding:0.75rem" },
@@ -3989,7 +4039,10 @@
       }
     }
 
-    function renderRootRow(comp, allowExpand = false) {
+    // allowExpand and allowAddChild were one flag. They are different questions:
+    // a part that holds children should open where it lives, but the Parts tab
+    // is a catalogue and does not want a structure-editing button on all 86 rows.
+    function renderRootRow(comp, allowExpand = false, allowAddChild = false) {
       const STATUS_COLOR = { active: "#2fa564", inactive: "#8b93a1", replaced: "#e5a326", flagged: "#e05454" };
       const TYPE_COLOR   = { part: "#2fa564", raw_material: "#8b93a1", sub_assembly: "#4a9eed", phantom_assembly: "#0d9488", finished_good: "#a855f7", spare_part: "#f59e0b", product_family: "#e05454" };
       const sfg = STATUS_COLOR[comp.lifecycle_status] || "#888";
@@ -4121,7 +4174,7 @@
         comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
         (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
-        role === "rushroom" && allowExpand ? el("button", {
+        role === "rushroom" && allowAddChild ? el("button", {
           class: "btn btn-sm", type: "button",
           style: "padding:0 6px;font-size:0.75rem;flex-shrink:0",
           title: "Add child",

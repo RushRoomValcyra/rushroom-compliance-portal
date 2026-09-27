@@ -1288,3 +1288,20 @@ It also means the replaced branch's *children* never follow. Replacing afterward
 The last one is worth noting as a class: this dialog was built by reusing a class whose *visible* behaviour was only ever seen with text in it.
 
 **Files changed:** assets/app.js, assets/styles.css, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-27
+**Feature:** PROP-062 — Expand all / Collapse all on the BOM list
+**Decision:** A pair of buttons scoped to the rendered page, hidden when nothing can expand; and `allowExpand` split from `allowAddChild`.
+
+**Why:** The per-assembly Expand all already existed one level down. Opening fifteen assemblies one arrow at a time was the same work it removes, left undone at the level above.
+
+*Scoped to what is on screen.* The list pages at 50 rows. "Expand all" over 86 parts behind a Load more would be a slow surprise; over what you can see it is predictable. Fetches run in one `Promise.all` rather than in sequence — fifteen assemblies is otherwise fifteen round trips of waiting — and a failure on one row marks that row, not the batch.
+
+*Hidden when nothing can expand, disabled when it would do nothing.* A control with no effect is the defect this project keeps producing; the Parts tab used to be exactly that case.
+
+The change also settled something older. The Parts tab was flat because `allowExpand` was `activeTab !== "components"` — written when a part could not hold structure. One now can: `S Plinth - White` is typed `part` and holds two children, which PROP-059 depends on. Keeping the tab flat meant that structure had no door on the tab where the part actually lives. Expansion is already gated per row on `comp.has_children`, so allowing it changes nothing for the other 80-odd parts.
+
+But `allowExpand` was doing two jobs: it also gated the `+child` button. Reusing it would have put a structure-editing control on all 86 catalogue rows as a side effect of making them expandable. They are now two flags, and the Parts tab keeps exactly the buttons it had. Whether that tab *should* offer `+child` is a separate question, recorded rather than answered.
+
+**Files changed:** assets/app.js, tests/expand-all.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/DECISIONS.md, CLAUDE.md

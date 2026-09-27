@@ -9533,7 +9533,6 @@
       ]));
     }
     wrap.replaceChildren(
-      el("p", { class: "muted", style: "max-width:760px" }, "PIM-owned catalog and mapping from planner source keys to PIM components and assemblies. Import once from a cart configuration; later visits load the saved PIM keys without accessing Website or Operations."),
       el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
         el("h3", { style: "margin-top:0" }, "Saved planner keys"),
         el("p", { class: "muted", style: "margin-top:0" }, "Source keys are grouped by type and saved per PIM tenant."),

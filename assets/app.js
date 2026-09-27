@@ -9366,7 +9366,7 @@
       const targetBtn = el("button", {
         class: "btn btn-sm", type: "button",
         onclick: () => pickComponentModal(token, {
-          title: "Choose PIM target",
+          title: "Choose BOM Node Target",
           hint: "The component or assembly this planner key resolves to.",
           // A Dynamic BOM is a configuration, not something a key resolves to.
           // The select excluded them; so does this.
@@ -9400,7 +9400,7 @@
       const row = (label, field, hint = "") => el("label", { class: "form-row" }, [el("span", { class: "form-label" }, label), el("span", {}, [field, hint ? el("small", { class: "muted", style: "display:block;margin-top:0.2rem" }, hint) : null].filter(Boolean))]);
       const close = openModal(editing ? "Edit planner mapping" : "New planner mapping", el("div", {}, [
         row("Source type", type), row("Stable source key", key, "Use the Website planner's exact key, not a display name. Color suffixes such as _color_0 are part of the key. Wildcards are stored but not resolved yet."),
-        row("PIM target", target), row("Release note", release), message,
+        row("BOM Node Target", target), row("Release note", release), message,
         el("div", { style: "margin-top:0.75rem;display:flex;justify-content:flex-end" }, save),
       ].filter(Boolean)));
       paintTarget();
@@ -9426,7 +9426,7 @@
           return;
         }
         list.replaceChildren(el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
-          el("thead", {}, el("tr", {}, ["Source", "PIM target", "Multiplicity", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
+          el("thead", {}, el("tr", {}, ["Source", "BOM Node Target", "Multiplicity", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
           el("tbody", {}, mappings.map((m) => el("tr", {}, [
             el("td", {}, [el("strong", {}, m.source_type), el("div", { class: "muted", style: "font-family:monospace;font-size:var(--text-xs)" }, m.source_key)]),
             el("td", {}, m.target ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}` : "Target no longer exists"),

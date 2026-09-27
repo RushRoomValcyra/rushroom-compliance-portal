@@ -5398,7 +5398,7 @@
   // Separate from openAddChildModal, which is a multi-select that also writes
   // edges — this one only answers "which component?" and hands it back.
   function pickComponentModal(token, opts = {}) {
-    const { title = "Choose a component", excludeIds = [], hint = "", onPick } = opts;
+    const { title = "Choose a component", excludeIds = [], hint = "", filter = null, onPick } = opts;
     const exclude = new Set(excludeIds);
     const box = el("div", {});
     const close = openModal(title, box);
@@ -5498,7 +5498,9 @@
     (async () => {
       try {
         const r = await API.post(token, "listComponents", {});
-        candidates = (r.components || []).filter((c) => !exclude.has(c.id));
+        candidates = (r.components || [])
+          .filter((c) => !exclude.has(c.id))
+          .filter((c) => !filter || filter(c));
         paintFilters();
         paintList();
         search.focus();
@@ -9324,7 +9326,6 @@
     const wrap = el("div", {});
     const list = el("div", { class: "loading" }, "Loading planner mappings…");
     let showInactive = false;
-    let targets = [];
     // PROP-053: the saved-keys list and the mappings table were loaded
     // independently, so a key that was already mapped looked identical to one
     // that was not — the only way to find out was to scroll to the table below
@@ -9349,20 +9350,38 @@
     ];
     const SOURCE_TYPE_LABELS = Object.fromEntries(SOURCE_TYPES.map(([value, label]) => [value, label.split(" — ")[0]]));
 
-    async function loadTargets() {
-      if (targets.length) return targets;
-      const r = await API.post(token, "listComponents");
-      targets = (r.components || []).filter((c) => c.type !== "product_family");
-      return targets;
-    }
-
     function editModal(mapping, detectedSource = null) {
       const editing = !!mapping;
       const source = mapping || detectedSource;
       const type = el("select", { class: "up-text", disabled: editing ? "" : null },
         SOURCE_TYPES.map(([value, label]) => el("option", { value, selected: source?.source_type === value ? "" : null }, label)));
       const key = el("input", { class: "up-text", placeholder: "Exact key, e.g. M, side_left_color_0, Foot", value: source?.source_key || "", disabled: editing ? "" : null });
-      const target = el("select", { class: "up-text" }, [el("option", { value: "" }, "Loading PIM components…")]);
+      // PROP-064: was a <select> holding every component in the registry —
+      // eighty-six options with no search, no tabs and no categories, which
+      // made it the one list on this screen you could not filter. The picker
+      // built for the copy dialog already does all of that.
+      let targetId = mapping?.target_component_id || "";
+      let chosen = mapping?.target || null;          // declared before paintTarget reads it
+      const targetLabel = el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" });
+      const targetBtn = el("button", {
+        class: "btn btn-sm", type: "button",
+        onclick: () => pickComponentModal(token, {
+          title: "Choose PIM target",
+          hint: "The component or assembly this planner key resolves to.",
+          // A Dynamic BOM is a configuration, not something a key resolves to.
+          // The select excluded them; so does this.
+          filter: (c) => c.type !== "product_family",
+          onPick: (c) => { targetId = c.id; chosen = c; paintTarget(); message.textContent = ""; },
+        }),
+      }, "Choose…");
+      const paintTarget = () => {
+        targetLabel.textContent = targetId && chosen
+          ? `${chosen.name}${chosen.part_number ? ` · ${chosen.part_number}` : ""}`
+          : "No component chosen yet";
+        targetLabel.style.color = targetId ? "" : "var(--muted,#8b93a1)";
+        targetBtn.textContent = targetId ? "Change…" : "Choose…";
+      };
+      const target = el("div", { style: "display:flex;gap:0.5rem;align-items:center;min-width:0" }, [targetLabel, targetBtn]);
       const release = el("input", { class: "up-text", placeholder: "Optional release note, e.g. Planner 2026.09", value: mapping?.release_label || "" });
       const message = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");
       const save = el("button", { class: "btn btn-primary", type: "button" }, editing ? "Save new revision" : "Create mapping");
@@ -9372,7 +9391,7 @@
         save.disabled = true; save.textContent = "Saving…";
         try {
           await API.post(token, "savePlannerMapping", {
-            mapping_id: mapping?.id, source_type: type.value, source_key: key.value.trim(), target_component_id: target.value,
+            mapping_id: mapping?.id, source_type: type.value, source_key: key.value.trim(), target_component_id: targetId,
             quantity_rule: "cart_quantity", fixed_quantity: null, release_label: release.value.trim() || null,
           });
           close(); await reload();
@@ -9384,10 +9403,7 @@
         row("PIM target", target), row("Release note", release), message,
         el("div", { style: "margin-top:0.75rem;display:flex;justify-content:flex-end" }, save),
       ].filter(Boolean)));
-      loadTargets().then((items) => {
-        target.replaceChildren(el("option", { value: "" }, "— choose PIM component or assembly —"), ...items.map((c) =>
-          el("option", { value: c.id, selected: mapping?.target_component_id === c.id ? "" : null }, `${c.name}${c.part_number ? ` · ${c.part_number}` : ""} (${c.type})`)));
-      }).catch((ex) => { target.replaceChildren(el("option", { value: "" }, "Could not load targets")); message.textContent = ex.message; });
+      paintTarget();
     }
 
     async function deactivate(mapping) {

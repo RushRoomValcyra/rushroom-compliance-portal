@@ -106,3 +106,33 @@ test("the key rows are banded, so the label and its button read as one row", () 
     "the rows are not wrapped, so :nth-child would count the section heading");
   assert.ok(/el\("div", \{ class: "key-row" \}/.test(app), "the rows do not use the banded class");
 });
+
+test("the PIM target is picked from a filterable list, not an 86-option select", () => {
+  const fn = app.match(/function editModal\(mapping, detectedSource = null\)[\s\S]*?\n    \}\n/);
+  assert.ok(fn, "editModal not found");
+  assert.ok(/pickComponentModal\(token, \{/.test(fn[0]), "the target is still chosen from a plain select");
+  assert.ok(!/target\.value/.test(fn[0]), "the save path still reads a select value");
+  assert.ok(/target_component_id: targetId/.test(fn[0]), "the chosen id is not what gets saved");
+  // A Dynamic BOM is a configuration, not something a key resolves to. The old
+  // select excluded them; losing that in the swap would be a silent widening.
+  assert.ok(/filter: \(c\) => c\.type !== "product_family"/.test(fn[0]),
+    "Dynamic BOMs are now offered as mapping targets");
+  // Editing an existing mapping must show what it currently points at.
+  assert.ok(/let chosen = mapping\?\.target \|\| null/.test(fn[0]),
+    "editing a mapping shows no current target until you pick a new one");
+  // And the function that draws it must exist — an earlier pass called it
+  // without defining it, which node --check cannot catch.
+  assert.ok(/const paintTarget = \(\) =>/.test(fn[0]), "paintTarget is called but never defined");
+});
+
+test("the picker can be narrowed by its caller", () => {
+  const picker = app.match(/function pickComponentModal\(token, opts = \{\}\)[\s\S]*?\n  \}\n/);
+  assert.ok(picker, "pickComponentModal not found");
+  assert.ok(/filter = null/.test(picker[0]), "the picker accepts no caller filter");
+  assert.ok(/\.filter\(\(c\) => !filter \|\| filter\(c\)\)/.test(picker[0]), "the filter is accepted but never applied");
+});
+
+test("nothing still loads a target list that no longer exists", () => {
+  // loadTargets() existed only to fill the removed select.
+  assert.ok(!/loadTargets/.test(app), "loadTargets survives with no caller");
+});

@@ -67,3 +67,39 @@ test("expanding and adding a child are separate permissions", () => {
   assert.ok(/const allowAddChild = activeTab !== "components"/.test(app),
     "the Parts tab gained a structure-editing button it did not have before");
 });
+
+// ---- Categories on Assemblies (PROP-065) -----------------------------------
+// The chips and the Category sort were gated to the Parts tab because an
+// assembly is not *required* to have a category. Three already carried one,
+// inherited through a copy, with no way to see or filter by it.
+
+test("categories are gated by one predicate, not three copies", () => {
+  assert.ok(/const bomTabHasCategories = \(tab\) => tab !== "dynamic";/.test(app),
+    "the predicate is missing");
+  // The main list, the add-child picker and pickComponentModal all ask this.
+  assert.ok([...app.matchAll(/bomTabHasCategories\(/g)].length >= 10,
+    "not every category gate routes through the predicate");
+  assert.equal([...app.matchAll(/tab !== "components"\s*\)\s*\{\s*\n\s*\w*[Cc]at/g)].length, 0,
+    "a chip bar is still hidden by a hard-coded Parts check");
+});
+
+test("the chip counts describe the tab you are on", () => {
+  // grouped.components on the Assemblies tab would have counted parts.
+  assert.equal([...app.matchAll(/const parts = grouped\.components \|\| \[\];/g)].length, 0,
+    "a chip bar still counts the Parts group regardless of tab");
+  assert.ok([...app.matchAll(/const parts = grouped\[(activeTab|state\.tab|pickState\.tab)\] \|\| \[\];/g)].length === 3,
+    "the three chip bars do not all count the active tab's group");
+});
+
+test("a category chosen on one tab does not follow you to another", () => {
+  // With chips on both tabs, a shared selection lands you on an empty list for
+  // a reason that happened on a different screen.
+  assert.ok(/const categoryByTab = \{ components: "all", assemblies: "all", dynamic: "all" \}/.test(app),
+    "the category selection is still shared across tabs");
+  assert.ok(/const curCategory = \(\) => categoryByTab\[activeTab\] \|\| "all"/.test(app),
+    "there is no per-tab accessor");
+  assert.ok(!/\bactiveCategory\b/.test(app), "the old shared variable is still referenced");
+  // Paging resets for the tab being filtered, not always for Parts.
+  assert.ok(/categoryByTab\[activeTab\] = id; tabPageShown\[activeTab\] = PAGE_SIZE/.test(app),
+    "choosing a category on Assemblies resets the Parts page counter");
+});

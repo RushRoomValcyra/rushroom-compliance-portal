@@ -3642,6 +3642,13 @@
   // picked — but it holds children and belongs with the assemblies everywhere
   // the UI groups by type. One definition, because five screens branch on this.
   const ASSEMBLY_TYPES = ["sub_assembly", "phantom_assembly"];
+  // PROP-065: categories apply to everything except a Dynamic BOM, which is a
+  // configuration rather than a thing with a part grouping. Assemblies were
+  // excluded from the category chips and the Category sort for no better
+  // reason than that they are not required to have one — and three of them
+  // already carried a category, inherited through a copy, with no way to see
+  // or filter by it. One predicate, because three screens ask this question.
+  const bomTabHasCategories = (tab) => tab !== "dynamic";
   const isPhantomType = (t) => t === "phantom_assembly";
   const bomTabOf = (c) => c.type === "product_family" ? "dynamic"
     : ASSEMBLY_TYPES.includes(c.type) ? "assemblies" : "components";
@@ -3726,7 +3733,11 @@
     const TAB_DEFS = BOM_TAB_DEFS;
 
     let activeTab = "components";
-    let activeCategory = "all";   // "all" | "none" | <category_id>
+    // Per tab, not shared: with the chips now on Assemblies too, carrying a
+    // Parts selection across would land you on an empty list for a reason that
+    // happened on a different screen.
+    const categoryByTab = { components: "all", assemblies: "all", dynamic: "all" };
+    const curCategory = () => categoryByTab[activeTab] || "all";   // "all" | "none" | <category_id>
     let sortKey = "name";         // any SORT_COLS key
     let sortDir = "asc";
     // What the list actually shows per row, so every visible column is sortable.
@@ -3858,9 +3869,9 @@
             // Name the file after what is actually in it, so three exports in a
             // downloads folder are still tellable apart.
             const tab = { components: "parts", assemblies: "assemblies", dynamic: "dynamic-boms" }[activeTab] || "bom";
-            const cat = activeTab === "components" && activeCategory !== "all"
-              ? "-" + (activeCategory === "none" ? "uncategorised"
-                  : ((partCategories.find((c) => c.id === activeCategory) || {}).name || "category")
+            const cat = bomTabHasCategories(activeTab) && curCategory() !== "all"
+              ? "-" + (curCategory() === "none" ? "uncategorised"
+                  : ((partCategories.find((c) => c.id === curCategory()) || {}).name || "category")
                       .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))
               : "";
             return `rushroom-${tab}${cat}`;
@@ -3927,22 +3938,25 @@
           onclick: () => { activeTab = td.id; renderAll(); },
         }, `${td.label} (${count})`);
       }));
-      // Category chips — Parts only. Counts come from the unfiltered Parts group,
-      // so a chip always shows how many it would reveal, not how many are showing.
-      if (activeTab !== "components") {
+      // Category chips — every tab except Dynamic BOMs. Counts come from the
+      // active tab's unfiltered group, so a chip always shows how many it would
+      // reveal rather than how many are showing.
+      if (!bomTabHasCategories(activeTab)) {
         catBarEl.style.display = "none";
         catBarEl.replaceChildren();
       } else {
         catBarEl.style.display = "flex";
-        const parts = grouped.components || [];
+        // Counts come from the ACTIVE tab's group, not always from Parts — on
+        // Assemblies the chips must describe assemblies.
+        const parts = grouped[activeTab] || [];
         const countFor = (id) => id === "all" ? parts.length
           : id === "none" ? parts.filter((c) => !c.category_id).length
           : parts.filter((c) => c.category_id === id).length;
         const chip = (id, label) => {
           const count = countFor(id);
           return bomChip(`${label} (${count})`, {
-            active: activeCategory === id, dim: !count,
-            onClick: () => { activeCategory = id; tabPageShown.components = PAGE_SIZE; renderAll(); },
+            active: curCategory() === id, dim: !count,
+            onClick: () => { categoryByTab[activeTab] = id; tabPageShown[activeTab] = PAGE_SIZE; renderAll(); },
           });
         };
         const chips = [chip("all", "All")];
@@ -3961,8 +3975,8 @@
       // List
       treeArea.replaceChildren();
       let items = grouped[activeTab] || [];
-      if (activeTab === "components" && activeCategory !== "all") {
-        items = items.filter((c) => activeCategory === "none" ? !c.category_id : c.category_id === activeCategory);
+      if (bomTabHasCategories(activeTab) && curCategory() !== "all") {
+        items = items.filter((c) => curCategory() === "none" ? !c.category_id : c.category_id === curCategory());
       }
 
       // Sort the filtered set, not the whole list, so the order you see is the
@@ -3976,7 +3990,7 @@
 
       // Column bar. Rebuilt per render because the active key and direction
       // are part of it, and because Category is meaningless outside Parts.
-      const cols = SORT_COLS.filter((c) => c.key !== "category" || activeTab === "components");
+      const cols = SORT_COLS.filter((c) => c.key !== "category" || bomTabHasCategories(activeTab));
       sortBarEl.replaceChildren(
         el("span", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-right:0.15rem" }, "Sort"),
         ...cols.map((c) => {
@@ -4007,8 +4021,8 @@
       expandableShown = [];
       if (!items.length) {
         const labels = { components: "parts", assemblies: "assemblies", dynamic: "dynamic BOMs" };
-        const catName = activeTab === "components" && activeCategory !== "all"
-          ? (activeCategory === "none" ? "Uncategorised" : categoryNameOf(activeCategory)) : null;
+        const catName = bomTabHasCategories(activeTab) && curCategory() !== "all"
+          ? (curCategory() === "none" ? "Uncategorised" : categoryNameOf(curCategory())) : null;
         const where = catName ? ` in ${catName}` : "";
         treeArea.append(el("div", { class: "notice", style: "margin-top:1rem" },
           searchQuery ? `No ${labels[activeTab]}${where} match "${searchQuery}".`
@@ -5414,7 +5428,7 @@
     const visible = () => {
       const q = (search.value || "").trim().toLowerCase();
       let items = bomGroupByType(candidates)[state.tab] || [];
-      if (state.tab === "components" && state.category !== "all") {
+      if (bomTabHasCategories(state.tab) && state.category !== "all") {
         items = items.filter((c) => state.category === "none" ? !c.category_id : c.category_id === state.category);
       }
       if (q) items = items.filter((c) => `${c.part_number} ${c.name}`.toLowerCase().includes(q));
@@ -5431,10 +5445,10 @@
           onclick: () => { state.tab = td.id; if (td.id !== "components") state.category = "all"; paintFilters(); paintList(); },
         }, `${td.label} (${(grouped[td.id] || []).length})`);
       }));
-      if (state.tab !== "components") { catBar.style.display = "none"; catBar.replaceChildren(); }
+      if (!bomTabHasCategories(state.tab)) { catBar.style.display = "none"; catBar.replaceChildren(); }
       else {
         catBar.style.display = "flex";
-        const parts = grouped.components || [];
+        const parts = grouped[state.tab] || [];
         const countFor = (id) => id === "all" ? parts.length
           : id === "none" ? parts.filter((c) => !c.category_id).length
           : parts.filter((c) => c.category_id === id).length;
@@ -5447,7 +5461,7 @@
         if (countFor("none")) chips.push(chip("none", "Uncategorised"));
         catBar.replaceChildren(...chips);
       }
-      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || state.tab === "components");
+      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || bomTabHasCategories(state.tab));
       sortBar.replaceChildren(
         el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "SORT"),
         ...cols.map((c) => bomChip(state.sortKey === c.key ? `${c.label} ${state.sortDir === "asc" ? "▲" : "▼"}` : c.label, {
@@ -5720,7 +5734,7 @@
     function visibleCandidates() {
       const q = (searchInput.value || "").trim().toLowerCase();
       let items = bomGroupByType(candidates)[pickState.tab] || [];
-      if (pickState.tab === "components" && pickState.category !== "all") {
+      if (bomTabHasCategories(pickState.tab) && pickState.category !== "all") {
         items = items.filter((c) => pickState.category === "none" ? !c.category_id : c.category_id === pickState.category);
       }
       if (q) items = items.filter((c) => `${c.part_number} ${c.name}`.toLowerCase().includes(q));
@@ -5741,12 +5755,12 @@
       // Categories apply to Parts only, exactly as in the BOM list. Counts come
       // from the unfiltered Parts group, so a chip says how many it would
       // reveal rather than how many are showing.
-      if (pickState.tab !== "components") {
+      if (!bomTabHasCategories(pickState.tab)) {
         pickCatBar.style.display = "none";
         pickCatBar.replaceChildren();
       } else {
         pickCatBar.style.display = "flex";
-        const parts = grouped.components || [];
+        const parts = grouped[pickState.tab] || [];
         const countFor = (id) => id === "all" ? parts.length
           : id === "none" ? parts.filter((c) => !c.category_id).length
           : parts.filter((c) => c.category_id === id).length;
@@ -5765,7 +5779,7 @@
         pickCatBar.replaceChildren(...chips);
       }
 
-      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || pickState.tab === "components");
+      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || bomTabHasCategories(pickState.tab));
       pickSortBar.replaceChildren(
         el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "SORT"),
         ...cols.map((c) => {
@@ -5907,7 +5921,7 @@
         // tabs, "no match" while five rows sit one tab away is exactly the dead
         // end this project keeps producing.
         const tabLabel = (BOM_TAB_DEFS.find((t) => t.id === pickState.tab) || {}).label || "components";
-        const catLabel = pickState.tab === "components" && pickState.category !== "all"
+        const catLabel = bomTabHasCategories(pickState.tab) && pickState.category !== "all"
           ? (pickState.category === "none" ? "Uncategorised" : categoryNameOf(pickState.category)) : null;
         const q = (searchInput.value || "").trim().toLowerCase();
         const elsewhere = BOM_TAB_DEFS
@@ -5919,7 +5933,7 @@
           }))
           .filter((x) => x.n > 0);
         // A category chip can hide rows just as effectively as a tab can.
-        const hiddenByCategory = pickState.tab === "components" && pickState.category !== "all"
+        const hiddenByCategory = bomTabHasCategories(pickState.tab) && pickState.category !== "all"
           ? (bomGroupByType(candidates).components || [])
               .filter((c) => !q || `${c.part_number} ${c.name}`.toLowerCase().includes(q)).length
           : 0;

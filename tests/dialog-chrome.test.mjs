@@ -241,9 +241,14 @@ test("the picker offers the same tabs, categories and sort as the list", () => {
   assert.ok(/BOM_SORT_COLS\.filter/.test(fn), "the picker has no sort controls");
   assert.ok(/bomSortComparator\(pickState\.sortKey, pickState\.sortDir\)/.test(fn),
     "the picker sorts differently from the list");
-  // Categories belong to Parts in both places.
-  assert.ok(/c\.key !== "category" \|\| pickState\.tab === "components"/.test(fn),
+  // Categories apply everywhere except Dynamic BOMs, and the picker must use
+  // the same predicate as the list rather than its own copy (PROP-065).
+  assert.ok(/c\.key !== "category" \|\| bomTabHasCategories\(pickState\.tab\)/.test(fn),
     "the picker offers a Category sort on tabs that have no categories");
+  assert.ok(/const bomTabHasCategories = \(tab\) => tab !== "dynamic";/.test(app),
+    "the predicate is not defined once");
+  assert.equal([...app.matchAll(/=== "components"\s*&&\s*\w*[Cc]ategory/g)].length, 0,
+    "a screen still hard-codes categories to the Parts tab");
   // Managing categories from inside this dialog would stack a second modal.
   assert.ok(!/openCategoryManager/.test(fn), "the picker opens the category manager over itself");
 });

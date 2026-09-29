@@ -57,13 +57,38 @@
       }
       return 0;
     };
+    // `header.offsetHeight` of 0 is a real answer when focus mode has hidden it;
+    // the 64px fallback is only for "there is no header element".
     const header = document.querySelector(".site-header");
-    root.style.setProperty("--header-h", ((header && header.offsetHeight) || 64) + "px");
+    root.style.setProperty("--header-h", (header ? header.offsetHeight : 64) + "px");
     root.style.setProperty("--tabs-h", firstVisible("#portal-app > .tabs") + "px");
     // Document order gives the outermost bar first, which is the one the
     // nested bar must clear.
     root.style.setProperty("--subtabs-h", firstVisible('[role="tabpanel"]:not([hidden]) .subtab-bar') + "px");
   }
+  // --- Focus mode (PROP-057) -------------------------------------------------
+  // The BOM tree sizes itself to `innerHeight - its own top`, so every pinned
+  // row above it is height the tree does not get. On a laptop the header and
+  // the three menu rows are ~240px — a quarter of the workspace. Focus mode
+  // gives that back.
+  //
+  // The MAIN tab bar deliberately stays: hiding it too would leave no way out
+  // of the screen whose toolbar holds the only toggle.
+  const CHROME_FOCUS_KEY = "rr.bomFocus";
+  const chromeFocusOn = () => document.documentElement.classList.contains("chrome-focus");
+  const chromeFocusPref = () => { try { return localStorage.getItem(CHROME_FOCUS_KEY) === "1"; } catch { return false; } };
+  function setChromeFocus(on, remember) {
+    document.documentElement.classList.toggle("chrome-focus", !!on);
+    // Remembered as a preference, not as page state: navigating away clears the
+    // class (see wireTabs and subTabs) so the header can never be hidden on a
+    // screen with no way to bring it back, but coming back to the tree restores
+    // what the user chose.
+    if (remember) { try { localStorage.setItem(CHROME_FOCUS_KEY, on ? "1" : "0"); } catch { /* private window */ } }
+    scheduleChromeMeasure();
+    // The tree measures its own top; it has just moved.
+    if (window.__pisSizeTreeArea) requestAnimationFrame(window.__pisSizeTreeArea);
+  }
+
   let chromeFrame = 0;
   function scheduleChromeMeasure() {
     if (chromeFrame) return;
@@ -831,6 +856,9 @@
       paneSubTab[key] = id;
       for (const k in btns) { const on = k === id; btns[k].classList.toggle("active", on); btns[k].setAttribute("aria-selected", on ? "true" : "false"); }
       const t = tabs.find((x) => x.id === id) || tabs[0];
+      // Cleared before the build, so a view that wants focus mode can turn it
+      // back on as it mounts (the BOM tree does).
+      setChromeFocus(false, false);
       body.replaceChildren(t.build());
       // The new body may itself contain a sub-tab bar — Product BOM does.
       scheduleChromeMeasure();
@@ -1012,7 +1040,9 @@
         const panel = document.getElementById(t.getAttribute("aria-controls"));
         if (panel) panel.hidden = !sel;
       }
-      // A different panel means a different sub-tab bar, or none at all.
+      // A different panel means a different sub-tab bar, or none at all — and
+      // focus mode must never survive into a screen that cannot undo it.
+      setChromeFocus(false, false);
       scheduleChromeMeasure();
     };
     tablist.addEventListener("click", (e) => { const t = e.target.closest('[role="tab"]'); if (t) { select(t); t.focus(); } });
@@ -3576,6 +3606,20 @@
   let openDetailComponentId = null;
   const categoryNameOf = (id) => (partCategories.find((c) => c.id === id) || {}).name || null;
 
+  // --- Where a part is fitted (PROP-056) -------------------------------------
+  // An EDGE property, not a component one: the same screw can be hub-fitted
+  // under one panel and site-fitted under another. Kept in step with the CHECK
+  // in migration 0036 and with FITTING_STAGES in portal-api.
+  //
+  // null is a third state, not a missing one — "nobody has decided" has to be
+  // distinguishable from "decided: hub", or the counts strip reports a
+  // confidence about the delivery that nobody actually has.
+  const FITTING_STAGES = [
+    { id: "hub",  short: "Hub",  label: "Assembled at the hub",  title: "Assembled at the logistics hub before delivery", colour: "#0369a1" },
+    { id: "site", short: "Site", label: "Installed on site",     title: "Fitted during physical installation on site",    colour: "#b45309" },
+  ];
+  const fittingStage = (id) => FITTING_STAGES.find((x) => x.id === id) || null;
+
   // --- Shared BOM list shaping (PROP-052) ------------------------------------
   // The BOM list and the add-child picker show the same rows and must offer the
   // same tabs, category chips and sort order. These live at module scope so
@@ -3594,8 +3638,20 @@
     { key: "lifecycle_status", label: "Status" },
   ];
 
+  // PROP-058: a phantom assembly is structural only — never built, stocked or
+  // picked — but it holds children and belongs with the assemblies everywhere
+  // the UI groups by type. One definition, because five screens branch on this.
+  const ASSEMBLY_TYPES = ["sub_assembly", "phantom_assembly"];
+  // PROP-065: categories apply to everything except a Dynamic BOM, which is a
+  // configuration rather than a thing with a part grouping. Assemblies were
+  // excluded from the category chips and the Category sort for no better
+  // reason than that they are not required to have one — and three of them
+  // already carried a category, inherited through a copy, with no way to see
+  // or filter by it. One predicate, because three screens ask this question.
+  const bomTabHasCategories = (tab) => tab !== "dynamic";
+  const isPhantomType = (t) => t === "phantom_assembly";
   const bomTabOf = (c) => c.type === "product_family" ? "dynamic"
-    : c.type === "sub_assembly" ? "assemblies" : "components";
+    : ASSEMBLY_TYPES.includes(c.type) ? "assemblies" : "components";
 
   function bomGroupByType(list) {
     const grouped = { components: [], assemblies: [], dynamic: [] };
@@ -3677,7 +3733,11 @@
     const TAB_DEFS = BOM_TAB_DEFS;
 
     let activeTab = "components";
-    let activeCategory = "all";   // "all" | "none" | <category_id>
+    // Per tab, not shared: with the chips now on Assemblies too, carrying a
+    // Parts selection across would land you on an empty list for a reason that
+    // happened on a different screen.
+    const categoryByTab = { components: "all", assemblies: "all", dynamic: "all" };
+    const curCategory = () => categoryByTab[activeTab] || "all";   // "all" | "none" | <category_id>
     let sortKey = "name";         // any SORT_COLS key
     let sortDir = "asc";
     // What the list actually shows per row, so every visible column is sortable.
@@ -3689,6 +3749,26 @@
     const PAGE_SIZE = 50;
     const tabPageShown = { components: PAGE_SIZE, assemblies: PAGE_SIZE, dynamic: PAGE_SIZE };
     const expandedTrees = {}; // compId → bom | "loading" | "error"
+    // The rows currently on screen, so Expand all / Collapse all act on what
+    // you can see rather than on 86 rows behind a "Load more".
+    let expandableShown = [];
+
+    async function expandAllShown() {
+      const targets = expandableShown.filter((c) => !expandedTrees[c.id]);
+      expandableShown.forEach((c) => { if (!expandedTrees[c.id]) expandedTrees[c.id] = "loading"; });
+      renderAll();
+      // In parallel: fifteen assemblies is fifteen getBom calls, and doing them
+      // one after another is fifteen round trips of waiting.
+      await Promise.all(targets.map(async (c) => {
+        try { expandedTrees[c.id] = await API.post(token, "getBom", { root_component_id: c.id, max_depth: 10 }); }
+        catch { expandedTrees[c.id] = "error"; }
+      }));
+      renderAll();
+    }
+    function collapseAllShown() {
+      expandableShown.forEach((c) => { delete expandedTrees[c.id]; });
+      renderAll();
+    }
 
     // Shared hover-preview tooltip — appended to body to avoid stacking-context issues
     // (position:fixed breaks inside any ancestor with transform/filter)
@@ -3706,6 +3786,17 @@
     // The list is cards, not a table, so there is no column header to click.
     // This bar plays that role: one control per sortable field.
     const sortBarEl = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;margin-top:0.6rem" });
+    // PROP-062: opening fifteen assemblies one arrow at a time is the same work
+    // the per-assembly Expand all already removes one level down. Built once
+    // and re-appended, because the bar is rebuilt on every render — and hidden
+    // when nothing on screen can expand, rather than offered as a dead control.
+    const expandAllBtn = el("button", { class: "btn btn-xs", type: "button",
+      title: "Open every row on screen that has something underneath it",
+      onclick: () => expandAllShown() }, "⌄ Expand all");
+    const collapseAllBtn = el("button", { class: "btn btn-xs", type: "button",
+      title: "Close every open row on screen",
+      onclick: () => collapseAllShown() }, "⌃ Collapse all");
+    const expandGroup = el("div", { style: "display:none;gap:0.3rem;margin-left:auto" }, [expandAllBtn, collapseAllBtn]);
     // The list scrolls inside its own region, so the toolbar, type tabs and
     // category chips above it stay put instead of scrolling away. Height is
     // measured rather than hard-coded: the chips row only exists on the Parts
@@ -3723,6 +3814,25 @@
     if (window.__pisSizeTreeArea) window.removeEventListener("resize", window.__pisSizeTreeArea);
     window.__pisSizeTreeArea = sizeTreeArea;
     window.addEventListener("resize", sizeTreeArea);
+
+    // PROP-057. Declared here rather than inline in the toolbar because it
+    // refers to itself in its own handler; a const used before its declaration
+    // throws, which this file has hit four times.
+    const focusToggle = el("button", {
+      class: "btn btn-sm", type: "button",
+      onclick: () => { setChromeFocus(!chromeFocusOn(), true); paintFocusToggle(); },
+    });
+    function paintFocusToggle() {
+      const on = chromeFocusOn();
+      focusToggle.textContent = on ? "⤡ Restore menus" : "⤢ Maximise workspace";
+      focusToggle.title = on
+        ? "Bring back the header and the menu rows"
+        : "Hide the header and menu rows to give the tree their height. The section tabs stay.";
+      focusToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    // Restore what the user last chose, now that the tree is the thing on screen.
+    setChromeFocus(chromeFocusPref(), false);
+    paintFocusToggle();
 
     let searchTimer = null;
     const searchInp = el("input", { type: "search", placeholder: "Search by name or part number…", class: "up-text",
@@ -3745,8 +3855,13 @@
 
     wrap.replaceChildren(
       el("div", { class: "pis-toolbar", style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap" }, [
-        el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => openAddComponent(token, (id, type) => { activeTab = type === "sub_assembly" ? "assemblies" : "components"; refreshTree(); }) }, "+ New BOM Node"),
+        el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => openAddComponent(token, (id, type) => { activeTab = bomTabOf({ type }); refreshTree(); }) }, "+ New BOM Node"),
+        // Search sits second: it is what this toolbar is used for most, and it
+        // was last in a row that wraps, so on a narrow window it fell to its
+        // own line behind four buttons nobody was reaching for.
+        searchInp,
         el("button", { class: "btn btn-sm", type: "button", onclick: () => refreshTree() }, "↺ Refresh"),
+        focusToggle,
         ...exportButtons(
           () => exportSet,
           () => BOM_EXPORT_COLUMNS((id) => (partCategories.find((c) => c.id === id) || {}).name || ""),
@@ -3754,9 +3869,9 @@
             // Name the file after what is actually in it, so three exports in a
             // downloads folder are still tellable apart.
             const tab = { components: "parts", assemblies: "assemblies", dynamic: "dynamic-boms" }[activeTab] || "bom";
-            const cat = activeTab === "components" && activeCategory !== "all"
-              ? "-" + (activeCategory === "none" ? "uncategorised"
-                  : ((partCategories.find((c) => c.id === activeCategory) || {}).name || "category")
+            const cat = bomTabHasCategories(activeTab) && curCategory() !== "all"
+              ? "-" + (curCategory() === "none" ? "uncategorised"
+                  : ((partCategories.find((c) => c.id === curCategory()) || {}).name || "category")
                       .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))
               : "";
             return `rushroom-${tab}${cat}`;
@@ -3773,7 +3888,6 @@
               onProgress: progress,
             }),
           }),
-        searchInp,
       ]),
       tabBarEl,
       summaryEl,
@@ -3824,22 +3938,25 @@
           onclick: () => { activeTab = td.id; renderAll(); },
         }, `${td.label} (${count})`);
       }));
-      // Category chips — Parts only. Counts come from the unfiltered Parts group,
-      // so a chip always shows how many it would reveal, not how many are showing.
-      if (activeTab !== "components") {
+      // Category chips — every tab except Dynamic BOMs. Counts come from the
+      // active tab's unfiltered group, so a chip always shows how many it would
+      // reveal rather than how many are showing.
+      if (!bomTabHasCategories(activeTab)) {
         catBarEl.style.display = "none";
         catBarEl.replaceChildren();
       } else {
         catBarEl.style.display = "flex";
-        const parts = grouped.components || [];
+        // Counts come from the ACTIVE tab's group, not always from Parts — on
+        // Assemblies the chips must describe assemblies.
+        const parts = grouped[activeTab] || [];
         const countFor = (id) => id === "all" ? parts.length
           : id === "none" ? parts.filter((c) => !c.category_id).length
           : parts.filter((c) => c.category_id === id).length;
         const chip = (id, label) => {
           const count = countFor(id);
           return bomChip(`${label} (${count})`, {
-            active: activeCategory === id, dim: !count,
-            onClick: () => { activeCategory = id; tabPageShown.components = PAGE_SIZE; renderAll(); },
+            active: curCategory() === id, dim: !count,
+            onClick: () => { categoryByTab[activeTab] = id; tabPageShown[activeTab] = PAGE_SIZE; renderAll(); },
           });
         };
         const chips = [chip("all", "All")];
@@ -3858,8 +3975,8 @@
       // List
       treeArea.replaceChildren();
       let items = grouped[activeTab] || [];
-      if (activeTab === "components" && activeCategory !== "all") {
-        items = items.filter((c) => activeCategory === "none" ? !c.category_id : c.category_id === activeCategory);
+      if (bomTabHasCategories(activeTab) && curCategory() !== "all") {
+        items = items.filter((c) => curCategory() === "none" ? !c.category_id : c.category_id === curCategory());
       }
 
       // Sort the filtered set, not the whole list, so the order you see is the
@@ -3873,7 +3990,7 @@
 
       // Column bar. Rebuilt per render because the active key and direction
       // are part of it, and because Category is meaningless outside Parts.
-      const cols = SORT_COLS.filter((c) => c.key !== "category" || activeTab === "components");
+      const cols = SORT_COLS.filter((c) => c.key !== "category" || bomTabHasCategories(activeTab));
       sortBarEl.replaceChildren(
         el("span", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-right:0.15rem" }, "Sort"),
         ...cols.map((c) => {
@@ -3895,11 +4012,17 @@
             },
           }, active ? `${c.label} ${sortDir === "asc" ? "▲" : "▼"}` : c.label);
         }),
+        expandGroup,
       );
+      // Reset each render; the row pass below decides whether it is shown. The
+      // list is cleared too, or an empty search would leave the buttons acting
+      // on rows that are no longer on screen.
+      expandGroup.style.display = "none";
+      expandableShown = [];
       if (!items.length) {
         const labels = { components: "parts", assemblies: "assemblies", dynamic: "dynamic BOMs" };
-        const catName = activeTab === "components" && activeCategory !== "all"
-          ? (activeCategory === "none" ? "Uncategorised" : categoryNameOf(activeCategory)) : null;
+        const catName = bomTabHasCategories(activeTab) && curCategory() !== "all"
+          ? (curCategory() === "none" ? "Uncategorised" : categoryNameOf(curCategory())) : null;
         const where = catName ? ` in ${catName}` : "";
         treeArea.append(el("div", { class: "notice", style: "margin-top:1rem" },
           searchQuery ? `No ${labels[activeTab]}${where} match "${searchQuery}".`
@@ -3910,8 +4033,21 @@
       }
       requestAnimationFrame(sizeTreeArea);
       const shown = Math.min(tabPageShown[activeTab], items.length);
-      const allowExpand = activeTab !== "components";
-      items.slice(0, shown).forEach((comp) => treeArea.append(renderRootRow(comp, allowExpand)));
+      // Expansion is gated per row by comp.has_children, so this no longer
+      // needs a tab gate. The Parts tab was "always flat" from a time when a
+      // part could not hold structure — now one can (S Plinth holds two
+      // children), and keeping it flat left that structure with no door on the
+      // tab where the part actually lives.
+      const shownItems = items.slice(0, shown);
+      expandableShown = shownItems.filter((c) => c.has_children);
+      const allowAddChild = activeTab !== "components";
+      shownItems.forEach((comp) => treeArea.append(renderRootRow(comp, true, allowAddChild)));
+      // "flex", not "": the group is a flex row, and clearing the property
+      // would drop it back to block and stack the two buttons.
+      expandGroup.style.display = expandableShown.length ? "flex" : "none";
+      const openCount = expandableShown.filter((c) => expandedTrees[c.id]).length;
+      expandAllBtn.disabled = openCount === expandableShown.length;
+      collapseAllBtn.disabled = openCount === 0;
       if (items.length > shown) {
         const remaining = items.length - shown;
         treeArea.append(el("div", { style: "text-align:center;padding:0.75rem" },
@@ -3920,9 +4056,12 @@
       }
     }
 
-    function renderRootRow(comp, allowExpand = false) {
+    // allowExpand and allowAddChild were one flag. They are different questions:
+    // a part that holds children should open where it lives, but the Parts tab
+    // is a catalogue and does not want a structure-editing button on all 86 rows.
+    function renderRootRow(comp, allowExpand = false, allowAddChild = false) {
       const STATUS_COLOR = { active: "#2fa564", inactive: "#8b93a1", replaced: "#e5a326", flagged: "#e05454" };
-      const TYPE_COLOR   = { part: "#2fa564", raw_material: "#8b93a1", sub_assembly: "#4a9eed", finished_good: "#a855f7", spare_part: "#f59e0b", product_family: "#e05454" };
+      const TYPE_COLOR   = { part: "#2fa564", raw_material: "#8b93a1", sub_assembly: "#4a9eed", phantom_assembly: "#0d9488", finished_good: "#a855f7", spare_part: "#f59e0b", product_family: "#e05454" };
       const sfg = STATUS_COLOR[comp.lifecycle_status] || "#888";
       const tfg = TYPE_COLOR[comp.type] || "#888";
 
@@ -4052,7 +4191,7 @@
         comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
         (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
-        role === "rushroom" && allowExpand ? el("button", {
+        role === "rushroom" && allowAddChild ? el("button", {
           class: "btn btn-sm", type: "button",
           style: "padding:0 6px;font-size:0.75rem;flex-shrink:0",
           title: "Add child",
@@ -4061,23 +4200,10 @@
         role === "rushroom" ? el("button", {
           class: "btn btn-sm", type: "button",
           style: "padding:0 7px;font-size:0.8125rem;line-height:1;flex-shrink:0",
-          title: "Duplicate — copies the spec fields, not documents or images",
-          onclick: async (ev) => {
-            ev.stopPropagation();
-            ev.target.disabled = true; ev.target.textContent = "…";
-            try {
-              const r = await API.post(token, "duplicateComponent", { component_id: comp.id });
-              await refreshTree();
-              // Open the copy straight away: the point of duplicating is to
-              // change something, and without this you have to find it first.
-              openComponentDetail(r.id, token, detailPanel, {
-                ...comp, id: r.id, name: r.name, part_number: r.part_number, lifecycle_status: "inactive",
-              }, role);
-            } catch (ex) {
-              ev.target.disabled = false; ev.target.textContent = "⧉";
-              alert(`Copy failed: ${ex.message}`);
-            }
-          },
+          title: comp.has_children
+            ? "Copy — takes the structure underneath with it, and lets you swap parts as it goes"
+            : "Copy this part",
+          onclick: (ev) => { ev.stopPropagation(); copyAssemblyModal(comp, token, refreshTree, role, detailPanel); },
         }, "⧉") : null,
         el("button", {
           class: "btn btn-sm", type: "button",
@@ -4206,20 +4332,20 @@
       // qty is the rolled-up quantity through the tree; edgeQty is what THIS
       // edge carries. The column shows the roll-up, but only edgeQty is editable
       // — editing the roll-up would silently write the wrong number.
-      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty) {
+      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage) {
         const n = nodeMap[nodeId];
         if (!n) return;
         const children = childrenOf[nodeId] || [];
-        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty });
+        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty, edgeStage: edgeStage ?? null });
         if (collapsed.has(posNum)) return;
         children.forEach((e, i) => {
-          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity);
+          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity, e.fitting_stage);
         });
       }
       // Root is already shown as the list-row header — start from its children
       const topEdges = childrenOf[rootId] || [];
       topEdges.forEach((e, i) => {
-        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity);
+        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity, e.fitting_stage);
       });
       return rows;
     }
@@ -4255,16 +4381,41 @@
 
       // Column header
       // Expand / Collapse all controls
-    wrap.append(el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.4rem" }, [
+    // PROP-056: the whole tree, not just the rows currently expanded — a
+    // collapsed sub-assembly still ships, and a count that changed when you
+    // collapsed something would be describing the screen rather than the
+    // delivery. "not set" is counted out loud on purpose: an unanswered
+    // question that looks like an answer is how a part gets left in the van.
+    const stageTally = (() => {
+      const t = { hub: 0, site: 0, unset: 0 };
+      (edges || []).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "unset"] += 1; });
+      return t;
+    })();
+    const stageStrip = el("div", { style: "display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap" },
+      stageTally.hub + stageTally.site + stageTally.unset ? [
+        el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "FITTED"),
+        ...FITTING_STAGES.map((x) => el("span", {
+          title: x.title,
+          style: `font-size:0.6875rem;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap;color:${x.colour};border:1px solid ${x.colour}55;background:${x.colour}12${stageTally[x.id] ? "" : ";opacity:0.45"}`,
+        }, `${stageTally[x.id]} ${x.short.toLowerCase()}`)),
+        stageTally.unset ? el("span", {
+          title: "Nobody has said where these are fitted — they will not appear on either crew's list",
+          style: "font-size:0.6875rem;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
+        }, `${stageTally.unset} not set`) : null,
+      ].filter(Boolean) : []);
+
+    wrap.append(el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.4rem;align-items:center;flex-wrap:wrap" }, [
       el("button", { class: "btn btn-sm", type: "button", onclick: () => { collapsed.clear(); render(); } }, "Expand all"),
       el("button", { class: "btn btn-sm", type: "button", onclick: () => { collapsed.clear(); buildRows().filter((r) => r.hasChildren).forEach((r) => collapsed.add(r.posNum)); render(); } }, "Collapse all"),
+      el("span", { style: "flex:1" }),
+      stageStrip,
     ]));
 
     wrap.append(el("div", {
-        style: "display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
-      }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 3 ? "text-align:center" : "" }, t))));
+        style: "display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
+      }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Fitted", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 4 ? "text-align:center" : "" }, t))));
 
-      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty }) => {
+      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage }) => {
         const isCollapsed = collapsed.has(posNum);
         const isFamily = n.type === "product_family";
         // PROP-036 — guards say what they MEAN. `depth` is positional only (it
@@ -4336,6 +4487,52 @@
           return box;
         };
 
+        // PROP-056: where this occurrence is fitted. Click to change; a select
+        // rather than a cycling badge, because with three states a cycle makes
+        // you click twice to undo a mis-click and gives no hint what comes next.
+        const stageCell = () => {
+          const box = el("div", { "data-row-control": "", style: "display:flex;justify-content:center" });
+          const show = (current) => {
+            const st = fittingStage(current);
+            if (!isTreeRow) { box.replaceChildren(); return; }
+            box.replaceChildren(el("button", {
+              class: "btn btn-xs", type: "button",
+              title: st ? `${st.title} — click to change` : "Nobody has said where this is fitted — click to set",
+              style: "font-size:0.6875rem;padding:1px 7px;border-radius:999px;white-space:nowrap;"
+                + (st ? `color:${st.colour};border-color:${st.colour}55;background:${st.colour}12;font-weight:700`
+                      : "color:var(--muted,#8b93a1);border-style:dashed;opacity:0.8"),
+              onclick: (ev) => { ev.stopPropagation(); edit(current); },
+            }, st ? st.short : "—"));
+          };
+          const edit = (current) => {
+            const sel = el("select", {
+              class: "up-text", "aria-label": "Where this part is fitted",
+              style: "font-size:0.6875rem;padding:1px 3px;max-width:6rem;box-sizing:border-box",
+            }, [
+              el("option", { value: "", selected: current ? null : "selected" }, "— not set —"),
+              ...FITTING_STAGES.map((x) => el("option", { value: x.id, selected: current === x.id ? "selected" : null }, x.label)),
+            ]);
+            let settled = false;
+            const commit = async () => {
+              if (settled) return;
+              settled = true;
+              const next = sel.value || null;
+              if (next === (current ?? null)) { show(current); return; }
+              sel.disabled = true;
+              try { await API.post(token, "setEdgeFittingStage", { edge_id: edgeId, fitting_stage: next }); onRefresh(); }
+              catch (ex) { settled = false; sel.disabled = false; alert(`Failed: ${ex.message}`); show(current); }
+            };
+            sel.onchange = commit;
+            sel.onblur = () => { if (!settled) show(current); };
+            sel.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Escape") { settled = true; show(current); } };
+            sel.onclick = (ev) => ev.stopPropagation();
+            box.replaceChildren(sel);
+            sel.focus();
+          };
+          show(edgeStage);
+          return box;
+        };
+
         const reorderBtn = (dir) => {
           const blocked = sibCount <= 1
             ? "Only child — nothing to reorder"
@@ -4375,12 +4572,21 @@
         const familyBadge = isFamily
           ? el("span", { style: "font-size:0.6875rem;font-weight:700;background:#2fa56420;color:#2fa564;border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;margin-left:4px" }, "DYNAMIC BOM")
           : null;
+        // PROP-058: inside a tree a phantom looks exactly like a sub-assembly,
+        // and the difference — that it is never built, stocked or picked —
+        // matters most precisely there. Same treatment as DYNAMIC BOM.
+        const phantomBadge = isPhantomType(n.type)
+          ? el("span", {
+              title: "Phantom assembly — structural only. It is never built or stocked; its children are the real parts.",
+              style: "font-size:0.6875rem;font-weight:700;background:#0d948820;color:#0d9488;border:1px dashed #0d948866;border-radius:4px;padding:0 5px;flex-shrink:0;white-space:nowrap;margin-left:4px",
+            }, "PHANTOM")
+          : null;
 
         // Component cell: connector + toggle | name + badges (line 1) / part# (line 2)
         const nameBlock = el("div", { style: "min-width:0;flex:1;overflow:hidden" }, [
           el("div", { style: "display:flex;align-items:center;gap:0.2rem;min-width:0" }, [
             el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, n.name),
-            familyBadge, condTag,
+            familyBadge, phantomBadge, condTag,
           ].filter(Boolean)),
           el("div", { style: "font-family:monospace;font-size:0.6875rem;color:var(--muted,#8b93a1);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number),
         ]);
@@ -4391,7 +4597,7 @@
         ]);
 
         const row = el("div", {
-          style: `display:grid;grid-template-columns:6rem 1fr 4rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
+          style: `display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
           onmouseenter: (ev) => { ev.currentTarget.style.background = "var(--bg-2,rgba(0,0,0,0.03))"; },
           onmouseleave: (ev) => { ev.currentTarget.style.background = ""; },
           ondblclick: (ev) => {
@@ -4403,6 +4609,7 @@
           el("span", { style: "font-family:monospace;font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1)" }, posNum),
           compCell,
           qtyCell(),
+          stageCell(),
           el("div", { style: "display:flex;justify-content:center" }, lifecycleBadge(n.lifecycle_status)),
           el("div", { "data-row-control": "", style: "display:flex;gap:0.2rem;flex-shrink:0;flex-wrap:nowrap" }, [
             // ⚙ variant-configure button hidden until import integration is built (PROP-018)
@@ -4900,7 +5107,7 @@
     });
     return sel;
   }
-  const categoryRequiredFor = (type) => type !== "sub_assembly" && type !== "product_family";
+  const categoryRequiredFor = (type) => !ASSEMBLY_TYPES.includes(type) && type !== "product_family";
 
   function openCategoryManager(token, onRefresh) {
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
@@ -5200,6 +5407,281 @@
     mo.observe(document.body, { childList: true, subtree: true });
   }
 
+  // --- Pick one component (PROP-060) -----------------------------------------
+  // A single-select picker over the same rows, tabs and sort as the BOM list.
+  // Separate from openAddChildModal, which is a multi-select that also writes
+  // edges — this one only answers "which component?" and hands it back.
+  function pickComponentModal(token, opts = {}) {
+    const { title = "Choose a component", excludeIds = [], hint = "", filter = null, onPick } = opts;
+    const exclude = new Set(excludeIds);
+    const box = el("div", {});
+    const close = openModal(title, box);
+
+    const state = { tab: "components", category: "all", sortKey: "name", sortDir: "asc" };
+    const search = el("input", { class: "up-text", type: "text", placeholder: "Search by part # or name…", style: "width:100%;margin-bottom:0.4rem;flex-shrink:0" });
+    const tabBar  = el("div", { style: "display:flex;gap:0;border-bottom:2px solid var(--border,#e2e8f0);flex-shrink:0;margin-bottom:0.4rem" });
+    const catBar  = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;flex-shrink:0;margin-bottom:0.4rem" });
+    const sortBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;flex-shrink:0;margin-bottom:0.4rem" });
+    const listEl  = el("div", { style: "flex:1;min-height:180px;max-height:46vh;overflow-y:auto;border:1px solid var(--border,#2d3748);border-radius:6px" });
+    let candidates = [];
+
+    const visible = () => {
+      const q = (search.value || "").trim().toLowerCase();
+      let items = bomGroupByType(candidates)[state.tab] || [];
+      if (bomTabHasCategories(state.tab) && state.category !== "all") {
+        items = items.filter((c) => state.category === "none" ? !c.category_id : c.category_id === state.category);
+      }
+      if (q) items = items.filter((c) => `${c.part_number} ${c.name}`.toLowerCase().includes(q));
+      return items.slice().sort(bomSortComparator(state.sortKey, state.sortDir));
+    };
+
+    function paintFilters() {
+      const grouped = bomGroupByType(candidates);
+      tabBar.replaceChildren(...BOM_TAB_DEFS.map((td) => {
+        const active = state.tab === td.id;
+        return el("button", {
+          type: "button",
+          style: `padding:0.3rem 0.8rem;font-size:0.75rem;font-weight:600;border:none;background:transparent;cursor:pointer;color:${active ? "var(--accent,#2fa564)" : "var(--muted,#888)"};border-bottom:${active ? "2px solid var(--accent,#2fa564)" : "2px solid transparent"};margin-bottom:-2px`,
+          onclick: () => { state.tab = td.id; if (td.id !== "components") state.category = "all"; paintFilters(); paintList(); },
+        }, `${td.label} (${(grouped[td.id] || []).length})`);
+      }));
+      if (!bomTabHasCategories(state.tab)) { catBar.style.display = "none"; catBar.replaceChildren(); }
+      else {
+        catBar.style.display = "flex";
+        const parts = grouped[state.tab] || [];
+        const countFor = (id) => id === "all" ? parts.length
+          : id === "none" ? parts.filter((c) => !c.category_id).length
+          : parts.filter((c) => c.category_id === id).length;
+        const chip = (id, label) => bomChip(`${label} (${countFor(id)})`, {
+          active: state.category === id, dim: !countFor(id),
+          onClick: () => { state.category = id; paintFilters(); paintList(); },
+        });
+        const chips = [chip("all", "All")];
+        partCategories.forEach((c) => chips.push(chip(c.id, c.name)));
+        if (countFor("none")) chips.push(chip("none", "Uncategorised"));
+        catBar.replaceChildren(...chips);
+      }
+      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || bomTabHasCategories(state.tab));
+      sortBar.replaceChildren(
+        el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "SORT"),
+        ...cols.map((c) => bomChip(state.sortKey === c.key ? `${c.label} ${state.sortDir === "asc" ? "▲" : "▼"}` : c.label, {
+          active: state.sortKey === c.key,
+          onClick: () => {
+            if (state.sortKey === c.key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+            else { state.sortKey = c.key; state.sortDir = "asc"; }
+            paintFilters(); paintList();
+          },
+        })),
+      );
+    }
+
+    function paintList() {
+      const rows = visible();
+      if (!rows.length) {
+        const tabLabel = (BOM_TAB_DEFS.find((t) => t.id === state.tab) || {}).label || "components";
+        const elsewhere = BOM_TAB_DEFS.filter((t) => t.id !== state.tab)
+          .map((t) => ({ tab: t, n: (bomGroupByType(candidates)[t.id] || []).length })).filter((x) => x.n);
+        listEl.replaceChildren(el("div", { style: "padding:0.6rem;color:var(--muted,#8b93a1);font-size:0.875rem;display:flex;flex-direction:column;gap:0.4rem;align-items:flex-start" }, [
+          el("span", {}, `No ${tabLabel} match.`),
+          ...elsewhere.map((x) => bomChip(`${x.n} in ${x.tab.label}`, {
+            onClick: () => { state.tab = x.tab.id; state.category = "all"; paintFilters(); paintList(); },
+          })),
+        ]));
+        return;
+      }
+      listEl.replaceChildren(...rows.map((c) => el("div", {
+        role: "button",
+        style: "padding:0.35rem 0.6rem;cursor:pointer;border-bottom:1px solid var(--border,#2d3748);display:flex;gap:0.5rem;align-items:center",
+        onclick: () => { close(); if (onPick) onPick(c); },
+      }, [
+        thumbBox(thumbMap[c.id]),
+        el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, c.part_number),
+        el("span", { style: "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: c.name }, c.name),
+        lifecycleBadge(c.lifecycle_status),
+      ])));
+    }
+
+    search.oninput = () => paintList();
+    setChildren(box,
+      hint ? el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, hint) : null,
+      tabBar, catBar, sortBar, search, listEl,
+      el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.6rem" },
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel")),
+    );
+    listEl.replaceChildren(el("div", { class: "loading", style: "padding:0.7rem" }, "Loading components…"));
+    (async () => {
+      try {
+        const r = await API.post(token, "listComponents", {});
+        candidates = (r.components || [])
+          .filter((c) => !exclude.has(c.id))
+          .filter((c) => !filter || filter(c));
+        paintFilters();
+        paintList();
+        search.focus();
+      } catch (ex) {
+        listEl.replaceChildren(el("div", { class: "error", style: "padding:0.7rem" }, ex.message));
+      }
+    })();
+  }
+
+  // --- Copy an assembly with its structure (PROP-059) ------------------------
+  // Building an assembly by hand is the slow part of this system, and the usual
+  // job is "the same thing with two parts swapped". The old ⧉ copied the node
+  // and nothing else, so copying an assembly handed you an empty shell.
+  //
+  // The dialog exists because a deep copy writes several registry rows and
+  // undoing that by hand is tedious — and because what is cloned versus shared
+  // is a real decision the user should see before it happens, not after.
+  function copyAssemblyModal(comp, token, onRefresh, role, detailPanel) {
+    const box = el("div", {});
+    // "Copy assembly" over a plain part was simply wrong. Structure OR an
+    // assembly type decides: a `part` that holds children really is being
+    // copied as an assembly, and an empty sub-assembly still is one.
+    const isAssemblyLike = !!comp.has_children || ASSEMBLY_TYPES.includes(comp.type);
+    const close = openModal(isAssemblyLike ? "Copy assembly" : "Copy part", box);
+
+    const nameInput = el("input", { class: "up-text", type: "text", style: "width:100%;box-sizing:border-box" });
+    // Deliberately not class="error": that class carries 1.25rem of padding and
+    // a dashed border, so an empty one renders as a large empty box.
+    const err = el("div", { style: "min-height:1.2rem;font-size:0.8125rem;margin-top:0.4rem;color:#e05454" }, "");
+    const go = el("button", { class: "btn btn-primary btn-sm", type: "button", disabled: true }, "Copy");
+    const body = el("div", { style: "margin:0.6rem 0" }, el("div", { class: "loading" }, "Working out what this will copy…"));
+
+    // PROP-060: { sourceId: {id, name, part_number} }. Declared here and applied
+    // by the server as the copy is written, so a replaced branch is never cloned
+    // — the S/M/L job is "copy S, use the M panel and the M plinth", and doing
+    // the swap afterwards would leave the S clones behind as litter.
+    const subs = {};
+    let userNamed = false;
+    nameInput.oninput = () => { userNamed = true; };
+
+    const rowLine = (r, tone, extra) => el("div", {
+      style: "display:flex;gap:0.5rem;align-items:center;padding:0.28rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem;flex-wrap:wrap",
+    }, [
+      thumbBox(thumbMap[r.id]),
+      el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, r.part_number || "—"),
+      el("span", { style: "flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: r.name }, r.name),
+      el("span", { style: `font-size:0.6875rem;font-weight:700;color:${tone}` }, r.type || ""),
+      ...(extra || []),
+    ].filter(Boolean));
+
+    const replaceBtn = (r) => el("button", {
+      class: "btn btn-xs", type: "button", title: `Use a different component instead of "${r.name}"`,
+      onclick: () => pickComponentModal(token, {
+        title: `Replace “${r.name}”`,
+        hint: "The copy will point at this component instead. The original assembly is not touched.",
+        // Never offer the thing being replaced, nor the assembly being copied.
+        excludeIds: [r.id, comp.id],
+        onPick: (picked) => { subs[r.id] = { id: picked.id, name: picked.name, part_number: picked.part_number }; replan(); },
+      }),
+    }, "Replace…");
+
+    async function replan() {
+      setChildren(body, el("div", { class: "loading" }, "Working out what this will copy…"));
+      go.disabled = true;
+      let plan;
+      try {
+        plan = await API.post(token, "copyAssembly", {
+          component_id: comp.id, dry_run: true,
+          substitutions: Object.fromEntries(Object.entries(subs).map(([from, to]) => [from, to.id])),
+        });
+      } catch (ex) {
+        setChildren(body, el("div", { class: "error" }, `Couldn't work out the copy: ${ex.message}`));
+        return;
+      }
+      if (!userNamed) nameInput.value = plan.suggested_name || `${comp.name} - copy`;
+      go.disabled = false;
+
+      const clone = plan.will_clone || [], share = plan.will_share || [], swap = plan.will_replace || [];
+      const listOf = (rows, tone, withReplace) => el("div", {
+        style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem",
+      }, rows.length
+        // Never on the root. Replacing the thing you are copying is not a copy,
+        // the server refuses it, and the button offered a dead end.
+        ? rows.map((r) => rowLine(r, tone, withReplace && r.id !== comp.id ? [replaceBtn(r)] : null))
+        : [el("div", { class: "muted", style: "padding:0.5rem;font-size:0.8125rem" }, "None.")]);
+
+      // A part with nothing under it gets none of this. One row in the cloned
+      // list, an empty reused list, a zero link count and a Replace button
+      // pointing at the thing being copied is noise dressed as detail.
+      if (!swap.length && clone.length === 1 && !share.length && !plan.edge_count) {
+        setChildren(body,
+          el("p", { class: "muted", style: "margin:0;font-size:0.8125rem" },
+            "Nothing is linked under this part, so the copy is a single new component. Its specifications come across; documents, drawings and images stay on the original."),
+        );
+        return;
+      }
+
+      setChildren(body,
+        el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, [
+          "Anything holding structure is copied so you can edit it freely; leaf parts are ",
+          el("strong", {}, "reused"),
+          ". Use ", el("strong", {}, "Replace…"), " to swap one for another — an S assembly becomes an M one without ever creating the S copies.",
+        ]),
+        el("div", { style: "display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem" }, [
+          bomChip(`${clone.length} new component${clone.length === 1 ? "" : "s"}`, { active: true }),
+          bomChip(`${share.length} reused`, {}),
+          swap.length ? bomChip(`${swap.length} replaced`, { active: true }) : null,
+          bomChip(`${plan.edge_count || 0} link${plan.edge_count === 1 ? "" : "s"}`, {}),
+        ].filter(Boolean)),
+
+        swap.length ? el("div", { style: "font-size:0.8125rem;font-weight:600" }, "Replaced") : null,
+        swap.length ? el("div", { style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem" },
+          swap.map((r) => rowLine(r, "#b45309", [
+            el("span", { style: "font-size:0.8125rem;color:var(--accent,#2fa564);font-weight:600" }, `→ ${r.with?.name ?? ""}`),
+            el("button", {
+              class: "btn btn-xs", type: "button", title: "Undo this replacement",
+              onclick: () => { delete subs[r.id]; replan(); },
+            }, "✕"),
+          ]))) : null,
+
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Copied as new components"),
+        listOf(clone, "#2fa564", true),
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Reused as they are"),
+        listOf(share, "var(--muted,#8b93a1)", true),
+        el("p", { class: "muted", style: "margin:0.6rem 0 0;font-size:0.75rem" },
+          "Specifications come across. Documents, drawings and images do not — they stay on the originals."),
+      );
+    }
+    replan();
+
+    go.onclick = async () => {
+      err.textContent = "";
+      go.disabled = true; go.textContent = "Copying…";
+      try {
+        const r = await API.post(token, "copyAssembly", {
+          component_id: comp.id, name: nameInput.value.trim() || undefined,
+          substitutions: Object.fromEntries(Object.entries(subs).map(([from, to]) => [from, to.id])),
+        });
+        close();
+        await onRefresh();
+        // Open the copy straight away: the point of copying is to change
+        // something, and without this you have to find it first.
+        openComponentDetail(r.id, token, detailPanel, {
+          ...comp, id: r.id, name: r.name, part_number: r.part_number, lifecycle_status: "inactive",
+        }, role);
+      } catch (ex) {
+        err.textContent = ex.message;
+        go.disabled = false; go.textContent = "Copy";
+      }
+    };
+
+    setChildren(box,
+      el("p", { class: "muted", style: "margin:0 0 0.6rem;font-size:0.8125rem" },
+        `Copying “${comp.name}” (${comp.part_number || "no part number"}).`),
+      el("label", { style: "display:block;font-size:0.8125rem;font-weight:600;margin-bottom:0.2rem" }, "Name for the copy"),
+      nameInput,
+      body,
+      err,
+      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem" }, [
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+        go,
+      ]),
+    );
+    nameInput.focus();
+    nameInput.select();
+  }
+
   // --- Add-child modal: link existing OR create new and link ---------------
   function openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, opts) {
     const linkExistingOnly = !!(opts && opts.linkExistingOnly);
@@ -5252,7 +5734,7 @@
     function visibleCandidates() {
       const q = (searchInput.value || "").trim().toLowerCase();
       let items = bomGroupByType(candidates)[pickState.tab] || [];
-      if (pickState.tab === "components" && pickState.category !== "all") {
+      if (bomTabHasCategories(pickState.tab) && pickState.category !== "all") {
         items = items.filter((c) => pickState.category === "none" ? !c.category_id : c.category_id === pickState.category);
       }
       if (q) items = items.filter((c) => `${c.part_number} ${c.name}`.toLowerCase().includes(q));
@@ -5273,12 +5755,12 @@
       // Categories apply to Parts only, exactly as in the BOM list. Counts come
       // from the unfiltered Parts group, so a chip says how many it would
       // reveal rather than how many are showing.
-      if (pickState.tab !== "components") {
+      if (!bomTabHasCategories(pickState.tab)) {
         pickCatBar.style.display = "none";
         pickCatBar.replaceChildren();
       } else {
         pickCatBar.style.display = "flex";
-        const parts = grouped.components || [];
+        const parts = grouped[pickState.tab] || [];
         const countFor = (id) => id === "all" ? parts.length
           : id === "none" ? parts.filter((c) => !c.category_id).length
           : parts.filter((c) => c.category_id === id).length;
@@ -5297,7 +5779,7 @@
         pickCatBar.replaceChildren(...chips);
       }
 
-      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || pickState.tab === "components");
+      const cols = BOM_SORT_COLS.filter((c) => c.key !== "category" || bomTabHasCategories(pickState.tab));
       pickSortBar.replaceChildren(
         el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "SORT"),
         ...cols.map((c) => {
@@ -5439,7 +5921,7 @@
         // tabs, "no match" while five rows sit one tab away is exactly the dead
         // end this project keeps producing.
         const tabLabel = (BOM_TAB_DEFS.find((t) => t.id === pickState.tab) || {}).label || "components";
-        const catLabel = pickState.tab === "components" && pickState.category !== "all"
+        const catLabel = bomTabHasCategories(pickState.tab) && pickState.category !== "all"
           ? (pickState.category === "none" ? "Uncategorised" : categoryNameOf(pickState.category)) : null;
         const q = (searchInput.value || "").trim().toLowerCase();
         const elsewhere = BOM_TAB_DEFS
@@ -5451,7 +5933,7 @@
           }))
           .filter((x) => x.n > 0);
         // A category chip can hide rows just as effectively as a tab can.
-        const hiddenByCategory = pickState.tab === "components" && pickState.category !== "all"
+        const hiddenByCategory = bomTabHasCategories(pickState.tab) && pickState.category !== "all"
           ? (bomGroupByType(candidates).components || [])
               .filter((c) => !q || `${c.part_number} ${c.name}`.toLowerCase().includes(q)).length
           : 0;
@@ -5488,7 +5970,7 @@
       const now = new Date();
       return `RR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-${s}`;
     }
-    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["finished_good", "Finished Good"]];
+    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Phantom Assembly (structural only)"], ["finished_good", "Finished Good"]];
     const newPN   = el("input",  { class: "up-text", type: "text" });
     const newName = el("input",  { class: "up-text", type: "text", placeholder: "Name (required)" });
     const newType = el("select", { class: "up-text" }, TYPE_OPTS.map(([v, l]) => el("option", { value: v }, l)));
@@ -7096,7 +7578,7 @@
         syncConditionalFields();
         statusSel.addEventListener("change", syncConditionalFields);
 
-        const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["finished_good", "Finished Good"]];
+        const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Phantom Assembly (structural only)"], ["finished_good", "Finished Good"]];
         const currentType = nodeData?.type || "part";
         const typeSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
           TYPE_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentType ? "selected" : null }, l))
@@ -7918,7 +8400,7 @@
     }
 
     // --- Fields --------------------------------------------------------------
-    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["finished_good", "Finished Good"]];
+    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Phantom Assembly (structural only)"], ["finished_good", "Finished Good"]];
     const pn   = el("input",    { class: "up-text", type: "text", placeholder: "Auto-generated if left empty" });
     const oem  = el("input",    { class: "up-text", type: "text", placeholder: "OEM / distributor reference (optional)" });
     const nm   = el("input",    { class: "up-text", type: "text", placeholder: "Name" });
@@ -8321,7 +8803,10 @@
       const all = (components || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
       const opts = [el("option", { value: "" }, "Choose a product, assembly or part…")];
       for (const [type, label] of TYPE_GROUPS) {
-        const group = all.filter((c) => (type === "part" ? (c.type !== "sub_assembly" && c.type !== "product_family") : c.type === type));
+        // Grouped with bomTabOf so a new type can never fall into "Parts" by
+        // default — phantom_assembly would have, silently.
+        const want = type === "part" ? "components" : type === "sub_assembly" ? "assemblies" : "dynamic";
+        const group = all.filter((c) => bomTabOf(c) === want);
         if (!group.length) continue;
         opts.push(el("optgroup", { label: `${label} (${group.length})` },
           group.map((c) => el("option", { value: c.id }, `${c.name}${c.part_number ? ` · ${c.part_number}` : ""}`))));
@@ -8855,7 +9340,6 @@
     const wrap = el("div", {});
     const list = el("div", { class: "loading" }, "Loading planner mappings…");
     let showInactive = false;
-    let targets = [];
     // PROP-053: the saved-keys list and the mappings table were loaded
     // independently, so a key that was already mapped looked identical to one
     // that was not — the only way to find out was to scroll to the table below
@@ -8880,20 +9364,38 @@
     ];
     const SOURCE_TYPE_LABELS = Object.fromEntries(SOURCE_TYPES.map(([value, label]) => [value, label.split(" — ")[0]]));
 
-    async function loadTargets() {
-      if (targets.length) return targets;
-      const r = await API.post(token, "listComponents");
-      targets = (r.components || []).filter((c) => c.type !== "product_family");
-      return targets;
-    }
-
     function editModal(mapping, detectedSource = null) {
       const editing = !!mapping;
       const source = mapping || detectedSource;
       const type = el("select", { class: "up-text", disabled: editing ? "" : null },
         SOURCE_TYPES.map(([value, label]) => el("option", { value, selected: source?.source_type === value ? "" : null }, label)));
       const key = el("input", { class: "up-text", placeholder: "Exact key, e.g. M, side_left_color_0, Foot", value: source?.source_key || "", disabled: editing ? "" : null });
-      const target = el("select", { class: "up-text" }, [el("option", { value: "" }, "Loading PIM components…")]);
+      // PROP-064: was a <select> holding every component in the registry —
+      // eighty-six options with no search, no tabs and no categories, which
+      // made it the one list on this screen you could not filter. The picker
+      // built for the copy dialog already does all of that.
+      let targetId = mapping?.target_component_id || "";
+      let chosen = mapping?.target || null;          // declared before paintTarget reads it
+      const targetLabel = el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" });
+      const targetBtn = el("button", {
+        class: "btn btn-sm", type: "button",
+        onclick: () => pickComponentModal(token, {
+          title: "Choose BOM Node Target",
+          hint: "The component or assembly this planner key resolves to.",
+          // A Dynamic BOM is a configuration, not something a key resolves to.
+          // The select excluded them; so does this.
+          filter: (c) => c.type !== "product_family",
+          onPick: (c) => { targetId = c.id; chosen = c; paintTarget(); message.textContent = ""; },
+        }),
+      }, "Choose…");
+      const paintTarget = () => {
+        targetLabel.textContent = targetId && chosen
+          ? `${chosen.name}${chosen.part_number ? ` · ${chosen.part_number}` : ""}`
+          : "No component chosen yet";
+        targetLabel.style.color = targetId ? "" : "var(--muted,#8b93a1)";
+        targetBtn.textContent = targetId ? "Change…" : "Choose…";
+      };
+      const target = el("div", { style: "display:flex;gap:0.5rem;align-items:center;min-width:0" }, [targetLabel, targetBtn]);
       const release = el("input", { class: "up-text", placeholder: "Optional release note, e.g. Planner 2026.09", value: mapping?.release_label || "" });
       const message = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");
       const save = el("button", { class: "btn btn-primary", type: "button" }, editing ? "Save new revision" : "Create mapping");
@@ -8903,7 +9405,7 @@
         save.disabled = true; save.textContent = "Saving…";
         try {
           await API.post(token, "savePlannerMapping", {
-            mapping_id: mapping?.id, source_type: type.value, source_key: key.value.trim(), target_component_id: target.value,
+            mapping_id: mapping?.id, source_type: type.value, source_key: key.value.trim(), target_component_id: targetId,
             quantity_rule: "cart_quantity", fixed_quantity: null, release_label: release.value.trim() || null,
           });
           close(); await reload();
@@ -8912,13 +9414,10 @@
       const row = (label, field, hint = "") => el("label", { class: "form-row" }, [el("span", { class: "form-label" }, label), el("span", {}, [field, hint ? el("small", { class: "muted", style: "display:block;margin-top:0.2rem" }, hint) : null].filter(Boolean))]);
       const close = openModal(editing ? "Edit planner mapping" : "New planner mapping", el("div", {}, [
         row("Source type", type), row("Stable source key", key, "Use the Website planner's exact key, not a display name. Color suffixes such as _color_0 are part of the key. Wildcards are stored but not resolved yet."),
-        row("PIM target", target), row("Release note", release), message,
+        row("BOM Node Target", target), row("Release note", release), message,
         el("div", { style: "margin-top:0.75rem;display:flex;justify-content:flex-end" }, save),
       ].filter(Boolean)));
-      loadTargets().then((items) => {
-        target.replaceChildren(el("option", { value: "" }, "— choose PIM component or assembly —"), ...items.map((c) =>
-          el("option", { value: c.id, selected: mapping?.target_component_id === c.id ? "" : null }, `${c.name}${c.part_number ? ` · ${c.part_number}` : ""} (${c.type})`)));
-      }).catch((ex) => { target.replaceChildren(el("option", { value: "" }, "Could not load targets")); message.textContent = ex.message; });
+      paintTarget();
     }
 
     async function deactivate(mapping) {
@@ -8941,7 +9440,7 @@
           return;
         }
         list.replaceChildren(el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
-          el("thead", {}, el("tr", {}, ["Source", "PIM target", "Multiplicity", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
+          el("thead", {}, el("tr", {}, ["Source", "BOM Node Target", "Multiplicity", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
           el("tbody", {}, mappings.map((m) => el("tr", {}, [
             el("td", {}, [el("strong", {}, m.source_type), el("div", { class: "muted", style: "font-family:monospace;font-size:var(--text-xs)" }, m.source_key)]),
             el("td", {}, m.target ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}` : "Target no longer exists"),
@@ -9004,12 +9503,12 @@
             el("span", { style: "font-size:var(--fs-xs);font-weight:500;color:var(--muted,#8b93a1)" },
               `${mappedInType}/${inType.length} mapped`),
           ]),
-          ...rows.map((item) => {
+          el("div", { class: "key-rows" }, rows.map((item) => {
             const m = idx.get(mapKeyOf(item.source_type, item.source_key));
             const targetName = m && m.target
               ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}`
               : m ? "Target no longer exists" : "";
-            return el("div", { class: "row-tools", style: "margin:0.35rem 0;justify-content:space-between;align-items:center;gap:0.5rem" }, [
+            return el("div", { class: "key-row" }, [
               el("span", { style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;min-width:0" }, [
                 el("span", { class: `badge-status ${m ? "s-done" : "s-todo"}` }, m ? "Mapped" : "Not mapped"),
                 el("code", {}, item.source_key),
@@ -9025,7 +9524,7 @@
               m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
                 : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
             ]);
-          }),
+          })),
         ]);
       }));
     }
@@ -9064,7 +9563,6 @@
       ]));
     }
     wrap.replaceChildren(
-      el("p", { class: "muted", style: "max-width:760px" }, "PIM-owned catalog and mapping from planner source keys to PIM components and assemblies. Import once from a cart configuration; later visits load the saved PIM keys without accessing Website or Operations."),
       el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
         el("h3", { style: "margin-top:0" }, "Saved planner keys"),
         el("p", { class: "muted", style: "margin-top:0" }, "Source keys are grouped by type and saved per PIM tenant."),

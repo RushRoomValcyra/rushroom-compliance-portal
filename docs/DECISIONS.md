@@ -1164,3 +1164,170 @@ Fixing it control by control would have meant a second handler on each, and the 
 The existing `click` and `keydown` stoppers on the quantity input stay and are now pinned by tests — removing them would put the single-click paths back on the row.
 
 **Files changed:** assets/app.js, tests/row-controls.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-056 — Where a part is fitted (hub or site)
+**Decision:** A `fitting_stage` column on `bom_edges`, with NULL as a meaningful third state, rather than a column on `bom_components` or a reuse of `component_routing_steps`.
+
+**Why:** Three candidates, and the first two were wrong for reasons worth writing down.
+
+*Not `component_routing_steps`.* That table exists and models operations during postponement manufacturing — ordered steps with instruction text, a reference document and a variant condition, scoped to a `family_id`. It answers "what work is performed on this panel for this configuration". The question here is different and much smaller: for one parent→child link, where does the joining happen. Routing steps also require a product family, and there are none — the machinery is unused, and bending it to this would have made both concepts harder to read.
+
+*Not a component column.* The same screw is hub-fitted under one panel and site-fitted under another. A column on `bom_components` cannot express that at all; it would force a single global answer for a part used in six places.
+
+*So: the edge.* That is where `quantity`, `reference_designator`, `sort_order` and `variant_condition` already live, all of them facts about the occurrence rather than the thing. It also means the answer survives a part being reused somewhere with a different arrangement.
+
+`NULL` is a third state and deliberately not defaulted. Every edge that exists today is unset, and a default would invent a decision nobody made. More importantly the counts strip names it out loud — `n not set` — because an unanswered question that renders like an answer is how a part gets left in the van. That is the same discipline as distinguishing "ran, found nothing" from "never ran".
+
+The tally counts **edges, not rendered rows**. `buildRows()` stops at collapsed nodes, so counting rows would make the totals change when someone collapses a sub-assembly that still ships — the strip would be describing the screen rather than the delivery.
+
+A `CHECK` rather than a Postgres enum type, because widening it is one statement and this schema has already widened `bom_component_history.change_type` twice. `factory` (already joined on arrival) and `either` (installer's choice) are the likely additions; the user chose to start with the two stages they actually named.
+
+The change is audited as `change_type: "updated"` with a descriptive note, matching `setEdgeQuantity`. A new change type would have needed both the CHECK widened *and* `HISTORY_EVENTS` in `getComponentChangelog` extended — and this repo has twice written audit rows that the query displaying them filtered out.
+
+**Deployment has a hard order.** `getBom` selects the new column, so deploying `portal-api` before the migration makes every BOM tree fail to load rather than degrade.
+
+**Files changed:** supabase/migrations/0036_edge_fitting_stage.sql, supabase/functions/portal-api/index.ts, assets/app.js, tests/fitting-stage.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-057 — Hide the menus while working in the BOM
+**Decision:** An explicit toggle that hides the header and both sub-tab rows, keeping the main section tabs, cleared by navigation and remembered as a preference.
+
+**Why:** The obvious implementation was scroll-direction auto-hide — header out on scroll down, back on scroll up. It cannot work here, and the reason is worth recording: `treeArea` sets its own `maxHeight` to `innerHeight - its top - 24` and scrolls internally, so the window never scrolls and there is no gesture to listen for. That also restates the problem precisely — every pinned row above the tree is height the tree does not get, which is why PROP-054's stack, correct in itself, made this screen worse.
+
+*The main tab bar stays.* The only toggle lives in the BOM toolbar, so hiding the section tabs as well would leave no way off the screen except reloading. Keeping them costs ~50px of the ~290px available and removes the trap entirely.
+
+*Navigation clears the mode.* Otherwise a user could hide the chrome, switch to Drawings, and find the header gone with no control anywhere to restore it. `wireTabs` and `subTabs` both clear it — and `subTabs` clears it *before* building the new view, so a view that wants focus mode can re-apply it as it mounts. The BOM tree does exactly that.
+
+*The preference persists, the state does not.* Clearing on navigation and persisting the choice are not in conflict: the class is page state, the localStorage flag is what the user asked for. Both reads and writes are guarded, because localStorage throws outright in a private window.
+
+*`display: none`, not a transform.* A translated sticky element still occupies its sticky slot, so the rows below would keep their offsets and leave a gap. Removing them from layout also means `measureChrome()` reads them as zero with no special case — the single change needed was making a hidden header measure `0` instead of falling through to the 64px first-paint fallback.
+
+**Files changed:** assets/app.js, assets/styles.css, tests/sticky-chrome.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-058 — Phantom assemblies
+**Decision:** A new value in the existing `type` CHECK, not a boolean flag; grouped with assemblies everywhere; excluded from `listAssemblies` unless asked for.
+
+**Why:** The user proposed it as a type and that is right for this codebase specifically. Five screens already branch on `type` — the tab grouping, the Status Overview picker, the category requirement, the type badges, the three type pickers. A parallel `is_phantom BOOLEAN` would have to be remembered at each of them, and the one that forgot would be the one nobody noticed. One CHECK widening reaches all of them.
+
+Adding the type exposed a latent defect rather than creating one. The Status Overview picker bucketed its "Parts" group by *exclusion* — `type !== 'sub_assembly' && type !== 'product_family'` — so any type added later falls silently into Parts. It now groups through `bomTabOf`, the same function the list tabs use. The server's two `validTypes` array literals were also independent copies; they are now one `COMPONENT_TYPES`.
+
+*Grouped with assemblies, badged in the tree.* On a root row the type badge already names the type, so a phantom is identifiable there. Inside a tree it would be indistinguishable from a sub-assembly, which is exactly where the difference matters, so it carries a dashed `PHANTOM` badge — the same treatment `DYNAMIC BOM` already has.
+
+*`listAssemblies` excludes them by default.* The endpoint is documented as mirroring the Assemblies tab, and this is the one place it deliberately does not. An integration asking for "the assemblies" and acting on the answer must not be handed a node that cannot be built. `include_phantom: true` opts in and adds a `type` field; without it the response is byte-identical to what every existing caller receives.
+
+**The gap that is not implemented, deliberately.** In every other PLM a phantom is *blow-through*: exploding a BOM skips the phantom level and attaches its children to the phantom's parent, so nothing ever tries to pick or build it. Nothing here flattens phantoms — `getBom`, the tree, the exports and the roll-up quantities all treat one as an ordinary level. That is correct while a phantom is only a grouping label for storefront logic, and becomes wrong the moment anything explodes a BOM to pick from. Recorded in the migration, in ROADMAP and in a test that fails if half-built blow-through logic appears.
+
+**Files changed:** supabase/migrations/0037_phantom_assembly_type.sql, supabase/functions/portal-api/index.ts, assets/app.js, tests/phantom-assembly.test.mjs, tests/dialog-chrome.test.mjs, tests/fitting-stage.test.mjs, docs/API.md, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, index.html, supplier.html, reset.html, verify.html, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-059 — Copy an assembly with its structure
+**Decision:** Clone the root and every descendant that holds children; reuse the leaves. Preview through the same action under `dry_run`. One clone path shared with the single-node ⧉.
+
+**Why:** `duplicateComponent` copied a row and no edges, so copying an assembly produced an empty shell — the opposite of useful for the job people actually do, which is "the same thing with two parts swapped".
+
+Three ways to define "the sub-structure follows", and the split matters:
+
+*Share everything* — one new component whose children point at the originals. Instant and adds nothing to the registry, but the copy's sub-assemblies **are** the originals, so editing inside one changes both. That is precisely the blast radius the add-child dialog already warns about, and it breaks the stated workflow of deleting a child from the copy.
+
+*Clone everything* — a second Confirmat Screw, a second shelf pin, in a registry people scan by part number. Clutter with no benefit: nobody edits a screw.
+
+*Clone what holds structure, reuse the leaves* — chosen. The copy is independently editable wherever editing is plausible, and the catalogue stays clean.
+
+The rule is **structural, not type-based**, and that distinction is load-bearing here: `S Plinth - White` is typed `part` and holds two children. Deciding on type would have shared it, and the first edit to the copy would have silently changed the original.
+
+The preview dialog runs the same action with `dry_run: true` rather than computing its own plan in the browser. Two implementations of "what will this do" is the shape of defect this repo keeps finding; here it would be a preview that disagrees with the result while writing real registry rows.
+
+`cloneComponentRow()` was extracted so the deep copy and the single-node ⧉ produce identical components — part number, spec record, revision A, audit row. Two clone paths would drift, and the one that drifted would be the rarely-used one.
+
+Two refusals rather than a silently wrong copy: more than 300 nodes, and deeper than 12 levels. The depth one matters most — a node discovered at the limit has no children fetched, so it would look like a leaf and be *reused* despite holding structure.
+
+Known gap, recorded rather than hidden: this is not transactional. Components are written, then the edges in one insert; if that insert fails the components exist and the error says how many, but nothing cleans them up. Supabase's REST client has no multi-statement transaction — doing it properly means a Postgres function.
+
+**Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-060 — Replace parts while copying an assembly
+**Decision:** Substitute during the copy rather than replace after it, applied server-side as the edges are written, previewed through the same `dry_run` path.
+
+**Why:** The request allowed either — replace in the copy dialog, or replace in the tree afterwards. During is strictly better for the job described, and the reason is not convenience:
+
+**A replaced branch is never cloned.** Copying the S assembly and then swapping the S plinth for the M plinth leaves an `S Plinth - White - copy` behind, along with clones of everything under it. On an S→M→L workflow that is three or four discarded components per copy, in a registry people scan by part number. Declaring the swap up front means those rows are never written. The screenshot that prompted this showed exactly that litter: `S Plinth - White - copy`, `Seat to Door Switch - White - copy`, `S Prepared LED Shelf - White - copy`, all about to be replaced.
+
+It also means the replaced branch's *children* never follow. Replacing afterwards would have cloned two levels of S structure and then orphaned them under a component nobody points at any more.
+
+*Substitution is keyed by component, not by edge.* One choice swaps every occurrence, which is what "this is the M version" means. Per-edge substitution would be more precise and much more tedious, and nothing in the stated workflow needs it.
+
+*The preview re-plans through the same action.* Every swap re-runs `copyAssembly` with `dry_run: true` and the current substitutions. The alternative — recomputing the plan in the browser — is two implementations of "what will this do", disagreeing while real registry rows get written. A typed name survives the re-plan; the suggested one does not overwrite it.
+
+`pickComponentModal` was written as a general single-select picker rather than folded into the dialog: it reuses `BOM_TAB_DEFS`, `BOM_SORT_COLS`, `bomGroupByType`, `bomSortComparator` and `bomChip` (PROP-052), so it offers the same tabs, chips and ordering as every other list, and the replace-in-tree feature that is still missing already has its UI.
+
+**Files changed:** supabase/functions/portal-api/index.ts, assets/app.js, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/SYSTEM_OVERVIEW.html, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-26
+**Feature:** PROP-061 — The copy dialog tells the truth about a part
+**Decision:** Title from what the node is, collapse the preview when there is nothing to preview, never offer Replace on the root, and stop empty status panels from rendering.
+
+**Why:** Copying a plain part exposed four things at once, all of them the same mistake — a dialog designed for the interesting case behaving as if every case were interesting.
+
+*The title.* "Copy assembly" over a signal cable. Decided by `has_children || ASSEMBLY_TYPES.includes(type)` rather than type alone, because both edge cases are real here: a node typed `part` that holds children genuinely is copied as an assembly (that is PROP-059's whole rule), and an empty sub-assembly is still an assembly.
+
+*Replace on the root.* The server already refuses to substitute the component being copied, so the button could only ever produce an error — a control whose sole outcome is a rejection.
+
+*The preview for a leaf.* One row under "copied", an empty "reused", "0 links", and a Replace button pointing at itself. Every element was accurate and the whole was noise. A single sentence replaces it.
+
+*The dashed box.* `.empty`, `.loading` and `.error` share a rule carrying `1.25rem` padding and a dashed border, so an `.error` element rendered empty — the normal state of an inline validation slot — draws a large blank box. Fixed both locally (the slot is no longer that class) and globally with `:empty { display: none }`, since an empty status panel is never wanted anywhere.
+
+The last one is worth noting as a class: this dialog was built by reusing a class whose *visible* behaviour was only ever seen with text in it.
+
+**Files changed:** assets/app.js, assets/styles.css, tests/copy-assembly.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-27
+**Feature:** PROP-062 — Expand all / Collapse all on the BOM list
+**Decision:** A pair of buttons scoped to the rendered page, hidden when nothing can expand; and `allowExpand` split from `allowAddChild`.
+
+**Why:** The per-assembly Expand all already existed one level down. Opening fifteen assemblies one arrow at a time was the same work it removes, left undone at the level above.
+
+*Scoped to what is on screen.* The list pages at 50 rows. "Expand all" over 86 parts behind a Load more would be a slow surprise; over what you can see it is predictable. Fetches run in one `Promise.all` rather than in sequence — fifteen assemblies is otherwise fifteen round trips of waiting — and a failure on one row marks that row, not the batch.
+
+*Hidden when nothing can expand, disabled when it would do nothing.* A control with no effect is the defect this project keeps producing; the Parts tab used to be exactly that case.
+
+The change also settled something older. The Parts tab was flat because `allowExpand` was `activeTab !== "components"` — written when a part could not hold structure. One now can: `S Plinth - White` is typed `part` and holds two children, which PROP-059 depends on. Keeping the tab flat meant that structure had no door on the tab where the part actually lives. Expansion is already gated per row on `comp.has_children`, so allowing it changes nothing for the other 80-odd parts.
+
+But `allowExpand` was doing two jobs: it also gated the `+child` button. Reusing it would have put a structure-editing control on all 86 catalogue rows as a side effect of making them expandable. They are now two flags, and the Parts tab keeps exactly the buttons it had. Whether that tab *should* offer `+child` is a separate question, recorded rather than answered.
+
+**Files changed:** assets/app.js, tests/expand-all.test.mjs, index.html, supplier.html, reset.html, verify.html, docs/ROADMAP.md, docs/DECISIONS.md, CLAUDE.md
+
+---
+**Date:** 2026-09-27
+**Feature:** Documentation audit — PROP-047 to PROP-064
+**Decision:** Establish what is live by querying production rather than by reading the roadmap, and rewrite the roadmap from the answer.
+
+**Why:** The **Built — Awaiting Deploy** section had become a graveyard. It still instructed a `supabase db push` for migrations 0036 and 0037, a `portal-api` deploy, and a `git push` — all of which had already happened. It also listed the edge-function split, `listAssemblies`, PROP-041, PROP-042 and the drawings domain as pending, years of a feature's life after they went live. A list of outstanding work that contains finished work is worse than no list: everything on it stops being read.
+
+So the audit was done against production, not against memory:
+
+- `bom_edges.fitting_stage` exists, **48 edges carry a stage**, **30 audit rows** record the changes — PROP-056 is not merely deployed, it is in daily use, and the Change Log path works.
+- The type CHECK includes `phantom_assembly` and **3 components use it** — PROP-058.
+- **51 `Copied from…` history rows** — PROP-059/060, and PROP-042 with them, since the deep copy and the single-node ⧉ share one clone path.
+- **6 active planner mappings** — PROP-053/064.
+- **2 drawings, 1 revision, 2 part links, 3 `drawing_*` audit rows** — PROP-045/046.
+- `custom_spec_fields.category_id` with 4 fields across 6 categories — PROP-041.
+- All three edge functions answer `health` — the function split.
+- `origin/main` is at v277 with nothing unpushed.
+
+Eleven entries moved to **Shipped** with the evidence that proved each one, and the section was renamed **Built — Awaiting Verification**, because nothing there is waiting on a command any more — only on someone looking at it. Ten entries stayed, all of them frontend behaviour that leaves no trace in the database: the exports, the drawing surface, the picker changes, the spinner fix, the banding. Their lines no longer carry deploy instructions that would be no-ops.
+
+Also brought up to date: Section 2 gained `planner_mappings` and `planner_catalog_entries` (never inventoried, though the user's own migrations 0034/0035 created them) plus the two schema changes of this cycle under *Enums & constraints*; Section 9 gained `setEdgeFittingStage`, `copyAssembly` and the five planner actions; Section 14 gained cards for PROP-048 through PROP-064, each marked with whether production confirms it or verification is still pending.
+
+**No cache bump.** Nothing under `assets/` changed, and forcing every client to re-download the bundle to publish a documentation edit would be a cost with no purpose. The `?v=277` recorded in Section 0 stays accurate because of it.
+
+**Files changed:** docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, docs/DECISIONS.md

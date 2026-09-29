@@ -435,6 +435,9 @@ tbody tr:hover { background: var(--panel-2); }
 }
 .empty, .loading, .error { padding: 1.25rem; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted); text-align: center; }
 .error { color: var(--red); border-color: var(--red-bd); }
+/* An empty status panel is not a status: .empty/.loading/.error carry padding
+   and a dashed border, so one rendered with no text is a large blank box. */
+.empty:empty, .loading:empty, .error:empty { display: none; }
 .muted { color: var(--muted); }
 .row-tools { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .row-tools .spacer { flex: 1; }
@@ -624,6 +627,30 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .acct-card .form-label { align-self: center; }
 
 /* sub-tabs within a panel (Library vs Add) — segmented control */
+/* Banded key rows (PROP-063). The label sits far left and its button far
+   right, so on a list of sixty the eye loses the row between them. Striping
+   ties the two ends together; the hover bar answers "which row am I on" for
+   the row you are actually about to click. */
+.key-rows { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.key-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.5rem; padding: 0.35rem 0.6rem; flex-wrap: wrap;
+}
+.key-row + .key-row { border-top: 1px solid var(--border); }
+.key-row:nth-child(even) { background: var(--panel-2); }
+.key-row:hover { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Focus mode (PROP-057) — the BOM tree sizes itself to the height left below
+   the pinned chrome, so on a laptop the header and the two menu rows are about
+   a quarter of the workspace. Hiding them hands that back.
+
+   display:none rather than a transform, so the rows stop occupying their
+   sticky slots and measureChrome() reads them as 0 with no special case.
+   The MAIN tab bar stays visible on purpose: the only toggle lives in the BOM
+   toolbar, so hiding the section tabs too would leave no way off the screen. */
+:root.chrome-focus .site-header,
+:root.chrome-focus .subtab-bar { display: none; }
+
 /* Sub-tab rows pin under the main tab bar (PROP-054). The sticky element is
    .subtab-bar — a full-width wrapper — because .subtabs is an inline-flex pill
    group and content would scroll visibly past either side of it.

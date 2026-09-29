@@ -30,6 +30,23 @@ import {
 import { RUSHROOM_ORG_ID, TENANT_TABLES, makeTdb } from "../_shared/tenant.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 import { startTimer } from "../_shared/timing.ts";
+import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
+
+const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
+const PLANNER_RESOLVER_MAX_REQUIREMENTS = 250;
+const PLANNER_RESOLVER_MAX_DEPTH = 20;
+const PLANNER_RESOLVER_MAX_EXPANSIONS = 5_000;
+const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
+const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
+
+// Unlike a straight string comparison, this walks the longest input even when
+// lengths differ. It is deliberately used for service-to-service credentials.
+function constantTimeSecretEqual(actual: string, expected: string): boolean {
+  const length = Math.max(actual.length, expected.length);
+  let difference = actual.length ^ expected.length;
+  for (let i = 0; i < length; i++) difference |= (actual.charCodeAt(i) || 0) ^ (expected.charCodeAt(i) || 0);
+  return difference === 0;
+}
 
 
 
@@ -903,6 +920,51 @@ Deno.serve(async (req) => {
     if (error) return json({ error: error.message }, 500);
     await db.from("platform_audit").insert({ actor_email: "billing_webhook", action: "billing_update", target_organization_id: orgId, detail: patch });
     return json({ ok: true });
+  }
+
+  // --- Operations → PIM planner BOM resolver (service authentication only) --
+  // This is intentionally ahead of browser session authentication. The caller
+  // may submit derived planner requirements only; PIM neither receives nor
+  // stores cart/customer/order data, and always resolves the seed Rushroom org.
+  if (action === "resolvePlannerBom") {
+    const resolverKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY");
+    if (!resolverKey) return json({ error: "Planner BOM resolver is not configured" }, 503);
+    const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (!constantTimeSecretEqual(suppliedKey, resolverKey)) return json({ error: "Invalid resolver credential" }, 401);
+    const allowedKeys = new Set(["action", "contract_version", "requirements"]);
+    if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "Resolver accepts only contract_version and derived requirements" }, 400);
+    if (body.contract_version !== 1 || !Array.isArray(body.requirements) || body.requirements.length === 0 || body.requirements.length > PLANNER_RESOLVER_MAX_REQUIREMENTS) {
+      return json({ error: `contract_version 1 and between 1 and ${PLANNER_RESOLVER_MAX_REQUIREMENTS} requirements are required` }, 400);
+    }
+
+    const requirements: Array<{ source_type: string; source_key: string; quantity: number }> = [];
+    const seenRequirements = new Set<string>();
+    for (const requirement of body.requirements) {
+      const source_type = String(requirement?.source_type ?? "");
+      const source_key = plannerSourceKey(requirement?.source_key);
+      const quantity = requirement?.quantity;
+      if (!PLANNER_SOURCE_TYPES.includes(source_type) || !plannerKeyValid(source_key) || typeof quantity !== "number" || !Number.isFinite(quantity) || quantity <= 0) {
+        return json({ error: "Every requirement needs a valid source_type, source_key, and positive finite numeric quantity" }, 400);
+      }
+      const identity = `${source_type}:${source_key}`;
+      if (seenRequirements.has(identity)) return json({ error: `Duplicate planner requirement: ${identity}` }, 400);
+      seenRequirements.add(identity); requirements.push({ source_type, source_key, quantity });
+    }
+
+    const resolverTdb = makeTdb(RUSHROOM_ORG_ID);
+    const [mappingRes, componentRes, edgeRes] = await Promise.all([
+      resolverTdb("planner_mappings").select("id, source_type, source_key, target_component_id, quantity_rule, fixed_quantity, mapping_revision").eq("is_active", true),
+      resolverTdb("bom_components").select("id, part_number, name, unit_of_measure, lifecycle_status"),
+      resolverTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).order("parent_id").order("child_id"),
+    ]);
+    if (mappingRes.error || componentRes.error || edgeRes.error) return json({ error: "PIM resolver data is unavailable" }, 502);
+    if ((edgeRes.data || []).length > PLANNER_RESOLVER_MAX_EXPANSIONS) return json({ error: "PIM BOM graph exceeds resolver traversal limit" }, 422);
+
+    const resolution = resolvePlannerGraph({
+      requirements, mappings: mappingRes.data || [], components: componentRes.data || [], edges: edgeRes.data || [],
+      maxDepth: PLANNER_RESOLVER_MAX_DEPTH, maxExpansions: PLANNER_RESOLVER_MAX_EXPANSIONS,
+    });
+    return json({ ...resolution, resolved_at: resolution.status === "resolved" ? new Date().toISOString() : null });
   }
 
   // --- everything else requires a valid token -----------------------------
@@ -2659,10 +2721,6 @@ Deno.serve(async (req) => {
   // This PIM-owned registry maps Website cart source keys to PIM BOM IDs. It
   // never reads the Website cart and does not resolve an order; Operations will
   // consume this stable contract later.
-  const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
-  const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
-  const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
-
   async function plannerTarget(targetId: string) {
     const { data } = await tdb("bom_components")
       .select("id, name, part_number, type")

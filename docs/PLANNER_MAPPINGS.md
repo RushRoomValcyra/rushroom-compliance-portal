@@ -68,6 +68,58 @@ Actions on `portal-api`:
 All actions require a Rushroom session. `organization_id` is derived only from
 the signed session and `planner_mappings` is tenant-scoped through `makeTdb`.
 
+## Operations → PIM resolver contract (Stage 1)
+
+`resolvePlannerBom` is a dedicated service-to-service `portal-api` action for a
+future Order Operations caller. It does not accept a browser session, cart JSON,
+customer data, addresses, prices, or order IDs. It is pinned to the Rushroom
+organization and requires the Edge Function environment variable named
+`OPERATIONS_PIM_RESOLVER_KEY` (no value is stored in this repository). The
+caller sends it as standard `Authorization: Bearer <key>`; PIM compares it in
+constant time. An unset key returns `503`; an invalid key returns `401`.
+
+The complete request body is:
+
+```json
+{
+  "action": "resolvePlannerBom",
+  "contract_version": 1,
+  "requirements": [
+    { "source_type": "module", "source_key": "M", "quantity": 2 }
+  ]
+}
+```
+
+Requirements are limited to 250 unique source identities and require positive,
+finite numeric quantities. Duplicate identities and any unrecognised top-level
+field are rejected. PIM resolves only active mappings. `cart_quantity` applies
+the requested quantity; `fixed` applies the mapping's `fixed_quantity`.
+
+Every valid response has exactly these top-level fields:
+
+```json
+{
+  "contract_version": 1,
+  "status": "resolved | needs_mapping | failed",
+  "resolved_at": "ISO timestamp or null",
+  "mapping_evidence": { "records": [] },
+  "unresolved_requirements": [],
+  "bom_entries": []
+}
+```
+
+`status: "resolved"` has a non-null `resolved_at`, no
+`unresolved_requirements`, and at least one `bom_entries` row. Any other status
+has `resolved_at: null` and an empty `bom_entries` array. `needs_mapping` means
+one or more source identities lack an active mapping. `failed` is a PIM data or
+graph blocker, such as a missing target, non-released component, cycle, too-deep
+expansion, or invalid edge. Each unresolved requirement carries its exact
+`source_type`, `source_key`, requested `quantity`, and machine-readable reason.
+Active `bom_edges` are expanded recursively with depth/expansion bounds; a leaf
+target stays a leaf and entries aggregate by PIM component. **PIM currently
+requires every target and exploded component to have `lifecycle_status`
+`released`; any other status blocks resolution.**
+
 ## Version and release metadata
 
 Every edit creates a new row with a higher `mapping_revision`, `supersedes_id`,

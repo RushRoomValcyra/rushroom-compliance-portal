@@ -360,6 +360,7 @@
     listAssemblies: (token, opts = {}) => call({ action: "listAssemblies", token, ...opts }),
     listPlannerCatalog: (token) => call({ action: "listPlannerCatalog", token }),
     importPlannerCatalog: (token, items) => call({ action: "importPlannerCatalog", token, items }),
+    deletePlannerCatalogEntry: (token, { sourceType, sourceKey }) => call({ action: "deletePlannerCatalogEntry", token, source_type: sourceType, source_key: sourceKey }),
     listPlannerMappings: (token, opts = {}) => call({ action: "listPlannerMappings", token, ...opts }),
     savePlannerMapping: (token, fields) => call({ action: "savePlannerMapping", token, ...fields }),
     deactivatePlannerMapping: (token, mappingId) => call({ action: "deactivatePlannerMapping", token, mapping_id: mappingId }),

@@ -9430,6 +9430,14 @@
       catch (ex) { alert(ex.message); }
     }
 
+    async function removeCatalogKey(item) {
+      if (!confirm(`Remove saved planner key ${item.source_type}:${item.source_key}? This does not delete PIM components or mapping history.`)) return;
+      try {
+        await API.deletePlannerCatalogEntry(token, { sourceType: item.source_type, sourceKey: item.source_key });
+        await loadCatalog();
+      } catch (ex) { alert(ex.message); }
+    }
+
     async function reload() {
       list.replaceChildren(el("div", { class: "loading" }, "Loading planner mappings…"));
       try {
@@ -9525,8 +9533,11 @@
               // item" on a mapped key used to open a blank form and fail with
               // a 409 from the one-active-source index only after it was
               // filled in.
-              m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
-                : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
+              el("span", { style: "display:flex;gap:0.35rem;flex-wrap:wrap" }, [
+                m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
+                  : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
+                actionBtn("Remove key", "trash", { onClick: () => removeCatalogKey(item) }),
+              ]),
             ]);
           })),
         ]);

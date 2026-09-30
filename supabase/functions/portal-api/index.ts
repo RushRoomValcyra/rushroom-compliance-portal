@@ -2896,6 +2896,26 @@ Deno.serve(async (req) => {
     return json({ ok: true, imported: items.length, catalog: data || [] });
   }
 
+  // Catalog keys are disposable discovery records. Do not allow an active
+  // resolver mapping to be orphaned: deactivate that mapping first, which
+  // preserves the resolver/audit history, then the obsolete key may be removed.
+  if (action === "deletePlannerCatalogEntry") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const sourceType = String(body.source_type ?? "");
+    const sourceKey = plannerSourceKey(body.source_key);
+    if (!PLANNER_SOURCE_TYPES.includes(sourceType) || !plannerKeyValid(sourceKey)) {
+      return json({ error: "A valid source_type and source_key are required" }, 400);
+    }
+    const { data: activeMapping, error: mappingError } = await tdb("planner_mappings")
+      .select("id").eq("source_type", sourceType).eq("source_key", sourceKey).eq("is_active", true).maybeSingle();
+    if (mappingError) return json({ error: mappingError.message }, 400);
+    if (activeMapping) return json({ error: "Deactivate the active mapping before removing this planner key" }, 409);
+    const { error } = await tdb("planner_catalog_entries")
+      .delete().eq("source_type", sourceType).eq("source_key", sourceKey);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
   if (action === "listPlannerMappings") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const includeHistory = body.include_history === true;

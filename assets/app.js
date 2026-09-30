@@ -9320,7 +9320,11 @@
       found.set(key, { source_type, source_key: source_key.trim() });
     };
     for (const item of Array.isArray(config.modules) ? config.modules : []) {
-      add("module", item?.module);
+      // Website planner v2 emits the mappable module identity in `name`
+      // (for example `module_m_color_white`). `module` remains only the
+      // structural size code (`M`) used by the UI/layout, so importing it
+      // would silently reintroduce the obsolete mapping vocabulary.
+      add("module", item?.name ?? item?.module);
       for (const interior of Array.isArray(item?.interior) ? item.interior : []) {
         add("interior", typeof interior === "string" ? interior : (interior?.name ?? interior?.interior));
       }

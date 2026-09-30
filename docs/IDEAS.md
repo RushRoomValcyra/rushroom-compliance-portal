@@ -1354,3 +1354,299 @@ The order matters. The map is the second problem; the watcher is the first. A co
 - **Engineering Drawing Intelligence (2026-09-02)** — a Drawing Watch agent (revision diffs, tolerance changes) is the obvious third, and is why the registry is a table rather than a hardcoded list.
 
 **Status:** Raw idea
+
+---
+### Warehouse Management System — Locations, Inbound, Stock Ledger — 2026-09-29
+
+**One sentence:** A warehouse management system that tracks physical stock locations, registers inbound deliveries with per-line QC inspection, and maintains an append-only stock ledger — designed to be fed by the BOM Link when it connects the storefront to the compliance portal's component registry.
+
+**Problem it solves:**
+Rushroom has no digital answer to three basic questions: where is a component right now, how much do we have, and is it cleared for production? Without this, every work order starts with a manual shelf check, incoming deliveries land in a grey zone between "received" and "available," and quality holds are invisible to anyone not physically in the warehouse.
+
+The BOM Link (being built separately) will translate customer orders → resolved BOM component lists. The WMS is what those lists are queried against. Without the WMS, the BOM Link resolves a BOM with no knowledge of whether any of those parts are actually in stock, in quarantine, or not received yet. These two systems are designed to meet: the BOM Link resolves *what is needed*; the WMS answers *what is available and where*.
+
+**Physical location model — proposed structure:**
+
+A four-level hierarchy under each warehouse. Designed for a single SMB warehouse with room to grow to multi-site.
+
+```
+Warehouse (e.g. "Kungsbacka")
+└── Zone  (functional purpose of the area)
+    └── Aisle  (row of shelving within the zone)
+        └── Bay  (a section of shelving within an aisle)
+            └── Level  (height: F=floor, 1–4=shelf levels)
+                └── Bin  (individual slot on the shelf)
+```
+
+Location code format: `{WAREHOUSE}-{ZONE}-{AISLE}{BAY}-L{LEVEL}-B{BIN}`
+Example: `KBG-STK-A03-L2-B1` = Kungsbacka warehouse, Stock zone, Aisle A Bay 3, Level 2, Bin 1
+
+**Zone types and their operational meaning:**
+- `INBOUND` — the receiving dock. Goods arrive here. No stock is "available" in this zone. A location here = "received but not yet inspected."
+- `QUARANTINE` — failed or pending QC. Nothing leaves here without a QC decision. Separate from INBOUND so that partially-inspected deliveries are visible as quarantined, not just "in receiving."
+- `STOCK` — released, available for production. This is the only zone from which pick lists pull. Stock is only STOCK-zone stock.
+- `PRODUCTION` — pulled for a specific active work order; temporarily allocated. Returned here if a work order is paused or cancelled before the components are consumed.
+- `OUTBOUND` — packed and awaiting carrier pickup. Not available stock.
+
+This zone model means the question "is this available?" is always: `location.zone_type = 'stock'`. No ambiguous status flags.
+
+**Bin labelling convention:** Print a QR code per bin: `{location_code}`. Scannable by a phone camera. Scanning a bin in the receiving flow auto-fills the storage location on a delivery line. This is the only scanner integration needed — no dedicated hardware.
+
+**MVP scope:**
+
+1. **`warehouses`** — `{id, org_id, name, address, timezone}`. One row per physical building.
+2. **`warehouse_zones`** — `{id, org_id, warehouse_id, zone_code TEXT (e.g. "STK"), zone_type ENUM (inbound|quarantine|stock|production|outbound), name, sort_order}`.
+3. **`storage_locations`** — `{id, org_id, zone_id, aisle TEXT, bay TEXT, level TEXT, bin TEXT, location_code TEXT UNIQUE per org, description, is_active BOOLEAN DEFAULT true}`. Location code is generated on create from the zone and the four position segments. The label printed on the bin IS this code.
+4. **`purchase_orders`** — `{id, org_id, supplier_name, supplier_ref TEXT, po_number TEXT, status ENUM (draft|sent|confirmed|partial|received|closed), expected_delivery DATE, notes, created_by, created_at}`.
+5. **`purchase_order_lines`** — `{id, org_id, po_id, part_number TEXT NOT NULL, bom_component_id UUID NULLABLE, description TEXT, quantity_ordered NUMERIC, unit_of_measure TEXT, unit_price NUMERIC, currency CHAR(3), notes}`. `part_number` is always filled (human-readable, matches compliance portal). `bom_component_id` is the UUID FK to `bom_components` — NULL until the BOM Link is live and can supply it. Both columns exist from day one; the UUID is the future join key.
+6. **`inbound_deliveries`** — `{id, org_id, po_id FK→purchase_orders NULLABLE (NULL = unplanned delivery), delivery_ref TEXT (supplier's delivery note number), arrived_at TIMESTAMPTZ, received_by, status ENUM (arrived|qc_in_progress|qc_complete|stocked|rejected), warehouse_id, notes}`.
+7. **`inbound_delivery_lines`** — `{id, org_id, delivery_id, po_line_id FK→purchase_order_lines NULLABLE, part_number TEXT NOT NULL, bom_component_id UUID NULLABLE, quantity_received NUMERIC, lot_number TEXT NOT NULL, batch_number TEXT, expiry_date DATE, inbound_location_id FK→storage_locations (must be INBOUND zone), status ENUM (pending_qc|qc_passed|qc_failed|quarantined|stocked)}`. Each line is one physical pallet/box/batch on the dock. `lot_number` is NOT NULL — if the supplier provides none, the receiver generates one: `{warehouse_code}-{YYYYMMDD}-{sequence}` e.g. `KBG-20261005-003`.
+8. **`inbound_inspections`** — `{id, org_id, delivery_line_id UNIQUE FK→inbound_delivery_lines, inspector_id, inspected_at, result ENUM (passed|failed|conditional), quantity_accepted NUMERIC, quantity_rejected NUMERIC, rejection_reason TEXT, certificate_verified BOOLEAN, dimensional_check BOOLEAN, visual_check BOOLEAN, notes TEXT}`. One inspection row per delivery line. When `result = passed`, the system suggests a target stock location and prompts a put-away. When `result = failed`, the line moves to QUARANTINE and a return-to-supplier workflow is triggered.
+9. **`stock_ledger`** — append-only, the authoritative source of truth: `{id, org_id, part_number TEXT, bom_component_id UUID NULLABLE, lot_number TEXT, from_location_id FK→storage_locations NULLABLE, to_location_id FK→storage_locations NULLABLE, quantity_delta NUMERIC (positive = into to_location, negative = out of from_location), movement_type ENUM (receipt|putaway|quarantine_in|quarantine_release|pick|production_return|transfer|adjustment|write_off|return_to_supplier), reference_id UUID (the id of the source record: delivery_line_id, pick_list_line_id, etc.), reference_type TEXT, moved_at TIMESTAMPTZ DEFAULT now(), moved_by}`. Every stock change is a ledger row. Stock levels are always derived from this table — never stored as a mutable balance.
+10. **`stock_levels`** — a Postgres materialised view or a computed-on-read query: `SELECT part_number, bom_component_id, location_id, lot_number, SUM(quantity_delta) AS qty FROM stock_ledger GROUP BY part_number, bom_component_id, location_id, lot_number HAVING SUM(quantity_delta) > 0`. The "available to pick" number is this filtered to `location.zone_type = 'stock'`.
+
+**API actions (in Order Operations):**
+`createWarehouse`, `createZone`, `createLocation`, `generateLocationCode` (from zone+aisle+bay+level+bin)
+`createPurchaseOrder`, `addPOLine`, `updatePOStatus`
+`createInboundDelivery`, `addDeliveryLine`, `updateDeliveryLineStatus`
+`submitInspection` — records inspection result, writes stock_ledger row (quarantine_in or triggers putaway prompt), updates delivery line status
+`confirmPutaway(delivery_line_id, target_location_id)` — writes stock_ledger `putaway` row, updates delivery line to `stocked`, updates delivery status
+`getStockLevel(part_number)` — returns qty by location and lot, filtered by zone type
+`getStockByLocation(location_id)` — what is physically at this location
+`getLotHistory(lot_number)` — all ledger entries for this lot (the recall query foundation)
+`listLowStock(threshold)` — components where total STOCK-zone qty < threshold
+`transferStock(from_location_id, to_location_id, part_number, lot_number, quantity)` — internal moves between stock locations
+
+**Frontend views:**
+- **Warehouse map** — zone/aisle/location browser. Click a location → what is stored there, which lots, which delivery lines. Edit location metadata. Print QR label button.
+- **Inbound dashboard** — today's expected deliveries (from POs with matching expected_delivery DATE). Pending QC queue. Recent completions.
+- **Delivery registration** — create an inbound delivery, add lines, scan/enter lot numbers, assign to INBOUND location. One-click "Start QC" to hand off to inspection.
+- **QC inspection form** — per-line: pass/fail/conditional, quantities, checklist toggles (visual/dimensional/certificate), rejection reason. Pass → putaway prompt. Fail → quarantine with reason.
+- **Stock report** — component search, current quantities by location and lot, zone breakdown. Export to CSV.
+
+**Tables involved:**
+New: `warehouses`, `warehouse_zones`, `storage_locations`, `purchase_orders`, `purchase_order_lines`, `inbound_deliveries`, `inbound_delivery_lines`, `inbound_inspections`, `stock_ledger`
+Derived: `stock_levels` (materialised view on `stock_ledger`)
+Cross-system reference (from compliance portal, soft for now, hard FK when BOM Link lands): `bom_components.id` / `part_number`
+All tables: `organization_id NOT NULL FK → organizations`
+
+**Effort estimate:** 50–65 hours
+- Schema + migrations (9 tables + view): 6 h
+- Location management UI (warehouse/zone/bin CRUD + QR label print): 6 h
+- Purchase order UI (create, add lines, status flow): 5 h
+- Inbound delivery registration UI: 5 h
+- QC inspection form UI: 5 h
+- Put-away flow (location picker, ledger write): 4 h
+- Stock ledger API actions (12 actions): 10 h
+- Stock report + lot history view: 5 h
+- `getLotHistory` query (the recall foundation): 2 h
+- Tests: 7 h
+
+**Risks:**
+- **Lot number discipline.** The entire value of this system — including future recall tracing — rests on `lot_number` being filled on every delivery line. Make it NOT NULL with a server-enforced generated format if the operator does not supply one. A delivery registered without a lot number is untraceable after the fact.
+- **`bom_component_id` NULL transition.** Every API action that writes stock_ledger rows today writes `bom_component_id = NULL`. When the BOM Link lands, a one-time migration will fill these UUIDs via a `part_number` match. Design the `getLotHistory` and `getStockLevel` queries to work on `part_number` text match in the interim — switch to UUID join after migration. Do not write the `part_number` query as a shortcut that stays forever.
+- **Stock level consistency.** The `stock_levels` derived view is fast for reads but only as accurate as the ledger. Any code path that changes physical stock without writing a ledger row creates ghost stock or negative stock. There must be one and only one way to move stock: a ledger row. No direct updates to a balance table.
+- **Location deactivation.** A location with stock cannot be deactivated. Guard `updateLocation` with a `getStockByLocation` check — refuse deactivation if any lot has stock there.
+- **Multi-step QC.** Some component types (e.g. LED strips) may need dimensional measurement results, not just a pass/fail toggle. The `inbound_inspections` table has `notes TEXT` for now. A `inspection_measurements JSONB` column is the natural extension — add it when a specific component category needs it, not speculatively.
+- **Scope with the compliance portal's work orders.** PROP-030's `work_order_components` will eventually pull from this stock ledger. That integration (pick list → stock_ledger `pick` event) is deliberately out of scope for this phase — the WMS must be functional and trusted before work orders consume from it.
+
+**Related PROPs / ideas:**
+- **Full Operations Platform (IDEAS 2026-09-29)** — this is Phase 1 of that broader idea, extracted as the standalone foundation; the other phases (assembly, picking, deliveries, recalls, installation) build on this ledger
+- **PROP-030 Manufacturing Routing & Work Orders** — will consume stock via `pick` ledger events once the WMS is live; the work order `work_order_components` pull list becomes a pick list against this stock
+- **PROP-013 BOM / component registry** — `bom_component_id` UUID is the future join to `bom_components`; the BOM Link supplies this once live
+- **PROP-012 Multi-tenancy** — `organization_id NOT NULL` on every table; stock and QC data is operationally sensitive per-tenant data
+
+**Status:** Raw idea
+
+---
+### Full Operations Platform — Purchase to Installation — 2026-09-29
+
+**One sentence:** An end-to-end operational system that takes a customer order from purchase through warehousing, in-house assembly, pick sequencing, delivery, and installer field management — anchored to the engineering/compliance platform's BOM component registry so that recalls are traceable to every affected order and every installed unit.
+
+**Problem it solves:**
+Rushroom currently has no operational system between "customer order exists" and "product ships." Eight functions today live on paper, spreadsheets, or in someone's head:
+
+1. **Purchase** — no purchase order system; supplier replenishment is ad hoc. No linkage between the BOM's component_metadata (supplier, lead time) and an actual PO.
+2. **Warehousing** — goods received without a formal GRN; no stock ledger; the "what do we have on the shelf right now?" question has no digital answer. No lot/batch tracking, which makes recalls impossible to trace.
+3. **In-house assembly** — PROP-030 built work orders with a resolved routing and pull list, but it lives in the engineering compliance portal. The shop floor needs a tablet-friendly assembly queue, step-by-step checklist, and a completion record — not an engineering portal.
+4. **Order sequencing** — when multiple customer orders arrive, there is no system to prioritise which assembly runs first. Prioritisation is gut feel and Slack messages.
+5. **Picking order sequencing** — the component pull list from a work order is in the compliance portal, not the warehouse. No pick path optimisation; a picker walks the warehouse in random order.
+6. **Deliveries** — no shipment planning; delivery date commitments live in someone's inbox. No tracking from "packed" → "in transit" → "delivered."
+7. **Recalls** — if a component batch is found defective, there is no way to answer "which orders contain it?" because there is no lot/batch tracing across GRNs, work orders, and shipments. Today a recall is a manual search across email history.
+8. **Installation management** — installers go on-site with a paper checklist. There is no digital job sheet, no photo confirmation, no completion sign-off, no issue reporting channel back to Rushroom.
+
+The compliance portal already owns the engineering record (BOM, component specs, regulatory status). The operations platform reads from it — it does not duplicate it.
+
+**What already exists in the compliance platform:**
+- `bom_components`, `bom_edges` — canonical component and assembly registry; the shared part master
+- `family_routing_steps` — variant-conditional manufacturing operations per product family
+- `work_orders`, `work_order_steps`, `work_order_components` (PROP-030) — work order specs from a resolved BOM + routing snapshot
+- `component_metadata` — supplier name, manufacturer, procurement data; the starting point for PO generation
+- `bom_edges.fitting_stage` (hub/site) — which components are assembled at the factory vs installed on-site; the dividing line between assembly and installation scope
+- `saved_configurations` / `materialiseConfiguration` — resolved configurations per customer order; the linkage point from compliance to operations
+
+The Order Operations Next.js app already exists as the target platform for this work.
+
+**Architecture: two systems, one shared part master.**
+The compliance portal owns: component registry, BOM structure, routing definitions, work order specs. It passes these downstream.
+The operations platform owns: inventory state, purchase orders, GRNs, lot/batch tracing, assembly execution, order queue, pick lists, shipments, installation jobs. It does not re-own the part master.
+The shared key between them is the compliance portal's component UUID + `part_number` — the same identifier that appears on every GRN line, work order component, and shipment line. Get this alignment right once and every domain integrates cleanly.
+
+**MVP scope — Phase 1: Purchase + Warehousing (the batch-tracing foundation):**
+These two domains come first because lot/batch tracing starts at goods received and flows through every subsequent domain. Without it, recalls are impossible to trace. Building purchase and warehousing first creates the data substrate everything else needs.
+
+1. **`purchase_orders`** — `{id, org_id, supplier_name, po_number, status (draft|sent|confirmed|partial|received|closed), expected_delivery DATE, notes, created_by, created_at}`.
+2. **`purchase_order_lines`** — `{id, org_id, po_id, component_id (FK→compliance portal bom_components UUID), quantity, unit_price, currency, notes}`.
+3. **`goods_received_notes`** (GRN) — `{id, org_id, po_id, received_at, received_by, warehouse_location, notes}`.
+4. **`grn_lines`** — `{id, org_id, grn_id, component_id, quantity_received, lot_number TEXT NOT NULL, batch_number, expiry_date, storage_bin}`. `lot_number` is the recall tracing anchor — NOT NULL, generated if the supplier doesn't provide one.
+5. **`stock_movements`** — append-only ledger: `{id, org_id, component_id, movement_type (received|consumed|adjusted|returned), quantity_delta, reference_id, lot_number, bin_location, moved_at, moved_by}`. Stock levels are derived from this ledger; never stored as a mutable balance.
+6. **API actions:** `createPurchaseOrder`, `addPOLine`, `confirmGRN` (creates GRN + lines + stock_movements), `getStockLevel(component_id)`, `getLotHistory(lot_number)` — the recall query: all GRNs and downstream consumers of a given lot.
+
+**Phase 2: Assembly Execution (shop floor):**
+- **`assembly_jobs`** — `{id, org_id, work_order_ref TEXT (UUID of compliance portal work_order, soft reference), customer_order_ref, status (queued|in_progress|completed|paused), operator_id, started_at, completed_at}`.
+- **`assembly_job_steps`** — snapshot of work_order_steps at job creation; operator checks off each step with `completed_at` and optional photo. Immutable once created.
+- **`assembly_job_components`** — which lot (from stock_movements) was consumed per component; this is the order→lot→GRN→supplier trace record.
+- Tablet-optimised UI: large step checkboxes, reference document links (signs into compliance portal document store), lot number entry per component pull.
+
+**Phase 3: Order Sequencing + Picking:**
+- **`customer_orders`** — `{id, org_id, order_ref, customer_name, configuration_id (from compliance portal saved_configurations), quantity, required_date, priority (standard|urgent|critical), status}`.
+- **`pick_lists`** + **`pick_list_lines`** — generated from one or more assembly jobs. Group by component, sort by bin_location (optimise the walk path). FIFO lot selection from stock_movements.
+- Order sequencing view — drag-and-drop queue with per-order stock coverage status (green/amber/red) and expected completion date.
+
+**Phase 4: Deliveries:**
+- **`shipments`** + **`shipment_lines`** — `{carrier, tracking_number, shipped_at, delivered_at, status (planned|packed|in_transit|delivered|returned)}`. Shipment lines link back to assembly jobs for full order→lot traceability.
+
+**Phase 5: Recalls:**
+- **`recall_events`** — `{affected_component_id, affected_lot_numbers[], trigger (supplier_notification|internal_finding|regulatory_order), status (investigating|active|closed)}`.
+- **`recall_scope_snapshot`** — computed by `getLotHistory` at recall creation time: all assembly jobs, customer orders, and shipments that consumed affected lots. Stored as a snapshot (not live query) so the record is stable.
+- **`recall_notifications`** — per customer order: notification sent, response received.
+- Recall view: paste lot numbers → instant impact list → one-click notify customers via Resend (noreply@valcyra.com, already live).
+
+**Phase 6: Installation Management:**
+- **`installation_jobs`** — `{customer_order_id, site_address, installer_id, scheduled_date, status (scheduled|in_progress|completed|issue_reported)}`.
+- **`installation_tasks`** — checklist derived from components with `fitting_stage = 'site'` in the compliance portal's bom_edges. One task per site-fitted group.
+- **`installation_issues`** — photo + description + severity; blocking issues halt completion and notify operations.
+- Progressive web app (PWA) for installers: magic-link auth, offline-capable checklist, photo capture, completion sign-off.
+
+**Tables involved:**
+New in Order Operations: `purchase_orders`, `purchase_order_lines`, `goods_received_notes`, `grn_lines`, `stock_movements`, `assembly_jobs`, `assembly_job_steps`, `assembly_job_components`, `customer_orders`, `pick_lists`, `pick_list_lines`, `shipments`, `shipment_lines`, `recall_events`, `recall_scope_snapshot`, `recall_notifications`, `installation_jobs`, `installation_tasks`, `installation_issues`
+Cross-system reads (from compliance portal, read-only via API): `bom_components`, `bom_edges`, `work_orders`, `work_order_steps`, `work_order_components`, `family_routing_steps`, `saved_configurations`, `component_metadata`, `document_versions`
+All new tables: `organization_id NOT NULL FK → organizations`
+
+**Effort estimate:** 200–280 hours across all six phases
+- Phase 1 Purchase + Warehousing: 30–40 h
+- Phase 2 Assembly Execution: 25–35 h
+- Phase 3 Order Sequencing + Picking: 20–30 h
+- Phase 4 Deliveries: 15–20 h
+- Phase 5 Recalls: 20–25 h
+- Phase 6 Installation Management (PWA): 40–55 h
+- Cross-system API integration layer (compliance portal → operations): 15–20 h
+- Tests: 15–20 h
+
+Each phase ships independently. Phase 1 is the prerequisite for all others (lot tracing starts at GRN). Phase 6 (installation) is the most isolated and can be built last.
+
+**Risks:**
+- **Component ID alignment is the hardest problem.** The compliance portal uses `bom_components.id` (UUID) and `part_number` as the canonical identifiers. Every GRN line and assembly job component row must carry the compliance portal's component UUID — not just a part number string, which can be renamed. If this alignment is not enforced from day one, the recall query (`getLotHistory`) will have gaps and returns wrong results silently.
+- **Lot discipline at goods received.** Lot tracing only works if operators assign lot numbers consistently at GRN time. Make `lot_number` NOT NULL on `grn_lines`. If the supplier doesn't provide one, the operator generates one (warehouse prefix + date + sequence). A gap here is invisible until a recall, when it is too late.
+- **Cross-system API surface.** The operations platform reads BOM data from the compliance portal. The cleanest approach: dedicated read-only actions in `portal-api` (`getBomForOperations`, `getWorkOrderDetail`, `listSavedConfigurations`) authenticated with a service token, not a user session. No direct cross-project Supabase access. These actions need to be built in the compliance portal as part of this work.
+- **Work order coordination.** The compliance portal creates work order specs; the operations platform executes them. A compliance-portal work order must not be deleted once an assembly job references it. Add a `has_active_assembly_job` guard to the compliance portal before any work order mutation.
+- **Recall query performance.** `getLotHistory` runs across GRN lines, stock movements, assembly job components, and shipment lines. Index `lot_number` in every table that carries it. This query runs rarely but must return in under two seconds — a recall is a safety event.
+- **Installer PWA offline mode.** Offline-first is hard. Bound the scope: installer downloads the day's jobs on arrival (when connected); actions queue locally via IndexedDB; sync on reconnect. Do not attempt full offline capability — just enough for a checklist in a building with poor signal.
+- **Scope boundary with ERP.** This platform does not own: invoicing, accounts payable, customer billing, financial P&L, VAT. The moment a feature requires any of those, it belongs in a future financial system. Purchase order acknowledgement is in scope; paying the invoice is not.
+- **PROP-012 multi-tenancy.** The Order Operations platform needs the same `organization_id` isolation the compliance portal enforces. If both systems share one Supabase project, the same RLS principles apply. If they use separate projects, cross-system API calls are the tenant boundary — never pass raw data across without org scoping.
+
+**Related PROPs:**
+- **PROP-030 Manufacturing Routing & Work Orders** — built the work order spec layer in the compliance portal; Phase 2 builds the execution layer on top of it
+- **PROP-018 Dynamic BOM Import** — the `external_order_id` on compliance portal work orders is where the storefront order links; Phase 3 `customer_orders` is the operations-side record of the same link
+- **Platform Architecture Map (IDEAS 2026-08-29)** — this idea is the concrete implementation of the "future operational system" described there; that idea drew the boundary before any code was written
+- **PROP-056 fitting_stage (hub/site)** — the hub/site split on `bom_edges` is the data source dividing factory work orders from installer job sheets
+- **Email delivery (Resend, noreply@valcyra.com)** — already live; recall notifications and installer job dispatch reuse this infrastructure directly
+- **PROP-012 Multi-tenancy** — all new tables carry `organization_id NOT NULL`; recall and installation data is the most operationally sensitive per-tenant data in the entire stack
+
+**Status:** Raw idea
+
+---
+
+### Scan-to-Confirm — Bin Label Build-Up and QR Verification — 2026-09-30
+
+**One sentence:** Give the warehouse a way to actually create and label its bins, then make every putaway and pick prove the operator is standing at the right one by scanning its QR label — turning `to_location_id` from a claim into evidence.
+
+**Problem it solves:**
+
+PROP-066 shipped the stock ledger, and the ledger is only as honest as the location on each row. Today that location is typed or picked from a dropdown, which fails two ways:
+
+1. **Silent misplacement.** The operator selects `KBG-STK-A03-L2-B1` and physically puts the pallet in A04. The ledger now asserts something false. Because the ledger is append-only and derived, nothing contradicts it — `stock_levels` confidently reports stock in a bin that is empty. Nobody finds out until a picker stands in front of A03 and it is bare, which may be weeks later and on a customer's deadline.
+2. **Unusable at the dock.** Choosing one bin from several hundred in a dropdown, on a phone, while holding a pallet, is the step people route around. A WMS that is slower than a clipboard gets used like a clipboard — filled in afterwards, from memory, in a batch.
+
+There is also a plainer blocker underneath both: **there is currently no way to create a bin from the UI at all.** `/warehouse/locations/new` is a stub. The backend can generate 240 bins in one call, but nothing in the app reaches it, so the warehouse has a location model and no locations.
+
+**What already exists (verified 2026-09-30):**
+
+The backend for location build-up is **done and tested**, not pending:
+
+- `generate_storage_locations(zone, aisles[], bays[], levels[], bins[], dry_run)` — cross-product bin generator with preview-then-commit. Proven: dry run returns codes and writes zero rows; the real run writes; re-running the same range reports every code as already-existing and writes nothing. Capped at 2000 per call.
+- `storage_locations` with the full aisle/bay/level/bin hierarchy and a system-unique `location_code` — the exact string a QR label needs to carry.
+- **Structure guards that make labels safe to print.** `location_code` is frozen by trigger once the bin has any ledger movement, so a printed label can never be invalidated by an edit. Bins are retired, never deleted. Zone `purpose` is frozen once the zone has history. Every structure change is captured in `warehouse_structure_events`.
+- `idempotency_keys` — a real implementation (`principal_id`, `operation`, `idempotency_key`, `request_fingerprint`, cached response), already in the Order Operations schema and directly usable to stop a double-tapped scan writing two ledger rows.
+- `/warehouse/locations` and `/warehouse/locations/[zoneId]` already render zones and their bins read-only.
+
+What is missing is entirely frontend, plus the scan layer.
+
+**The design idea — two scan modes, and only one of them is interesting:**
+
+- **Scan-to-locate.** Point at any bin, the app opens its contents. Read-only, no risk, useful for stock checks.
+- **Scan-to-confirm.** The app states the expected bin first, then requires a scan of *that* bin before it will write. Match → ledger entry. Mismatch → refuse, show both codes side by side, and offer an explicit **"use the scanned bin instead"** override.
+
+That override is the part worth being deliberate about. The suggested bin is sometimes genuinely full or blocked, and a system that only says no gets bypassed. So the override exists — but it writes the ledger entry for the bin that was actually scanned, recorded as an override. The operator is never forced to lie to the system to get their job done, which is the usual root cause of bad warehouse data.
+
+Applied to picking, this is the same mechanic inverted: the pick list says take 4 from `KBG-STK-A01-L1-B2`, the scan proves the picker was there, and the `pick` ledger entry carries that proof.
+
+**MVP scope:**
+
+The loop that proves the whole thing: generate bins → print labels → stick them on the shelves → receive a delivery → scan to confirm putaway → stock appears in the right bin.
+
+1. **Location build-up UI** — zone picker plus aisle/bay/level/bin range inputs, calling the existing RPC with `dry_run = true` to render a preview table of every code it would create (flagging any that already exist), then the same call with `dry_run = false` on confirm. The backend is done; this is the form and the preview table.
+2. **Label sheet** — printable A4 grid of QR codes, selectable by zone or by range, with the human-readable `location_code` printed large beneath each QR. Client-side QR generation, CSS print styles, no server rendering.
+3. **`<LocationScanner>` component** — camera preview, decode, and a manual code entry field as a first-class sibling rather than a hidden fallback. Returns a `location_code` to whatever flow mounted it.
+4. **Scan-to-confirm wired into putaway** — expected vs scanned, with the override path above, and the write keyed through `idempotency_keys`.
+5. **Commissioning screen** — scan a freshly-labelled bin, call `commission_storage_location()`, show it go live. The backend for this is already built (below); this is the camera loop and a running count of how many bins in the zone are still uncommissioned.
+
+Deliberately deferred: picking (needs pick lists, which need the BOM Link to resolve order → required components), cycle counting, offline queueing, and tracking which labels have been printed.
+
+**Commissioning — decided and built 2026-09-30:**
+
+A generated bin exists on paper, not on a shelf. Nothing should be storable in it until someone has physically labelled it, and the cheapest possible proof of that is a scan of the label itself — it cannot be faked from a desk, and it simultaneously establishes that the label exists, decodes correctly, and is on the shelf it names. So commissioning *is* the first scan.
+
+Three database changes landed together, since none of them means anything alone:
+
+1. `generate_storage_locations()` now creates bins with `is_active = false`.
+2. A `before insert` trigger on `stock_ledger` refuses any movement whose `to_location_id` is an inactive bin, with a message telling the operator to label and scan it. Note the deliberate asymmetry: **`from_location_id` may be inactive.** Evacuation must always be possible — if stock ever lands in an inactive bin through a migration or a bug, blocking the way out would strand it permanently, and an append-only ledger has no undo.
+3. `commission_storage_location(code)` flips exactly one bin active. It is `SECURITY DEFINER` because `storage_locations` is admin-write but the person walking the aisle with a roll of labels is an operator — so it checks `is_active_workforce()`, only ever sets `is_active` true, only on a bin that is currently false, and touches no other column. The audit trigger still fires and `auth.uid()` still resolves, so the event records who commissioned what.
+
+Verified end to end locally: bins generate inactive; putaway into an uncommissioned bin is refused; an operator (not an admin) can commission by scanned code, case-insensitively; double-commissioning and unknown codes are both refused with specific messages; putaway succeeds immediately after commissioning; and evacuation from an inactive bin stays possible.
+
+Known rough edge, deliberately not polished: the structure audit records a commissioning as `reactivated`, since the generic audit trigger cannot distinguish a first activation from a genuine reactivation without querying prior events. The distinction is recoverable from the event history and was not worth a schema change.
+
+**Tables involved:**
+
+No new tables for the MVP. Reads `warehouses`, `warehouse_zones`, `storage_locations`; writes `stock_ledger` and `inbound_delivery_lines.status`; uses `idempotency_keys` for scan dedupe. A `label_print_events` table would later answer "which bins are physically labelled," which is worth having but is not needed to prove the loop.
+
+**Effort estimate:** 30–40 hours.
+Location build-up UI ~8h · label sheet and print CSS ~6h · scanner component including iOS behaviour ~10h · scan-to-confirm on putaway ~6h · testing on real phones in the actual building ~4h.
+
+**Risks:**
+
+- **A QR proves the read, not the placement.** Scanning verifies the app decoded the right string; it cannot know the label is on the correct shelf. Stick A03's label on A04 and every scan is confidently wrong, with more authority than the dropdown had. Mitigation is physical: print the human-readable code large enough to sanity-check by eye, and plan a cycle-count flow before trusting the data completely.
+- **Camera needs a secure context.** Fine on the deployed Netlify site and fine on `localhost`, but testing from a phone pointed at a dev machine's LAN IP will silently fail without HTTPS. Budget for a tunnel or deploy previews when testing on real devices.
+- **iOS has no `BarcodeDetector`.** The native API is Chrome/Android only, so a JS library is required (`html5-qrcode` or `zxing-js/browser`). Lazy-load it on scan routes only — the same pattern PROP-049 used for ExcelJS, which is the precedent in this codebase for a heavy client-side dependency.
+- **Dead zones make success ambiguous.** Metal shelving kills wifi. A scan that decodes fine but whose write fails leaves the operator believing the job is done. For the MVP, fail loudly and unmistakably rather than showing optimistic success; a retry queue can come later.
+- **Permission denied once is denied forever, as far as the operator is concerned.** If the camera prompt is declined the flow must still be completable by typing the code, with the reason visible.
+- **Bins can be generated before the shelves are built.** ~~Worth deciding whether generated bins start inactive.~~ **Decided 2026-09-30 and already implemented:** generated bins start inactive and are commissioned by scanning their own label at the shelf. See below.
+
+**Related PROPs:**
+
+- **PROP-066 Warehouse Management System** — this is its direct continuation. PROP-066 named the QR convention in a single line ("Print a QR code per bin, scannable by a phone camera") and specified nothing further; everything above is that line expanded. The structure guards shipped under PROP-066 are what make printed labels safe, since `location_code` can no longer change out from under a label.
+- **PROP-049 Parts workbook with pictures** — the precedent for lazy-loading a heavy client library only on the route that needs it. The scanner library should follow it.
+- **PROP-012 Multi-tenancy — does not apply.** Order Operations authorises through `is_active_workforce()` / `is_admin()` and carries no `organization_id`. The WMS follows Order Operations, not the compliance portal. Nothing here should acquire org scoping.
+
+**Status:** Raw idea

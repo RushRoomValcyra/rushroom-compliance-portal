@@ -1331,3 +1331,32 @@ Also brought up to date: Section 2 gained `planner_mappings` and `planner_catalo
 **No cache bump.** Nothing under `assets/` changed, and forcing every client to re-download the bundle to publish a documentation edit would be a cost with no purpose. The `?v=277` recorded in Section 0 stays accurate because of it.
 
 **Files changed:** docs/SYSTEM_OVERVIEW.html, docs/ROADMAP.md, docs/DECISIONS.md
+
+---
+
+**Date:** 2026-09-30
+**Feature:** PROP-066 Warehouse Management System — database layer (Order Operations)
+
+**Decision 1 — Warehouse layout is protected by invariants, not by a role.**
+Deleting or re-pointing a stock location can silently corrupt every derived stock figure, so the obvious move was a `warehouse_admin` tier above `admin`. We did the opposite: no new role, and the dangerous operations were made structurally impossible instead. Layout is never deleted (a `before delete` trigger always raises; retire with `is_active = false`), `location_code` freezes once a bin has ledger history, a bin can never change zone, and a zone's `purpose` freezes once anything in it has moved.
+
+**Why:** A permission tier can be granted to the wrong person; an invariant cannot be talked around. It also keeps one gate (`is_admin()`) rather than creating a second key to manage, consistent with the standing preference against role granularity. The deeper reason is that `stock_levels` reads zone purpose *as of now* and joins it onto immutable ledger rows — so a mutable layout edit retroactively reinterprets history with no event recording it. Freezing the fields that feed the view is the only way the append-only ledger stays meaningful.
+
+**Decision 2 — Stock can never move *into* an inactive bin, but can always move *out* of one.**
+The `stock_ledger` guard checks `to_location_id` for `is_active` and deliberately does not check `from_location_id`.
+
+**Why:** Symmetry here would be a trap. If stock ever lands in an inactive bin through a migration, a fixup or a bug, blocking the exit would strand it permanently — and an append-only ledger has no undo. Always leave an escape route from a state you can reach.
+
+**Decision 3 — Generated bins start inactive and are commissioned by scanning their own label.**
+`generate_storage_locations()` can create 2000 bins in one call, long before the shelves exist or the labels are stuck on. Bins are therefore created `is_active = false` and activated only through `commission_storage_location(code)`.
+
+**Why:** A bin that exists in the database but not in the building is somewhere stock can be "put" that has no physical reality. Scanning the label is the cheapest possible proof of the opposite: it cannot be done from a desk, and it establishes in one action that the label exists, decodes correctly, and is on the shelf it names. The function is `SECURITY DEFINER` because `storage_locations` is admin-write while the person walking the aisle with a roll of labels is an operator — scoped so it can only ever set `is_active` true, only on a bin currently false, and touches no other column.
+
+**Decision 4 — `stock_levels` is `security_invoker = on`.**
+Caught by `supabase advisors`, not by review. A Postgres view runs as its owner unless told otherwise, so the view returned the whole stock position to any authenticated caller, straight past the `is_active_workforce()` policies on the tables beneath it.
+
+**Why:** RLS on a base table is not inherited by a view over it. Any view over a protected table must opt in explicitly. Recorded in ROADMAP under *Discovered While Building* because it generalises beyond this feature.
+
+**Status — deployed, not verified.** All four migrations are live on the Supabase staging project and every object was confirmed present by query. Every guard was proven against a **local** database; none has been exercised on staging, where all seven WMS tables hold zero rows. The feature is unusable until the location build-up UI exists, because all five write paths are still stubs.
+
+**Files changed:** Order Operations — `supabase/migrations/20261001000000_wms_core.sql`, `20261001010000_wms_structure_guards.sql`, `20261001020000_stock_levels_security_invoker.sql`, `20261001030000_bins_commissioned_when_labelled.sql`, `server/warehouse/*.ts`, `features/warehouse/presentation.ts`, `app/(workforce)/warehouse/**`, `app/(workforce)/workforce-nav.tsx`, `types/database.generated.ts`. Digital Builds — `docs/IDEAS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`.

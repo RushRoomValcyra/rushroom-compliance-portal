@@ -1360,3 +1360,20 @@ Caught by `supabase advisors`, not by review. A Postgres view runs as its owner 
 **Status — deployed, not verified.** All four migrations are live on the Supabase staging project and every object was confirmed present by query. Every guard was proven against a **local** database; none has been exercised on staging, where all seven WMS tables hold zero rows. The feature is unusable until the location build-up UI exists, because all five write paths are still stubs.
 
 **Files changed:** Order Operations — `supabase/migrations/20261001000000_wms_core.sql`, `20261001010000_wms_structure_guards.sql`, `20261001020000_stock_levels_security_invoker.sql`, `20261001030000_bins_commissioned_when_labelled.sql`, `server/warehouse/*.ts`, `features/warehouse/presentation.ts`, `app/(workforce)/warehouse/**`, `app/(workforce)/workforce-nav.tsx`, `types/database.generated.ts`. Digital Builds — `docs/IDEAS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`.
+
+---
+
+**Date:** 2026-10-01
+**Feature:** Operations → PIM planner BOM resolver (service-to-service)
+
+**Decision — Service key authentication ahead of the browser session gate.**
+The resolver is a machine-to-machine call from Order Operations, not a browser session. Placing it before the session auth gate means the call never needs a signed JWT or a user context. The key is compared with a constant-time equality function to prevent timing-based enumeration.
+
+**Why:** A browser session cannot be shared between two backend services without re-implementing login on the calling side. A shared secret is the standard pattern for service-to-service calls, and the endpoint is pinned to the Rushroom org — there is no tenant to derive from a session anyway. The gate returns 503 if the secret is unset (not 401), which makes an undeployed secret visible as a configuration failure rather than an auth failure.
+
+**Decision — Resolver accepts only derived requirements, never cart or order data.**
+The payload schema enforces this with an allowlist of three keys (`action`, `contract_version`, `requirements`). Any extra key returns 400. Order Operations sends planner source types and keys; all commerce context stays on that side.
+
+**Why:** PIM resolves *what a configuration maps to in the component registry*. That is the one thing it knows. Sending order IDs, customer names or addresses would require PIM to store and process data it has no schema for and no business owning.
+
+**Files changed:** `supabase/functions/_shared/planner-resolver-core.mjs`, `supabase/functions/portal-api/index.ts`, `tests/planner-resolver.test.mjs`, `docs/PLANNER_MAPPINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`.

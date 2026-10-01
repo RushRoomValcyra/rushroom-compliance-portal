@@ -25,6 +25,7 @@ Append this block to docs/IDEAS.md:
 **Problem it solves:** [the pain]
 **MVP scope:** [smallest thing worth building]
 **Tables involved:** [list]
+**Branch name:** `feat/[short-kebab-slug]`
 **Effort estimate:** [X hours]
 **Risks:** [what could go wrong]
 **Related PROPs:** [any overlap with existing proposals]

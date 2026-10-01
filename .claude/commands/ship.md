@@ -3,8 +3,9 @@
 Run this after a feature is built and tested. Never before.
 
 ## Step 1 — See what changed
-Run: git diff --name-only HEAD
+Run: git diff --name-only main...HEAD
 Read each changed file to understand what was added or modified.
+Confirm you are on a feature branch (`git branch`), not on main.
 
 ## Step 2 — Update SYSTEM_OVERVIEW.html
 Open docs/SYSTEM_OVERVIEW.html and make exactly these updates:
@@ -55,12 +56,28 @@ Add this block at the bottom of docs/DECISIONS.md:
 In index.html, increment N by 1 in every ?v=N asset reference (styles.css, config.js, api.js, gdocs.js, viewer.js, app.js). Do the same in supplier.html if it carries versioned assets.
 Also update the ?v=N line in CLAUDE.md to match.
 
-## Step 6 — Stage everything
+## Step 6 — Stage everything and commit to the feature branch
 Run: git add -A
 Show me a summary of every file that changed — as a table, one line per file.
 Then ask: "Ready to commit? Give me a commit message or I'll write one."
 
-## Step 7 — ALWAYS end with the Next Steps block
+Commit to the feature branch (not to main). A good commit message:
+- First line: `feat: <what it does>` (≤72 chars)
+- Body (if needed): why, not what
+
+## Step 7 — Merge to main
+After committing, merge the feature branch into main and clean up:
+
+```
+git checkout main
+git merge feat/<prop-slug> --no-ff -m "feat: <feature name>"
+git branch -d feat/<prop-slug>
+```
+
+`--no-ff` keeps the branch visible in the log. Only merge when the feature is confirmed
+ready — not to "save progress". If the feature is incomplete, push the branch and pause.
+
+## Step 8 — ALWAYS end with the Next Steps block
 This is mandatory and comes last, after any explanation. Never bury ordering in prose.
 Keep the whole block under ~12 lines. Commands only — no rationale inside it.
 

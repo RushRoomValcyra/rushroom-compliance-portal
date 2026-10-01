@@ -38,10 +38,28 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
     walk(mapping.target_component_id, rootQuantity, 0, new Set());
   }
   const unresolved_requirements = [...unresolvedByIdentity.values()].sort((a, b) => `${a.source_type}:${a.source_key}`.localeCompare(`${b.source_type}:${b.source_key}`));
-  const bom_entries = unresolved_requirements.length ? [] : [...leaves.entries()].map(([id, quantity]) => {
+  const bom_entries = [...leaves.entries()].map(([id, quantity]) => {
     const component = componentById.get(id);
     return { pim_component_id: id, part_number: component.part_number, component_name: component.name, unit: component.unit_of_measure, quantity };
   }).sort((a, b) => `${a.part_number || ""}:${a.component_name}:${a.pim_component_id}`.localeCompare(`${b.part_number || ""}:${b.component_name}:${b.pim_component_id}`));
-  const status = !unresolved_requirements.length && bom_entries.length ? "resolved" : unresolved_requirements.length && unresolved_requirements.every((item) => item.reason === "missing_or_inactive_mapping") ? "needs_mapping" : "failed";
-  return { contract_version: 1, status, resolved_at: null, mapping_evidence: { records }, unresolved_requirements, bom_entries: status === "resolved" ? bom_entries : [] };
+  const onlyMissingMappings = unresolved_requirements.length > 0
+    && unresolved_requirements.every((item) => item.reason === "missing_or_inactive_mapping");
+  // A partial result is intentionally limited to missing mappings. Graph/data
+  // failures must remain failed rather than returning a potentially misleading
+  // production pick list.
+  const status = !unresolved_requirements.length && bom_entries.length
+    ? "resolved"
+    : onlyMissingMappings && bom_entries.length
+      ? "partially_resolved"
+      : onlyMissingMappings
+        ? "needs_mapping"
+        : "failed";
+  return {
+    contract_version: 1,
+    status,
+    resolved_at: null,
+    mapping_evidence: { records },
+    unresolved_requirements,
+    bom_entries: status === "resolved" || status === "partially_resolved" ? bom_entries : [],
+  };
 }

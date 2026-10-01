@@ -100,7 +100,7 @@ Every valid response has exactly these top-level fields:
 ```json
 {
   "contract_version": 1,
-  "status": "resolved | needs_mapping | failed",
+  "status": "resolved | partially_resolved | needs_mapping | failed",
   "resolved_at": "ISO timestamp or null",
   "mapping_evidence": { "records": [] },
   "unresolved_requirements": [],
@@ -109,11 +109,12 @@ Every valid response has exactly these top-level fields:
 ```
 
 `status: "resolved"` has a non-null `resolved_at`, no
-`unresolved_requirements`, and at least one `bom_entries` row. Any other status
-has `resolved_at: null` and an empty `bom_entries` array. `needs_mapping` means
-one or more source identities lack an active mapping. `failed` is a PIM data or
-graph blocker, such as a missing target, non-released component, cycle, too-deep
-expansion, or invalid edge. Each unresolved requirement carries its exact
+`unresolved_requirements`, and at least one `bom_entries` row.
+`partially_resolved` has `resolved_at: null`, at least one returned BOM row, and
+one or more missing/inactive mappings. It is an incomplete working list, not a
+released pick list. `needs_mapping` means no requirement could be resolved;
+`failed` is a PIM data or graph blocker, such as a missing target, non-released
+component, cycle, too-deep expansion, or invalid edge. Each unresolved requirement carries its exact
 `source_type`, `source_key`, requested `quantity`, and machine-readable reason.
 Active `bom_edges` are expanded recursively with depth/expansion bounds; a leaf
 target stays a leaf and entries aggregate by PIM component. **PIM currently

@@ -24,7 +24,9 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
       if (path.has(componentId)) { block(source, requirement.quantity, "bom_cycle"); return; }
       const component = componentById.get(componentId);
       if (!component) { block(source, requirement.quantity, "missing_target"); return; }
-      if (component.lifecycle_status !== "released") { block(source, requirement.quantity, "component_not_released"); return; }
+      // The active planner mapping is the publishing decision for this
+      // integration. Component lifecycle remains PIM metadata and must not
+      // prevent an explicitly mapped planner part from being exploded.
       const childEdges = children.get(componentId) || [];
       if (!childEdges.length) { leaves.set(componentId, (leaves.get(componentId) || 0) + quantity); return; }
       const nextPath = new Set(path); nextPath.add(componentId);

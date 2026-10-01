@@ -26,18 +26,18 @@ test("resolver handles mapping rules and returns an exploded BOM", () => {
     'resolverTdb("planner_mappings")', 'resolverTdb("bom_edges")', 'is("effective_to", null)',
     "PLANNER_RESOLVER_MAX_DEPTH", "PLANNER_RESOLVER_MAX_EXPANSIONS", "resolvePlannerGraph",
   ]) assert.ok(api.includes(fragment), `resolver API lacks ${fragment}`);
-  for (const fragment of ['mapping.quantity_rule === "fixed" ? Number(mapping.fixed_quantity) : requirement.quantity', '"bom_cycle"', 'component.lifecycle_status !== "released"', "unresolved_requirements", "bom_entries", "mapping_evidence: { records }", '"partially_resolved"']) {
+  for (const fragment of ['mapping.quantity_rule === "fixed" ? Number(mapping.fixed_quantity) : requirement.quantity', '"bom_cycle"', "unresolved_requirements", "bom_entries", "mapping_evidence: { records }", '"partially_resolved"']) {
     assert.ok(core.includes(fragment), `resolver core lacks ${fragment}`);
   }
   assert.ok(!api.includes("X-Operations-PIM-Resolver-Key"), "legacy custom resolver header must not remain");
   assert.ok(!api.includes("blocking_errors, bom"), "legacy response fields must not remain in the resolver response");
 });
 
-test("mapped released leaf resolves with the requested cart quantity", () => {
+test("an actively mapped leaf resolves with the requested cart quantity regardless of PIM lifecycle", () => {
   const result = resolvePlannerGraph({
     requirements: [{ source_type: "module", source_key: "M", quantity: 3 }],
     mappings: [{ id: "map-1", source_type: "module", source_key: "M", target_component_id: "part-1", quantity_rule: "cart_quantity", fixed_quantity: null, mapping_revision: 2 }],
-    components: [{ id: "part-1", part_number: "RR-001", name: "Leaf part", unit_of_measure: "each", lifecycle_status: "released" }],
+    components: [{ id: "part-1", part_number: "RR-001", name: "Leaf part", unit_of_measure: "each", lifecycle_status: "inactive" }],
     edges: [], maxDepth: 20, maxExpansions: 5000,
   });
   assert.equal(result.status, "resolved");

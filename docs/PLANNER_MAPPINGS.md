@@ -113,13 +113,13 @@ Every valid response has exactly these top-level fields:
 `partially_resolved` has `resolved_at: null`, at least one returned BOM row, and
 one or more missing/inactive mappings. It is an incomplete working list, not a
 released pick list. `needs_mapping` means no requirement could be resolved;
-`failed` is a PIM data or graph blocker, such as a missing target, non-released
-component, cycle, too-deep expansion, or invalid edge. Each unresolved requirement carries its exact
+`failed` is a PIM data or graph blocker, such as a missing target, cycle,
+too-deep expansion, or invalid edge. Component lifecycle does not block an
+explicitly active planner mapping. Each unresolved requirement carries its exact
 `source_type`, `source_key`, requested `quantity`, and machine-readable reason.
 Active `bom_edges` are expanded recursively with depth/expansion bounds; a leaf
-target stays a leaf and entries aggregate by PIM component. **PIM currently
-requires every target and exploded component to have `lifecycle_status`
-`released`; any other status blocks resolution.**
+target stays a leaf and entries aggregate by PIM component. The active mapping,
+not the component lifecycle field, controls whether a planner key resolves.
 
 ## Version and release metadata
 

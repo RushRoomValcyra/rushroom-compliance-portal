@@ -3532,6 +3532,11 @@ Deno.serve(async (req) => {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { parent_id, child_id, quantity, reference_designator, effective_from, variant_condition } = body;
     if (!parent_id || !child_id || !quantity) return json({ error: "parent_id, child_id and quantity required" }, 400);
+    const { data: parentComp } = await tdb("bom_components").select("type").eq("id", parent_id).maybeSingle();
+    const ASSEMBLY_TYPES = ["sub_assembly", "phantom_assembly"];
+    if (!parentComp || !ASSEMBLY_TYPES.includes(parentComp.type)) {
+      return json({ error: "Only assemblies can have children." }, 400);
+    }
     try {
       // PROP-036: new children land at the end of the sibling list.
       const { data: sibs } = await tdb("bom_edges").select("sort_order")

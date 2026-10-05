@@ -4424,7 +4424,7 @@
         // `depth > 0` is one level off. That mismatch caused the v202 data loss.
         const isTreeRow  = !!parentNode;                    // every row inside a tree has a parent
         const canUnlink  = isTreeRow;                       // unlink the edge, never delete the component
-        const canAddChild = n.type !== "finished_good";     // PROP-029: a finished good is a leaf
+        const canAddChild = n.type === "sub_assembly" || n.type === "phantom_assembly"; // only assemblies own children
         // Always rendered on a tree row, disabled when there is nothing to swap
         // with. Hiding them on single-child assemblies made the control invisible
         // and left users unable to tell the feature existed; it also made the

@@ -212,6 +212,8 @@
         <li><b>One database rule</b> for every path<span class="s">§6 · data is now clean enough to switch it on</span></li>
         <li><b>Sourcing required on create</b><span class="s">question 8</span></li>
         <li><b>Hub/Site on operations</b><span class="s">docs/IDEAS.md · build when the first work order needs it</span></li>
+        <li><b>Stocked stop in the planner resolver</b><span class="s">question 13 — pre-assemblies are stocked, so Order Operations must get the pre-assembly, not its loose parts. Changes Order Operations → own /build.</span></li>
+        <li><b>Migration 0039 — drawer hardware set</b><span class="s">Written and tested on a copy of production; not applied yet.</span></li>
       </ul>
     </div>
     <div class="col col-issue">
@@ -219,14 +221,16 @@
       <ul>
         <li><b>Hard block too strict</b><span class="s">+child refuses Dynamic BOMs and manufactured parts; Move still lets a part get children silently.</span></li>
         <li><b>13 links inside the new wrappers have no Hub/Site</b><span class="s">e.g. L Prepared Plinth → L Plinth. Set in the BOM tree.</span></li>
-        <li><b>Drawers don't match how we build them</b><span class="s">Bottom and back panel missing; hardware set modelled with children; drawer and door wrappers used nowhere — case G, question 12.</span></li>
-        <li><b>Pre-built stock vs pick list</b><span class="s">Order Operations always gets the loose parts, even for a pre-assembly already on the shelf — question 13.</span></li>
+        <li><b>Drawers incomplete</b><span class="s">Bottom and back panel parts don't exist yet; drawer and door pre-assemblies are used by no cabinet and no planner mapping; door handle colours open — case G.</span></li>
+        <li><b>Hardware set had children</b><span class="s">Fixed by 0039 once applied. 0038's Prepared Drawer Slides wrappers were a mistake — the slides come in the box.</span></li>
+        <li><b>Pre-built stock vs pick list</b><span class="s">Order Operations always gets the loose parts, even for a pre-assembly on the shelf — question 13.</span></li>
         <li><b>Order Operations sees leaves only</b><span class="s">so a Kit's grouping does not reach the pick list as a group yet.</span></li>
       </ul>
     </div>
   </div>
   <div class="timeline">
     <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
+    <div><b>2026-10-06</b> Drawer answers: set includes slides and screws · drawers come in pairs · bottom/back parts to be created · front, handle and door handles fitted at the hub · doors pre-built, ~5 days stock. Migration 0039 written.</div>
     <div><b>2026-10-06</b> Kits renamed “… KIT”. Drawer process described (case G) — exposes the stocked pre-assembly question (13).</div>
     <div><b>2026-10-06</b> Framework agreed: Type × Sourcing × Operations. Phantom → <b style="min-width:0">Kit</b>, never dissolved. Prepared-wrapper rule; migration 0038 applied. Buy unit = BOM line (LED profile). Kits have no category.</div>
   </div>
@@ -234,7 +238,7 @@
   <div class="facts" style="margin-top:22px">
     <div class="fact"><div class="big">24 → 0</div><div class="lbl">parts holding children, before and after 2026-10-06</div></div>
     <div class="fact"><div class="big">90 / 91</div><div class="lbl">parts say <b>Purchased</b> — mostly the default, because the create form never asks</div></div>
-    <div class="fact"><div class="big">6 / 26</div><div class="lbl">sub-assemblies say <b>Purchased</b> — all of them drawer or door structures (case G)</div></div>
+    <div class="fact"><div class="big">6 / 26</div><div class="lbl">sub-assemblies say <b>Purchased</b> — all drawer or door structures; 0039 fixes them</div></div>
     <div class="fact"><div class="big">5</div><div class="lbl">code paths that can attach a child, each with its own (or no) rule</div></div>
   </div>
 
@@ -461,12 +465,12 @@
         <div>
           <div class="model"><b>How it should look</b> (three levels)</div>
           <div class="tree"><ul><li><span class="n">Drawer, as ordered</span> <span class="ghost">front and handle chosen in the order</span>
-            <ul><li><span class="n">L Prepared Drawer Set Excluding Front</span> <span class="b b-src">Assembled</span> <span class="b b-hub">Hub</span>
-                <ul><li><span class="n">Drawer hardware set</span> <span class="b b-src">Purchased</span> <span class="ghost">one article — rule 1</span></li>
-                    <li><span class="n">Drawer bottom</span> <span class="b b-src">Purchased</span> <span class="ghost">panel supplier</span></li>
-                    <li><span class="n">Drawer back panel</span> <span class="b b-src">Purchased</span> <span class="ghost">panel supplier</span></li></ul></li>
-                <li><span class="n">Drawer front</span> <span class="ghost">colour per order</span></li>
-                <li><span class="n">Handle</span> <span class="ghost">colour per order</span></li></ul></li></ul></div>
+            <ul><li><span class="n">L Prepared Drawer Set Excluding Front</span> <span class="b b-src">Assembled</span> <span class="b b-hub">Hub</span> <span class="ghost">a pair — built ahead, stocked</span>
+                <ul><li><span class="n">L Drawer Set ex Front</span> ×2 <span class="b b-src">Purchased</span> <span class="ghost">hardware set; slides + screws in the box</span></li>
+                    <li><span class="n">Drawer bottom</span> ×2 <span class="b b-src">Purchased</span> <span class="ghost">part not created yet</span></li>
+                    <li><span class="n">Drawer back panel</span> ×2 <span class="b b-src">Purchased</span> <span class="ghost">part not created yet</span></li></ul></li>
+                <li><span class="n">L Drawer Front - White</span> ×2 <span class="b b-hub">Hub</span> <span class="ghost">colour per order</span></li>
+                <li><span class="n">Drawer front handle - White / Grey</span> ×2 <span class="b b-hub">Hub</span> <span class="ghost">colour per order</span></li></ul></li></ul></div>
         </div>
         <div>
           <div class="model"><b>What production holds today</b></div>
@@ -475,9 +479,8 @@
               <ul><li><span class="n">Prepared Drawer Slides LEFT</span> ×2 <span class="ghost">slides + 2 EURO screws</span></li>
                   <li><span class="n">Prepared Drawer Slides RIGHT</span> ×2 <span class="ghost">slides + 2 EURO screws</span></li></ul></li></ul></li></ul></div>
           <div class="ex" style="border:0;padding:0">
-            <b>Gaps:</b> no bottom and no back panel · the bought set has children (if slides and screws come in the box, rule 1 says one line) ·
-            the Prepared Drawer Sets and the Prepared Wide/Narrow Doors are used by no assembly and no planner mapping, so no drawer or door reaches Order Operations today ·
-            the ×2 needs explaining. <i>See question 12.</i></div>
+            <b>Fixed by 0039 (not applied yet):</b> the bought set loses its children and becomes one line; the Prepared Drawer Sets and Prepared Doors become Assembled.
+            <b>Still missing:</b> the bottom and back panel parts · the drawer and door pre-assemblies are used by no cabinet and no planner mapping, so no drawer or door reaches Order Operations today.</div>
         </div>
       </div>
       <div class="ex"><b>Front and handle colour:</b> chosen in the customer order. Proposed: keep using planner keys — the order sends “drawer L”, “front: oak”, “handle: silver”
@@ -665,10 +668,13 @@
       <div class="qc">Renamed in the portal 2026-10-06 — now “… Module Common Parts KIT - White”.</div></li>
     <li class="part"><div class="qq">Six sub-assemblies say “Purchased” — the drawer and door structures. <span class="b b-src">Process described</span></div>
       <div class="qc"><b>Answered:</b> the drawer is a bought hardware set + bottom + back panel, pre-assembled at the hub, completed per order with front and handle (case G).
-        So the Prepared Drawer Set is <b>Assembled</b>. <b>Still open:</b> (a) does the supplier's hardware set include the slides and EURO screws — is “Drawer Set ex Front” that set?
-        (b) why ×2 — two drawers per module? (c) the article numbers of the bottom and back panel; (d) the doors: is a handle added per order there too, and is the Prepared Door also Assembled?
-        (e) are the front and handle fitted at the hub or on site?</div></li>
-    <li><div class="qq">Pre-built stock: when a pre-assembly is already built and on the shelf, should the pick list ask for the pre-assembly, or for its loose parts?</div>
+        So the Prepared Drawer Set is <b>Assembled</b>. Further answers: (a) the hardware set includes the slides and screws → one line;
+        (b) ×2 because drawers are always bought and built in pairs — the cabinets are designed for two; (c) the bottom and back panel parts do not exist yet;
+        (d) door handles are pre-installed at the hub, with about 5 days of stock; (e) drawer front and handle are fitted at the hub.
+        <b>Still open:</b> which handle colours each Prepared door is stocked in (one Prepared door per colour, like <i>Prepared S Middle Door - White - White Handle</i>); and where the drawer and door pre-assemblies sit in the cabinets.</div></li>
+    <li class="part"><div class="qq">Pre-built stock: when a pre-assembly is already built and on the shelf, should the pick list ask for the pre-assembly, or for its loose parts? <span class="b b-src">Answered — designed, not built</span></div>
+      <div class="qc"><b>Answered:</b> doors are pre-built with handles (~5 days of stock) and drawer pairs are pre-assembled before the order — so <b>yes, stocked</b>, and the pick list must ask for the pre-assembly.
+        Building it means a “stocked” marker on assemblies and a resolver that stops there; it changes what Order Operations receives, so it goes through /build.</div>
       <div class="qc">Today Order Operations always receives the <b>loose parts</b> — the resolver goes all the way down to items with no children. That is right for something built per order,
         and wrong for a drawer pre-assembled ahead and stocked: the picker would be sent for a hardware set, a bottom and a back panel instead of one finished pre-assembly.
         The same question applies to the Prepared panels. This is a new dimension — <b>stocked or built-to-order</b> — and the resolver would need to stop at stocked items.</div></li>

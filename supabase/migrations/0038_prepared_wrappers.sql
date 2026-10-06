@@ -120,6 +120,15 @@ BEGIN
       RAISE EXCEPTION '0038 step %: component % not found', step.seq, step.pn;
     END IF;
 
+    -- Re-runnable: a step whose work is already done is skipped, so running
+    -- the block twice (e.g. pasted after `db push`) cannot wrap a wrapper.
+    IF (step.op = 'retire' AND p.lifecycle_status = 'replaced')
+       OR (step.op <> 'retire' AND NOT EXISTS (
+             SELECT 1 FROM bom_edges WHERE parent_id = p.id AND effective_to IS NULL)) THEN
+      report := report || format(E'skipped  %s  %s  (already done)\n', p.part_number, p.name);
+      CONTINUE;
+    END IF;
+
     -- ---------------------------------------------------------------- RETIRE
     IF step.op = 'retire' THEN
       IF EXISTS (

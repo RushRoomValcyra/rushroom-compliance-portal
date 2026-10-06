@@ -423,14 +423,61 @@
   </div>
 
   <!-- ============================================================ -->
+  <h2><span class="num">5b</span>When someone adds a child to a part — flag, don't block</h2>
+  <p class="lead">A part that receives a child stays a part. Sometimes that is right (a manufactured part has inputs),
+  often it is a sub-assembly being built by accident. The portal should not silently allow it, and should not flatly refuse it either:
+  it should <b>ask the one question that decides it — how does this part come to exist?</b></p>
+
+  <div class="flow" style="grid-template-columns:1fr 40px 1.6fr">
+    <div class="panel" style="border-left:4px solid var(--amber)">
+      <h3>The moment</h3>
+      <p style="font-size:13px;margin:6px 0 10px">User presses <b>+child</b> on <i>Left Side Panel - White</i> <span class="b b-type">part</span>,
+      or <b>moves</b> a component under it, or <b>copies</b> one that has children.</p>
+      <p style="font-size:13px;color:var(--muted)">The portal reads the part's <b>Sourcing</b> and answers from the matrix (row <i>part</i>):</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="truths">
+      <div class="truth likely">
+        <div class="tq"><span class="b b-src">Manufactured</span> or <span class="b b-src">Subcontracted</span> → allowed, no flag</div>
+        <div class="ta">The children are inputs: material we consume, or what we hand the supplier. It stays a part.</div>
+      </div>
+      <div class="truth" style="border-left:4px solid var(--amber)">
+        <div class="tq"><span class="b b-src">Purchased</span> → flag, and offer the right move</div>
+        <div class="ta" style="color:var(--ink)">“You buy this part complete. What is this child?”</div>
+        <div class="ta">· <b>We fit it ourselves</b> → add it to the parent assembly instead, next to the part<br>
+          · <b>It arrives fitted from the supplier</b> → convert to a purchased sub-assembly<br>
+          · <b>We work on the part</b> (holes, cut-outs) → that is an operation on the work order, not a child (case D1)<br>
+          · <b>We make this part from it</b> → change Sourcing to Manufactured, then add</div>
+      </div>
+      <div class="truth" style="border-left:4px solid var(--amber)">
+        <div class="tq"><span class="b b-src">Assembled</span> → flag: this is a sub-assembly</div>
+        <div class="ta">Offer one click: “Convert to sub-assembly”. Its part number, documents and links stay.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rule-box" style="border-color:var(--amber);background:#fffdf7">
+    <h3>Why a flag and not a block</h3>
+    <p style="font-size:14px;margin-top:6px">The decision needs someone who knows what happens in the workshop — the same reason the
+      Hub/Site check above is a warning. A block would also stop the legitimate case (a manufactured part with inputs),
+      which is what today's rule does.</p>
+    <p style="font-size:14px;margin-top:8px"><b>Bonus:</b> Sourcing is “Purchased” on all 96 parts only because nobody was ever asked.
+      This flag asks at exactly the moment it matters, so the data gets corrected as people work — not in a clean-up project.</p>
+    <p style="font-size:14px;margin-top:8px"><b>What stays a hard block:</b> a <span class="b b-type">finished_good</span> with children
+      (decided, PROP-029), and a component containing itself. Those are never right, so no question is needed.</p>
+    <p style="font-size:14px;margin-top:8px"><b>The 24 existing cases</b> get the same flag on their row, as a
+      <span class="b b-flag">review</span> badge, until someone has answered the question for each.</p>
+  </div>
+
+  <!-- ============================================================ -->
   <h2><span class="num">6</span>Where the rule is enforced</h2>
   <p class="lead">Today five different code paths can attach a child to a component. Each applies its own rule, or none.</p>
 
   <table class="enf">
     <thead><tr><th>How a child gets attached</th><th>Rule applied today</th><th>Status</th></tr></thead>
     <tbody>
-      <tr><td><b>+child / +sib</b> in the BOM tree</td><td>Only sub-assembly and phantom may be parents (added 2026-10-05)</td><td class="st st-part">◐ Too strict — blocks Dynamic BOMs and manufactured parts</td></tr>
-      <tr><td><b>Move</b> a child to another parent</td><td>Only “not a finished good”</td><td class="st st-bad">✕ Lets a part receive children</td></tr>
+      <tr><td><b>+child / +sib</b> in the BOM tree</td><td>Only sub-assembly and kit may be parents (added 2026-10-05) — a hard block on every part</td><td class="st st-part">◐ Too strict — blocks Dynamic BOMs and manufactured parts; should become the flag in 5b</td></tr>
+      <tr><td><b>Move</b> a child to another parent</td><td>Only “not a finished good”</td><td class="st st-bad">✕ Lets a part receive children silently — no flag, no question</td></tr>
       <tr><td><b>Copy</b> an assembly</td><td>None</td><td class="st st-bad">✕ No check</td></tr>
       <tr><td><b>Materialise</b> a Dynamic BOM configuration</td><td>None</td><td class="st st-bad">✕ No check</td></tr>
       <tr><td><b>Change Type</b> on the edit form</td><td>None — a sub-assembly with children can become a part</td><td class="st st-bad">✕ No check</td></tr>
@@ -467,6 +514,9 @@
       <div class="qc">The portal's work orders can carry a <code>drill</code> step with the customer's hole drawing attached. But the
         customer order lives in <b>Order Operations</b>. Does the drawing start there and flow to the work order, or the other way round?
         And is the drilling done at the <b>Hub</b> or on <b>Site</b>?</div></li>
+    <li><div class="qq">The flag in 5b: may the user dismiss it and keep a purchased part with children, or must they pick one of the four answers?</div>
+      <div class="qc"><b>Dismissable</b> is gentler but lets the 24-case pattern grow again. <b>Must answer</b> keeps the data honest but adds a step every time.
+        A middle way: allow “keep as is”, but the row keeps its <span class="b b-flag">review</span> badge until someone answers.</div></li>
   </ol>
 
   <p class="industry">

@@ -3638,10 +3638,17 @@
     { key: "lifecycle_status", label: "Status" },
   ];
 
-  // PROP-058: a phantom assembly is structural only — never built, stocked or
-  // picked — but it holds children and belongs with the assemblies everywhere
-  // the UI groups by type. One definition, because five screens branch on this.
+  // PROP-058: a phantom assembly is never built or stocked as one thing, but
+  // it is NOT dissolved — its children are drawn from stock and picked
+  // together under it. Shown to users as "Kit"; the stored value stays
+  // phantom_assembly. It holds children and belongs with the assemblies
+  // everywhere the UI groups by type. One definition, because five screens
+  // branch on this.
   const ASSEMBLY_TYPES = ["sub_assembly", "phantom_assembly"];
+  // Display name for a stored type. Only phantom_assembly is renamed; every
+  // other type still shows its stored value, as before.
+  const TYPE_DISPLAY = { phantom_assembly: "kit" };
+  const typeDisplay = (t) => TYPE_DISPLAY[t] || t || "";
   // PROP-065: categories apply to everything except a Dynamic BOM, which is a
   // configuration rather than a thing with a part grouping. Assemblies were
   // excluded from the category chips and the Category sort for no better
@@ -4187,7 +4194,7 @@
             style: "margin-left:6px;font-size:0.6875rem;color:var(--muted,#94a3b8);cursor:default;white-space:nowrap;vertical-align:middle",
           }, `↗ ${parentCountMap[comp.id]}`) : null,
         ].filter(Boolean)),
-        el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, comp.type || ""),
+        el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, typeDisplay(comp.type)),
         comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
         (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
@@ -4572,14 +4579,15 @@
         const familyBadge = isFamily
           ? el("span", { style: "font-size:0.6875rem;font-weight:700;background:#2fa56420;color:#2fa564;border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;margin-left:4px" }, "DYNAMIC BOM")
           : null;
-        // PROP-058: inside a tree a phantom looks exactly like a sub-assembly,
-        // and the difference — that it is never built, stocked or picked —
-        // matters most precisely there. Same treatment as DYNAMIC BOM.
+        // PROP-058: inside a tree a phantom (shown as "Kit") looks exactly like
+        // a sub-assembly, and the difference — that it is never built or
+        // stocked, only picked as a group — matters most precisely there.
+        // Same treatment as DYNAMIC BOM.
         const phantomBadge = isPhantomType(n.type)
           ? el("span", {
-              title: "Phantom assembly — structural only. It is never built or stocked; its children are the real parts.",
+              title: "Kit — never built or stocked as one thing. Its children are drawn from stock and picked together under it.",
               style: "font-size:0.6875rem;font-weight:700;background:#0d948820;color:#0d9488;border:1px dashed #0d948866;border-radius:4px;padding:0 5px;flex-shrink:0;white-space:nowrap;margin-left:4px",
-            }, "PHANTOM")
+            }, "KIT")
           : null;
 
         // Component cell: connector + toggle | name + badges (line 1) / part# (line 2)
@@ -5251,7 +5259,7 @@
         el("span", { style: `font-family:monospace;font-size:0.75rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${wbs ? "color:var(--accent,#2fa564)" : "color:var(--muted,#8b93a1);opacity:0.5"}` }, wbs || "—"),
         el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, c.part_number),
         el("span", { style: "font-size:0.875rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: c.name }, c.name),
-        el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);text-align:right;white-space:nowrap" }, c.type || ""),
+        el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);text-align:right;white-space:nowrap" }, typeDisplay(c.type)),
       ]);
     }
 
@@ -5561,7 +5569,7 @@
       thumbBox(thumbMap[r.id]),
       el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, r.part_number || "—"),
       el("span", { style: "flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: r.name }, r.name),
-      el("span", { style: `font-size:0.6875rem;font-weight:700;color:${tone}` }, r.type || ""),
+      el("span", { style: `font-size:0.6875rem;font-weight:700;color:${tone}` }, typeDisplay(r.type)),
       ...(extra || []),
     ].filter(Boolean));
 
@@ -5970,7 +5978,7 @@
       const now = new Date();
       return `RR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-${s}`;
     }
-    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Phantom Assembly (structural only)"], ["finished_good", "Finished Good"]];
+    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
     const newPN   = el("input",  { class: "up-text", type: "text" });
     const newName = el("input",  { class: "up-text", type: "text", placeholder: "Name (required)" });
     const newType = el("select", { class: "up-text" }, TYPE_OPTS.map(([v, l]) => el("option", { value: v }, l)));
@@ -7578,7 +7586,7 @@
         syncConditionalFields();
         statusSel.addEventListener("change", syncConditionalFields);
 
-        const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Phantom Assembly (structural only)"], ["finished_good", "Finished Good"]];
+        const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
         const currentType = nodeData?.type || "part";
         const typeSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
           TYPE_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentType ? "selected" : null }, l))
@@ -8400,7 +8408,7 @@
     }
 
     // --- Fields --------------------------------------------------------------
-    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Phantom Assembly (structural only)"], ["finished_good", "Finished Good"]];
+    const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
     const pn   = el("input",    { class: "up-text", type: "text", placeholder: "Auto-generated if left empty" });
     const oem  = el("input",    { class: "up-text", type: "text", placeholder: "OEM / distributor reference (optional)" });
     const nm   = el("input",    { class: "up-text", type: "text", placeholder: "Name" });

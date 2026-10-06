@@ -177,7 +177,7 @@
       <ul>
         <li><span class="b b-type">part</span><span class="d">A single item — a panel, a switch, a screw</span></li>
         <li><span class="b b-type">sub_assembly</span><span class="d">Something that is a set of other items</span></li>
-        <li><span class="b b-type">phantom_assembly</span><span class="d">A pick group — never built or stocked as one thing, but its children are drawn from stock and picked together</span></li>
+        <li><span class="b b-type">Kit</span><span class="d"><i>(stored as phantom_assembly)</i> A pick group — never built or stocked as one thing, but its children are drawn from stock and picked together</span></li>
         <li><span class="b b-type">finished_good</span><span class="d">A complete product we buy and pass on untouched</span></li>
         <li><span class="b b-type">product_family</span><span class="d">Dynamic BOM — a configurable product with variants</span></li>
       </ul>
@@ -240,7 +240,7 @@
         <td class="ok"><span class="verdict">✓ Supplier's inputs</span>The supplier builds it. Some lines may come from us or be specified by us. <i>See question 5.</i></td>
       </tr>
       <tr>
-        <th class="rowh"><span class="b b-type">phantom_assembly</span></th>
+        <th class="rowh"><span class="b b-type">Kit</span></th>
         <td class="ok" colspan="4"><span class="verdict">✓ Pick group — the level is kept</span>Never bought, built or stocked as one thing, so Sourcing does not apply to the phantom itself. But it is <b>not dissolved</b>: its children are drawn from stock and appear <b>grouped under it on the pick list</b>. <span class="count">Decided 2026-10-06 — see question 6</span></td>
       </tr>
       <tr>

@@ -68,7 +68,7 @@ test("a phantom is offered when creating and editing, everywhere", () => {
   const pickers = [...app.matchAll(/const TYPE_OPTS = \[[\s\S]*?\];/g)].map((m) => m[0]);
   assert.equal(pickers.length, 3, `expected three type pickers, found ${pickers.length}`);
   for (const p of pickers) {
-    assert.ok(/\["phantom_assembly", "Phantom Assembly \(structural only\)"\]/.test(p),
+    assert.ok(/\["phantom_assembly", "Kit \(picked together, not built\)"\]/.test(p),
       `a type picker does not offer phantom_assembly:\n${p.slice(0, 120)}`);
   }
 });
@@ -76,7 +76,10 @@ test("a phantom is offered when creating and editing, everywhere", () => {
 test("a phantom is visibly different inside a tree", () => {
   // In a tree it otherwise looks exactly like a sub-assembly, and the
   // difference matters most precisely there.
-  assert.ok(app.includes('}, "PHANTOM")'), "no PHANTOM badge on tree rows");
+  // Shown to users as "Kit" — a phantom is a pick group, never dissolved.
+  assert.ok(app.includes('}, "KIT")'), "no KIT badge on tree rows");
+  assert.ok(/const TYPE_DISPLAY = \{ phantom_assembly: "kit" \}/.test(app), "list badges would show the raw phantom_assembly value");
+  assert.ok(!/comp\.type \|\| ""\)/.test(app), "the root-row badge bypasses typeDisplay");
   assert.ok(/familyBadge, phantomBadge, condTag/.test(app), "the badge is built but never mounted");
   assert.ok(/never built or stocked/.test(app), "the badge does not explain what a phantom is");
   assert.ok(/phantom_assembly: "#0d9488"/.test(app), "the root-row type badge has no colour for phantoms");

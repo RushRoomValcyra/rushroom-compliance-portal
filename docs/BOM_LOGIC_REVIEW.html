@@ -139,6 +139,25 @@
   .fact .big { font-size: 26px; font-weight: 700; }
   .fact .lbl { font-size: 12px; color: var(--muted); }
 
+  .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0 6px; }
+  .col { border-radius: 8px; padding: 14px 16px; font-size: 13px; }
+  .col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .col ul { list-style: none; }
+  .col li { padding: 6px 0; border-top: 1px solid rgba(0,0,0,.06); line-height: 1.4; }
+  .col li:first-child { border-top: 0; }
+  .col li .s { display: block; font-size: 12px; opacity: .75; }
+  .col-live  { background: var(--green-bg); } .col-live h3 { color: var(--green); }
+  .col-rule  { background: #eef6f1; border: 1px solid #cfe7d8; } .col-rule h3 { color: var(--green); }
+  .col-plan  { background: var(--blue-bg); } .col-plan h3 { color: var(--blue); }
+  .col-issue { background: var(--amber-bg); } .col-issue h3 { color: var(--amber); }
+  .timeline { font-size: 13px; margin: 10px 0 0; border-left: 3px solid var(--border); padding-left: 14px; }
+  .timeline div { padding: 3px 0; } .timeline b { display: inline-block; min-width: 92px; }
+  ol.questions li.done { border-color: var(--green); background: var(--green-bg); }
+  ol.questions li.done::before { background: var(--green); }
+  ol.questions li.part { border-color: var(--blue); background: var(--blue-bg); }
+  ol.questions li.part::before { background: var(--blue); }
+  .resolved { margin-top: 16px; border: 2px solid var(--green); border-radius: 8px; padding: 16px 20px; background: #f7fcf9; }
+  @media (max-width: 900px) { .board { grid-template-columns: 1fr; } }
   .industry { font-size: 13px; color: var(--muted); border-left: 3px solid var(--border); padding: 4px 0 4px 14px; margin-top: 16px; }
 
   @media (max-width: 900px) {
@@ -152,19 +171,69 @@
 <div class="container">
 
   <h1>BOM Structure Logic — Review</h1>
-  <div class="subtitle">Rushroom Engineering &amp; Compliance Platform · draft for review · 2026-10-06</div>
+  <div class="subtitle">Rushroom Engineering &amp; Compliance Platform · living overview · last updated 2026-10-06</div>
 
-  <div class="banner">
-    <strong>Proposal, not built.</strong> This page shows the logic we are considering for when a component
-    may hold children and what those children mean. Nothing here is implemented yet. Amber dashed
-    cells and the numbered questions at the end are the decisions we need to make together.
+  <div class="banner" style="background:var(--green-bg);border-left-color:var(--green)">
+    <strong style="color:var(--green)">How to read this page.</strong> This is where BOM structure decisions are followed.
+    The <b>status board</b> below says what is live, what is decided, what is planned and what is not right yet.
+    The sections after it explain the logic; the <b>rules</b> (6b) and <b>questions</b> (7) show what is settled and what is still open.
+    Green = decided or live · blue = designed, not built · amber = open or not right yet.
   </div>
 
-  <div class="facts">
-    <div class="fact"><div class="big">24</div><div class="lbl">plain <b>parts</b> in production that hold children (42 child links)</div></div>
-    <div class="fact"><div class="big">96 / 96</div><div class="lbl">parts marked <b>Purchased</b> — the create form never asks, so this is the default, not a decision</div></div>
-    <div class="fact"><div class="big">12 / 19</div><div class="lbl">sub-assemblies marked <b>Purchased</b> — same cause</div></div>
-    <div class="fact"><div class="big">5</div><div class="lbl">different code paths that create a child link, each with its own (or no) rule</div></div>
+  <h2 style="margin-top:28px"><span class="num">0</span>Status board</h2>
+  <div class="board">
+    <div class="col col-live">
+      <h3>✓ Live in production</h3>
+      <ul>
+        <li><b>No part holds children</b><span class="s">Was 24 parts / 42 links. Migration 0038, verified by query 2026-10-06.</span></li>
+        <li><b>10 new Prepared wrappers</b>, 8 leftovers retired<span class="s">Plinths, back panels, bottom, seat switch, drawer slides.</span></li>
+        <li><b>18 missing lines now reach Order Operations</b><span class="s">Panels, shelves, plinths — they were not leaves before.</span></li>
+        <li><b>Phantom shown as “Kit”</b> (v282)<span class="s">Pushed. Not yet checked in the UI.</span></li>
+      </ul>
+    </div>
+    <div class="col col-rule">
+      <h3>✓ Decided — working rules</h3>
+      <ul>
+        <li>Buy unit = BOM line</li>
+        <li>A purchased part never holds children → Prepared wrapper</li>
+        <li>What we do to it = operation</li>
+        <li>What it is made of = materials</li>
+        <li>A Kit is a pick group, never dissolved</li>
+        <li>Kits have no category</li>
+        <li>Type = <i>may</i> it have children · Sourcing = <i>what they mean</i></li>
+      </ul>
+    </div>
+    <div class="col col-plan">
+      <h3>◇ Designed, not built</h3>
+      <ul>
+        <li><b>Flag, don't block</b> on +child / move / copy<span class="s">§5b · waits on question 10 · replaces today's hard block</span></li>
+        <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
+        <li><b>One database rule</b> for every path<span class="s">§6 · data is now clean enough to switch it on</span></li>
+        <li><b>Sourcing required on create</b><span class="s">question 8</span></li>
+        <li><b>Hub/Site on operations</b><span class="s">docs/IDEAS.md · build when the first work order needs it</span></li>
+      </ul>
+    </div>
+    <div class="col col-issue">
+      <h3>! Not right yet</h3>
+      <ul>
+        <li><b>Hard block too strict</b><span class="s">+child refuses Dynamic BOMs and manufactured parts; Move still lets a part get children silently.</span></li>
+        <li><b>13 links inside the new wrappers have no Hub/Site</b><span class="s">e.g. L Prepared Plinth → L Plinth. Set in the BOM tree.</span></li>
+        <li><b>6 sub-assemblies say “Purchased”</b><span class="s">Prepared Drawer Sets, Drawer Sets, Prepared Wide/Narrow Doors — question 12.</span></li>
+        <li><b>4 kits still named “… Assembly”</b><span class="s">question 11</span></li>
+        <li><b>Order Operations sees leaves only</b><span class="s">so a Kit's grouping does not reach the pick list as a group yet.</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="timeline">
+    <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
+    <div><b>2026-10-06</b> Framework agreed: Type × Sourcing × Operations. Phantom → <b style="min-width:0">Kit</b>, never dissolved. Prepared-wrapper rule; migration 0038 applied. Buy unit = BOM line (LED profile). Kits have no category.</div>
+  </div>
+
+  <div class="facts" style="margin-top:22px">
+    <div class="fact"><div class="big">24 → 0</div><div class="lbl">parts holding children, before and after 2026-10-06</div></div>
+    <div class="fact"><div class="big">90 / 91</div><div class="lbl">parts say <b>Purchased</b> — mostly the default, because the create form never asks</div></div>
+    <div class="fact"><div class="big">6 / 26</div><div class="lbl">sub-assemblies say <b>Purchased</b> — under our rules most of them are Assembled</div></div>
+    <div class="fact"><div class="big">5</div><div class="lbl">code paths that can attach a child, each with its own (or no) rule</div></div>
   </div>
 
   <!-- ============================================================ -->
@@ -229,14 +298,14 @@
     <tbody>
       <tr>
         <th class="rowh"><span class="b b-type">part</span></th>
-        <td class="no"><span class="verdict">✕ No children</span>A bought single item. If it arrives with things fitted to it, it is not a part — it is a purchased sub-assembly. <b>May still have operations</b> done to it, e.g. customer holes.<span class="count">Today: all 24 part-parents sit here</span></td>
+        <td class="no"><span class="verdict">✕ No children</span>A bought single item. If it arrives with things fitted to it, it is not a part — it is a purchased sub-assembly. <b>May still have operations</b> done to it, e.g. customer holes.<span class="count">Cleaned 2026-10-06: 0 left (migration 0038)</span></td>
         <td class="ok q-cell"><span class="verdict">✓ Inputs we consume</span>Sheet, paint, inserts — the material a part is made from. <i>See question 2.</i></td>
         <td class="no q-cell"><span class="verdict">✕ Contradiction</span>If we put it together, it is a sub-assembly. Suggest retyping. <i>See question 2.</i></td>
         <td class="ok"><span class="verdict">✓ Inputs we provide</span>E.g. we give our sheet to a laser cutter; it comes back as our part.</td>
       </tr>
       <tr>
         <th class="rowh"><span class="b b-type">sub_assembly</span></th>
-        <td class="ref q-cell"><span class="verdict">◐ Contents, for reference</span>What is inside the thing we buy. Kept for compliance and spares. Never picked, never built by us. <i>See question 4.</i></td>
+        <td class="no q-cell"><span class="verdict">✕ One line — proposed</span>Follows from rule 1 (buy unit = BOM line): a bought assembly is one line with no children. What is inside goes on the Materials and Documents tabs. <i>Confirm in question 4.</i></td>
         <td class="na q-cell"><span class="verdict">? Same as Assembled</span>Unless we need to tell a welded frame apart from a screwed one. <i>See question 3.</i></td>
         <td class="ok"><span class="verdict">✓ Build inputs</span>What we pick and put together, at the hub or on site.</td>
         <td class="ok"><span class="verdict">✓ Supplier's inputs</span>The supplier builds it. Some lines may come from us or be specified by us. <i>See question 5.</i></td>
@@ -271,7 +340,7 @@
   <div class="meanings">
     <div class="meaning">
       <h3>Purchased</h3>
-      <div class="tag">“This is what's inside what we buy”</div>
+      <div class="tag">“This is what's inside what we buy” — <b style="color:var(--amber)">proposed under rule 1: record it on Materials / Documents, not as BOM lines</b></div>
       <div class="tree"><ul><li><span class="n">LED driver box</span> <span class="b b-src">Purchased</span>
         <ul><li class="dim"><span class="n">PCB</span></li><li class="dim"><span class="n">Housing</span></li></ul></li></ul></div>
       <dl>
@@ -330,10 +399,10 @@
     <div class="case">
       <div class="ctitle">B · We buy an assembly complete</div>
       <div class="cwhat">An LED driver, a switch with its cable already on.</div>
-      <div class="model"><span class="b b-type">sub_assembly</span> + <span class="b b-src">Purchased</span> → contents for reference</div>
-      <div class="tree"><ul><li><span class="n">Seat to Door Switch</span>
-        <ul><li class="dim"><span class="n">Door switch</span> <span class="ghost">inside, as delivered</span></li></ul></li></ul></div>
-      <div class="ex">Today <i>Seat to Door Switch</i> is a <b>part</b> holding <i>Door switch</i> — it belongs here instead, if it arrives assembled.</div>
+      <div class="model"><span class="b b-type">part</span> + <span class="b b-src">Purchased</span> → one line, no children <span class="ghost">(rule 1 — proposed, question 4)</span></div>
+      <div class="tree"><ul><li><span class="n">LED driver</span> <span class="ghost">contents on the Materials tab</span></li></ul></div>
+      <div class="ex">Checked against <i>Seat to Door Switch</i>: the door switch arrives <b>unmounted</b>, so it is not this case — it is
+        now in <i>Prepared Seat to Door Switch</i> (migration 0038).</div>
     </div>
     <div class="case">
       <div class="ctitle">C · We buy an assembly, with one part of ours in it</div>
@@ -435,6 +504,17 @@
     <p style="font-size:13px;color:var(--muted);margin-top:8px">Shown as a warning in the tree and in a review list — not a hard block, because the fix needs a person who knows what actually happens in the workshop.</p>
   </div>
 
+  <div class="resolved">
+    <h3 style="color:var(--green)">✓ Resolved 2026-10-06 — what L Plinth became (live)</h3>
+    <p style="font-size:13px;color:var(--muted);margin:4px 0 8px">We fit the hardware ourselves, so it moved into a new Prepared wrapper. The panel stays exactly what we buy.</p>
+    <div class="tree"><ul><li><span class="n">L Module Common Parts Assembly</span> <span class="b b-type">Kit</span>
+      <ul><li><span class="n">L Prepared Plinth - White</span> <span class="b b-src">Assembled</span> <span class="b b-site">Site</span>
+        <ul><li><span class="n">L Plinth - White</span> <span class="b b-src">Purchased</span> <span class="ghost">Hub/Site not set yet</span></li>
+            <li><span class="n">Prepared Seat to Door Switch</span> ×2 <span class="b b-site">Site</span>
+              <ul><li><span class="n">Seat to Door Switch</span></li><li><span class="n">Door switch</span> <span class="b b-site">Site</span></li></ul></li>
+            <li><span class="n">Shelf pin</span> ×2 <span class="b b-site">Site</span></li></ul></li></ul></li></ul></div>
+  </div>
+
   <!-- ============================================================ -->
   <h2><span class="num">5b</span>When someone adds a child to a part — flag, don't block</h2>
   <p class="lead">A part that receives a child stays a part. Sometimes that is right (a manufactured part has inputs),
@@ -499,7 +579,7 @@
   </table>
   <div class="enf-after">
     <b>Proposed:</b> one rule in the database itself, so all five paths obey it automatically and no future screen can bypass it.
-    The matrix in section 2 becomes that rule. It switches on only <b>after</b> the 24 existing cases are cleaned up, otherwise it would reject today's data.
+    The matrix in section 2 becomes that rule. It could only switch on once the 24 existing cases were cleaned up — <b>done 2026-10-06</b> (migration 0038), so the data no longer stands in the way. Still to decide first: question 10.
   </div>
 
   <!-- ============================================================ -->
@@ -516,6 +596,8 @@
       <div class="qc">Aluminium, plastic, zinc-plated steel → the Materials tab (RoHS / REACH), not child parts.</div></li>
     <li><div class="qq">A Kit is a pick group and is never dissolved.</div>
       <div class="qc">Never built or stocked as one thing; its children are drawn from stock and picked together under it. Stored as <code>phantom_assembly</code>, shown as <b>Kit</b>.</div></li>
+    <li><div class="qq">Kits have no category.</div>
+      <div class="qc">A category says what kind of physical thing an item is; a kit is deliberately mixed (panels, fasteners, Prepared wrappers). Which wardrobe module it belongs to (S / M / L / BB) is in its name for now. When filtering by module becomes painful, that is a <b>Module</b> field on assemblies — not a category.</div></li>
   </ol>
 
   <!-- ============================================================ -->
@@ -523,29 +605,34 @@
   <p class="lead">These are the open points. Each one changes what gets built.</p>
 
   <ol class="questions">
-    <li><div class="qq">Is this the right split — Type says <i>whether</i> it may have children, Sourcing says <i>what they mean</i>?</div>
-      <div class="qc">Everything below depends on this one.</div></li>
+    <li class="done"><div class="qq">Is this the right split — Type says <i>whether</i> it may have children, Sourcing says <i>what they mean</i>? <span class="b b-type">Decided — yes</span></div>
+      <div class="qc">Agreed 2026-10-06, with Operations as the third dimension (what we do to an item).</div></li>
     <li><div class="qq">Part + Manufactured, and Part + Assembled: what do we allow?</div>
       <div class="qc">Proposed: <b>Manufactured</b> may have inputs (sheet, paint); <b>Assembled</b> means it is really a sub-assembly. But a panel with inserts pressed in — is that a part we manufactured, or something we assembled?</div></li>
     <li><div class="qq">Do Manufactured and Assembled need to mean different things for a sub-assembly?</div>
       <div class="qc">E.g. a welded frame (can't be taken apart) vs. a screwed unit (can). If the difference doesn't matter to us, the two can behave the same.</div></li>
-    <li><div class="qq">Do we want to record what's inside things we buy?</div>
-      <div class="qc">For compliance it is valuable — substance declarations (RoHS, REACH) concern the contents. But it is extra work per purchased assembly. Optional, required, or not at all?</div></li>
+    <li class="part"><div class="qq">Do we want to record what's inside things we buy? <span class="b b-src">Proposed answer</span></div>
+      <div class="qc">Rule 1 (buy unit = BOM line) points to: <b>yes, but on the Materials and Documents tabs, not as BOM lines</b> — otherwise Order Operations would be asked to pick things that cannot be ordered. Confirm.</div></li>
     <li><div class="qq">For Subcontracted items: do we mark per line who supplies it (us / the supplier / the supplier, but our specification)?</div>
       <div class="qc">This is the one concept we don't have today. Needed now, or once the first subcontracted item exists?</div></li>
-    <li style="border-color:var(--green);background:var(--green-bg)"><div class="qq">Phantoms: should the phantom level disappear on the pick list? <span class="b b-type">Decided — no</span></div>
-      <div class="qc">Phantoms are how we draw materials from stock and group the pick list, so the level is kept everywhere, including in what the planner BOM resolver sends Order Operations (which already does this). <b>This is where we deliberately differ from SAP/PTC</b>, where a phantom is dissolved (“blown through”). Follow-up: the edit form labels it <i>“Phantom Assembly (structural only)”</i>, which now undersells what it does.</div></li>
+    <li class="done"><div class="qq">Phantoms: should the phantom level disappear on the pick list? <span class="b b-type">Decided — no</span></div>
+      <div class="qc">Phantoms are how we draw materials from stock and group the pick list, so the level is kept. <b>Correction:</b> the planner BOM resolver sends Order Operations leaves only, so the Kit grouping does <b>not</b> reach the pick list as a group yet — see the status board. <b>This is where we deliberately differ from SAP/PTC</b>, where a phantom is dissolved (“blown through”). Renamed in the UI to <b>Kit (picked together, not built)</b> — v282.</div></li>
     <li><div class="qq">Finished good: always Purchased, never children?</div>
       <div class="qc">Matches the existing decision (PROP-029). Confirm it still holds.</div></li>
     <li><div class="qq">Sourcing becomes a required choice when creating a component, with no default.</div>
       <div class="qc">Without this, every new component is silently “Purchased” and the consistency check in section 5 gives false alarms.</div></li>
-    <li><div class="qq">Customer holes (case D1): where do the hole positions come from, and who records that they were drilled?</div>
+    <li class="part"><div class="qq">Customer holes (case D1): where do the hole positions come from, and who records that they were drilled? <span class="b b-src">Partly decided</span></div>
+      <div class="qc"><b>Decided:</b> the holes are an operation on the work order, not a part or a child (rule 3). <b>Still open:</b> the two questions below.</div>
       <div class="qc">The portal's work orders can carry a <code>drill</code> step with the customer's hole drawing attached. But the
         customer order lives in <b>Order Operations</b>. Does the drawing start there and flow to the work order, or the other way round?
         And is the drilling done at the <b>Hub</b> or on <b>Site</b>?</div></li>
     <li><div class="qq">The flag in 5b: may the user dismiss it and keep a purchased part with children, or must they pick one of the four answers?</div>
       <div class="qc"><b>Dismissable</b> is gentler but lets the 24-case pattern grow again. <b>Must answer</b> keeps the data honest but adds a step every time.
         A middle way: allow “keep as is”, but the row keeps its <span class="b b-flag">review</span> badge until someone answers.</div></li>
+    <li><div class="qq">Rename the four kits from “… Module Common Parts <b>Assembly</b>” to “… <b>Kit</b>”?</div>
+      <div class="qc">The name would then agree with the KIT badge. Safe for Order Operations — planner mappings point at the component, not its name. Four edits in the portal, or one small migration.</div></li>
+    <li><div class="qq">Six sub-assemblies say “Purchased”: L/M Prepared Drawer Set, L/M Drawer Set ex Front, Prepared Wide and Narrow Left/Right Door. Are any of them really bought complete?</div>
+      <div class="qc">Under rule 2 a Prepared wrapper is our work, so <b>Assembled</b>. If a drawer set really arrives complete from the supplier, rule 1 says it should be one line with no children instead.</div></li>
   </ol>
 
   <p class="industry">

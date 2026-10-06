@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOM Structure Logic — Review</title>
+<style>
+  :root {
+    --green: #15803d; --green-bg: #e8f5ec;
+    --amber: #b45309; --amber-bg: #fdf3e2;
+    --red: #b91c1c;   --red-bg: #fdeaea;
+    --grey: #64748b;  --grey-bg: #f1f5f9;
+    --blue: #2563eb;  --blue-bg: #e8f0fe;
+    --site: #c2410c;  --site-bg: #fdeee4;
+    --border: #e2e8f0; --ink: #1e293b; --muted: #64748b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+         line-height: 1.55; color: var(--ink); background: #f4f6f8; padding: 40px 20px; font-size: 15px; }
+  .container { max-width: 1180px; margin: 0 auto; background: #fff; padding: 56px; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-radius: 6px; }
+  h1 { font-size: 30px; margin-bottom: 6px; }
+  h2 { font-size: 22px; margin: 56px 0 8px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+  h2 .num { color: var(--green); margin-right: 8px; }
+  h3 { font-size: 16px; margin-bottom: 6px; }
+  p.lead { color: var(--muted); margin-bottom: 22px; max-width: 820px; }
+  .subtitle { color: var(--muted); margin-bottom: 18px; }
+  .banner { background: var(--amber-bg); border-left: 4px solid var(--amber); padding: 14px 18px; border-radius: 4px; margin: 18px 0 8px; }
+  .banner strong { color: var(--amber); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: var(--grey-bg); padding: 1px 5px; border-radius: 3px; }
+
+  /* badges, in the portal's style */
+  .b { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 4px; font-weight: 500; white-space: nowrap; }
+  .b-type  { background: var(--green-bg); color: var(--green); }
+  .b-src   { background: var(--blue-bg);  color: var(--blue); }
+  .b-site  { background: var(--site-bg);  color: var(--site); border: 1px solid #f5c6a5; border-radius: 10px; }
+  .b-hub   { background: var(--blue-bg);  color: var(--blue); border: 1px solid #bcd0f7; border-radius: 10px; }
+  .b-flag  { background: var(--red-bg);   color: var(--red); }
+
+  /* two questions */
+  .axes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 10px; }
+  .axis.three { border-top: 4px solid var(--amber); }
+  .b-op { background: var(--amber-bg); color: var(--amber); }
+  .op { display: inline-block; font-size: 12px; color: var(--amber); border: 1px dashed var(--amber); border-radius: 4px; padding: 0 6px; margin-left: 4px; }
+  .case.new { border: 2px solid var(--amber); }
+  .axis { border: 1px solid var(--border); border-radius: 8px; padding: 20px 22px; }
+  .axis .q { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+  .axis .field { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .axis ul { list-style: none; }
+  .axis li { padding: 5px 0; border-top: 1px solid var(--grey-bg); display: flex; gap: 10px; align-items: baseline; }
+  .axis li .b { min-width: 118px; text-align: center; }
+  .axis li span.d { color: var(--muted); font-size: 14px; }
+  .axis.one   { border-top: 4px solid var(--green); }
+  .axis.two   { border-top: 4px solid var(--blue); }
+  .key-idea { margin-top: 20px; background: var(--green-bg); border-radius: 8px; padding: 16px 20px; font-size: 16px; }
+  .key-idea strong { color: var(--green); }
+
+  /* matrix */
+  table.matrix { width: 100%; border-collapse: separate; border-spacing: 6px; margin-top: 8px; table-layout: fixed; }
+  table.matrix th { font-size: 13px; text-align: center; padding: 8px; color: var(--muted); font-weight: 600; }
+  table.matrix th.rowh { text-align: left; width: 150px; }
+  table.matrix td { vertical-align: top; padding: 12px 12px; border-radius: 6px; font-size: 13px; line-height: 1.45; }
+  table.matrix td .verdict { font-weight: 700; font-size: 13px; display: block; margin-bottom: 4px; }
+  table.matrix td .count { display: block; margin-top: 6px; font-size: 12px; opacity: .8; }
+  .ok   { background: var(--green-bg); color: #14532d; }
+  .ok .verdict { color: var(--green); }
+  .ref  { background: var(--amber-bg); color: #713f12; }
+  .ref .verdict { color: var(--amber); }
+  .no   { background: var(--red-bg); color: #7f1d1d; }
+  .no .verdict { color: var(--red); }
+  .na   { background: var(--grey-bg); color: var(--grey); }
+  .na .verdict { color: var(--grey); }
+  .q-cell { outline: 2px dashed var(--amber); outline-offset: -2px; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .legend i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 6px; }
+
+  /* meaning cards */
+  .meanings { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 10px; }
+  .meaning { border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; }
+  .meaning h3 { margin-bottom: 2px; }
+  .meaning .tag { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .meaning dl { font-size: 13px; margin-top: auto; border-top: 1px solid var(--border); padding-top: 10px; }
+  .meaning dt { color: var(--muted); font-size: 12px; }
+  .meaning dd { margin-bottom: 6px; font-weight: 500; }
+  .yes { color: var(--green); } .nope { color: var(--red); } .some { color: var(--amber); }
+
+  /* mini trees */
+  .tree { font-size: 13px; margin: 6px 0 12px; }
+  .tree ul { list-style: none; padding-left: 18px; position: relative; }
+  .tree > ul { padding-left: 0; }
+  .tree li { position: relative; padding: 3px 0 3px 14px; }
+  .tree ul ul li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 50%; width: 10px; border-left: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; }
+  .tree ul ul li::after { content: ""; position: absolute; left: 0; top: 50%; bottom: 0; border-left: 1px solid #cbd5e1; }
+  .tree ul ul li:last-child::after { display: none; }
+  .tree .n { font-weight: 600; }
+  .tree .ghost { color: var(--muted); font-style: italic; font-weight: 400; }
+  .tree li.dim > .n { color: var(--muted); font-weight: 500; }
+
+  /* cases */
+  .cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; margin-top: 10px; }
+  .case { border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+  .case .ctitle { font-weight: 700; margin-bottom: 2px; }
+  .case .cwhat { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .case .model { font-size: 13px; margin-bottom: 6px; }
+  .case .ex { font-size: 12px; color: var(--muted); border-top: 1px solid var(--grey-bg); padding-top: 8px; }
+
+  /* flow */
+  .flow { display: grid; grid-template-columns: 1fr 40px 1.25fr; align-items: start; gap: 6px; margin-top: 12px; }
+  .arrow { text-align: center; font-size: 26px; color: var(--muted); padding-top: 70px; }
+  .panel { border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+  .panel.today { border-left: 4px solid var(--red); }
+  .truths { display: grid; gap: 10px; }
+  .truth { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .truth .tq { font-weight: 600; font-size: 14px; }
+  .truth .ta { font-size: 13px; color: var(--muted); margin: 2px 0 4px; }
+  .truth.likely { border-left: 4px solid var(--green); }
+  .rule-box { margin-top: 18px; border: 2px solid var(--red); border-radius: 8px; padding: 16px 20px; background: #fffafa; }
+  .rule-box .rule { font-family: ui-monospace, Menlo, monospace; font-size: 14px; margin: 6px 0; }
+
+  /* enforcement */
+  table.enf { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+  table.enf th, table.enf td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.enf th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  table.enf td.st { white-space: nowrap; font-weight: 600; }
+  .st-ok { color: var(--green); } .st-bad { color: var(--red); } .st-part { color: var(--amber); }
+  .enf-after { margin-top: 14px; background: var(--green-bg); border-radius: 8px; padding: 14px 18px; font-size: 14px; }
+
+  /* questions */
+  ol.questions { counter-reset: q; list-style: none; margin-top: 10px; }
+  ol.questions li { counter-increment: q; border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px 14px 56px; margin-bottom: 10px; position: relative; }
+  ol.questions li::before { content: counter(q); position: absolute; left: 16px; top: 13px; width: 26px; height: 26px; border-radius: 50%; background: var(--amber); color: #fff; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  ol.questions .qq { font-weight: 600; }
+  ol.questions .qc { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  ol.questions .qc b { color: var(--ink); font-weight: 600; }
+
+  .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+  .fact { background: var(--grey-bg); border-radius: 8px; padding: 14px; }
+  .fact .big { font-size: 26px; font-weight: 700; }
+  .fact .lbl { font-size: 12px; color: var(--muted); }
+
+  .industry { font-size: 13px; color: var(--muted); border-left: 3px solid var(--border); padding: 4px 0 4px 14px; margin-top: 16px; }
+
+  @media (max-width: 900px) {
+    .container { padding: 24px; } .axes, .flow { grid-template-columns: 1fr; } .arrow { padding: 0; transform: rotate(90deg); }
+    .meanings, .facts { grid-template-columns: 1fr 1fr; }
+  }
+  @media print { body { background: #fff; padding: 0; } .container { box-shadow: none; padding: 0; } h2 { break-after: avoid; } .case, .meaning, .truth, ol.questions li { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>BOM Structure Logic — Review</h1>
+  <div class="subtitle">Rushroom Engineering &amp; Compliance Platform · draft for review · 2026-10-06</div>
+
+  <div class="banner">
+    <strong>Proposal, not built.</strong> This page shows the logic we are considering for when a component
+    may hold children and what those children mean. Nothing here is implemented yet. Amber dashed
+    cells and the numbered questions at the end are the decisions we need to make together.
+  </div>
+
+  <div class="facts">
+    <div class="fact"><div class="big">24</div><div class="lbl">plain <b>parts</b> in production that hold children (42 child links)</div></div>
+    <div class="fact"><div class="big">96 / 96</div><div class="lbl">parts marked <b>Purchased</b> — the create form never asks, so this is the default, not a decision</div></div>
+    <div class="fact"><div class="big">12 / 19</div><div class="lbl">sub-assemblies marked <b>Purchased</b> — same cause</div></div>
+    <div class="fact"><div class="big">5</div><div class="lbl">different code paths that create a child link, each with its own (or no) rule</div></div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">1</span>Every component answers three questions</h2>
+  <p class="lead">All three already exist in the portal. The first two live on the component; the third lives on the
+  work order, because it can differ for every customer. The proposal is to stop asking <b>Type</b> to answer all of them.</p>
+
+  <div class="axes">
+    <div class="axis one">
+      <div class="q">What is it?</div>
+      <div class="field">Field: <b>Type</b></div>
+      <ul>
+        <li><span class="b b-type">part</span><span class="d">A single item — a panel, a switch, a screw</span></li>
+        <li><span class="b b-type">sub_assembly</span><span class="d">Something that is a set of other items</span></li>
+        <li><span class="b b-type">phantom_assembly</span><span class="d">A grouping on screen only — never exists physically as one thing</span></li>
+        <li><span class="b b-type">finished_good</span><span class="d">A complete product we buy and pass on untouched</span></li>
+        <li><span class="b b-type">product_family</span><span class="d">Dynamic BOM — a configurable product with variants</span></li>
+      </ul>
+    </div>
+    <div class="axis two">
+      <div class="q">How does it come to exist?</div>
+      <div class="field">Field: <b>Sourcing</b> (stored as <code>make_or_buy</code>)</div>
+      <ul>
+        <li><span class="b b-src">Purchased</span><span class="d">We buy it complete</span></li>
+        <li><span class="b b-src">Manufactured</span><span class="d">We make it from material</span></li>
+        <li><span class="b b-src">Assembled</span><span class="d">We put it together from bought parts</span></li>
+        <li><span class="b b-src">Subcontracted</span><span class="d">A supplier makes it for us, possibly from parts we provide or specify</span></li>
+      </ul>
+    </div>
+    <div class="axis three">
+      <div class="q">What do we do to it?</div>
+      <div class="field">Field: <b>Operations</b> (routing steps → work order steps)</div>
+      <ul>
+        <li><span class="b b-op">drill</span><span class="d">e.g. 2–10 extra holes, positions per customer</span></li>
+        <li><span class="b b-op">route / cut</span><span class="d">Shape changes</span></li>
+        <li><span class="b b-op">insert / attach</span><span class="d">Fittings pressed or screwed in</span></li>
+        <li><span class="b b-op">surface_treat</span><span class="d">Finish, lacquer</span></li>
+        <li><span class="b b-op">inspect</span><span class="d">Checks</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="key-idea">
+    <strong>The core idea:</strong> <b>Type</b> decides <i>whether</i> a component can have children.
+    <b>Sourcing</b> decides <i>what those children mean</i> — are they things we build with, things the
+    supplier builds with, or just a record of what's inside something we bought?
+    <b>Operations</b> say <i>what we do to it</i> — and do not change what it is. A panel with two extra holes is
+    still the same panel in the BOM.
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">2</span>The rule matrix</h2>
+  <p class="lead">Every combination of Type and Sourcing, and what the portal would allow. Read across a row: same kind of item, different ways of getting it.</p>
+
+  <table class="matrix">
+    <thead>
+      <tr>
+        <th class="rowh">Type ↓ &nbsp; Sourcing →</th>
+        <th>Purchased</th><th>Manufactured</th><th>Assembled</th><th>Subcontracted</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th class="rowh"><span class="b b-type">part</span></th>
+        <td class="no"><span class="verdict">✕ No children</span>A bought single item. If it arrives with things fitted to it, it is not a part — it is a purchased sub-assembly. <b>May still have operations</b> done to it, e.g. customer holes.<span class="count">Today: all 24 part-parents sit here</span></td>
+        <td class="ok q-cell"><span class="verdict">✓ Inputs we consume</span>Sheet, paint, inserts — the material a part is made from. <i>See question 2.</i></td>
+        <td class="no q-cell"><span class="verdict">✕ Contradiction</span>If we put it together, it is a sub-assembly. Suggest retyping. <i>See question 2.</i></td>
+        <td class="ok"><span class="verdict">✓ Inputs we provide</span>E.g. we give our sheet to a laser cutter; it comes back as our part.</td>
+      </tr>
+      <tr>
+        <th class="rowh"><span class="b b-type">sub_assembly</span></th>
+        <td class="ref q-cell"><span class="verdict">◐ Contents, for reference</span>What is inside the thing we buy. Kept for compliance and spares. Never picked, never built by us. <i>See question 4.</i></td>
+        <td class="na q-cell"><span class="verdict">? Same as Assembled</span>Unless we need to tell a welded frame apart from a screwed one. <i>See question 3.</i></td>
+        <td class="ok"><span class="verdict">✓ Build inputs</span>What we pick and put together, at the hub or on site.</td>
+        <td class="ok"><span class="verdict">✓ Supplier's inputs</span>The supplier builds it. Some lines may come from us or be specified by us. <i>See question 5.</i></td>
+      </tr>
+      <tr>
+        <th class="rowh"><span class="b b-type">phantom_assembly</span></th>
+        <td class="na" colspan="4"><span class="verdict">— Sourcing does not apply</span>A grouping that exists only in the BOM. Its children really belong to the level above it; the phantom never gets bought, built or picked. <i>See question 6.</i></td>
+      </tr>
+      <tr>
+        <th class="rowh"><span class="b b-type">finished_good</span></th>
+        <td class="no"><span class="verdict">✕ No children</span>Bought and passed on untouched (decision PROP-029).</td>
+        <td class="no" colspan="3"><span class="verdict">✕ Contradiction</span>A finished good is by definition something we don't make. If we make it, it is a sub-assembly. <i>See question 7.</i></td>
+      </tr>
+      <tr>
+        <th class="rowh"><span class="b b-type">product_family</span></th>
+        <td class="ok" colspan="4"><span class="verdict">✓ Variant options</span>Children are the options a configuration chooses between. Sourcing does not apply to the family itself — only to the items inside it.</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="legend">
+    <span><i style="background:var(--green-bg);border:1px solid var(--green)"></i>Children allowed — real build inputs</span>
+    <span><i style="background:var(--amber-bg);border:1px solid var(--amber)"></i>Children allowed — reference only</span>
+    <span><i style="background:var(--red-bg);border:1px solid var(--red)"></i>Not allowed / contradiction</span>
+    <span><i style="background:var(--grey-bg);border:1px solid var(--grey)"></i>Not applicable</span>
+    <span><i style="background:#fff;outline:2px dashed var(--amber)"></i>Needs a decision</span>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">3</span>What children mean, depending on Sourcing</h2>
+  <p class="lead">The same-looking tree carries four different meanings. This is what each one tells the rest of the system — Order Operations pick lists, compliance declarations, and the Hub/Site fitting stage.</p>
+
+  <div class="meanings">
+    <div class="meaning">
+      <h3>Purchased</h3>
+      <div class="tag">“This is what's inside what we buy”</div>
+      <div class="tree"><ul><li><span class="n">LED driver box</span> <span class="b b-src">Purchased</span>
+        <ul><li class="dim"><span class="n">PCB</span></li><li class="dim"><span class="n">Housing</span></li></ul></li></ul></div>
+      <dl>
+        <dt>Picked / built by us?</dt><dd class="nope">No — we buy one thing</dd>
+        <dt>Counts for compliance?</dt><dd class="yes">Yes — substances live inside</dd>
+        <dt>Children can be Hub / Site?</dt><dd class="nope">No — they arrive fitted</dd>
+      </dl>
+    </div>
+    <div class="meaning">
+      <h3>Manufactured</h3>
+      <div class="tag">“This is what we make it from”</div>
+      <div class="tree"><ul><li><span class="n">Side panel</span> <span class="b b-src">Manufactured</span>
+        <ul><li><span class="n">MDF sheet</span></li><li><span class="n">Lacquer</span></li></ul></li></ul></div>
+      <dl>
+        <dt>Picked / built by us?</dt><dd class="yes">Yes — consumed in production</dd>
+        <dt>Counts for compliance?</dt><dd class="yes">Yes</dd>
+        <dt>Children can be Hub / Site?</dt><dd class="some">Not meaningful — consumed, not fitted</dd>
+      </dl>
+    </div>
+    <div class="meaning">
+      <h3>Assembled</h3>
+      <div class="tag">“This is what we put together”</div>
+      <div class="tree"><ul><li><span class="n">Plinth unit</span> <span class="b b-src">Assembled</span>
+        <ul><li><span class="n">Plinth panel</span> <span class="b b-hub">Hub</span></li><li><span class="n">Door switch</span> <span class="b b-site">Site</span></li></ul></li></ul></div>
+      <dl>
+        <dt>Picked / built by us?</dt><dd class="yes">Yes</dd>
+        <dt>Counts for compliance?</dt><dd class="yes">Yes</dd>
+        <dt>Children can be Hub / Site?</dt><dd class="yes">Yes — this is where it belongs</dd>
+      </dl>
+    </div>
+    <div class="meaning">
+      <h3>Subcontracted</h3>
+      <div class="tag">“This is what the supplier builds it from”</div>
+      <div class="tree"><ul><li><span class="n">Door module</span> <span class="b b-src">Subcontracted</span>
+        <ul><li class="dim"><span class="n">Hinge</span> <span class="ghost">supplier buys</span></li><li><span class="n">Our LED strip</span> <span class="ghost">we provide</span></li></ul></li></ul></div>
+      <dl>
+        <dt>Picked / built by us?</dt><dd class="some">Only the lines we provide</dd>
+        <dt>Counts for compliance?</dt><dd class="yes">Yes</dd>
+        <dt>Children can be Hub / Site?</dt><dd class="nope">No — the supplier fits them</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">4</span>Our real buying situations, modelled</h2>
+  <p class="lead">The situations Rushroom actually meets, and the Type + Sourcing combination for each.</p>
+
+  <div class="cases">
+    <div class="case">
+      <div class="ctitle">A · We buy a plain part</div>
+      <div class="cwhat">A shelf pin, a screw, a bare panel.</div>
+      <div class="model"><span class="b b-type">part</span> + <span class="b b-src">Purchased</span> → no children</div>
+      <div class="tree"><ul><li><span class="n">Shelf pin</span></li></ul></div>
+      <div class="ex">The most common case: 96 parts.</div>
+    </div>
+    <div class="case">
+      <div class="ctitle">B · We buy an assembly complete</div>
+      <div class="cwhat">An LED driver, a switch with its cable already on.</div>
+      <div class="model"><span class="b b-type">sub_assembly</span> + <span class="b b-src">Purchased</span> → contents for reference</div>
+      <div class="tree"><ul><li><span class="n">Seat to Door Switch</span>
+        <ul><li class="dim"><span class="n">Door switch</span> <span class="ghost">inside, as delivered</span></li></ul></li></ul></div>
+      <div class="ex">Today <i>Seat to Door Switch</i> is a <b>part</b> holding <i>Door switch</i> — it belongs here instead, if it arrives assembled.</div>
+    </div>
+    <div class="case">
+      <div class="ctitle">C · We buy an assembly, with one part of ours in it</div>
+      <div class="cwhat">The supplier builds it, but one item is our design, which we provide or tell them to buy.</div>
+      <div class="model"><span class="b b-type">sub_assembly</span> + <span class="b b-src">Subcontracted</span> → supplier's inputs, our line marked</div>
+      <div class="tree"><ul><li><span class="n">Door module</span>
+        <ul><li class="dim"><span class="n">Frame, hinges</span> <span class="ghost">supplier's</span></li><li><span class="n">Custom front</span> <span class="ghost">ours</span></li></ul></li></ul></div>
+      <div class="ex">Needs a per-line “who supplies this” marker — see question 5.</div>
+    </div>
+    <div class="case new">
+      <div class="ctitle">D1 · We buy a part and customise it per customer</div>
+      <div class="cwhat">Predrilled panels get 2–10 extra holes, anywhere, different for every order.</div>
+      <div class="model"><span class="b b-type">part</span> + <span class="b b-src">Purchased</span> → no children, <b>plus an operation on the work order</b></div>
+      <div class="tree"><ul><li><span class="n">Left Side Panel - White</span> <span class="ghost">same part number for every customer</span></li></ul></div>
+      <div class="tree"><ul><li><span class="n">Work order <span class="ghost">(example)</span></span>
+        <ul><li><span class="n">Step 3</span> <span class="op">drill</span> Left Side Panel · 6 holes · <span class="ghost">customer's hole drawing attached</span></li></ul></li></ul></div>
+      <div class="ex">The holes are <b>not</b> material and <b>not</b> a new part. The BOM stays clean; what was done to
+        each delivered panel is recorded on its work order. The portal already has this shape:
+        routing steps with <code>drill</code>, work-order steps tied to a component, each with a reference document.</div>
+    </div>
+    <div class="case">
+      <div class="ctitle">D2 · We buy a part and always modify it the same way</div>
+      <div class="cwhat">The same cut-out on every unit, a standard variant we stock.</div>
+      <div class="model"><span class="b b-type">part</span> + <span class="b b-src">Manufactured</span> → the bought part is its input</div>
+      <div class="tree"><ul><li><span class="n">Panel, with cable cut-out</span> <span class="ghost">own part number</span>
+        <ul><li><span class="n">Panel, as bought</span></li></ul></li></ul></div>
+      <div class="ex">Only worth a new part number when the result is identical every time and is stocked or reused.
+        If it varies per order, it is D1.</div>
+    </div>
+    <div class="case">
+      <div class="ctitle">E · We assemble it ourselves</div>
+      <div class="cwhat">Our own build, at the hub or on site.</div>
+      <div class="model"><span class="b b-type">sub_assembly</span> + <span class="b b-src">Assembled</span> → build inputs, with Hub / Site</div>
+      <div class="tree"><ul><li><span class="n">L Cabinet</span>
+        <ul><li><span class="n">L Plinth</span> <span class="b b-hub">Hub</span></li><li><span class="n">Door switch</span> <span class="b b-site">Site</span></li></ul></li></ul></div>
+      <div class="ex">The only case where Hub / Site carries real meaning.</div>
+    </div>
+    <div class="case">
+      <div class="ctitle">F · We buy a finished product and never touch it</div>
+      <div class="cwhat">Resold or included as delivered.</div>
+      <div class="model"><span class="b b-type">finished_good</span> + <span class="b b-src">Purchased</span> → no children</div>
+      <div class="tree"><ul><li><span class="n">Standing makeup mirror with LED</span></li></ul></div>
+      <div class="ex">3 in production today, all leaves.</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">5</span>The built-in consistency check</h2>
+  <p class="lead">Once Sourcing is trustworthy, the fields can check each other. This is how the portal would find the 24 problem cases by itself, instead of us sorting them by hand.</p>
+
+  <div class="flow">
+    <div class="panel today">
+      <h3>Today — L Plinth - White</h3>
+      <div class="tree"><ul><li><span class="n">L Plinth - White</span> <span class="b b-type">part</span> <span class="b b-src">Purchased</span>
+        <ul>
+          <li><span class="n">Seat to Door Switch</span> ×2 <span class="b b-site">Site</span>
+            <ul><li><span class="n">Door switch</span> ×1 <span class="b b-site">Site</span></li></ul></li>
+          <li><span class="n">Shelf pin</span> ×2 <span class="b b-site">Site</span></li>
+        </ul></li></ul></div>
+      <p style="font-size:13px;margin-top:8px"><span class="b b-flag">Contradiction</span> Something we buy complete cannot have parts we fit on site. One of the two fields is wrong.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="truths">
+      <div class="truth likely">
+        <div class="tq">a · We fit the switch and pins ourselves</div>
+        <div class="ta">The children don't belong to the panel. Move them one level up, next to it. Their Site badge stays.</div>
+        <div class="tree"><ul><li><span class="n">L Cabinet</span><ul><li><span class="n">L Plinth</span></li><li><span class="n">Seat to Door Switch</span> <span class="b b-site">Site</span></li><li><span class="n">Shelf pin</span> <span class="b b-site">Site</span></li></ul></li></ul></div>
+      </div>
+      <div class="truth">
+        <div class="tq">b · The supplier delivers the plinth with them fitted</div>
+        <div class="ta">It is a purchased sub-assembly. Retype it; clear Hub/Site on its children.</div>
+      </div>
+      <div class="truth">
+        <div class="tq">c · The supplier fits parts that we give them</div>
+        <div class="ta">Sub-assembly, Subcontracted. Mark which lines come from us.</div>
+      </div>
+      <div class="truth">
+        <div class="tq">d · We build a plinth unit from a bought panel</div>
+        <div class="ta">Make “L Plinth unit” a sub-assembly, Assembled; the bought panel becomes one of its children.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rule-box">
+    <h3>The rule</h3>
+    <div class="rule">IF parent Sourcing = Purchased AND a child is marked Hub or Site → flag it</div>
+    <div class="rule">IF parent Sourcing = Subcontracted AND a child is marked Hub or Site → flag it</div>
+    <p style="font-size:13px;color:var(--muted);margin-top:8px">Shown as a warning in the tree and in a review list — not a hard block, because the fix needs a person who knows what actually happens in the workshop.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">6</span>Where the rule is enforced</h2>
+  <p class="lead">Today five different code paths can attach a child to a component. Each applies its own rule, or none.</p>
+
+  <table class="enf">
+    <thead><tr><th>How a child gets attached</th><th>Rule applied today</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td><b>+child / +sib</b> in the BOM tree</td><td>Only sub-assembly and phantom may be parents (added 2026-10-05)</td><td class="st st-part">◐ Too strict — blocks Dynamic BOMs and manufactured parts</td></tr>
+      <tr><td><b>Move</b> a child to another parent</td><td>Only “not a finished good”</td><td class="st st-bad">✕ Lets a part receive children</td></tr>
+      <tr><td><b>Copy</b> an assembly</td><td>None</td><td class="st st-bad">✕ No check</td></tr>
+      <tr><td><b>Materialise</b> a Dynamic BOM configuration</td><td>None</td><td class="st st-bad">✕ No check</td></tr>
+      <tr><td><b>Change Type</b> on the edit form</td><td>None — a sub-assembly with children can become a part</td><td class="st st-bad">✕ No check</td></tr>
+      <tr><td><b>Database</b></td><td>Only the loop check (a component cannot contain itself)</td><td class="st st-bad">✕ No structure rule</td></tr>
+    </tbody>
+  </table>
+  <div class="enf-after">
+    <b>Proposed:</b> one rule in the database itself, so all five paths obey it automatically and no future screen can bypass it.
+    The matrix in section 2 becomes that rule. It switches on only <b>after</b> the 24 existing cases are cleaned up, otherwise it would reject today's data.
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">7</span>Decisions we need to make</h2>
+  <p class="lead">These are the open points. Each one changes what gets built.</p>
+
+  <ol class="questions">
+    <li><div class="qq">Is this the right split — Type says <i>whether</i> it may have children, Sourcing says <i>what they mean</i>?</div>
+      <div class="qc">Everything below depends on this one.</div></li>
+    <li><div class="qq">Part + Manufactured, and Part + Assembled: what do we allow?</div>
+      <div class="qc">Proposed: <b>Manufactured</b> may have inputs (sheet, paint); <b>Assembled</b> means it is really a sub-assembly. But a panel with inserts pressed in — is that a part we manufactured, or something we assembled?</div></li>
+    <li><div class="qq">Do Manufactured and Assembled need to mean different things for a sub-assembly?</div>
+      <div class="qc">E.g. a welded frame (can't be taken apart) vs. a screwed unit (can). If the difference doesn't matter to us, the two can behave the same.</div></li>
+    <li><div class="qq">Do we want to record what's inside things we buy?</div>
+      <div class="qc">For compliance it is valuable — substance declarations (RoHS, REACH) concern the contents. But it is extra work per purchased assembly. Optional, required, or not at all?</div></li>
+    <li><div class="qq">For Subcontracted items: do we mark per line who supplies it (us / the supplier / the supplier, but our specification)?</div>
+      <div class="qc">This is the one concept we don't have today. Needed now, or once the first subcontracted item exists?</div></li>
+    <li><div class="qq">Phantoms: when we send a BOM to Order Operations, should the phantom level disappear, with its children attached to the level above?</div>
+      <div class="qc">Today the planner BOM resolver sends the phantom as its own level. Matters as soon as Order Operations makes pick lists from it.</div></li>
+    <li><div class="qq">Finished good: always Purchased, never children?</div>
+      <div class="qc">Matches the existing decision (PROP-029). Confirm it still holds.</div></li>
+    <li><div class="qq">Sourcing becomes a required choice when creating a component, with no default.</div>
+      <div class="qc">Without this, every new component is silently “Purchased” and the consistency check in section 5 gives false alarms.</div></li>
+    <li><div class="qq">Customer holes (case D1): where do the hole positions come from, and who records that they were drilled?</div>
+      <div class="qc">The portal's work orders can carry a <code>drill</code> step with the customer's hole drawing attached. But the
+        customer order lives in <b>Order Operations</b>. Does the drawing start there and flow to the work order, or the other way round?
+        And is the drilling done at the <b>Hub</b> or on <b>Site</b>?</div></li>
+  </ol>
+
+  <p class="industry">
+    Cross-checked against how SAP, PTC Windchill and automotive directed-buy arrangements handle the same
+    situations. They also keep “is it an assembly” separate from “do we make or buy it”, and treat bought
+    assemblies, subcontracting and phantoms much as above. That is used here only to check the reasoning, not as a template —
+    the Sourcing-gives-meaning rule and the Hub/Site consistency check are our own.
+  </p>
+
+</div>
+</body>
+</html>

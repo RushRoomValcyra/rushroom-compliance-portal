@@ -105,7 +105,9 @@ test("the front end and the function agree on the vocabulary", () => {
 
 test("one migration owns the column, and it runs before the function needs it", () => {
   const files = readdirSync(join(root, "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
-  const owning = files.filter((f) => /fitting_stage/.test(read(`supabase/migrations/${f}`)));
+  // "Owns" = defines the column or its CHECK. Data migrations that copy the
+  // value when moving a link (0038) do not own it.
+  const owning = files.filter((f) => /ADD COLUMN[^;]*fitting_stage|fitting_stage_check/.test(read(`supabase/migrations/${f}`)));
   assert.deepEqual(owning, ["0036_edge_fitting_stage.sql"],
     `fitting_stage is touched by ${owning.length} migrations — there should be one`);
   // getBom selects the column, so the migration must sort before nothing that

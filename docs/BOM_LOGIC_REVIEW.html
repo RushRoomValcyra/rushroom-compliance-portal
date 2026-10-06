@@ -189,6 +189,7 @@
         <li><b>10 new Prepared wrappers</b>, 8 leftovers retired<span class="s">Plinths, back panels, bottom, seat switch, drawer slides.</span></li>
         <li><b>18 missing lines now reach Order Operations</b><span class="s">Panels, shelves, plinths — they were not leaves before.</span></li>
         <li><b>Phantom shown as “Kit”</b> (v282)<span class="s">Pushed. Not yet checked in the UI.</span></li>
+        <li><b>Drawer hardware set is one line</b> (migration 0039)<span class="s">Applied and verified by query 2026-10-06. Prepared Drawer Sets and Doors are Assembled.</span></li>
         <li><b>Kits renamed “… Module Common Parts KIT”</b><span class="s">Done in the portal 2026-10-06 (question 11).</span></li>
       </ul>
     </div>
@@ -212,8 +213,8 @@
         <li><b>One database rule</b> for every path<span class="s">§6 · data is now clean enough to switch it on</span></li>
         <li><b>Sourcing required on create</b><span class="s">question 8</span></li>
         <li><b>Hub/Site on operations</b><span class="s">docs/IDEAS.md · build when the first work order needs it</span></li>
-        <li><b>Stocked stop in the planner resolver</b><span class="s">question 13 — pre-assemblies are stocked, so Order Operations must get the pre-assembly, not its loose parts. Changes Order Operations → own /build.</span></li>
-        <li><b>Migration 0039 — drawer hardware set</b><span class="s">Written and tested on a copy of production; not applied yet.</span></li>
+        <li><b>Stocked stop in the planner resolver</b><span class="s">question 13 — <b>parked in the roadmap backlog</b> until the BOM structure is finished. Changes Order Operations → own /build.</span></li>
+
       </ul>
     </div>
     <div class="col col-issue">
@@ -222,7 +223,7 @@
         <li><b>Hard block too strict</b><span class="s">+child refuses Dynamic BOMs and manufactured parts; Move still lets a part get children silently.</span></li>
         <li><b>13 links inside the new wrappers have no Hub/Site</b><span class="s">e.g. L Prepared Plinth → L Plinth. Set in the BOM tree.</span></li>
         <li><b>Drawers incomplete</b><span class="s">Bottom and back panel parts don't exist yet; drawer and door pre-assemblies are used by no cabinet and no planner mapping; door handle colours open — case G.</span></li>
-        <li><b>Hardware set had children</b><span class="s">Fixed by 0039 once applied. 0038's Prepared Drawer Slides wrappers were a mistake — the slides come in the box.</span></li>
+        <li><b>Hardware set had children</b><span class="s">Fixed — 0039 applied. 0038's Prepared Drawer Slides wrappers were a mistake (the slides come in the box) and are retired.</span></li>
         <li><b>Pre-built stock vs pick list</b><span class="s">Order Operations always gets the loose parts, even for a pre-assembly on the shelf — question 13.</span></li>
         <li><b>Order Operations sees leaves only</b><span class="s">so a Kit's grouping does not reach the pick list as a group yet.</span></li>
       </ul>
@@ -238,7 +239,7 @@
   <div class="facts" style="margin-top:22px">
     <div class="fact"><div class="big">24 → 0</div><div class="lbl">parts holding children, before and after 2026-10-06</div></div>
     <div class="fact"><div class="big">90 / 91</div><div class="lbl">parts say <b>Purchased</b> — mostly the default, because the create form never asks</div></div>
-    <div class="fact"><div class="big">6 / 26</div><div class="lbl">sub-assemblies say <b>Purchased</b> — all drawer or door structures; 0039 fixes them</div></div>
+    <div class="fact"><div class="big">6 → 0</div><div class="lbl">sub-assemblies said <b>Purchased</b> — all drawer or door structures; fixed by 0039</div></div>
     <div class="fact"><div class="big">5</div><div class="lbl">code paths that can attach a child, each with its own (or no) rule</div></div>
   </div>
 
@@ -479,7 +480,7 @@
               <ul><li><span class="n">Prepared Drawer Slides LEFT</span> ×2 <span class="ghost">slides + 2 EURO screws</span></li>
                   <li><span class="n">Prepared Drawer Slides RIGHT</span> ×2 <span class="ghost">slides + 2 EURO screws</span></li></ul></li></ul></li></ul></div>
           <div class="ex" style="border:0;padding:0">
-            <b>Fixed by 0039 (not applied yet):</b> the bought set loses its children and becomes one line; the Prepared Drawer Sets and Prepared Doors become Assembled.
+            <b>Fixed by 0039 (live):</b> the bought set loses its children and becomes one line; the Prepared Drawer Sets and Prepared Doors become Assembled.
             <b>Still missing:</b> the bottom and back panel parts · the drawer and door pre-assemblies are used by no cabinet and no planner mapping, so no drawer or door reaches Order Operations today.</div>
         </div>
       </div>

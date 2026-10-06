@@ -1377,3 +1377,39 @@ The payload schema enforces this with an allowlist of three keys (`action`, `con
 **Why:** PIM resolves *what a configuration maps to in the component registry*. That is the one thing it knows. Sending order IDs, customer names or addresses would require PIM to store and process data it has no schema for and no business owning.
 
 **Files changed:** `supabase/functions/_shared/planner-resolver-core.mjs`, `supabase/functions/portal-api/index.ts`, `tests/planner-resolver.test.mjs`, `docs/PLANNER_MAPPINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`.
+
+---
+
+**Date:** 2026-10-06
+**Feature:** BOM structure rules — what may hold children, and what children mean
+
+Worked through with the team on `docs/BOM_LOGIC_REVIEW.html`, using real production cases. Industry practice (SAP, PTC Windchill, automotive directed-buy) was used as a check, not a template; where Rushroom differs it is stated below. These rules stand until real work shows one is wrong, then they are corrected.
+
+**Decision 1 — Buy unit = BOM line.**
+One thing we order and stock is one BOM line, however many pieces arrive in the box. *L LED Profile including milky cover* is one supplier article delivered as profile + cover + 2 clips; it is one `part`, `purchased`, with no children.
+
+**Why:** The planner resolver sends Order Operations leaves only. Four children would become four pick lines for items that cannot be ordered or stocked on their own.
+
+**Decision 2 — A purchased part never holds children; the work done to it lives in its "Prepared …" sub-assembly.**
+The Prepared wrapper is a `sub_assembly`, `assembled`, holding the bought part ×1 plus everything fitted to it, with Hub/Site on each link.
+
+**Why:** The part stays exactly what we buy, so its supplier documents, drawings and material declarations stay true. The wrapper is where our work is, so Hub/Site sits on an Assembled parent — the only place it means something. Production had 24 parts holding 42 links (built through `+child` before 2026-10-05 and spread by the copy dialog); **migration 0038** moved them all, created 10 wrappers and retired 5 unused copies plus 3 unused ×2 back-panel wrappers. Tested on a local copy of production first; both guards in the migration (no part-parents left; no planner quantity changed) passed. Side effect: 18 panels, shelves and plinths that had been missing from resolved planner BOMs — because a part with children is not a leaf — now reach Order Operations.
+
+**Decision 3 — What we do to an item is an operation; what it is made of is materials. Neither is structure.**
+Customer holes in predrilled panels (2–10 per order, anywhere), fitting a cover, attaching clips → steps on the work order (`drill`, `attach`, …). Aluminium, plastic, zinc-plated steel → `component_materials`.
+
+**Why:** Per-order customisation as new part numbers would flood the catalogue with one-offs; as children it would put things on the pick list that cannot be picked.
+
+**Decision 4 — Phantoms are pick groups and are never dissolved. Shown as "Kit".**
+Never built or stocked as one thing, but its children are drawn from stock and picked together under it. Stored value stays `phantom_assembly`; the UI says **Kit**.
+
+**Why:** Rushroom uses the grouping for stock withdrawal and the pick list. This deliberately differs from SAP/PTC, where a phantom is "blown through". Supersedes the open question in ROADMAP (*Phantoms are not blow-through*). Note: the resolver still emits leaves only, so the Kit grouping does not yet reach Order Operations as a group.
+
+**Decision 5 — Type says whether a component may have children; Sourcing says what those children mean.**
+Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled → what we put together. Subcontracted → what the supplier builds from. A child of a Purchased or Subcontracted parent marked Hub/Site is a contradiction to flag.
+
+**Why:** Sourcing already existed on every component and was unused by logic. **Not yet built:** the flag-don't-block check on `+child` / move / copy (review page §5b, open question 10). Yesterday's hard block in `addBomEdge` (assemblies only) is still live and also blocks Dynamic BOMs and manufactured parts.
+
+**Status:** Decisions 2 and 4 are in production — 0038 applied (verified by query: 0 part-parents, 10 wrappers); Kit label pushed with cache v282, not yet checked in the UI. Decisions 1 and 3 are data-entry rules. Decision 5 is designed, not built.
+
+**Files changed:** `supabase/migrations/0038_prepared_wrappers.sql`, `tests/prepared-wrappers.test.mjs`, `tests/fitting-stage.test.mjs`, `tests/phantom-assembly.test.mjs`, `assets/app.js`, `index.html`, `supplier.html`, `reset.html`, `verify.html`, `docs/BOM_LOGIC_REVIEW.html`, `docs/DECISIONS.md`, `docs/IDEAS.md`, `docs/ROADMAP.md`.

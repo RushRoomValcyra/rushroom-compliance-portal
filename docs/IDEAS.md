@@ -1650,3 +1650,17 @@ Location build-up UI ~8h · label sheet and print CSS ~6h · scanner component i
 - **PROP-012 Multi-tenancy — does not apply.** Order Operations authorises through `is_active_workforce()` / `is_admin()` and carries no `organization_id`. The WMS follows Order Operations, not the compliance portal. Nothing here should acquire org scoping.
 
 **Status:** Raw idea
+
+---
+
+### Fitting Stage on Operations — Hub or Site for Work, Not Only for Parts — 2026-10-06
+
+**One sentence:** Let a routing step and a work-order step say whether it happens at the hub or on site, using the same Hub/Site values the BOM links already carry.
+
+**Problem it solves:**
+
+Decision 2026-10-06 (*Buy unit = BOM line*) keeps a bought article as one BOM line even when we assemble it ourselves, and moves the assembling into operations. The first real case already needs two places: *L LED Profile including milky cover* is one order, delivered loose; the cover is fitted at the hub and the 2 clips on site. `bom_edges.fitting_stage` can only say where the whole article goes. `family_routing_steps` and `work_order_steps` have an operation type and instruction text but no stage, so "fit clips — on site" can only be written as free text, and nothing can build a hub task list or a site task list from it.
+
+**Sketch:** a nullable `fitting_stage` (`hub` / `site`, NULL = not decided) on `family_routing_steps` and `work_order_steps`, with the same CHECK as migration 0036; a stage control on each step; the existing Hub/Site counts extended to operations.
+
+**Status:** Raw idea — build when the first work order needs it ("until we hit the wall").

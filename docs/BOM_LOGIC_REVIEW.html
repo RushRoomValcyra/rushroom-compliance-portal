@@ -131,6 +131,8 @@
   ol.questions .qq { font-weight: 600; }
   ol.questions .qc { font-size: 13px; color: var(--muted); margin-top: 3px; }
   ol.questions .qc b { color: var(--ink); font-weight: 600; }
+  ol.rules li { border-color: var(--green); background: var(--green-bg); }
+  ol.rules li::before { background: var(--green); }
 
   .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
   .fact { background: var(--grey-bg); border-radius: 8px; padding: 14px; }
@@ -361,6 +363,17 @@
       <div class="ex">Only worth a new part number when the result is identical every time and is stocked or reused.
         If it varies per order, it is D1.</div>
     </div>
+    <div class="case new">
+      <div class="ctitle">D3 · One order, loose pieces we put together</div>
+      <div class="cwhat">L LED Profile including milky cover: one article from the supplier, delivered as profile + cover + 2 clips. We fit the cover at the hub and the clips on site.</div>
+      <div class="model"><span class="b b-type">part</span> + <span class="b b-src">Purchased</span> → no children. Fitting = operations; aluminium / plastic / zinc-plated steel = Materials tab</div>
+      <div class="tree"><ul><li><span class="n">L LED Profile including milky cover</span> <span class="ghost">one order line, one stock item</span></li></ul></div>
+      <div class="tree"><ul><li><span class="n">Work order <span class="ghost">(example)</span></span>
+        <ul><li><span class="n">Fit cover into profile</span> <span class="op">attach</span> <span class="b b-hub">Hub</span></li>
+            <li><span class="n">Fit 2 clips</span> <span class="op">attach</span> <span class="b b-site">Site</span></li></ul></li></ul></div>
+      <div class="ex">Splitting it into four children would make Order Operations try to pick four items that cannot be ordered or stocked
+        on their own. <b>Known gap:</b> operations cannot carry Hub/Site yet — see docs/IDEAS.md.</div>
+    </div>
     <div class="case">
       <div class="ctitle">E · We assemble it ourselves</div>
       <div class="cwhat">Our own build, at the hub or on site.</div>
@@ -488,6 +501,22 @@
     <b>Proposed:</b> one rule in the database itself, so all five paths obey it automatically and no future screen can bypass it.
     The matrix in section 2 becomes that rule. It switches on only <b>after</b> the 24 existing cases are cleaned up, otherwise it would reject today's data.
   </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">6b</span>Rules we have decided</h2>
+  <p class="lead">Agreed 2026-10-06. We work by these until real work shows one is wrong — then we correct it.</p>
+  <ol class="questions rules">
+    <li><div class="qq">Buy unit = BOM line.</div>
+      <div class="qc">One thing we order and stock is one line, however many pieces arrive in the box. <i>Example: the LED profile (case D3).</i></div></li>
+    <li><div class="qq">A purchased part never holds children.</div>
+      <div class="qc">The work we do to it lives in its <b>Prepared …</b> sub-assembly (Assembled), next to it. <i>Applied to production by migration 0038: 24 parts, 42 links, 10 new wrappers.</i></div></li>
+    <li><div class="qq">What we do to it is an operation, not structure.</div>
+      <div class="qc">Customer holes, fitting a cover, attaching clips → steps on the work order. The BOM stays what we buy and pick.</div></li>
+    <li><div class="qq">What it is made of is materials, not structure.</div>
+      <div class="qc">Aluminium, plastic, zinc-plated steel → the Materials tab (RoHS / REACH), not child parts.</div></li>
+    <li><div class="qq">A Kit is a pick group and is never dissolved.</div>
+      <div class="qc">Never built or stocked as one thing; its children are drawn from stock and picked together under it. Stored as <code>phantom_assembly</code>, shown as <b>Kit</b>.</div></li>
+  </ol>
 
   <!-- ============================================================ -->
   <h2><span class="num">7</span>Decisions we need to make</h2>

@@ -177,7 +177,7 @@
       <ul>
         <li><span class="b b-type">part</span><span class="d">A single item — a panel, a switch, a screw</span></li>
         <li><span class="b b-type">sub_assembly</span><span class="d">Something that is a set of other items</span></li>
-        <li><span class="b b-type">phantom_assembly</span><span class="d">A grouping on screen only — never exists physically as one thing</span></li>
+        <li><span class="b b-type">phantom_assembly</span><span class="d">A pick group — never built or stocked as one thing, but its children are drawn from stock and picked together</span></li>
         <li><span class="b b-type">finished_good</span><span class="d">A complete product we buy and pass on untouched</span></li>
         <li><span class="b b-type">product_family</span><span class="d">Dynamic BOM — a configurable product with variants</span></li>
       </ul>
@@ -241,7 +241,7 @@
       </tr>
       <tr>
         <th class="rowh"><span class="b b-type">phantom_assembly</span></th>
-        <td class="na" colspan="4"><span class="verdict">— Sourcing does not apply</span>A grouping that exists only in the BOM. Its children really belong to the level above it; the phantom never gets bought, built or picked. <i>See question 6.</i></td>
+        <td class="ok" colspan="4"><span class="verdict">✓ Pick group — the level is kept</span>Never bought, built or stocked as one thing, so Sourcing does not apply to the phantom itself. But it is <b>not dissolved</b>: its children are drawn from stock and appear <b>grouped under it on the pick list</b>. <span class="count">Decided 2026-10-06 — see question 6</span></td>
       </tr>
       <tr>
         <th class="rowh"><span class="b b-type">finished_good</span></th>
@@ -457,8 +457,8 @@
       <div class="qc">For compliance it is valuable — substance declarations (RoHS, REACH) concern the contents. But it is extra work per purchased assembly. Optional, required, or not at all?</div></li>
     <li><div class="qq">For Subcontracted items: do we mark per line who supplies it (us / the supplier / the supplier, but our specification)?</div>
       <div class="qc">This is the one concept we don't have today. Needed now, or once the first subcontracted item exists?</div></li>
-    <li><div class="qq">Phantoms: when we send a BOM to Order Operations, should the phantom level disappear, with its children attached to the level above?</div>
-      <div class="qc">Today the planner BOM resolver sends the phantom as its own level. Matters as soon as Order Operations makes pick lists from it.</div></li>
+    <li style="border-color:var(--green);background:var(--green-bg)"><div class="qq">Phantoms: should the phantom level disappear on the pick list? <span class="b b-type">Decided — no</span></div>
+      <div class="qc">Phantoms are how we draw materials from stock and group the pick list, so the level is kept everywhere, including in what the planner BOM resolver sends Order Operations (which already does this). <b>This is where we deliberately differ from SAP/PTC</b>, where a phantom is dissolved (“blown through”). Follow-up: the edit form labels it <i>“Phantom Assembly (structural only)”</i>, which now undersells what it does.</div></li>
     <li><div class="qq">Finished good: always Purchased, never children?</div>
       <div class="qc">Matches the existing decision (PROP-029). Confirm it still holds.</div></li>
     <li><div class="qq">Sourcing becomes a required choice when creating a component, with no default.</div>
@@ -472,7 +472,7 @@
   <p class="industry">
     Cross-checked against how SAP, PTC Windchill and automotive directed-buy arrangements handle the same
     situations. They also keep “is it an assembly” separate from “do we make or buy it”, and treat bought
-    assemblies, subcontracting and phantoms much as above. That is used here only to check the reasoning, not as a template —
+    assemblies and subcontracting much as above. Phantoms are the deliberate exception: elsewhere they are dissolved, here they are pick groups. That is used here only to check the reasoning, not as a template —
     the Sourcing-gives-meaning rule and the Hub/Site consistency check are our own.
   </p>
 

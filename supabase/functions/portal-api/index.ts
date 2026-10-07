@@ -3681,13 +3681,23 @@ Deno.serve(async (req) => {
     }
     const { data: comps } = await tdb("bom_components")
       .select("id, part_number, name, type, make_or_buy, lifecycle_status").order("name");
-    const targets = (comps || []).filter((c: any) =>
-      !blocked.has(c.id) &&
-      // (2) PROP-067: only parents the database will accept for this kind of
-      //     link (finished goods never; bought items only reference children)
-      bomChildRule(c.type, c.make_or_buy, edge.is_reference === true) === null &&
-      c.id !== edge.parent_id            // already its parent — nothing to do
-    );
+    // (2) Every parent that can take the child in SOME form. `takes` says
+    //     which: a part takes only In the box, so moving onto one asks — In the
+    //     box, or a Prepared assembly built in its place (2026-10-07). Finished
+    //     goods take nothing and drop out here.
+    const targets = (comps || [])
+      .map((c: any) => ({
+        ...c,
+        takes: {
+          fitted: bomChildRule(c.type, c.make_or_buy, false) === null,
+          box: bomChildRule(c.type, c.make_or_buy, true) === null,
+        },
+      }))
+      .filter((c: any) =>
+        !blocked.has(c.id) &&
+        (c.takes.fitted || c.takes.box) &&
+        c.id !== edge.parent_id          // already its parent — nothing to do
+      );
     return json({ targets, current_parent_id: edge.parent_id });
   }
 
@@ -3696,7 +3706,7 @@ Deno.serve(async (req) => {
   // the assembly being viewed. Every other parent link is left untouched.
   if (action === "moveComponentToParent") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { edge_id, new_parent_id } = body;
+    const { edge_id, new_parent_id, as_reference } = body;
     if (!edge_id || !new_parent_id) return json({ error: "edge_id and new_parent_id required" }, 400);
     const today = new Date().toISOString().slice(0, 10);
 
@@ -3735,7 +3745,11 @@ Deno.serve(async (req) => {
         variant_condition: edge.variant_condition ?? null,
         // A move keeps where the part is fitted and what kind of link it is.
         // Before PROP-067 the stage was silently dropped on every move.
-        fitting_stage: edge.fitting_stage ?? null, is_reference: edge.is_reference === true,
+        // as_reference lets a move also change the kind of link: onto a part,
+        // the user chooses In the box (true); out of a box into an assembly,
+        // it becomes a real child (false). Absent = keep what it was.
+        fitting_stage: edge.fitting_stage ?? null,
+        is_reference: typeof as_reference === "boolean" ? as_reference : edge.is_reference === true,
         effective_from: today, sort_order: nextOrder,
       }).select("id").maybeSingle();
       if (insErr || !created) throw new Error(insErr?.message || "Edge insert returned no data");

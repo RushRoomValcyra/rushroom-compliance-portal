@@ -4734,9 +4734,16 @@
                 : openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }),
             }, "+child") : null,
             isTreeRow ? el("button", {
-              class: "btn btn-sm", type: "button", title: "Move to another assembly",
+              class: "btn btn-sm", type: "button", title: "Move under another row",
               style: "padding:1px 5px;font-size:0.6875rem",
-              onclick: (ev) => { ev.stopPropagation(); openMoveModal(n, edgeId, parentNode, token, onRefresh, { positions: allPositions(), rootId, rootName: (nodeMap[rootId] || {}).name, fromPos: posNum, edgeRef }); },
+              onclick: (ev) => {
+                ev.stopPropagation();
+                // Where each component sits in THIS structure, so Move can wrap a
+                // part in place when you move something onto it.
+                const parentOf = {};
+                (edges || []).forEach((x) => { if (!(x.child_id in parentOf)) parentOf[x.child_id] = x.parent_id; });
+                openMoveModal(n, edgeId, parentNode, token, onRefresh, { positions: allPositions(), rootId, rootName: (nodeMap[rootId] || {}).name, fromPos: posNum, edgeRef, parentOf });
+              },
             }, "⇄") : null,
             el("button", {
               class: "btn btn-sm", type: "button",
@@ -5324,6 +5331,9 @@
   // Edge-scoped on purpose: a component used in several assemblies moves ONLY in
   // the assembly on screen. Every other parent link is left exactly as it was.
   function openMoveModal(node, edgeId, currentParent, token, onRefresh, tree) {
+    const isRef = !!(tree && tree.edgeRef);
+    // A real child moving onto something that only takes In the box: ask how.
+    const needsChoice = (c) => !isRef && c.takes && !c.takes.fitted && c.takes.box;
     const positions = (tree && tree.positions) || {};
     const treeRootId = tree && tree.rootId;
     // Where a destination sits in the assembly on screen. A component can hold
@@ -5369,7 +5379,10 @@
         el("span", { style: `font-family:monospace;font-size:0.75rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${wbs ? "color:var(--accent,#2fa564)" : "color:var(--muted,#8b93a1);opacity:0.5"}` }, wbs || "—"),
         el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, c.part_number),
         el("span", { style: "font-size:0.875rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: c.name }, c.name),
-        el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);text-align:right;white-space:nowrap" }, typeDisplay(c.type)),
+        el("span", {
+          style: "font-size:0.75rem;color:var(--muted,#8b93a1);text-align:right;white-space:nowrap",
+          title: needsChoice(c) ? "A part: you will choose In the box, or a Prepared assembly built where it sits" : null,
+        }, needsChoice(c) ? `${typeDisplay(c.type)} · asks` : typeDisplay(c.type)),
       ]);
     }
 
@@ -5402,8 +5415,40 @@
     }
     searchInput.oninput = () => buildList(searchInput.value);
 
+    const move = async (newParentId, asReference) => {
+      submitBtn.disabled = true; submitBtn.textContent = "Moving…"; errEl.textContent = "";
+      try {
+        await API.post(token, "moveComponentToParent", {
+          edge_id: edgeId, new_parent_id: newParentId,
+          ...(typeof asReference === "boolean" ? { as_reference: asReference } : {}),
+        });
+        overlay.remove();
+        onRefresh();
+      } catch (ex) {
+        errEl.textContent = ex.message;
+        submitBtn.disabled = false; submitBtn.textContent = "Move here";
+      }
+    };
+
     submitBtn.onclick = async () => {
       if (!selectedId) return;
+      const target = targets.find((c) => c.id === selectedId);
+      // Onto a part: the same two ways as +child. Prepared assembly is built
+      // where the part sits in this structure, and the row moves inside it.
+      if (target && needsChoice(target)) {
+        window.PortalBomRules.openTwoWays({
+          anchor: submitBtn, label: `Move under ${target.name}`,
+          onInTheBox: () => move(target.id, true),
+          onPrepared: () => window.PortalBomRules.openWrap({
+            node: target, token,
+            parentNode: tree && tree.parentOf && tree.parentOf[target.id] ? { id: tree.parentOf[target.id] } : null,
+            onCreated: (w) => move(w.id, false),
+          }),
+        });
+        return;
+      }
+      // Out of a box into an assembly, it becomes a real child.
+      if (isRef && target && !(target.takes || {}).box) return move(target.id, false);
       submitBtn.disabled = true; submitBtn.textContent = "Moving…"; errEl.textContent = "";
       try {
         await API.post(token, "moveComponentToParent", { edge_id: edgeId, new_parent_id: selectedId });
@@ -5422,7 +5467,7 @@
 
     dialog.append(
       el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:1rem" }, [
-        el("h3", { style: "margin:0;font-size:1rem" }, "Move to another assembly"),
+        el("h3", { style: "margin:0;font-size:1rem" }, "Move under another row"),
         el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
       ]),
       el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0.3rem 1.25rem;padding:0.6rem 0.75rem;border:1px solid var(--border,#2d3748);border-radius:6px" }, [
@@ -5438,7 +5483,7 @@
       el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" },
         tree && tree.edgeRef
           ? "In the box can only move into another bought part's box — assemblies are not offered."
-          : "Parts are not offered: a part only takes In the box. What we fit to it belongs in its Prepared assembly."),
+          : "Moving onto a part asks: In the box, or a Prepared assembly built where it sits."),
       el("div", { style: `${GRID};padding:0.25rem 0.7rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8b93a1)` }, [
         el("span", {}, "Pos."), el("span", {}, "Part no."), el("span", {}, "Destination"), el("span", { style: "text-align:right" }, "Type"),
       ]),
@@ -5457,7 +5502,15 @@
     (async () => {
       try {
         const res = await API.post(token, "listMoveTargets", { edge_id: edgeId });
-        targets = res.targets || [];
+        // 2026-10-07: you can move a row under any other row in the structure.
+        // A part (which takes only In the box) is offered where it sits in this
+        // structure, and asks how; a part elsewhere is not a sensible target.
+        targets = (res.targets || []).filter((c) => {
+          const t = c.takes || { fitted: true, box: false };
+          if (isRef ? t.box : t.fitted) return true;          // same kind of link — moves as before
+          if (!isRef && t.box) return !!wbsOf(c.id);          // onto a part — asks
+          return isRef && t.fitted;                           // out of a box into an assembly
+        });
         buildList();
         searchInput.focus();
       } catch (ex) {

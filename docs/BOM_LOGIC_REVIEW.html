@@ -222,7 +222,7 @@
     <div class="col col-plan">
       <h3>◇ Next — designed, not built</h3>
       <ul>
-        <li><b>“—” means as is</b> (0045, v292) — built, not deployed<span class="s">Strip says “N as is” instead of “N not set”; picker says “— nothing (as is) —”; Change Log likewise.</span></li>
+        <li><b>Move under any row in the structure</b> (v293) — built, not deployed<span class="s">Onto an assembly: as before. Onto a part: the same two ways as +child — In the box, or a Prepared assembly built where the part sits, with the moved row inside. portal-api deploy → git push.</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
         <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
@@ -241,6 +241,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-07</b> Moving a row under another row must always work — that is how a BOM is worked. Move now offers parts too, with the same two ways as +child; the rules stay as they are.</div>
     <div><b>2026-10-07</b> Fitted “—” = do nothing, picked as is (question 14). The strip and picker say so; “not set” is gone.</div>
     <div><b>2026-10-07</b> “◆ BEING PREPARED” removed again: Fitted already says where value is added — nothing (pick as is), Hub (prepared / pre-assembled) or Site (fitted at the customer).</div>
     <div><b>2026-10-07</b> Door hardware (plate, hinge, handle) is ordered separately and fitted by us at the hub — so it rightly sits in Prepared S Middle Door, not under the door. PROP-071 built so that reads as “door + what is fitted to it”.</div>
@@ -302,6 +303,7 @@
     <p style="font-size:14px;margin-top:6px">Checked in the code, 2026-10-07: the only way BOM quantities leave the portal is the planner resolver to Order Operations
       (Order Operations reads nothing else), and it already skips In-the-box links — so the part stays one order line and one pick line. Work orders take their pull list
       from product families, not from the BOM tree. In-the-box rows appear only in the portal's own tree and exports, marked as such.</p>
+    <p style="font-size:14px;margin-top:8px"><b>Move works the same way:</b> moving a row onto a part in the same structure offers the same two choices. “Prepared assembly” builds it where the part sits and puts the moved row inside — e.g. the drawer front handle onto <i>L Drawer Front - White</i> gives <i>Prepared L Drawer Front - White</i> = front ×1 + handle.</p>
     <p style="font-size:14px;margin-top:8px"><b>What goes away:</b> the “what is this child?” dialog, the “cannot hold children yet” dialog, the in-dialog fix buttons, and the Sourcing condition on a part's children. A part's children no longer depend on whether someone set its Sourcing correctly.</p>
     <p style="font-size:14px;margin-top:8px"><b>What stays:</b> a finished good never gets +child · <b>Hub/Site on In-the-box rows</b> — decided 2026-10-07: some contents are pre-installed at the hub, some fitted on site · Sourcing is still chosen when a part is created.</p>
   </div>

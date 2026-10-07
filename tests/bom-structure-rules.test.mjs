@@ -120,8 +120,11 @@ test("addBomEdge no longer carries its own type guard", () => {
 
 test("is_reference survives every path that copies a link", () => {
   const move = api.match(/if \(action === "moveComponentToParent"\) \{[\s\S]*?\n  \}\n/)[0];
-  assert.ok(/fitting_stage: edge\.fitting_stage \?\? null, is_reference: edge\.is_reference === true/.test(move),
-    "a move must keep Hub/Site and the reference flag");
+  assert.ok(/fitting_stage: edge\.fitting_stage \?\? null,/.test(move), "a move must keep Hub/Site");
+  // The kind of link is kept unless the move itself changes it (onto a part →
+  // In the box; out of a box into an assembly → real child).
+  assert.ok(/is_reference: typeof as_reference === "boolean" \? as_reference : edge\.is_reference === true/.test(move),
+    "a move must keep the In-the-box flag unless told otherwise");
   const copy = api.match(/if \(action === "copyAssembly"\) \{[\s\S]*?\n  \}\n/)[0];
   assert.ok(/is_reference: e\.is_reference === true/.test(copy));
   const mat = api.match(/if \(action === "materialiseConfiguration"\) \{[\s\S]*?\n  \}\n/)[0];
@@ -222,11 +225,25 @@ test("an In the box filter chip combines with the category", () => {
 
 // ---- Move explains itself (kept when PROP-071's label was removed) ----------
 
-test("Move says why parts are not offered", () => {
-  assert.ok(/Parts are not offered: a part only takes In the box\./.test(app));
-  assert.ok(/fromPos: posNum, edgeRef \}/.test(app));
+test("Move can put a row under any other row in the structure (2026-10-07)", () => {
+  const targets = api.match(/if \(action === "listMoveTargets"\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.ok(/takes: \{\s*fitted: bomChildRule\(c\.type, c\.make_or_buy, false\) === null,\s*box: bomChildRule\(c\.type, c\.make_or_buy, true\) === null,/.test(targets),
+    "targets must say which kinds of child they take");
+  assert.ok(/\(c\.takes\.fitted \|\| c\.takes\.box\)/.test(targets), "parts are still filtered out of Move");
+  const modal = app.slice(app.indexOf("function openMoveModal"), app.indexOf("// --- Resizable dialogs"));
+  assert.ok(/if \(!isRef && t\.box\) return !!wbsOf\(c\.id\);/.test(modal), "a part is offered only where it sits in this structure");
+  assert.ok(/window\.PortalBomRules\.openTwoWays\(\{[\s\S]*?onInTheBox: \(\) => move\(target\.id, true\)/.test(modal), "onto a part, In the box is not offered");
+  assert.ok(/onCreated: \(w\) => move\(w\.id, false\)/.test(modal), "onto a part, the Prepared assembly is not built in place");
+  assert.ok(/tree\.parentOf\[target\.id\]/.test(modal), "the wrapper is not built where the part sits");
+  assert.ok(/Moving onto a part asks: In the box, or a Prepared assembly built where it sits\./.test(app));
+  assert.ok(/fromPos: posNum, edgeRef, parentOf \}/.test(app));
 });
 
+test("+child and Move share one two-way menu", () => {
+  assert.ok(/function openTwoWays\(/.test(rulesJs));
+  assert.ok(/function openAddMenu\([\s\S]*?openTwoWays\(\{/.test(rulesJs), "+child no longer uses the shared menu");
+  assert.ok(/const done = \(w\) => \(onCreated \? onCreated\(w\) : onAddTo && onAddTo\(w, \{ reference: false \}\)\);/.test(rulesJs));
+});
 test("the 'part being prepared' mark is gone everywhere (decided 2026-10-07)", () => {
   // Fitted (nothing / Hub / Site) already says where value is added.
   const sql44 = read("supabase/migrations/0044_drop_prepared_part.sql");

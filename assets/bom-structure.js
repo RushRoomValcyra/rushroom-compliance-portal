@@ -71,13 +71,14 @@
     ]);
   }
 
-  // The two-item menu, anchored under the +child button that opened it.
-  // onAddTo(target, { reference }) opens the portal's normal add-child picker.
-  function openAddMenu({ anchor, node, parentNode, token, onAddTo, onChanged }) {
+  // The two choices, as a small menu anchored to the button that opened it.
+  // Shared by +child (openAddMenu) and by Move onto a part (app.js).
+  function openTwoWays({ anchor, label, onInTheBox, onPrepared }) {
     document.querySelectorAll("[data-add-menu]").forEach((m) => m.remove());
     const menu = el("div", {
-      "data-add-menu": "", role: "menu", "aria-label": `Add to ${node.name}`,
-      style: "position:fixed;z-index:1000;width:min(340px,92vw);padding:0.35rem;border:1px solid var(--border,#e2e8f0);border-radius:10px;background:var(--bg,#fff);box-shadow:0 8px 28px rgba(0,0,0,.16)",
+      "data-add-menu": "", role: "menu", "aria-label": label,
+      // Above dialogs (--z-modal 1000): Move opens it from inside one.
+      style: "position:fixed;z-index:calc(var(--z-modal, 1000) + 50);width:min(340px,92vw);padding:0.35rem;border:1px solid var(--border,#e2e8f0);border-radius:10px;background:var(--bg,#fff);box-shadow:0 8px 28px rgba(0,0,0,.16)",
     });
     const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); document.removeEventListener("keydown", onKey, true); };
     const outside = (ev) => { if (!menu.contains(ev.target) && ev.target !== anchor) close(); };
@@ -85,10 +86,10 @@
     menu.append(
       option("▢", "background:var(--grey-bg,#f1f5f9)", "In the box",
         "What comes with this order line. No stock of its own.",
-        () => { close(); onAddTo(node, { reference: true }); }),
+        () => { close(); onInTheBox(); }),
       option("⧉", "background:#e8f5ec;color:#15803d", "Prepared assembly",
         "New assembly with this part inside. Part unchanged.",
-        () => { close(); openWrap({ node, parentNode, token, onAddTo, onChanged }); }),
+        () => { close(); onPrepared(); }),
     );
     document.body.append(menu);
     const r = anchor.getBoundingClientRect();
@@ -100,10 +101,24 @@
     menu.querySelector("button").focus();
   }
 
+  // +child on a part: In the box opens the picker; Prepared assembly builds
+  // the wrapper and then opens the picker on it.
+  // onAddTo(target, { reference }) opens the portal's normal add-child picker.
+  function openAddMenu({ anchor, node, parentNode, token, onAddTo, onChanged }) {
+    openTwoWays({
+      anchor, label: `Add to ${node.name}`,
+      onInTheBox: () => onAddTo(node, { reference: true }),
+      onPrepared: () => openWrap({ node, parentNode, token, onAddTo, onChanged }),
+    });
+  }
+
   // Prepared assembly: one field. An existing Prepared assembly for this part
   // is offered first, so a second one is never made by accident. Inside a tree
   // the new one takes the part's place there; from the Parts list it stands alone.
-  async function openWrap({ node, parentNode, token, onAddTo, onChanged }) {
+  // onCreated(wrapper), when given, replaces "open the picker on it" — Move
+  // uses it to drop the moved row straight into the new assembly.
+  async function openWrap({ node, parentNode, token, onAddTo, onChanged, onCreated }) {
+    const done = (w) => (onCreated ? onCreated(w) : onAddTo && onAddTo(w, { reference: false }));
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const body = el("div", { style: "display:flex;flex-direction:column;gap:0.6rem" });
     const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
@@ -130,7 +145,7 @@
     if (existing.length) {
       body.append(...existing.map((w) => el("button", {
         class: "btn btn-sm", type: "button", style: "text-align:left;white-space:normal",
-        onclick: () => { close(); if (onAddTo) onAddTo(w, { reference: false }); },
+        onclick: () => { close(); done(w); },
       }, `Use ${w.name}`)));
       body.append(el("div", { style: `font-size:0.75rem;${MUTED}` }, "or create a new one:"));
     }
@@ -149,7 +164,7 @@
         });
         close();
         if (onChanged) onChanged();
-        if (onAddTo) onAddTo({ id: r.wrapper_id, name: r.name, part_number: r.part_number, type: "sub_assembly", make_or_buy: "assembled" }, { reference: false });
+        done({ id: r.wrapper_id, name: r.name, part_number: r.part_number, type: "sub_assembly", make_or_buy: "assembled" });
       } catch (ex) {
         err.textContent = ex.message;
         createBtn.disabled = false;
@@ -161,5 +176,5 @@
     nameInput.select();
   }
 
-  window.PortalBomRules = { childRule, takesInTheBox, openAddMenu, openWrap };
+  window.PortalBomRules = { childRule, takesInTheBox, openTwoWays, openAddMenu, openWrap };
 })();

@@ -256,3 +256,11 @@ test("the 'part being prepared' mark is gone everywhere (decided 2026-10-07)", (
   }
   assert.ok(!app.includes("BEING PREPARED"));
 });
+
+test("Move never offers the row's own assembly as 'Use …' (a silent no-op)", () => {
+  // 2026-10-07: moving the hinge onto the door offered "Use Prepared S Middle
+  // Door …" — the assembly the hinge was already in — and nothing happened.
+  assert.ok(/exclude: currentParent \? \[currentParent\.id\] : \[\]/.test(app));
+  assert.ok(/&& !exclude\.includes\(p\.id\)/.test(rulesJs), "openWrap ignores exclude");
+  assert.ok(/are already together in \$\{currentParent\.name\}/.test(app), "no explanation when they already share an assembly");
+});

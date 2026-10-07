@@ -5443,6 +5443,14 @@
             node: target, token,
             parentNode: tree && tree.parentOf && tree.parentOf[target.id] ? { id: tree.parentOf[target.id] } : null,
             onCreated: (w) => move(w.id, false),
+            // Never offer the row's own assembly: "use it" would move the row
+            // to where it already is, and nothing would happen.
+            exclude: currentParent ? [currentParent.id] : [],
+            // Already side by side in one assembly: say so, so a new Prepared
+            // assembly inside it is a deliberate choice, not an accident.
+            note: currentParent && tree && tree.parentOf && tree.parentOf[target.id] === currentParent.id
+              ? `${node.name} and ${target.name} are already together in ${currentParent.name}. Create only if you want a separate Prepared ${target.name} inside it.`
+              : null,
           }),
         });
         return;

@@ -117,7 +117,10 @@
   // the new one takes the part's place there; from the Parts list it stands alone.
   // onCreated(wrapper), when given, replaces "open the picker on it" — Move
   // uses it to drop the moved row straight into the new assembly.
-  async function openWrap({ node, parentNode, token, onAddTo, onChanged, onCreated }) {
+  // exclude: assemblies not to offer as "Use …" (Move passes the row's own
+  // assembly — choosing it would move the row to where it already is).
+  // note: one line of context shown above the choices.
+  async function openWrap({ node, parentNode, token, onAddTo, onChanged, onCreated, exclude = [], note = null }) {
     const done = (w) => (onCreated ? onCreated(w) : onAddTo && onAddTo(w, { reference: false }));
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const body = el("div", { style: "display:flex;flex-direction:column;gap:0.6rem" });
@@ -135,13 +138,14 @@
     try {
       const r = await window.PortalAPI.post(token, "listParentsOf", { component_id: node.id });
       existing = (r.parents || []).filter((l) => l.parent && !l.is_reference)
-        .map((l) => l.parent).filter((p) => p.type === "sub_assembly" && p.make_or_buy === "assembled");
+        .map((l) => l.parent).filter((p) => p.type === "sub_assembly" && p.make_or_buy === "assembled" && !exclude.includes(p.id));
     } catch { /* offering an existing one is a convenience, not a requirement */ }
 
     const nameInput = el("input", { class: "up-text", type: "text", value: `Prepared ${node.name}`, maxlength: "200", "aria-label": "Name", style: "width:100%;box-sizing:border-box" });
     const err = el("div", { role: "alert", style: "color:#e05454;font-size:0.8125rem;min-height:1rem" }, "");
     const createBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Create");
 
+    if (note) body.append(el("div", { style: `font-size:0.8125rem;${MUTED}` }, note));
     if (existing.length) {
       body.append(...existing.map((w) => el("button", {
         class: "btn btn-sm", type: "button", style: "text-align:left;white-space:normal",

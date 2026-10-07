@@ -198,7 +198,7 @@
         <li><b>Prepared wrappers</b> work — “Wrap in Prepared…” confirmed OK by you 2026-10-07</li>
         <li><b>18 missing lines now reach Order Operations</b><span class="s">Panels, shelves, plinths — they were not leaves before.</span></li>
         <li><b>The database enforces the rule on every path</b> (PROP-067, 0040)<span class="s">add, move, copy, materialise, change of Type/Sourcing.</span></li>
-        <li><b>In the box exists</b> (PROP-068, 0041, v286)<span class="s">…but reaching it takes too many steps — see “Not right yet”.</span></li>
+        <li><b>Two ways to add to a part</b> (PROP-069, 0042, v287) — confirmed working by you 2026-10-07<span class="s">+child → In the box, or Prepared assembly. LED profile clips In the box ×8.</span></li>
         <li><b>Kit</b> label, kits renamed “… KIT”, drawer hardware set is one line (0039)</li>
       </ul>
     </div>
@@ -222,7 +222,7 @@
     <div class="col col-plan">
       <h3>◇ Next — designed, not built</h3>
       <ul>
-        <li><b>PROP-069 — Two ways to add to a part: built, tested on a copy of production, not deployed</b><span class="s">§0b. One-click menu: <b>In the box</b> or <b>Prepared assembly</b>. No Sourcing gate, no long dialogs. db push (0042) → portal-api deploy → git push (v287).</span></li>
+        <li><b>PROP-070 — In the box visible and filterable: built, not deployed</b><span class="s">Cardboard colour on In-the-box rows and on the parts that hold them (“▢ In the box · 1”), and a “▢ In the box” filter chip that combines with the category. portal-api deploy → git push (v288).</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
         <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
@@ -231,8 +231,7 @@
     <div class="col col-issue">
       <h3>! Not right yet</h3>
       <ul>
-        <li><b>Adding to a part is over-engineered</b><span class="s">Up to three dialogs of text; a Part + Assembled blocks the obvious action. Fixed by PROP-069.</span></li>
-        <li><b>“Load failed” when changing Sourcing from that dialog</b><span class="s">2026-10-07, not reproduced — the API answers normally. The dialog goes away with PROP-069.</span></li>
+        <li><b>In the box looks like structure</b><span class="s">a part with contents shows the same green arrow as an assembly — fixed by PROP-070.</span></li>
         <li><b>L LED Profile still Part + Assembled</b><span class="s">Its clips part exists but is not linked yet.</span></li>
         <li><b>13 links inside the new wrappers have no Hub/Site</b></li>
         <li><b>Drawers incomplete</b><span class="s">bottom/back parts missing; drawer & door pre-assemblies used nowhere; door handle colours open — case G.</span></li>
@@ -241,6 +240,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-07</b> PROP-069 live and confirmed. PROP-070 built: In the box gets its own colour (cardboard) in the tree and the list, and a filter chip.</div>
     <div><b>2026-10-07</b> PROP-069 built: two-item menu; a part's children no longer depend on Sourcing; Prepared assembly from any part. Hub/Site kept on In the box — and made a general principle: where something is installed <i>or modified</i> must always be sayable.</div>
     <div><b>2026-10-07</b> Verdict on first real use: over-engineered. Adding to a part becomes <b style="min-width:0">two options in one click</b> — In the box (visual, no stock of its own) or Prepared assembly — with no Sourcing gate (PROP-069, planned).</div>
     <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
@@ -262,7 +262,7 @@
   </div>
 
   <!-- ============================================================ -->
-  <h2><span class="num">0b</span>Adding to a part: two ways, one click <span class="b b-src" style="font-size:12px;vertical-align:middle">PROP-069 · built, not deployed</span></h2>
+  <h2><span class="num">0b</span>Adding to a part: two ways, one click <span class="b b-type" style="font-size:12px;vertical-align:middle">PROP-069 · live</span></h2>
   <p class="lead">Decided 2026-10-07 after the first real use. <b>A part never holds real children.</b> When you press <b>+child</b> on a part there are exactly two choices — no questions, no long text, and the part's Sourcing does not matter.</p>
 
   <div class="mock">
@@ -278,7 +278,8 @@
         <div class="tq">▢ In the box → the normal picker opens straight away</div>
         <div class="ta">Link existing or create new, with quantities. The rows show under the part in grey with <b>IN THE BOX</b>.</div>
         <div class="tree"><ul><li><span class="n">L LED Profile including milky cover</span> <span class="ghost">1 order line · 1 stock item</span>
-          <ul><li class="dim"><span class="n">Milky cover</span> <span class="ghost">in the box</span></li><li class="dim"><span class="n">LED Profile Clips</span> ×2 <span class="ghost">in the box</span></li></ul></li></ul></div>
+          <ul><li class="dim" style="background:#8a6d3b12;border-left:3px dashed #8a6d3b;padding-left:6px"><span class="n">Milky cover</span> <span class="b" style="background:#8a6d3b12;color:#8a6d3b;border:1px dashed #8a6d3b66">▢ IN THE BOX</span> <span class="b b-hub">Hub</span></li><li class="dim" style="background:#8a6d3b12;border-left:3px dashed #8a6d3b;padding-left:6px"><span class="n">LED Profile Clips</span> ×8 <span class="b" style="background:#8a6d3b12;color:#8a6d3b;border:1px dashed #8a6d3b66">▢ IN THE BOX</span> <span class="b b-site">Site</span></li></ul></li></ul></div>
+        <div class="ta">In the list the part itself shows <span class="b" style="background:#8a6d3b12;color:#8a6d3b;border:1px dashed #8a6d3b66">▢ In the box · 2</span>, and the <b>▢ In the box</b> chip lists only such parts (PROP-070).</div>
       </div>
       <div class="truth likely">
         <div class="tq">⧉ Prepared assembly → one line to confirm the name</div>

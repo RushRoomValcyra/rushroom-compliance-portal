@@ -195,3 +195,27 @@ test("a Prepared assembly can be made from any part, whatever its Sourcing", () 
   assert.ok(sql42.includes("REVOKE ALL ON FUNCTION bom_wrap_in_prepared(uuid, uuid, uuid, boolean, text, uuid) FROM PUBLIC, anon, authenticated;"));
   assert.ok(/RAISE EXCEPTION '0042: existing links break the simplified rule/.test(sql42));
 });
+
+// ---- PROP-070: In the box is visible and filterable --------------------------
+
+test("the list knows how much each part holds In the box", () => {
+  const list = api.match(/if \(action === "listComponents"\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.ok(/select\("parent_id, is_reference"\)/.test(list));
+  assert.ok(/box_count: boxCount\[c\.id\] \|\| 0/.test(list));
+});
+
+test("In the box has its own colour in the tree and the list", () => {
+  assert.ok(/const BOX = \{ colour: "#8a6d3b"/.test(app), "no dedicated In-the-box colour");
+  assert.ok(/edgeRef \? boxBadge\("▢ IN THE BOX"/.test(app), "tree rows lost the box badge");
+  assert.ok(/background:\$\{BOX\.tint\}/.test(app), "In-the-box tree rows are not tinted");
+  assert.ok(/comp\.box_count \? boxBadge\(`▢ In the box · \$\{comp\.box_count\}`/.test(app), "list rows do not show their box contents");
+});
+
+test("an In the box filter chip combines with the category", () => {
+  assert.ok(/const boxOnlyByTab = \{/.test(app));
+  assert.ok(/if \(boxOnlyByTab\[activeTab\]\) items = items\.filter\(\(c\) => \(c\.box_count \|\| 0\) > 0\);/.test(app));
+  // applied after the category filter, not instead of it
+  const cat = app.indexOf("items = items.filter((c) => curCategory() === \"none\"");
+  const box = app.indexOf("if (boxOnlyByTab[activeTab]) items = items.filter");
+  assert.ok(cat > 0 && box > cat);
+});

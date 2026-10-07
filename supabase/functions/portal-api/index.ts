@@ -3001,10 +3001,15 @@ Deno.serve(async (req) => {
     // Fetch the set of component IDs that are active BOM parents in one indexed query.
     // This lets the frontend classify tabs without N×getBom calls.
     const { data: parentRows } = await db.from("bom_edges")
-      .select("parent_id")
+      .select("parent_id, is_reference")
       .eq("organization_id", organizationId)
       .is("effective_to", null);
     const parentIdSet = new Set((parentRows || []).map((r: any) => r.parent_id));
+    // PROP-070: how many In-the-box items each component holds, so the list can
+    // show a bought part's contents apart from an assembly's structure, and
+    // filter on it.
+    const boxCount: Record<string, number> = {};
+    (parentRows || []).forEach((r: any) => { if (r.is_reference) boxCount[r.parent_id] = (boxCount[r.parent_id] || 0) + 1; });
     const search = body.search ? String(body.search).trim() : null;
     let q = tdb("bom_components")
       .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id, description")
@@ -3012,7 +3017,7 @@ Deno.serve(async (req) => {
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
     const { data: comps, error: ce } = await q;
     if (ce) return json({ error: ce.message }, 400);
-    const components = (comps || []).map((c: any) => ({ ...c, has_children: parentIdSet.has(c.id) }));
+    const components = (comps || []).map((c: any) => ({ ...c, has_children: parentIdSet.has(c.id), box_count: boxCount[c.id] || 0 }));
     return json({ components, root_ids: components.map((c: any) => c.id) });
   }
 

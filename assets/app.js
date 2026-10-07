@@ -3620,6 +3620,15 @@
   ];
   const fittingStage = (id) => FITTING_STAGES.find((x) => x.id === id) || null;
 
+  // PROP-070: In the box has its own colour — cardboard — so a bought part's
+  // contents never read as an assembly's structure (green), and stay apart
+  // from Hub (blue) and Site (orange).
+  const BOX = { colour: "#8a6d3b", tint: "#8a6d3b12", line: "#8a6d3b66" };
+  const boxBadge = (text, title) => el("span", {
+    title,
+    style: `font-size:0.6875rem;font-weight:700;color:${BOX.colour};background:${BOX.tint};border:1px dashed ${BOX.line};border-radius:4px;padding:0 6px;flex-shrink:0;white-space:nowrap`,
+  }, text);
+
   // PROP-067 (BOM logic question 8): Sourcing is chosen when a component is
   // created — never defaulted. A Kit is never bought or built as one thing and
   // a Dynamic BOM is a configuration, so neither is asked; a finished good is
@@ -3766,6 +3775,9 @@
     // happened on a different screen.
     const categoryByTab = { components: "all", assemblies: "all", dynamic: "all" };
     const curCategory = () => categoryByTab[activeTab] || "all";   // "all" | "none" | <category_id>
+    // PROP-070: "only parts with something In the box" — independent of the
+    // category, so it combines with it (Electronics + In the box).
+    const boxOnlyByTab = { components: false, assemblies: false, dynamic: false };
     let sortKey = "name";         // any SORT_COLS key
     let sortDir = "asc";
     // What the list actually shows per row, so every visible column is sortable.
@@ -3992,6 +4004,17 @@
         // Only offered when there is a backlog — a category is required on create,
         // so this exists for pre-PROP-038 rows and should disappear once cleared.
         if (countFor("none")) chips.push(chip("none", "Uncategorised"));
+        const boxN = parts.filter((c) => (c.box_count || 0) > 0).length;
+        if (boxN || boxOnlyByTab[activeTab]) {
+          const on = boxOnlyByTab[activeTab];
+          chips.push(el("button", {
+            type: "button", "aria-pressed": on ? "true" : "false",
+            title: "Only show what has something In the box — combines with the category",
+            style: `padding:0.28rem 0.7rem;font-size:0.75rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;border:1px dashed ${BOX.colour};`
+              + (on ? `background:${BOX.colour};color:#fff` : `background:${BOX.tint};color:${BOX.colour}`),
+            onclick: () => { boxOnlyByTab[activeTab] = !on; tabPageShown[activeTab] = PAGE_SIZE; renderAll(); },
+          }, `▢ In the box (${boxN})`));
+        }
         chips.push(el("button", {
           type: "button", title: "Add, rename, reorder or delete categories",
           style: "padding:0.28rem 0.6rem;font-size:0.75rem;border-radius:999px;cursor:pointer;background:transparent;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
@@ -4006,6 +4029,7 @@
       if (bomTabHasCategories(activeTab) && curCategory() !== "all") {
         items = items.filter((c) => curCategory() === "none" ? !c.category_id : c.category_id === curCategory());
       }
+      if (boxOnlyByTab[activeTab]) items = items.filter((c) => (c.box_count || 0) > 0);
 
       // Sort the filtered set, not the whole list, so the order you see is the
       // order of what is actually shown. Copy first — `items` may be the array
@@ -4096,7 +4120,10 @@
       const sfg = STATUS_COLOR[comp.lifecycle_status] || "#888";
       const tfg = TYPE_COLOR[comp.type] || "#888";
 
-      const container = el("div", { style: "border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-bottom:0.4rem;overflow:hidden" });
+      // PROP-070: a part whose children are only In the box is marked in the
+      // box colour, so it is never mistaken for an assembly in the list.
+      const boxOnly = (comp.box_count || 0) > 0 && !["sub_assembly", "phantom_assembly", "product_family"].includes(comp.type);
+      const container = el("div", { style: `border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-bottom:0.4rem;overflow:hidden${boxOnly ? `;border-left:3px dashed ${BOX.colour}` : ""}` });
       const treeDiv   = el("div", { style: "display:none;padding:0 0.6rem 0.6rem;border-top:1px solid var(--border,#e2e8f0)" });
 
       function rebuildTreeDiv() {
@@ -4114,7 +4141,7 @@
 
       const expandBtn = allowExpand && comp.has_children ? el("button", {
         type: "button", title: "Expand",
-        style: "background:none;border:none;cursor:pointer;padding:0 4px;font-size:0.75rem;color:var(--accent,#2fa564);transition:transform 0.15s;flex-shrink:0",
+        style: `background:none;border:none;cursor:pointer;padding:0 4px;font-size:0.75rem;color:${boxOnly ? BOX.colour : "var(--accent,#2fa564)"};transition:transform 0.15s;flex-shrink:0`,
         onclick: async (ev) => {
           ev.stopPropagation();
           const open = treeDiv.style.display !== "none";
@@ -4219,6 +4246,7 @@
           }, `↗ ${parentCountMap[comp.id]}`) : null,
         ].filter(Boolean)),
         el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, typeDisplay(comp.type)),
+        comp.box_count ? boxBadge(`▢ In the box · ${comp.box_count}`, "What comes with this order line — shown underneath, never ordered or picked on its own") : null,
         comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
         (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
@@ -4641,10 +4669,7 @@
           el("div", { style: "display:flex;align-items:center;gap:0.2rem;min-width:0" }, [
             el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, n.name),
             familyBadge, phantomBadge, condTag,
-            edgeRef ? el("span", {
-              title: "In the box — comes with the order line of the part above. Never ordered or picked on its own.",
-              style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);border:1px dashed var(--border,#cbd5e1);border-radius:4px;padding:0 5px;flex-shrink:0;white-space:nowrap;margin-left:4px",
-            }, "IN THE BOX") : null,
+            edgeRef ? boxBadge("▢ IN THE BOX", "In the box — comes with the order line of the part above. Never ordered or picked on its own.") : null,
           ].filter(Boolean)),
           el("div", { style: "font-family:monospace;font-size:0.6875rem;color:var(--muted,#8b93a1);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number),
         ]);
@@ -4655,9 +4680,11 @@
         ]);
 
         const row = el("div", {
-          style: `display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px solid ${isFamily ? "#2fa564" : "transparent"};border-radius:3px;margin-bottom:1px;cursor:default`,
+          // PROP-070: an In-the-box row is tinted cardboard with a dashed edge —
+          // visibly contents, not structure.
+          style: `display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-left:3px ${edgeRef ? `dashed ${BOX.colour}` : `solid ${isFamily ? "#2fa564" : "transparent"}`};border-radius:3px;margin-bottom:1px;cursor:default${edgeRef ? `;background:${BOX.tint}` : ""}`,
           onmouseenter: (ev) => { ev.currentTarget.style.background = "var(--bg-2,rgba(0,0,0,0.03))"; },
-          onmouseleave: (ev) => { ev.currentTarget.style.background = ""; },
+          onmouseleave: (ev) => { ev.currentTarget.style.background = edgeRef ? BOX.tint : ""; },
           ondblclick: (ev) => {
             if (hitRowControl(ev)) return;
             ev.stopPropagation();

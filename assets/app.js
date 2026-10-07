@@ -5747,7 +5747,12 @@
     // the swap afterwards would leave the S clones behind as litter.
     const subs = {};
     let userNamed = false;
-    nameInput.oninput = () => { userNamed = true; };
+    // The copy's name, shown wherever the result is described — so the dialog
+    // says what will EXIST afterwards, not what is being read (2026-10-07).
+    const nameEls = [];
+    const paintNames = () => nameEls.forEach((n) => { n.textContent = nameInput.value.trim() || `${comp.name} - copy`; });
+    nameInput.oninput = () => { userNamed = true; paintNames(); };
+    const copyName = () => { const n = el("strong", {}); nameEls.push(n); return n; };
 
     const rowLine = (r, tone, extra) => el("div", {
       style: "display:flex;gap:0.5rem;align-items:center;padding:0.28rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem;flex-wrap:wrap",
@@ -5783,10 +5788,16 @@
         setChildren(body, el("div", { class: "error" }, `Couldn't work out the copy: ${ex.message}`));
         return;
       }
-      if (!userNamed) nameInput.value = plan.suggested_name || `${comp.name} - copy`;
-      go.disabled = false;
-
       const clone = plan.will_clone || [], share = plan.will_share || [], swap = plan.will_replace || [];
+      if (!userNamed) {
+        // Swapping M Middle Door for L Middle Door in "Prepared M Middle Door …"
+        // suggests "Prepared L Middle Door …" — then it needs no "- copy".
+        let suggested = comp.name, swapped = false;
+        swap.forEach((r) => { if (r.with?.name && suggested.includes(r.name)) { suggested = suggested.replace(r.name, r.with.name); swapped = true; } });
+        nameInput.value = swapped ? suggested : (plan.suggested_name || `${comp.name} - copy`);
+      }
+      nameEls.length = 0;
+      go.disabled = false;
       const listOf = (rows, tone, withReplace) => el("div", {
         style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem",
       }, rows.length
@@ -5806,20 +5817,38 @@
         return;
       }
 
+      // Rows for what the copy will contain, named as they will be.
+      const newRow = (r) => {
+        const isRoot = r.id === comp.id;
+        return el("div", {
+          style: "display:flex;gap:0.5rem;align-items:center;padding:0.28rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem;flex-wrap:wrap",
+        }, [
+          thumbBox(thumbMap[r.id]),
+          el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--accent,#2fa564);flex-shrink:0" }, "new part no."),
+          el("span", { style: "flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" },
+            isRoot ? copyName() : `${r.name} (copy)`),
+          el("span", { style: "font-size:0.6875rem;font-weight:700;color:#2fa564" }, typeDisplay(r.type)),
+          isRoot ? null : replaceBtn(r),
+        ].filter(Boolean));
+      };
+
       setChildren(body,
+        el("p", { style: "margin:0 0 0.5rem;font-size:0.875rem" }, [
+          "Creates ", copyName(), " with a new part number. ",
+          el("span", { class: "muted" }, `The original “${comp.name}” is not changed.`),
+        ]),
         el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, [
-          "Anything holding structure is copied so you can edit it freely; leaf parts are ",
-          el("strong", {}, "reused"),
-          ". Use ", el("strong", {}, "Replace…"), " to swap one for another — an S assembly becomes an M one without ever creating the S copies.",
+          "Leaf parts are ", el("strong", {}, "the same parts"), " in the copy, not duplicates. Use ",
+          el("strong", {}, "Replace…"), " to put a different part in the copy — an S assembly becomes an M one without creating S copies.",
         ]),
         el("div", { style: "display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem" }, [
           bomChip(`${clone.length} new component${clone.length === 1 ? "" : "s"}`, { active: true }),
-          bomChip(`${share.length} reused`, {}),
-          swap.length ? bomChip(`${swap.length} replaced`, { active: true }) : null,
+          bomChip(`${share.length} same part${share.length === 1 ? "" : "s"}`, {}),
+          swap.length ? bomChip(`${swap.length} swapped`, { active: true }) : null,
           bomChip(`${plan.edge_count || 0} link${plan.edge_count === 1 ? "" : "s"}`, {}),
         ].filter(Boolean)),
 
-        swap.length ? el("div", { style: "font-size:0.8125rem;font-weight:600" }, "Replaced") : null,
+        swap.length ? el("div", { style: "font-size:0.8125rem;font-weight:600" }, "Swapped in the copy") : null,
         swap.length ? el("div", { style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem" },
           swap.map((r) => rowLine(r, "#b45309", [
             el("span", { style: "font-size:0.8125rem;color:var(--accent,#2fa564);font-weight:600" }, `→ ${r.with?.name ?? ""}`),
@@ -5829,13 +5858,14 @@
             }, "✕"),
           ]))) : null,
 
-        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Copied as new components"),
-        listOf(clone, "#2fa564", true),
-        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Reused as they are"),
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "New in the copy"),
+        el("div", { style: "max-height:26vh;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-top:0.3rem" }, clone.map(newRow)),
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-top:0.6rem" }, "Same part in the copy"),
         listOf(share, "var(--muted,#8b93a1)", true),
         el("p", { class: "muted", style: "margin:0.6rem 0 0;font-size:0.75rem" },
           "Specifications come across. Documents, drawings and images do not — they stay on the originals."),
       );
+      paintNames();
     }
     replan();
 

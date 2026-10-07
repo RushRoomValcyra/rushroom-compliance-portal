@@ -209,7 +209,7 @@ test("the dialog re-plans on every swap instead of guessing", () => {
     "the real copy and the preview do not both send the substitutions");
   assert.ok(/delete subs\[r\.id\]; replan\(\)/.test(modal), "a replacement cannot be undone");
   // A name the user typed must survive a re-plan.
-  assert.ok(/if \(!userNamed\) nameInput\.value/.test(modal), "re-planning overwrites a name the user typed");
+  assert.ok(/if \(!userNamed\) \{[\s\S]*?nameInput\.value = /.test(modal), "re-planning overwrites a name the user typed");
 });
 
 test("the picker never offers the thing being replaced", () => {
@@ -249,7 +249,7 @@ test("a part with nothing under it gets no assembly preview", () => {
   assert.ok(/Nothing is linked under this part/.test(modal), "the leaf case has no explanation of its own");
   // And it must stop there rather than fall through into the lists.
   const shortIdx = modal.indexOf("Nothing is linked under this part");
-  const listsIdx = modal.indexOf('}, "Copied as new components")');   // the heading, not a comment
+  const listsIdx = modal.indexOf('}, "New in the copy")');   // the heading, not a comment
   assert.ok(shortIdx < listsIdx, "the leaf message renders after the assembly lists");
   assert.ok(/return;\n      \}/.test(modal.slice(shortIdx, listsIdx)), "the leaf path does not return early");
 });
@@ -259,6 +259,7 @@ test("the root is never offered a Replace button", () => {
   // so the button was a dead end.
   const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
   assert.ok(/withReplace && r\.id !== comp\.id/.test(modal), "the root row still offers Replace");
+  assert.ok(/isRoot \? null : replaceBtn\(r\)/.test(modal), "the root row in 'New in the copy' offers Replace");
 });
 
 test("an empty status panel does not render as a blank box", () => {
@@ -268,4 +269,16 @@ test("an empty status panel does not render as a blank box", () => {
   const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
   assert.ok(!/const err = el\("div", \{ class: "error"/.test(modal),
     "the dialog's inline error slot is still a full .error panel");
+});
+
+test("the copy dialog describes the result, named as it will be (2026-10-07)", () => {
+  // "Copied as new components" listed the ORIGINAL's name and part number, so
+  // after a Replace it was unclear what the copy would hold.
+  const modal = app.match(/function copyAssemblyModal\([\s\S]*?\n  \}\n/)[0];
+  assert.ok(/"Creates ", copyName\(\), " with a new part number\. "/.test(modal), "no one-line statement of what is created");
+  assert.ok(/The original “\$\{comp\.name\}” is not changed\./.test(modal));
+  assert.ok(/isRoot \? copyName\(\) : `\$\{r\.name\} \(copy\)`/.test(modal), "new rows show the original's name, not the copy's");
+  assert.ok(/"Swapped in the copy"/.test(modal) && /"Same part in the copy"/.test(modal));
+  // Swapping M for L in "Prepared M Middle Door …" suggests "Prepared L Middle Door …".
+  assert.ok(/suggested\.replace\(r\.name, r\.with\.name\)/.test(modal));
 });

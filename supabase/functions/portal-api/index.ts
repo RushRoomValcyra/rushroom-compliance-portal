@@ -4609,7 +4609,8 @@ Deno.serve(async (req) => {
           part_number: comp.part_number, oem_number: comp.oem_number,
           name: comp.name, description: comp.description,
           type: comp.type, lifecycle_status: comp.lifecycle_status,
-          notes: `Fitted ${FITTING_STAGE_LABEL[stage as string] ?? "not set"} (was ${FITTING_STAGE_LABEL[edge.fitting_stage as string] ?? "not set"}) in "${parent?.name ?? "assembly"}"`,
+          // "—" means nothing is done to it — picked as is (decided 2026-10-07).
+          notes: `Fitted ${FITTING_STAGE_LABEL[stage as string] ?? "as is (nothing done)"} (was ${FITTING_STAGE_LABEL[edge.fitting_stage as string] ?? "as is (nothing done)"}) in "${parent?.name ?? "assembly"}"`,
         });
       } catch { /* non-fatal — the stage is already saved */ }
     }

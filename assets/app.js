@@ -4478,27 +4478,26 @@
     // PROP-056: the whole tree, not just the rows currently expanded — a
     // collapsed sub-assembly still ships, and a count that changed when you
     // collapsed something would be describing the screen rather than the
-    // delivery. "not set" is counted out loud on purpose: an unanswered
-    // question that looks like an answer is how a part gets left in the van.
+    // delivery.
+    // Decided 2026-10-07: an empty Fitted ("—") is an answer, not a gap — do
+    // nothing, pick it as is for the order. So it is counted as "as is", not
+    // as "not set". (PROP-056 had meant empty = undecided; that reading is gone.)
     const stageTally = (() => {
-      const t = { hub: 0, site: 0, unset: 0 };
-      // PROP-068: In-the-box children count where we fit them (the LED
-      // profile's clips go on site). One with no stage arrives fitted — no crew
-      // fits it — so it is not "not set" either.
-      (edges || []).filter((e) => !(e.is_reference && !fittingStage(e.fitting_stage))).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "unset"] += 1; });
+      const t = { hub: 0, site: 0, asis: 0 };
+      (edges || []).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "asis"] += 1; });
       return t;
     })();
     const stageStrip = el("div", { style: "display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap" },
-      stageTally.hub + stageTally.site + stageTally.unset ? [
+      stageTally.hub + stageTally.site + stageTally.asis ? [
         el("span", { style: "font-size:0.6875rem;font-weight:700;letter-spacing:0.04em;color:var(--muted,#8b93a1)" }, "FITTED"),
         ...FITTING_STAGES.map((x) => el("span", {
           title: x.title,
           style: `font-size:0.6875rem;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap;color:${x.colour};border:1px solid ${x.colour}55;background:${x.colour}12${stageTally[x.id] ? "" : ";opacity:0.45"}`,
         }, `${stageTally[x.id]} ${x.short.toLowerCase()}`)),
-        stageTally.unset ? el("span", {
-          title: "Nobody has said where these are fitted — they will not appear on either crew's list",
-          style: "font-size:0.6875rem;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
-        }, `${stageTally.unset} not set`) : null,
+        stageTally.asis ? el("span", {
+          title: "Nothing done — picked as is for the order",
+          style: "font-size:0.6875rem;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap;color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)",
+        }, `${stageTally.asis} as is`) : null,
       ].filter(Boolean) : []);
 
     wrap.append(el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.4rem;align-items:center;flex-wrap:wrap" }, [
@@ -4598,10 +4597,9 @@
             if (!isTreeRow) { box.replaceChildren(); return; }
             box.replaceChildren(el("button", {
               class: "btn btn-xs", type: "button",
-              // PROP-068: for an In-the-box child, empty means it arrives fitted.
+              // "—" is an answer: nothing is done to it, it is picked as is.
               title: st ? `${st.title} — click to change`
-                : edgeRef ? "In the box — empty means it arrives fitted. Click to say where we fit it"
-                : "Nobody has said where this is fitted — click to set",
+                : "Nothing done — picked as is. Click to set Hub or Site",
               style: "font-size:0.6875rem;padding:1px 7px;border-radius:999px;white-space:nowrap;"
                 + (st ? `color:${st.colour};border-color:${st.colour}55;background:${st.colour}12;font-weight:700`
                       : "color:var(--muted,#8b93a1);border-style:dashed;opacity:0.8"),
@@ -4613,7 +4611,7 @@
               class: "up-text", "aria-label": "Where this part is fitted",
               style: "font-size:0.6875rem;padding:1px 3px;max-width:6rem;box-sizing:border-box",
             }, [
-              el("option", { value: "", selected: current ? null : "selected" }, "— not set —"),
+              el("option", { value: "", selected: current ? null : "selected" }, "— nothing (as is) —"),
               ...FITTING_STAGES.map((x) => el("option", { value: x.id, selected: current === x.id ? "selected" : null }, x.label)),
             ]);
             let settled = false;

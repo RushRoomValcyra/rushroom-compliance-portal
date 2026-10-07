@@ -85,8 +85,11 @@ test("the counts describe the delivery, not the screen", () => {
   // .filter() between the edge list and the loop — it must still be the edges.
   assert.ok(/\(edges \|\| \[\]\)(\.filter\([\s\S]*?\))?\.forEach/.test(strip[0]), "the tally counts rendered rows rather than edges");
   assert.ok(!/buildRows\(\)/.test(strip[0]), "the tally is derived from the collapsed view");
-  assert.ok(/unset/.test(strip[0]), "unset edges are not counted, so an unanswered question looks answered");
-  assert.ok(/not set/.test(app), "the strip never shows the unset count");
+  // Empty edges are still counted — since 2026-10-07 as "as is" (nothing done,
+  // picked for the order), no longer as an unanswered "not set". Every link is
+  // in one of the three counts, so the strip adds up to the whole delivery.
+  assert.ok(/asis/.test(strip[0]), "empty Fitted links are not counted, so the strip does not add up");
+  assert.ok(/as is`/.test(app), "the strip never shows the as-is count");
 });
 
 test("the stage control does not open the detail panel", () => {
@@ -115,4 +118,12 @@ test("one migration owns the column, and it runs before the function needs it", 
   // getBom selects the column, so the migration must sort before nothing that
   // matters — but it must exist, and `supabase db push` applies in name order.
   assert.ok(files.includes("0036_edge_fitting_stage.sql"), "the migration is missing");
+});
+
+test("an empty Fitted reads as 'as is', not as a gap (decided 2026-10-07)", () => {
+  // Three answers: nothing (picked as is), Hub, Site. "—" is the first one.
+  assert.ok(/`\$\{stageTally\.asis\} as is`/.test(app), "the strip still counts empty Fitted as 'not set'");
+  assert.ok(!/not set`\) : null/.test(app));
+  assert.ok(/"— nothing \(as is\) —"/.test(app), "the Fitted picker still offers '— not set —'");
+  assert.ok(/as is \(nothing done\)/.test(read("supabase/functions/portal-api/index.ts")), "the Change Log still says 'not set'");
 });

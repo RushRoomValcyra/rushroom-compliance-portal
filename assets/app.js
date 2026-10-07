@@ -3620,6 +3620,27 @@
   ];
   const fittingStage = (id) => FITTING_STAGES.find((x) => x.id === id) || null;
 
+  // PROP-067 (BOM logic question 8): Sourcing is chosen when a component is
+  // created — never defaulted. A Kit is never bought or built as one thing and
+  // a Dynamic BOM is a configuration, so neither is asked; a finished good is
+  // always bought (CHECK in migration 0040). Shared by both create forms.
+  const SOURCING_OPTS = [
+    ["purchased", "Purchased (bought-in)"],
+    ["manufactured", "Manufactured (made in-house)"],
+    ["assembled", "Assembled (in-house from bought parts)"],
+    ["subcontracted", "Subcontracted (outsourced)"],
+  ];
+  const sourcingAskedFor = (type) => type !== "phantom_assembly" && type !== "product_family" && type !== "finished_good";
+  // A select with no default: "— choose —" is what it shows until someone decides.
+  function sourcingSelect(style) {
+    return el("select", { class: "up-text", style: style || null, "aria-label": "Sourcing" }, [
+      el("option", { value: "", selected: "selected" }, "— choose how it comes to exist —"),
+      ...SOURCING_OPTS.map(([v, l]) => el("option", { value: v }, l)),
+    ]);
+  }
+  // What addComponent needs: the choice, or the fixed value for types not asked.
+  const sourcingFor = (type, chosen) => type === "finished_good" ? "purchased" : sourcingAskedFor(type) ? (chosen || null) : null;
+
   // --- Shared BOM list shaping (PROP-052) ------------------------------------
   // The BOM list and the add-child picker show the same rows and must offer the
   // same tabs, category chips and sort order. These live at module scope so
@@ -4202,7 +4223,18 @@
           class: "btn btn-sm", type: "button",
           style: "padding:0 6px;font-size:0.75rem;flex-shrink:0",
           title: "Add child",
-          onclick: (ev) => { ev.stopPropagation(); openAddChildModal(comp, allComponents, token, refreshTree, comp.id); },
+          onclick: (ev) => {
+            ev.stopPropagation();
+            // PROP-067: something we buy complete is asked "what is this child?"
+            if (window.PortalBomRules && window.PortalBomRules.isBoughtComplete(comp)) {
+              window.PortalBomRules.openChildIntent({
+                node: comp, parentNode: null, token, onChanged: refreshTree,
+                onAddTo: (target, o) => openAddChildModal(target, allComponents, token, refreshTree, target.id, { reference: !!(o && o.reference) }),
+              });
+              return;
+            }
+            openAddChildModal(comp, allComponents, token, refreshTree, comp.id);
+          },
         }, "+child") : null,
         role === "rushroom" ? el("button", {
           class: "btn btn-sm", type: "button",
@@ -4339,20 +4371,20 @@
       // qty is the rolled-up quantity through the tree; edgeQty is what THIS
       // edge carries. The column shows the roll-up, but only edgeQty is editable
       // — editing the roll-up would silently write the wrong number.
-      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage) {
+      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage, edgeRef) {
         const n = nodeMap[nodeId];
         if (!n) return;
         const children = childrenOf[nodeId] || [];
-        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty, edgeStage: edgeStage ?? null });
+        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty, edgeStage: edgeStage ?? null, edgeRef: edgeRef === true });
         if (collapsed.has(posNum)) return;
         children.forEach((e, i) => {
-          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity, e.fitting_stage);
+          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity, e.fitting_stage, e.is_reference);
         });
       }
       // Root is already shown as the list-row header — start from its children
       const topEdges = childrenOf[rootId] || [];
       topEdges.forEach((e, i) => {
-        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity, e.fitting_stage);
+        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity, e.fitting_stage, e.is_reference);
       });
       return rows;
     }
@@ -4395,7 +4427,9 @@
     // question that looks like an answer is how a part gets left in the van.
     const stageTally = (() => {
       const t = { hub: 0, site: 0, unset: 0 };
-      (edges || []).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "unset"] += 1; });
+      // PROP-067: a reference child arrives fitted inside a bought item — no
+      // crew fits it, so it is neither hub, site nor "not set".
+      (edges || []).filter((e) => !e.is_reference).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "unset"] += 1; });
       return t;
     })();
     const stageStrip = el("div", { style: "display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap" },
@@ -4422,7 +4456,7 @@
         style: "display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
       }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Fitted", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 4 ? "text-align:center" : "" }, t))));
 
-      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage }) => {
+      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage, edgeRef }) => {
         const isCollapsed = collapsed.has(posNum);
         const isFamily = n.type === "product_family";
         // PROP-036 — guards say what they MEAN. `depth` is positional only (it
@@ -4431,7 +4465,12 @@
         // `depth > 0` is one level off. That mismatch caused the v202 data loss.
         const isTreeRow  = !!parentNode;                    // every row inside a tree has a parent
         const canUnlink  = isTreeRow;                       // unlink the edge, never delete the component
-        const canAddChild = n.type === "sub_assembly" || n.type === "phantom_assembly"; // only assemblies own children
+        // PROP-067: assemblies take children directly; something we buy
+        // complete takes them through the "what is this child?" dialog, which
+        // builds a Prepared wrapper or records a reference child. A reference
+        // row is contents of a bought item — nothing is added under or beside it.
+        const boughtComplete = !!(window.PortalBomRules && window.PortalBomRules.isBoughtComplete(n));
+        const canAddChild = !edgeRef && (n.type === "sub_assembly" || n.type === "phantom_assembly" || boughtComplete);
         // Always rendered on a tree row, disabled when there is nothing to swap
         // with. Hiding them on single-child assemblies made the control invisible
         // and left users unable to tell the feature existed; it also made the
@@ -4502,6 +4541,13 @@
           const show = (current) => {
             const st = fittingStage(current);
             if (!isTreeRow) { box.replaceChildren(); return; }
+            if (edgeRef) {
+              box.replaceChildren(el("span", {
+                title: "Reference child — it arrives fitted inside the part above, so it has no Hub or Site",
+                style: "font-size:0.6875rem;color:var(--muted,#8b93a1)",
+              }, "—"));
+              return;
+            }
             box.replaceChildren(el("button", {
               class: "btn btn-xs", type: "button",
               title: st ? `${st.title} — click to change` : "Nobody has said where this is fitted — click to set",
@@ -4595,6 +4641,10 @@
           el("div", { style: "display:flex;align-items:center;gap:0.2rem;min-width:0" }, [
             el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, n.name),
             familyBadge, phantomBadge, condTag,
+            edgeRef ? el("span", {
+              title: "Reference child — inside the part above as delivered. Recorded for compliance; never picked.",
+              style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);border:1px dashed var(--border,#cbd5e1);border-radius:4px;padding:0 5px;flex-shrink:0;white-space:nowrap;margin-left:4px",
+            }, "REF") : null,
           ].filter(Boolean)),
           el("div", { style: "font-family:monospace;font-size:0.6875rem;color:var(--muted,#8b93a1);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number),
         ]);
@@ -4624,8 +4674,16 @@
 
             canReorder ? reorderBtn("up") : null,
             canReorder ? reorderBtn("down") : null,
-            isTreeRow ? el("button", { class: "btn btn-xs", type: "button", title: "Add sibling", style: "font-size:0.6875rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+sib") : null,
-            canAddChild ? el("button", { class: "btn btn-xs", type: "button", title: "Add child", style: "font-size:0.6875rem", onclick: () => openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+child") : null,
+            isTreeRow && !edgeRef ? el("button", { class: "btn btn-xs", type: "button", title: "Add sibling", style: "font-size:0.6875rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+sib") : null,
+            canAddChild ? el("button", {
+              class: "btn btn-xs", type: "button", title: boughtComplete ? "Add child — bought complete, so you will be asked what it is" : "Add child", style: "font-size:0.6875rem",
+              onclick: () => boughtComplete
+                ? window.PortalBomRules.openChildIntent({
+                    node: n, parentNode: isTreeRow ? parentNode : null, token, onChanged: onRefresh,
+                    onAddTo: (target, o) => openAddChildModal(target, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom, reference: !!(o && o.reference) }),
+                  })
+                : openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }),
+            }, "+child") : null,
             isTreeRow ? el("button", {
               class: "btn btn-sm", type: "button", title: "Move to another assembly",
               style: "padding:1px 5px;font-size:0.6875rem",
@@ -5038,6 +5096,8 @@
         id: n.id, part_number: n.part_number, name: n.name, type: n.type,
         quantity: edge ? edge.quantity : "", unit: n.unit_of_measure || "",
         reference: edge ? (edge.reference_designator || "") : "",
+        // PROP-067: contents of a bought item — listed, but never picked
+        contents: edge && edge.is_reference ? "reference" : "",
         lifecycle_status: n.lifecycle_status,
         parent_id: parentId || "", parent_name: parentId ? (byId[parentId]?.name || "") : "",
       });
@@ -5064,6 +5124,7 @@
     { label: "Qty", get: (r) => r.quantity },
     { label: "Unit", get: (r) => r.unit },
     { label: "Ref", get: (r) => r.reference },
+    { label: "Reference child", get: (r) => r.contents },
     { label: "Status", get: (r) => r.lifecycle_status || "" },
     { label: "Parent", get: (r) => r.parent_name },
     { label: "Parent ID", get: (r) => r.parent_id },
@@ -5693,6 +5754,10 @@
   // --- Add-child modal: link existing OR create new and link ---------------
   function openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, opts) {
     const linkExistingOnly = !!(opts && opts.linkExistingOnly);
+    // PROP-067: reference children — what is inside a bought item as delivered.
+    // Same picker; the links are marked is_reference, so they are never picked
+    // and carry no Hub/Site. Reached only through the "what is this child?" dialog.
+    const isReference = !!(opts && opts.reference);
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     // The picker is the reason this dialog is resizable. A fixed 200px list of
     // 64 parts shows four at a time, and the window it is in has plenty of room
@@ -5992,13 +6057,19 @@
     const newCat = categorySelect(null);
     newCat.style.cssText = F + ";appearance:none;-webkit-appearance:none;cursor:pointer";
     const newCatRow = el("div", { style: ROW }, [el("label", { style: LBL }, "Category"), newCat]);
-    const syncCatRequired = () => { newCatRow.style.display = categoryRequiredFor(newType.value) ? "" : "none"; };
+    const newMob = sourcingSelect(F + ";appearance:none;-webkit-appearance:none;cursor:pointer");
+    const newMobRow = el("div", { style: ROW }, [el("label", { style: LBL }, "Sourcing"), newMob]);
+    const syncCatRequired = () => {
+      newCatRow.style.display = categoryRequiredFor(newType.value) ? "" : "none";
+      newMobRow.style.display = sourcingAskedFor(newType.value) ? "" : "none";
+    };
     newType.addEventListener("change", syncCatRequired);
     syncCatRequired();
     const newSection = el("div", {}, [
       el("div", { style: ROW }, [el("label", { style: LBL }, "Part number"), newPN]),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Name"), newName]),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Type"), newType]),
+      newMobRow,
       newCatRow,
     ]);
 
@@ -6091,6 +6162,7 @@
           const qty = parseFloat(qtyInput.value);
           if (!qty || qty <= 0) return stop("Quantity must be greater than 0.");
           if (!newName.value.trim()) return stop("Name is required.");
+          if (sourcingAskedFor(newType.value) && !newMob.value) return stop("Choose its Sourcing — how it comes to exist.");
           if (categoryRequiredFor(newType.value) && !newCat.value) return stop("Pick a category for this part.");
           batch = [{ qty, ref: refInput.value.trim() || null }];
         } else {
@@ -6113,6 +6185,7 @@
               part_number: newPN.value.trim() || null,
               name:        newName.value.trim(),
               type:        newType.value,
+              make_or_buy: sourcingFor(newType.value, newMob.value),
               category_id: newCat.value || null,
             });
             batch[0].childId = r.id;
@@ -6127,6 +6200,7 @@
             await API.post(token, "addBomEdge", {
               parent_id: parentNode.id, child_id: item.childId,
               quantity: item.qty, reference_designator: item.ref, variant_condition: cond,
+              is_reference: isReference,
             });
             added.push(item);
             if (item.childId) picked.delete(item.childId);
@@ -6177,7 +6251,7 @@
     form.append(
       el("div", { style: "flex-shrink:0" }, [
         el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
-          el("h3", { style: "margin:0;font-size:1rem" }, "Add child component"),
+          el("h3", { style: "margin:0;font-size:1rem" }, isReference ? `What is inside “${parentNode.name}” as delivered` : "Add child component"),
           el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
         ]),
         el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),
@@ -7588,15 +7662,30 @@
 
         const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
         const currentType = nodeData?.type || "part";
+        // PROP-067: a type the picker does not offer (raw material, spare part,
+        // Dynamic BOM) is shown as itself. Before, the select fell back to "Part"
+        // and Save silently retyped the component.
+        const OTHER_TYPE_LABEL = { raw_material: "Raw material", spare_part: "Spare part", product_family: "Dynamic BOM" };
+        const typeOpts = TYPE_OPTS.some(([v]) => v === currentType) ? TYPE_OPTS
+          : [...TYPE_OPTS, [currentType, OTHER_TYPE_LABEL[currentType] || currentType]];
         const typeSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
-          TYPE_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentType ? "selected" : null }, l))
+          typeOpts.map(([v, l]) => el("option", { value: v, selected: v === currentType ? "selected" : null }, l))
         );
 
-        const MOB_OPTS = [["purchased","Purchased (bought-in)"],["manufactured","Manufactured (made in-house)"],["assembled","Assembled (in-house from bought parts)"],["subcontracted","Subcontracted (outsourced)"]];
-        const currentMOB = nodeData?.make_or_buy || "purchased";
-        const mobSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" },
-          MOB_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentMOB ? "selected" : null }, l))
-        );
+        // PROP-067: never assume "purchased". Opened from a tree row this used to
+        // have no make_or_buy at all, so Save wrote Purchased over whatever was true.
+        const currentMOB = nodeData?.make_or_buy || "";
+        const mobSel = el("select", { class: "up-text", style: "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)" }, [
+          currentMOB ? null : el("option", { value: "", selected: "selected" }, "— not set —"),
+          ...SOURCING_OPTS.map(([v, l]) => el("option", { value: v, selected: v === currentMOB ? "selected" : null }, l)),
+        ]);
+        // A finished good is always bought; a Kit or Dynamic BOM has no sourcing.
+        const syncMob = () => {
+          if (typeSel.value === "finished_good") { mobSel.value = "purchased"; mobSel.disabled = true; }
+          else mobSel.disabled = !sourcingAskedFor(typeSel.value);
+        };
+        typeSel.addEventListener("change", syncMob);
+        syncMob();
 
         // PROP-038 — category. This is also the only way to clear the untagged
         // backlog: a category is required on create, but pre-existing parts have
@@ -7626,7 +7715,8 @@
                 part_number: pnInp.value.trim() || undefined,
                 description: descInp.value.trim() || null,
                 type: typeSel.value,
-                make_or_buy: mobSel.value,
+                // Only what someone actually chose — "— not set —" sends nothing.
+                make_or_buy: sourcingFor(typeSel.value, mobSel.value) || undefined,
               }),
               API.post(token, "upsertComponentMetadata", {
                 component_id: componentId,
@@ -7651,7 +7741,7 @@
                 description: descInp.value.trim() || null,
                 part_number: pnInp.value.trim() || nodeData?.part_number,
                 type: typeSel.value,
-                make_or_buy: mobSel.value,
+                make_or_buy: sourcingFor(typeSel.value, mobSel.value) || nodeData?.make_or_buy,
                 lifecycle_status: statusSel.value,
                 replacement_note: statusSel.value === "replaced" ? replNoteArea.value.trim() || null : null,
                 flag_reason:      statusSel.value === "flagged"  ? flagReasonArea.value.trim() || null : null,
@@ -7679,6 +7769,22 @@
             el("div", { style: "grid-column:1/3" }, [lbl("Description"), descInp]),
           ]),
           el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
+          // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
+          // part from where it lives starts here.
+          window.PortalBomRules && window.PortalBomRules.isBoughtComplete(nodeData) ? el("div", {
+            style: "display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border,#e2e8f0)",
+          }, [
+            el("span", { style: "flex:1;font-size:0.75rem;color:var(--muted,#8b93a1)" },
+              "Bought complete. Anything we fit to it belongs in a Prepared assembly; the part stays as it is."),
+            el("button", {
+              class: "btn btn-sm", type: "button", style: "white-space:nowrap",
+              onclick: () => window.PortalBomRules.openWrap({
+                node: { id: componentId, name: nodeData.name, type: nodeData.type, make_or_buy: nodeData.make_or_buy },
+                parentNode: null, token, onAddTo: null,
+                onChanged: () => { try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ } },
+              }),
+            }, "Wrap in Prepared…"),
+          ]) : null,
         ]);
       }
 
@@ -8458,6 +8564,16 @@
       catRow.replaceChildren(frow("Category", cat, "Required — this is how the part is found in the Parts tab."));
     }
     typ.addEventListener("change", drawCatRow);
+    // PROP-067: Sourcing is chosen, never defaulted — hidden for a Kit and a
+    // Dynamic BOM (not asked) and a finished good (always bought).
+    const mob = sourcingSelect();
+    const mobRow = el("div", {}, []);
+    function drawMobRow() {
+      if (!sourcingAskedFor(typ.value)) { mobRow.replaceChildren(); mobRow.style.display = "none"; return; }
+      mobRow.style.display = "";
+      mobRow.replaceChildren(frow("Sourcing", mob, "Required — do we buy it, make it, put it together, or have it made?"));
+    }
+    typ.addEventListener("change", drawMobRow);
 
     const submitBtn = el("button", { class: "btn btn-primary btn-sm", type: "submit" }, "Create BOM Node");
     zone.register(submitBtn, false);
@@ -8515,6 +8631,11 @@
       errEl.textContent = "";
       submitBtn.disabled = true; submitBtn.textContent = "Creating…";
       try {
+        if (sourcingAskedFor(typ.value) && !mob.value) {
+          errEl.textContent = "Choose its Sourcing — how it comes to exist.";
+          submitBtn.disabled = false; submitBtn.textContent = "Create BOM Node";
+          return;
+        }
         if (categoryRequiredFor(typ.value) && !cat.value) {
           errEl.textContent = "Pick a category for this part.";
           submitBtn.disabled = false; submitBtn.textContent = "Create BOM Node";
@@ -8524,6 +8645,7 @@
           part_number: pn.value.trim() || null,
           name:        nm.value.trim(),
           type:        typ.value,
+          make_or_buy: sourcingFor(typ.value, mob.value),
           category_id: cat.value || null,
           description: desc.value.trim() || null,
         });
@@ -8600,6 +8722,7 @@
       frow("OEM number",  oem,  null),
       frow("Name",        nm,   null),
       frow("Type",        typ,  null),
+      mobRow,
       catRow,
       frow("Description", desc, "Purpose — what does this product/assembly do?"),
       el("div", { style: ROW }, [
@@ -8614,6 +8737,7 @@
     );
 
     drawCatRow();   // populate on open, not only on type change
+    drawMobRow();
     dialog.append(form);
     overlay.append(dialog);
     document.body.append(overlay);

@@ -81,7 +81,9 @@ test("the counts describe the delivery, not the screen", () => {
   assert.ok(strip, "stageTally not found");
   // buildRows() stops at collapsed nodes; counting those rows would make the
   // totals change when someone collapses a sub-assembly that still ships.
-  assert.ok(/\(edges \|\| \[\]\)\.forEach/.test(strip[0]), "the tally counts rendered rows rather than edges");
+  // PROP-067 filters out reference links first (nobody fits those), so allow a
+  // .filter() between the edge list and the loop — it must still be the edges.
+  assert.ok(/\(edges \|\| \[\]\)(\.filter\([\s\S]*?\))?\.forEach/.test(strip[0]), "the tally counts rendered rows rather than edges");
   assert.ok(!/buildRows\(\)/.test(strip[0]), "the tally is derived from the collapsed view");
   assert.ok(/unset/.test(strip[0]), "unset edges are not counted, so an unanswered question looks answered");
   assert.ok(/not set/.test(app), "the strip never shows the unset count");

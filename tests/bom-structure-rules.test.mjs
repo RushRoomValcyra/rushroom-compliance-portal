@@ -1,0 +1,128 @@
+// BOM structure rules (PROP-067) — static, no credentials.
+//
+// Which parent may hold which child lives in the database (migration 0040),
+// with two mirrors: the API (so the move picker only offers what the database
+// accepts) and the browser (so +child routes bought items through the
+// "what is this child?" dialog). Three copies of one rule drift unless
+// something checks them — this file does, over every type × sourcing × link.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import vm from "node:vm";
+
+const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+const sql = read("supabase/migrations/0040_bom_structure_rules.sql");
+const handler = read("supabase/functions/portal-api/handlers/bom-structure.ts");
+const api = read("supabase/functions/portal-api/index.ts");
+const app = read("assets/app.js");
+const rulesJs = read("assets/bom-structure.js");
+
+const TYPES = ["part", "raw_material", "spare_part", "sub_assembly", "phantom_assembly", "finished_good", "product_family"];
+const SOURCING = ["purchased", "manufactured", "assembled", "subcontracted"];
+
+// The decisions, restated independently (docs/BOM_LOGIC_REVIEW.html §2, §5b).
+function decided(type, mob, ref) {
+  if (type === "finished_good") return false;                       // Q7
+  if (ref) return mob === "purchased" && !["phantom_assembly", "product_family"].includes(type); // Q4
+  if (mob === "purchased" && ["part", "raw_material", "spare_part", "sub_assembly"].includes(type)) return false; // rule 2
+  if (mob === "assembled" && ["part", "raw_material", "spare_part"].includes(type)) return false; // part we put together = sub-assembly
+  return true;   // incl. Manufactured / Subcontracted parts — deferred, left open
+}
+
+function browserRule() {
+  const sandbox = { window: {}, document: {} };
+  vm.runInNewContext(rulesJs, sandbox);
+  return sandbox.window.PortalBomRules.childRule;
+}
+
+async function serverRule() {
+  // The handler imports Deno-only modules; lift out the pure function alone.
+  const fn = handler.match(/export function bomChildRule[\s\S]*?\n}\n/);
+  assert.ok(fn, "bomChildRule not found in handlers/bom-structure.ts");
+  const dir = mkdtempSync(join(tmpdir(), "bomrule-"));
+  const file = join(dir, "rule.ts");
+  writeFileSync(file, fn[0]);
+  return (await import(file)).bomChildRule;
+}
+
+test("browser and API apply the decided matrix to every combination", async () => {
+  const js = browserRule();
+  const ts = await serverRule();
+  for (const t of TYPES) for (const m of SOURCING) for (const r of [false, true]) {
+    const want = decided(t, m, r);
+    assert.equal(js(t, m, r) === null, want, `browser: ${t} / ${m} / ${r ? "reference" : "fitted"}`);
+    assert.equal(ts(t, m, r) === null, want, `API: ${t} / ${m} / ${r ? "reference" : "fitted"}`);
+    assert.equal(js(t, m, r), ts(t, m, r), `browser and API word ${t} / ${m} differently`);
+  }
+});
+
+test("the database refuses with the same four sentences", () => {
+  const sqlMsgs = [...sql.matchAll(/THEN '([^']+)'/g)].map((m) => m[1]).sort();
+  const jsMsgs = [...rulesJs.matchAll(/return "([^"]+)";/g)].map((m) => m[1]).sort();
+  assert.equal(sqlMsgs.length, 4, "bom_child_rule should have four refusals");
+  assert.deepEqual(sqlMsgs, jsMsgs, "SQL and browser messages differ");
+  assert.ok(/WHEN p_type = 'finished_good'/.test(sql));
+  assert.ok(/p_type IN \('part', 'raw_material', 'spare_part', 'sub_assembly'\)/.test(sql));
+});
+
+test("0040 adds the reference flag, both CHECKs and both triggers", () => {
+  assert.ok(/ADD COLUMN IF NOT EXISTS is_reference BOOLEAN NOT NULL DEFAULT false/.test(sql));
+  assert.ok(/CHECK \(NOT is_reference OR fitting_stage IS NULL\)/.test(sql), "a reference child must not carry Hub/Site");
+  assert.ok(/CHECK \(type <> 'finished_good' OR make_or_buy = 'purchased'\)/.test(sql));
+  assert.ok(/BEFORE INSERT OR UPDATE OF parent_id, is_reference, effective_to ON bom_edges/.test(sql),
+    "the link trigger must cover insert, re-parent, re-flag and re-open");
+  assert.ok(/BEFORE UPDATE OF type, make_or_buy ON bom_components/.test(sql));
+  assert.ok(/IF NEW\.effective_to IS NOT NULL THEN RETURN NEW;/.test(sql), "closing a link must always be allowed");
+});
+
+test("0040 refuses to switch on over data that breaks the rule", () => {
+  assert.ok(/RAISE EXCEPTION '0040: existing links break the BOM structure rules/.test(sql));
+});
+
+test("the new functions are as closed as the tables (RLS is deny-all)", () => {
+  for (const fn of ["bom_wrap_in_prepared(uuid, uuid, uuid, boolean, text, uuid)", "bom_child_rule(text, text, boolean)"]) {
+    assert.ok(sql.includes(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC, anon, authenticated;`), `${fn} is callable by anon`);
+    assert.ok(sql.includes(`GRANT EXECUTE ON FUNCTION ${fn} TO service_role;`));
+  }
+  assert.ok(/WHERE id = p_part AND organization_id = p_org/.test(sql), "the wrap must be scoped to the caller's org");
+});
+
+test("addBomEdge no longer carries its own type guard", () => {
+  const block = api.match(/if \(action === "addBomEdge"\) \{[\s\S]*?\n  \}\n/);
+  assert.ok(block);
+  assert.ok(!/Only assemblies can have children/.test(block[0]));
+  assert.ok(!/ASSEMBLY_TYPES/.test(block[0]));
+  assert.ok(/is_reference: is_reference === true/.test(block[0]));
+});
+
+test("is_reference survives every path that copies a link", () => {
+  const move = api.match(/if \(action === "moveComponentToParent"\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.ok(/fitting_stage: edge\.fitting_stage \?\? null, is_reference: edge\.is_reference === true/.test(move),
+    "a move must keep Hub/Site and the reference flag");
+  const copy = api.match(/if \(action === "copyAssembly"\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.ok(/is_reference: e\.is_reference === true/.test(copy));
+  const mat = api.match(/if \(action === "materialiseConfiguration"\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.equal((mat.match(/is_reference: e\.is_reference === true/g) || []).length, 2);
+});
+
+test("Order Operations never receives a reference child as a pick line", () => {
+  assert.ok(/resolverTdb\("bom_edges"\)\.select\("parent_id, child_id, quantity"\)\.is\("effective_to", null\)\.eq\("is_reference", false\)/.test(api));
+});
+
+test("the tree reads the flag, and Sourcing is never assumed", () => {
+  assert.ok(/"id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage, is_reference"/.test(api));
+  assert.ok(/"id, part_number, name, type, make_or_buy, category_id, unit_of_measure/.test(api), "getBom nodes need Sourcing and Category for the edit form");
+  assert.ok(!/nodeData\?\.make_or_buy \|\| "purchased"/.test(app), "the edit form defaults Sourcing to Purchased again");
+  assert.ok(/Choose its Sourcing: purchased, manufactured, assembled or subcontracted\./.test(api), "addComponent accepts a missing Sourcing");
+});
+
+test("the pages load the rules before app.js", () => {
+  for (const page of ["index.html", "supplier.html"]) {
+    const html = read(page);
+    const rules = html.indexOf("assets/bom-structure.js");
+    const appAt = html.indexOf("assets/app.js");
+    assert.ok(rules > 0 && rules < appAt, `${page}: bom-structure.js must load before app.js`);
+  }
+});

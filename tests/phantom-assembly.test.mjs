@@ -16,7 +16,12 @@ const api = read("supabase/functions/portal-api/index.ts");
 
 test("the database accepts the new type", () => {
   const files = readdirSync(join(root, "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
-  const owning = files.filter((f) => /phantom_assembly/.test(read(`supabase/migrations/${f}`)));
+  // "Owns" = rewrites the type CHECK with phantom_assembly in it. 0040 names
+  // the type in its structure rule without redefining the type list.
+  const owning = files.filter((f) => {
+    const sql = read(`supabase/migrations/${f}`);
+    return /phantom_assembly/.test(sql) && /bom_components_type_check/.test(sql);
+  });
   assert.deepEqual(owning, ["0037_phantom_assembly_type.sql"], `expected one migration, got ${owning}`);
   const mig = read("supabase/migrations/0037_phantom_assembly_type.sql");
   const check = mig.match(/CHECK \(type IN \(([\s\S]*?)\)\)/);

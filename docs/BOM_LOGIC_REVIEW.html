@@ -212,11 +212,9 @@
     <div class="col col-plan">
       <h3>◇ Designed, not built</h3>
       <ul>
-        <li><b>Auto-build the Prepared wrapper</b> on +child / move / copy<span class="s">§5b · replaces today's hard block</span></li>
-        <li><b>Reference children</b><span class="s">marker on the link; greyed in the tree; resolver skips them</span></li>
+        <li><b>PROP-067 — built, tested locally, not deployed:</b> the “what is this child?” dialog and automatic Prepared wrapper · reference children (REF, never picked) · one database rule for add / move / copy / materialise · Sourcing chosen on create · no silent change of Type or Sourcing<span class="s">Waiting for: db push → portal-api deploy → git push.</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
-        <li><b>One database rule</b> for every path<span class="s">§6 · data is clean; finished good = hard block</span></li>
-        <li><b>Sourcing required on create</b><span class="s">decided — question 8</span></li>
+
         <li><b>Hub/Site on operations</b><span class="s">docs/IDEAS.md · build when the first work order needs it</span></li>
         <li><b>Stocked stop in the planner resolver</b><span class="s">question 13 — <b>parked in the roadmap backlog</b> until the BOM structure is finished. Changes Order Operations → own /build.</span></li>
 
@@ -225,7 +223,7 @@
     <div class="col col-issue">
       <h3>! Not right yet</h3>
       <ul>
-        <li><b>Hard block too strict</b><span class="s">+child refuses Dynamic BOMs and manufactured parts; Move still lets a part get children silently.</span></li>
+        <li><b>Hard block too strict</b><span class="s">+child refuses Dynamic BOMs and manufactured parts; Move still lets a part get children silently. <b>Replaced by PROP-067 once deployed.</b></span></li>
         <li><b>13 links inside the new wrappers have no Hub/Site</b><span class="s">e.g. L Prepared Plinth → L Plinth. Set in the BOM tree.</span></li>
         <li><b>Drawers incomplete</b><span class="s">Bottom and back panel parts don't exist yet; drawer and door pre-assemblies are used by no cabinet and no planner mapping; door handle colours open — case G.</span></li>
         <li><b>Hardware set had children</b><span class="s">Fixed — 0039 applied. 0038's Prepared Drawer Slides wrappers were a mistake (the slides come in the box) and are retired.</span></li>
@@ -236,6 +234,7 @@
   </div>
   <div class="timeline">
     <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
+    <div><b>2026-10-07</b> PROP-067 built: the BOM logic decided on this page, implemented and exercised on a local copy of production. Not deployed yet.</div>
     <div><b>2026-10-06</b> Order agreed: nail the BOM logic, then build stocked pre-assemblies. Decided: the portal builds Prepared wrappers itself (Q10), contents of bought items as reference children (Q4), finished goods never hold children (Q7), Sourcing required on create (Q8); Manufactured/Subcontracted wait for a first case.</div>
     <div><b>2026-10-06</b> Drawer answers: set includes slides and screws · drawers come in pairs · bottom/back parts to be created · front, handle and door handles fitted at the hub · doors pre-built, ~5 days stock. Migration 0039 written.</div>
     <div><b>2026-10-06</b> Kits renamed “… KIT”. Drawer process described (case G) — exposes the stocked pre-assembly question (13).</div>

@@ -31,6 +31,7 @@ import { RUSHROOM_ORG_ID, TENANT_TABLES, makeTdb } from "../_shared/tenant.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
+import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 
 const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
 const PLANNER_RESOLVER_MAX_REQUIREMENTS = 250;
@@ -1072,7 +1073,9 @@ Deno.serve(async (req) => {
     const [mappingRes, componentRes, edgeRes] = await Promise.all([
       resolverTdb("planner_mappings").select("id, source_type, source_key, target_component_id, quantity_rule, fixed_quantity, mapping_revision").eq("is_active", true),
       resolverTdb("bom_components").select("id, part_number, name, unit_of_measure, lifecycle_status"),
-      resolverTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).order("parent_id").order("child_id"),
+      // PROP-067: reference children are contents of a bought item, never picked —
+      // skipping them keeps that item a leaf, i.e. one pick line.
+      resolverTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).eq("is_reference", false).order("parent_id").order("child_id"),
     ]);
     if (mappingRes.error || componentRes.error || edgeRes.error) return json({ error: "PIM resolver data is unavailable" }, 502);
     if ((edgeRes.data || []).length > PLANNER_RESOLVER_MAX_EXPANSIONS) return json({ error: "PIM BOM graph exceeds resolver traversal limit" }, 422);
@@ -3097,11 +3100,26 @@ Deno.serve(async (req) => {
   // --- BOM: add a new component (creates the node + first version "A") ------
   if (action === "addComponent") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { name, type, oem_number, description, notes, category_id } = body;
+    const { name, type, oem_number, description, notes, category_id, make_or_buy } = body;
     let { part_number } = body;
     if (!name || !type) return json({ error: "name and type are required" }, 400);
     const validTypes = COMPONENT_TYPES;
     if (!validTypes.includes(type)) return json({ error: "Invalid type" }, 400);
+    // PROP-067 (question 8): Sourcing is chosen, never defaulted. The silent
+    // 'purchased' default is why 90 of 91 parts said Purchased without anyone
+    // deciding it. A finished good is always bought (CHECK in 0040); a Kit is
+    // never bought or built as one thing, and a Dynamic BOM is a configuration,
+    // so neither is asked.
+    const MAKE_OR_BUY = ["purchased", "manufactured", "assembled", "subcontracted"];
+    let sourcing: string | null = null;
+    if (type === "finished_good") sourcing = "purchased";
+    else if (type === "phantom_assembly") sourcing = "assembled";
+    else if (type !== "product_family") {
+      if (!MAKE_OR_BUY.includes(make_or_buy)) {
+        return json({ error: "Choose its Sourcing: purchased, manufactured, assembled or subcontracted." }, 400);
+      }
+      sourcing = make_or_buy;
+    }
     // PROP-038: a category is required for anything that lands in the Parts tab.
     // Assemblies and Dynamic BOMs are grouped by their own tabs and are exempt.
     const needsCategory = !CATEGORYLESS_TYPES.includes(type);
@@ -3127,6 +3145,7 @@ Deno.serve(async (req) => {
       oem_number: oem_number ? String(oem_number).trim() : null,
       description: description || null, notes: notes || null,
       category_id: category_id || null,
+      ...(sourcing ? { make_or_buy: sourcing } : {}),
       created_by: session.uid || null,
     }).select("id").maybeSingle();
     if (ce || !comp) return json({ error: ce?.message ?? "Component insert returned no data" }, 400);
@@ -3233,7 +3252,7 @@ Deno.serve(async (req) => {
         .select("id, name, part_number, type").in("id", ids);
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const { data: edges } = await tdb("bom_edges")
-        .select("id, parent_id, child_id, quantity, reference_designator, sort_order, fitting_stage, variant_condition")
+        .select("id, parent_id, child_id, quantity, reference_designator, sort_order, fitting_stage, variant_condition, is_reference")
         .in("parent_id", ids).is("effective_to", null)
         .order("sort_order", { ascending: true });
       const next: string[] = [];
@@ -3315,6 +3334,7 @@ Deno.serve(async (req) => {
           quantity: e.quantity, reference_designator: e.reference_designator,
           sort_order: e.sort_order ?? 0, fitting_stage: e.fitting_stage ?? null,
           variant_condition: e.variant_condition ?? null,
+          is_reference: e.is_reference === true,   // PROP-067
         });
       }
     }
@@ -3332,7 +3352,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  // --- BOM: update component metadata (never part_number or type) -----------
+  // --- BOM: update component metadata ---------------------------------------
+  // Type and Sourcing may change, but not into a combination the children it
+  // already holds would break — trg_bom_component_structure (0040) refuses it.
   if (action === "updateComponent") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { component_id, name, description, notes, oem_number, part_number, type: newType, make_or_buy } = body;
@@ -3354,7 +3376,7 @@ Deno.serve(async (req) => {
       patch.make_or_buy = make_or_buy;
     }
     const { error } = await tdb("bom_components").update(patch).eq("id", component_id);
-    if (error) return json({ error: error.message }, 400);
+    if (error) return json({ error: bomRuleError(error.message) ?? error.message }, 400);
     return json({ ok: true });
   }
 
@@ -3492,7 +3514,7 @@ Deno.serve(async (req) => {
     const depthLimit = Math.min(Number(max_depth) || 4, 10);
     // BFS: fetch children level by level
     const nodeMap: Record<string, any> = {};
-    const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null; sort_order?: number; fitting_stage?: string | null }> = [];
+    const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null; sort_order?: number; fitting_stage?: string | null; is_reference?: boolean }> = [];
     const queue: Array<{ id: string; depth: number }> = [{ id: root_component_id, depth: 0 }];
     const visited = new Set<string>();
     while (queue.length > 0) {
@@ -3500,11 +3522,11 @@ Deno.serve(async (req) => {
       const ids = batch.map((n) => n.id).filter((id) => !visited.has(id));
       if (!ids.length) break;
       ids.forEach((id) => visited.add(id));
-      const { data: comps } = await tdb("bom_components").select("id, part_number, name, type, unit_of_measure, lifecycle_status, notes, description").in("id", ids);
+      const { data: comps } = await tdb("bom_components").select("id, part_number, name, type, make_or_buy, category_id, unit_of_measure, lifecycle_status, notes, description").in("id", ids);
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const currentDepth = batch[0].depth;
       if (currentDepth >= depthLimit) continue;
-      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage")
+      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage, is_reference")
         .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId)
         .order("sort_order", { ascending: true }).order("id", { ascending: true });
       (childEdges || []).forEach((e: any) => {
@@ -3518,6 +3540,8 @@ Deno.serve(async (req) => {
   // --- BOM: add an edge (child under parent) --------------------------------
   // Turn Postgres constraint noise into something a user can act on.
   function bomEdgeError(raw: string): string {
+    const rule = bomRuleError(raw);   // PROP-067: the structure rules (migration 0040)
+    if (rule) return rule;
     if (raw.includes("bom_edges_unconditional_unique")) {
       return "That component is already a child of this assembly. Remove the existing link first, or add it with a variant condition.";
     }
@@ -3530,13 +3554,11 @@ Deno.serve(async (req) => {
 
   if (action === "addBomEdge") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { parent_id, child_id, quantity, reference_designator, effective_from, variant_condition } = body;
+    const { parent_id, child_id, quantity, reference_designator, effective_from, variant_condition, is_reference } = body;
     if (!parent_id || !child_id || !quantity) return json({ error: "parent_id, child_id and quantity required" }, 400);
-    const { data: parentComp } = await tdb("bom_components").select("type").eq("id", parent_id).maybeSingle();
-    const ASSEMBLY_TYPES = ["sub_assembly", "phantom_assembly"];
-    if (!parentComp || !ASSEMBLY_TYPES.includes(parentComp.type)) {
-      return json({ error: "Only assemblies can have children." }, 400);
-    }
+    // PROP-067: which parent may hold which child is decided by the database
+    // (trg_bom_edge_structure, migration 0040) — for this path and every other
+    // one that opens a link. Its refusal comes back through bomEdgeError.
     try {
       // PROP-036: new children land at the end of the sibling list.
       const { data: sibs } = await tdb("bom_edges").select("sort_order")
@@ -3549,12 +3571,19 @@ Deno.serve(async (req) => {
         effective_from: effective_from || new Date().toISOString().slice(0, 10),
         variant_condition: variant_condition ?? null,
         sort_order: nextOrder,
+        is_reference: is_reference === true,
       }).select("id").maybeSingle();
       if (error) return json({ error: bomEdgeError(error.message) }, 400);
       return json({ id: data.id });
     } catch (e: any) {
       return json({ error: bomEdgeError(String(e?.message || "")) }, 400);
     }
+  }
+
+  // --- BOM: wrap a bought part in a Prepared sub-assembly (PROP-067) --------
+  if (action === "wrapInPrepared") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    return await wrapInPrepared(body, { organizationId, uid: (session.uid as string) || null });
   }
 
   // --- BOM: close an edge (soft-delete, sets effective_to = today) ----------
@@ -3632,7 +3661,7 @@ Deno.serve(async (req) => {
     const { edge_id } = body;
     if (!edge_id) return json({ error: "edge_id required" }, 400);
     const { data: edge } = await tdb("bom_edges")
-      .select("id, parent_id, child_id, variant_condition").eq("id", edge_id).is("effective_to", null).maybeSingle();
+      .select("id, parent_id, child_id, variant_condition, is_reference").eq("id", edge_id).is("effective_to", null).maybeSingle();
     if (!edge) return json({ error: "Edge not found" }, 404);
 
     // (1) never itself, never one of its own descendants — that is the cycle rule
@@ -3646,10 +3675,12 @@ Deno.serve(async (req) => {
       (existing || []).forEach((e: any) => blocked.add(e.parent_id));
     }
     const { data: comps } = await tdb("bom_components")
-      .select("id, part_number, name, type, lifecycle_status").order("name");
+      .select("id, part_number, name, type, make_or_buy, lifecycle_status").order("name");
     const targets = (comps || []).filter((c: any) =>
       !blocked.has(c.id) &&
-      c.type !== "finished_good" &&      // (2) PROP-029 leaf rule
+      // (2) PROP-067: only parents the database will accept for this kind of
+      //     link (finished goods never; bought items only reference children)
+      bomChildRule(c.type, c.make_or_buy, edge.is_reference === true) === null &&
       c.id !== edge.parent_id            // already its parent — nothing to do
     );
     return json({ targets, current_parent_id: edge.parent_id });
@@ -3665,7 +3696,7 @@ Deno.serve(async (req) => {
     const today = new Date().toISOString().slice(0, 10);
 
     const { data: edge } = await tdb("bom_edges")
-      .select("id, parent_id, child_id, quantity, reference_designator, variant_condition")
+      .select("id, parent_id, child_id, quantity, reference_designator, variant_condition, fitting_stage, is_reference")
       .eq("id", edge_id).is("effective_to", null).maybeSingle();
     if (!edge) return json({ error: "Edge not found" }, 404);
     if (new_parent_id === edge.parent_id) return json({ ok: true, new_edge_id: edge.id, moved: false });
@@ -3679,7 +3710,7 @@ Deno.serve(async (req) => {
       .select("id, type, name").eq("id", new_parent_id).maybeSingle();
     if (!target) return json({ error: "Destination not found" }, 404);
     if (target.type === "finished_good") {
-      return json({ error: "A finished good is a leaf and cannot hold children." }, 400);
+      return json({ error: "A finished good is bought and passed on untouched — it never holds children." }, 400);
     }
 
     // Close first, insert second. trg_check_bom_cycle is BEFORE INSERT, so it
@@ -3697,6 +3728,9 @@ Deno.serve(async (req) => {
         parent_id: new_parent_id, child_id: edge.child_id,
         quantity: edge.quantity, reference_designator: edge.reference_designator,
         variant_condition: edge.variant_condition ?? null,
+        // A move keeps where the part is fitted and what kind of link it is.
+        // Before PROP-067 the stage was silently dropped on every move.
+        fitting_stage: edge.fitting_stage ?? null, is_reference: edge.is_reference === true,
         effective_from: today, sort_order: nextOrder,
       }).select("id").maybeSingle();
       if (insErr || !created) throw new Error(insErr?.message || "Edge insert returned no data");
@@ -3732,19 +3766,20 @@ Deno.serve(async (req) => {
     const { component_id } = body;
     if (!component_id) return json({ error: "component_id required" }, 400);
     const { data: edges, error: ee } = await tdb("bom_edges")
-      .select("parent_id, quantity, reference_designator")
+      .select("parent_id, quantity, reference_designator, is_reference")
       .eq("child_id", component_id)
       .is("effective_to", null);
     if (ee) return json({ error: ee.message }, 400);
     const parentIds = (edges || []).map((e: any) => e.parent_id);
     if (!parentIds.length) return json({ parents: [] });
     const { data: parents } = await tdb("bom_components")
-      .select("id, part_number, name, type, lifecycle_status")
+      .select("id, part_number, name, type, make_or_buy, lifecycle_status")   // make_or_buy: PROP-067 wrap dialog
       .in("id", parentIds);
     const result = (edges || []).map((e: any) => ({
       parent_id: e.parent_id,
       quantity: e.quantity,
       reference_designator: e.reference_designator,
+      is_reference: e.is_reference === true,
       parent: (parents || []).find((p: any) => p.id === e.parent_id) || null,
     }));
     return json({ parents: result });
@@ -4545,8 +4580,13 @@ Deno.serve(async (req) => {
       return json({ error: `fitting_stage must be one of ${FITTING_STAGES.join(", ")}, or null` }, 400);
     }
     const { data: edge } = await tdb("bom_edges")
-      .select("id, parent_id, child_id, fitting_stage").eq("id", edge_id).is("effective_to", null).maybeSingle();
+      .select("id, parent_id, child_id, fitting_stage, is_reference").eq("id", edge_id).is("effective_to", null).maybeSingle();
     if (!edge) return json({ error: "Edge not found or no longer active" }, 404);
+    // PROP-067: a reference child arrives fitted inside its parent — "where is
+    // it fitted" has no answer. The CHECK in 0040 enforces it; this says why.
+    if (edge.is_reference && stage !== null) {
+      return json({ error: "A reference child arrives fitted inside its parent, so it has no Hub or Site." }, 400);
+    }
     if ((edge.fitting_stage ?? null) === stage) return json({ ok: true, changed: false, fitting_stage: stage });
 
     const { error } = await tdb("bom_edges").update({ fitting_stage: stage }).eq("id", edge_id);
@@ -4607,7 +4647,7 @@ Deno.serve(async (req) => {
       const currentDepth = batch[0].depth;
       if (currentDepth >= 10) continue;
       const { data: childEdges } = await db.from("bom_edges")
-        .select("id, parent_id, child_id, quantity, reference_designator, variant_condition")
+        .select("id, parent_id, child_id, quantity, reference_designator, variant_condition, is_reference")
         .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId);
       (childEdges || []).forEach((e: any) => {
         const cond = e.variant_condition;
@@ -4756,7 +4796,7 @@ Deno.serve(async (req) => {
       const currentDepth = batch[0].depth;
       if (currentDepth >= 10) continue;
       const { data: childEdges } = await db.from("bom_edges")
-        .select("id, parent_id, child_id, quantity, reference_designator, variant_condition")
+        .select("id, parent_id, child_id, quantity, reference_designator, variant_condition, is_reference")
         .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId);
       (childEdges || []).forEach((e: any) => {
         const cond = e.variant_condition;
@@ -4779,6 +4819,7 @@ Deno.serve(async (req) => {
       reference_designator: e.reference_designator || null,
       effective_from: today,
       variant_condition: null,
+      is_reference: e.is_reference === true,   // PROP-067
     }));
     // Copy deeper edges (non-root parents) as-is, unconditional
     const deeperEdges = resultEdges.filter((e: any) => e.parent_id !== cfg.family_id);
@@ -4792,6 +4833,7 @@ Deno.serve(async (req) => {
           reference_designator: e.reference_designator || null,
           effective_from: today,
           variant_condition: null,
+          is_reference: e.is_reference === true,   // PROP-067
         });
       }
     }

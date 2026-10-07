@@ -9,7 +9,7 @@
  *                    tests/bom-structure-rules.test.mjs fails if they differ)
  *   openChildIntent  "+child" on something we buy complete: what is this child?
  *                      1. we fit it        → a Prepared wrapper (openWrap)
- *                      2. inside, as delivered → a reference child
+ *                      2. comes with its order → In the box (PROP-068)
  *                      3. we work on the part  → an operation, nothing added
  *   openWrap         build "Prepared <name>" around a bought part, or add to the
  *                    Prepared assembly it already sits in
@@ -27,10 +27,10 @@
       return "A finished good is bought and passed on untouched — it never holds children.";
     }
     if (isReference && (makeOrBuy !== "purchased" || type === "phantom_assembly" || type === "product_family")) {
-      return "A reference child records what is inside something we buy; this parent is not bought complete.";
+      return "Only something we buy complete has an In the box: what comes with its order line.";
     }
     if (!isReference && makeOrBuy === "purchased" && BOUGHT_COMPLETE_TYPES.includes(type)) {
-      return "This is bought complete. Something we fit goes into its Prepared wrapper; something inside it as delivered is a reference child.";
+      return "This is bought complete. Something ordered separately and fitted to it goes into its Prepared wrapper; something that comes with its order is In the box.";
     }
     if (!isReference && makeOrBuy === "assembled" && ["part", "raw_material", "spare_part"].includes(type)) {
       return "A part we put together is a sub-assembly. Change its Type first.";
@@ -102,11 +102,11 @@
     const { body, close } = shell("What is this child?");
     body.append(
       note(`You buy ${node.name} complete. What you add under it decides what gets built.`),
-      choice("We fit it to this part",
-        "Hardware, pins, a switch we mount — it goes into a Prepared assembly next to the part. The part stays exactly what we buy.",
+      choice("We order it separately and fit it to this part",
+        "Its own order line — hardware, pins, a switch we mount. It goes into a Prepared assembly next to the part, which stays exactly what we buy.",
         () => { close(); openWrap({ node, parentNode, token, onAddTo, onChanged }); }),
-      choice("It is inside the part when we receive it",
-        "Recorded as a reference child: shown greyed, never picked, no Hub or Site — but it counts for compliance.",
+      choice("It comes In the box with this part",
+        "Part of the same order line — loose or already fitted. Never ordered or picked on its own; you can still say where we fit it (Hub or Site). Counts for compliance.",
         () => { close(); onAddTo(node, { reference: true }); }),
       choice("We work on the part — holes, cut-outs, a finish",
         "That is an operation on the work order, not a part. Nothing is added here.",

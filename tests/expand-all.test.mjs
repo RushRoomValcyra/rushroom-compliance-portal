@@ -59,13 +59,15 @@ test("a part that holds children can be opened where it lives", () => {
 });
 
 test("expanding and adding a child are separate permissions", () => {
-  // They were one flag. Reusing it would have put +child on all 86 catalogue
-  // rows as a side effect of making them expandable.
+  // They were one flag; they stay two. PROP-068 (2026-10-07) then decided that
+  // every part row gets +child — a bought part's children now mean something
+  // (In the box, or a Prepared wrapper) — except a finished good, which never
+  // holds children. That is a decision, not a side effect of expandability.
   assert.ok(/function renderRootRow\(comp, allowExpand = false, allowAddChild = false\)/.test(app),
     "renderRootRow still takes a single flag");
-  assert.ok(/role === "rushroom" && allowAddChild \?/.test(app), "+child is still gated on expandability");
-  assert.ok(/const allowAddChild = activeTab !== "components"/.test(app),
-    "the Parts tab gained a structure-editing button it did not have before");
+  assert.ok(/role === "rushroom" && allowAddChild && comp\.type !== "finished_good" \?/.test(app),
+    "+child must be hidden on a finished good, and still gated on its own flag");
+  assert.ok(/const allowAddChild = true;/.test(app), "the Parts tab lost its +child (PROP-068)");
 });
 
 // ---- Categories on Assemblies (PROP-065) -----------------------------------

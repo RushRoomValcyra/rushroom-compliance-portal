@@ -14,6 +14,8 @@ import vm from "node:vm";
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 const sql = read("supabase/migrations/0040_bom_structure_rules.sql");
+// PROP-068 rewords the matrix and lifts the Hub/Site ban on In-the-box links.
+const sql41 = read("supabase/migrations/0041_in_the_box.sql");
 const handler = read("supabase/functions/portal-api/handlers/bom-structure.ts");
 const api = read("supabase/functions/portal-api/index.ts");
 const app = read("assets/app.js");
@@ -67,7 +69,8 @@ test("browser and API apply the decided matrix to every combination", async () =
 });
 
 test("the database refuses with the same four sentences", () => {
-  const sqlMsgs = [...sql.matchAll(/THEN '([^']+)'/g)].map((m) => m[1]).sort();
+  // The latest definition of bom_child_rule is the one in force.
+  const sqlMsgs = [...sql41.matchAll(/THEN '([^']+)'/g)].map((m) => m[1].replace(/''/g, "'")).sort();
   const jsMsgs = [...rulesJs.matchAll(/return "([^"]+)";/g)].map((m) => m[1]).sort();
   assert.equal(sqlMsgs.length, 4, "bom_child_rule should have four refusals");
   assert.deepEqual(sqlMsgs, jsMsgs, "SQL and browser messages differ");
@@ -83,6 +86,14 @@ test("0040 adds the reference flag, both CHECKs and both triggers", () => {
     "the link trigger must cover insert, re-parent, re-flag and re-open");
   assert.ok(/BEFORE UPDATE OF type, make_or_buy ON bom_components/.test(sql));
   assert.ok(/IF NEW\.effective_to IS NOT NULL THEN RETURN NEW;/.test(sql), "closing a link must always be allowed");
+});
+
+test("In the box may carry Hub/Site (PROP-068)", () => {
+  assert.ok(/DROP CONSTRAINT IF EXISTS bom_edges_reference_unstaged;/.test(sql41));
+  assert.ok(!/ADD CONSTRAINT bom_edges_reference_unstaged/.test(sql41), "0041 must not put the ban back");
+  const stage = api.match(/if \(action === "setEdgeFittingStage"\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.ok(!/is_reference/.test(stage), "the stage setter still refuses In-the-box links");
+  assert.ok(sql41.includes("REVOKE ALL ON FUNCTION bom_child_rule(text, text, boolean) FROM PUBLIC, anon, authenticated;"));
 });
 
 test("0040 refuses to switch on over data that breaks the rule", () => {

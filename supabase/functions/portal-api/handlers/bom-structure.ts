@@ -16,16 +16,16 @@ import { json } from "../../_shared/http.ts";
 import { db } from "../../_shared/env.ts";
 
 // NULL-equivalent: returns null when allowed, otherwise the reason it is not.
-// Keep in step with bom_child_rule() in supabase/migrations/0040.
+// Keep in step with bom_child_rule() — latest definition in supabase/migrations/0041.
 export function bomChildRule(type: string, makeOrBuy: string, isReference: boolean): string | null {
   if (type === "finished_good") {
     return "A finished good is bought and passed on untouched — it never holds children.";
   }
   if (isReference && (makeOrBuy !== "purchased" || type === "phantom_assembly" || type === "product_family")) {
-    return "A reference child records what is inside something we buy; this parent is not bought complete.";
+    return "Only something we buy complete has an In the box: what comes with its order line.";
   }
   if (!isReference && makeOrBuy === "purchased" && ["part", "raw_material", "spare_part", "sub_assembly"].includes(type)) {
-    return "This is bought complete. Something we fit goes into its Prepared wrapper; something inside it as delivered is a reference child.";
+    return "This is bought complete. Something ordered separately and fitted to it goes into its Prepared wrapper; something that comes with its order is In the box.";
   }
   if (!isReference && makeOrBuy === "assembled" && ["part", "raw_material", "spare_part"].includes(type)) {
     return "A part we put together is a sub-assembly. Change its Type first.";
@@ -33,14 +33,11 @@ export function bomChildRule(type: string, makeOrBuy: string, isReference: boole
   return null;
 }
 
-// The triggers raise "BOM_RULE: <name>: <reason>"; the two CHECKs raise their
-// constraint names. Anything else is not ours to reword.
+// The triggers raise "BOM_RULE: <name>: <reason>"; the finished-good CHECK
+// raises its constraint name. Anything else is not ours to reword.
 export function bomRuleError(raw: string): string | null {
   const m = raw.match(/BOM_RULE:\s*([\s\S]*)$/);
   if (m) return m[1].trim();
-  if (raw.includes("bom_edges_reference_unstaged")) {
-    return "A reference child arrives fitted inside its parent, so it has no Hub or Site.";
-  }
   if (raw.includes("bom_components_finished_good_purchased")) {
     return "A finished good is always bought: its Sourcing must be Purchased.";
   }

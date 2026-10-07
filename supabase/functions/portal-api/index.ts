@@ -1073,8 +1073,8 @@ Deno.serve(async (req) => {
     const [mappingRes, componentRes, edgeRes] = await Promise.all([
       resolverTdb("planner_mappings").select("id, source_type, source_key, target_component_id, quantity_rule, fixed_quantity, mapping_revision").eq("is_active", true),
       resolverTdb("bom_components").select("id, part_number, name, unit_of_measure, lifecycle_status"),
-      // PROP-067: reference children are contents of a bought item, never picked —
-      // skipping them keeps that item a leaf, i.e. one pick line.
+      // PROP-067/068: In-the-box children come with their parent's order line,
+      // never on their own — skipping them keeps that item a leaf, one pick line.
       resolverTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).eq("is_reference", false).order("parent_id").order("child_id"),
     ]);
     if (mappingRes.error || componentRes.error || edgeRes.error) return json({ error: "PIM resolver data is unavailable" }, 502);
@@ -4580,13 +4580,10 @@ Deno.serve(async (req) => {
       return json({ error: `fitting_stage must be one of ${FITTING_STAGES.join(", ")}, or null` }, 400);
     }
     const { data: edge } = await tdb("bom_edges")
-      .select("id, parent_id, child_id, fitting_stage, is_reference").eq("id", edge_id).is("effective_to", null).maybeSingle();
+      .select("id, parent_id, child_id, fitting_stage").eq("id", edge_id).is("effective_to", null).maybeSingle();
     if (!edge) return json({ error: "Edge not found or no longer active" }, 404);
-    // PROP-067: a reference child arrives fitted inside its parent — "where is
-    // it fitted" has no answer. The CHECK in 0040 enforces it; this says why.
-    if (edge.is_reference && stage !== null) {
-      return json({ error: "A reference child arrives fitted inside its parent, so it has no Hub or Site." }, 400);
-    }
+    // PROP-068: an In-the-box child may carry Hub/Site too — the LED profile's
+    // clips come loose in the box and are fitted on site.
     if ((edge.fitting_stage ?? null) === stage) return json({ ok: true, changed: false, fitting_stage: stage });
 
     const { error } = await tdb("bom_edges").update({ fitting_stage: stage }).eq("id", edge_id);

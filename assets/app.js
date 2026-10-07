@@ -4068,7 +4068,10 @@
       // tab where the part actually lives.
       const shownItems = items.slice(0, shown);
       expandableShown = shownItems.filter((c) => c.has_children);
-      const allowAddChild = activeTab !== "components";
+      // PROP-068: every row gets +child, the Parts tab included (reverses
+      // PROP-062): a bought part's children now mean something — In the box,
+      // or a Prepared wrapper. A finished good is filtered per row.
+      const allowAddChild = true;
       shownItems.forEach((comp) => treeArea.append(renderRootRow(comp, true, allowAddChild)));
       // "flex", not "": the group is a flex row, and clearing the property
       // would drop it back to block and stack the two buttons.
@@ -4085,8 +4088,8 @@
     }
 
     // allowExpand and allowAddChild were one flag. They are different questions:
-    // a part that holds children should open where it lives, but the Parts tab
-    // is a catalogue and does not want a structure-editing button on all 86 rows.
+    // a part that holds children should open where it lives; whether a row may
+    // take children is its own decision (PROP-068: every row but a finished good).
     function renderRootRow(comp, allowExpand = false, allowAddChild = false) {
       const STATUS_COLOR = { active: "#2fa564", inactive: "#8b93a1", replaced: "#e5a326", flagged: "#e05454" };
       const TYPE_COLOR   = { part: "#2fa564", raw_material: "#8b93a1", sub_assembly: "#4a9eed", phantom_assembly: "#0d9488", finished_good: "#a855f7", spare_part: "#f59e0b", product_family: "#e05454" };
@@ -4219,7 +4222,7 @@
         comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
         (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
-        role === "rushroom" && allowAddChild ? el("button", {
+        role === "rushroom" && allowAddChild && comp.type !== "finished_good" ? el("button", {
           class: "btn btn-sm", type: "button",
           style: "padding:0 6px;font-size:0.75rem;flex-shrink:0",
           title: "Add child",
@@ -4427,9 +4430,10 @@
     // question that looks like an answer is how a part gets left in the van.
     const stageTally = (() => {
       const t = { hub: 0, site: 0, unset: 0 };
-      // PROP-067: a reference child arrives fitted inside a bought item — no
-      // crew fits it, so it is neither hub, site nor "not set".
-      (edges || []).filter((e) => !e.is_reference).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "unset"] += 1; });
+      // PROP-068: In-the-box children count where we fit them (the LED
+      // profile's clips go on site). One with no stage arrives fitted — no crew
+      // fits it — so it is not "not set" either.
+      (edges || []).filter((e) => !(e.is_reference && !fittingStage(e.fitting_stage))).forEach((e) => { t[fittingStage(e.fitting_stage) ? e.fitting_stage : "unset"] += 1; });
       return t;
     })();
     const stageStrip = el("div", { style: "display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap" },
@@ -4467,10 +4471,10 @@
         const canUnlink  = isTreeRow;                       // unlink the edge, never delete the component
         // PROP-067: assemblies take children directly; something we buy
         // complete takes them through the "what is this child?" dialog, which
-        // builds a Prepared wrapper or records a reference child. A reference
-        // row is contents of a bought item — nothing is added under or beside it.
+        // builds a Prepared wrapper or puts the child In the box (PROP-068).
+        // An In-the-box row may hold structure of its own, like any bought item.
         const boughtComplete = !!(window.PortalBomRules && window.PortalBomRules.isBoughtComplete(n));
-        const canAddChild = !edgeRef && (n.type === "sub_assembly" || n.type === "phantom_assembly" || boughtComplete);
+        const canAddChild = n.type === "sub_assembly" || n.type === "phantom_assembly" || boughtComplete;
         // Always rendered on a tree row, disabled when there is nothing to swap
         // with. Hiding them on single-child assemblies made the control invisible
         // and left users unable to tell the feature existed; it also made the
@@ -4541,16 +4545,12 @@
           const show = (current) => {
             const st = fittingStage(current);
             if (!isTreeRow) { box.replaceChildren(); return; }
-            if (edgeRef) {
-              box.replaceChildren(el("span", {
-                title: "Reference child — it arrives fitted inside the part above, so it has no Hub or Site",
-                style: "font-size:0.6875rem;color:var(--muted,#8b93a1)",
-              }, "—"));
-              return;
-            }
             box.replaceChildren(el("button", {
               class: "btn btn-xs", type: "button",
-              title: st ? `${st.title} — click to change` : "Nobody has said where this is fitted — click to set",
+              // PROP-068: for an In-the-box child, empty means it arrives fitted.
+              title: st ? `${st.title} — click to change`
+                : edgeRef ? "In the box — empty means it arrives fitted. Click to say where we fit it"
+                : "Nobody has said where this is fitted — click to set",
               style: "font-size:0.6875rem;padding:1px 7px;border-radius:999px;white-space:nowrap;"
                 + (st ? `color:${st.colour};border-color:${st.colour}55;background:${st.colour}12;font-weight:700`
                       : "color:var(--muted,#8b93a1);border-style:dashed;opacity:0.8"),
@@ -4642,9 +4642,9 @@
             el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, n.name),
             familyBadge, phantomBadge, condTag,
             edgeRef ? el("span", {
-              title: "Reference child — inside the part above as delivered. Recorded for compliance; never picked.",
+              title: "In the box — comes with the order line of the part above. Never ordered or picked on its own.",
               style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);border:1px dashed var(--border,#cbd5e1);border-radius:4px;padding:0 5px;flex-shrink:0;white-space:nowrap;margin-left:4px",
-            }, "REF") : null,
+            }, "IN THE BOX") : null,
           ].filter(Boolean)),
           el("div", { style: "font-family:monospace;font-size:0.6875rem;color:var(--muted,#8b93a1);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number),
         ]);
@@ -4674,7 +4674,8 @@
 
             canReorder ? reorderBtn("up") : null,
             canReorder ? reorderBtn("down") : null,
-            isTreeRow && !edgeRef ? el("button", { class: "btn btn-xs", type: "button", title: "Add sibling", style: "font-size:0.6875rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }) }, "+sib") : null,
+            // PROP-068: beside an In-the-box row, a sibling goes In the box too.
+            isTreeRow ? el("button", { class: "btn btn-xs", type: "button", title: edgeRef ? "Add to the same box" : "Add sibling", style: "font-size:0.6875rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom, reference: edgeRef }) }, "+sib") : null,
             canAddChild ? el("button", {
               class: "btn btn-xs", type: "button", title: boughtComplete ? "Add child — bought complete, so you will be asked what it is" : "Add child", style: "font-size:0.6875rem",
               onclick: () => boughtComplete
@@ -5096,8 +5097,8 @@
         id: n.id, part_number: n.part_number, name: n.name, type: n.type,
         quantity: edge ? edge.quantity : "", unit: n.unit_of_measure || "",
         reference: edge ? (edge.reference_designator || "") : "",
-        // PROP-067: contents of a bought item — listed, but never picked
-        contents: edge && edge.is_reference ? "reference" : "",
+        // PROP-068: comes with the parent's order line — listed, never picked
+        contents: edge && edge.is_reference ? "yes" : "",
         lifecycle_status: n.lifecycle_status,
         parent_id: parentId || "", parent_name: parentId ? (byId[parentId]?.name || "") : "",
       });
@@ -5124,7 +5125,7 @@
     { label: "Qty", get: (r) => r.quantity },
     { label: "Unit", get: (r) => r.unit },
     { label: "Ref", get: (r) => r.reference },
-    { label: "Reference child", get: (r) => r.contents },
+    { label: "In the box", get: (r) => r.contents },
     { label: "Status", get: (r) => r.lifecycle_status || "" },
     { label: "Parent", get: (r) => r.parent_name },
     { label: "Parent ID", get: (r) => r.parent_id },
@@ -5754,9 +5755,9 @@
   // --- Add-child modal: link existing OR create new and link ---------------
   function openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, opts) {
     const linkExistingOnly = !!(opts && opts.linkExistingOnly);
-    // PROP-067: reference children — what is inside a bought item as delivered.
-    // Same picker; the links are marked is_reference, so they are never picked
-    // and carry no Hub/Site. Reached only through the "what is this child?" dialog.
+    // PROP-067/068: In the box — what comes with a bought item's order line.
+    // Same picker; the links are marked is_reference, so they are never ordered
+    // or picked on their own (Hub/Site is set afterwards, on the row).
     const isReference = !!(opts && opts.reference);
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     // The picker is the reason this dialog is resizable. A fixed 200px list of
@@ -6251,7 +6252,7 @@
     form.append(
       el("div", { style: "flex-shrink:0" }, [
         el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
-          el("h3", { style: "margin:0;font-size:1rem" }, isReference ? `What is inside “${parentNode.name}” as delivered` : "Add child component"),
+          el("h3", { style: "margin:0;font-size:1rem" }, isReference ? `In the box with “${parentNode.name}”` : "Add child component"),
           el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
         ]),
         el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),

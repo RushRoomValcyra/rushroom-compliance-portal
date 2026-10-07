@@ -40,6 +40,10 @@
 
   // Bought complete: fitted children are refused, reference children are not.
   const isBoughtComplete = (c) => !!c && c.make_or_buy === "purchased" && BOUGHT_COMPLETE_TYPES.includes(c.type);
+  // A Part that says Assembled takes no child of either kind — its Type and
+  // Sourcing contradict each other, and only a person can say which is wrong.
+  const needsTypeOrSourcing = (c) => !!c && !!c.make_or_buy && c.type !== "finished_good"
+    && childRule(c.type, c.make_or_buy, false) !== null && childRule(c.type, c.make_or_buy, true) !== null;
 
   function el(tag, attrs = {}, kids = []) {
     const n = document.createElement(tag);
@@ -203,5 +207,35 @@
     nameInput.select();
   }
 
-  window.PortalBomRules = { childRule, isBoughtComplete, openChildIntent, openWrap };
+  // +child on a part whose Type and Sourcing contradict (Part + Assembled):
+  // say so, let the user fix the one that is wrong, then carry on.
+  // onResolved(updatedNode) continues into the right next step.
+  function openCannotHold({ node, token, onChanged, onResolved }) {
+    const { body, close } = shell(`${node.name} cannot hold children yet`);
+    const err = errorLine();
+    const fix = (patch, label) => async (ev) => {
+      ev.currentTarget.disabled = true; err.textContent = "";
+      try {
+        await window.PortalAPI.post(token, "updateComponent", { component_id: node.id, ...patch });
+        close();
+        if (onChanged) onChanged();
+        if (onResolved) onResolved({ ...node, ...patch });
+      } catch (ex) {
+        err.textContent = `${label}: ${ex.message}`;
+        ev.currentTarget.disabled = false;
+      }
+    };
+    body.append(
+      note(`It is a Part with Sourcing “Assembled”. A part we put together is really a sub-assembly — and if we buy it complete, its Sourcing is Purchased. Which is true?`),
+      choice("We buy it complete — one order line",
+        "Sourcing becomes Purchased. Then you choose: comes In the box with it, or ordered separately (Prepared wrapper).",
+        fix({ make_or_buy: "purchased" }, "Could not change Sourcing")),
+      choice("We put it together ourselves",
+        "Type becomes Sub-assembly, so its parts are added as normal children.",
+        fix({ type: "sub_assembly" }, "Could not change Type")),
+      err,
+    );
+  }
+
+  window.PortalBomRules = { childRule, isBoughtComplete, needsTypeOrSourcing, openChildIntent, openWrap, openCannotHold };
 })();

@@ -235,6 +235,7 @@
   </div>
   <div class="timeline">
     <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
+    <div><b>2026-10-07</b> First real use (LED profile clips) failed: the profile is still Part + Assembled, which can hold no child, and “Create new” left an orphan part behind. Fixed: the dialog checks the rule before writing, a retry reuses the created part, and +child on a Part + Assembled asks which of the two is true.</div>
     <div><b>2026-10-07</b> Rethink: contents of a bought item are things we may work with. “Reference children” become <b style="min-width:0">In the box</b> — may carry Hub/Site; still never their own order line. Every part row gets +child. Built as PROP-068.</div>
     <div><b>2026-10-07</b> PROP-067 built and deployed: the BOM logic decided on this page now enforced by the database on every path. Waiting for a check in the portal.</div>
     <div><b>2026-10-06</b> Order agreed: nail the BOM logic, then build stocked pre-assemblies. Decided: the portal builds Prepared wrappers itself (Q10), contents of bought items as reference children (Q4), finished goods never hold children (Q7), Sourcing required on create (Q8); Manufactured/Subcontracted wait for a first case.</div>

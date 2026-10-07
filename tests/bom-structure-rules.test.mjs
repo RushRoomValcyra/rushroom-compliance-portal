@@ -145,3 +145,32 @@ test("the pages load the rules before app.js", () => {
     assert.ok(rules > 0 && rules < appAt, `${page}: bom-structure.js must load before app.js`);
   }
 });
+
+// ---- Create-child safety (fix 2026-10-07) ------------------------------------
+// "Create new" under L LED Profile (Part + Assembled) created the part, had the
+// link refused, and a second press collided on the same part number — leaving
+// an orphan and hiding the real reason behind a duplicate-key error.
+
+test("the add-child dialog asks the rule before it writes anything", () => {
+  const submit = app.slice(app.indexOf("function openAddChildModal"), app.indexOf("PROP-036 option 3"));
+  const check = submit.indexOf("R.childRule(parentNode.type, parentNode.make_or_buy, isReference)");
+  const create = submit.indexOf('API.post(token, "addComponent"');
+  assert.ok(check > 0 && create > 0 && check < create, "the rule must be checked before the part is created");
+});
+
+test("a part created on a failed press is reused, never created twice", () => {
+  assert.ok(/if \(mode === "new" && createdNew\) \{[\s\S]*?batch\[0\]\.childId = createdNew\.id;/.test(app));
+  assert.ok(/createdNew = \{ id: r\.id, part_number: r\.part_number/.test(app));
+  assert.ok(/part_number_key/.test(app), "a duplicate part number must read as a sentence, not a Postgres error");
+});
+
+test("a Part that says Assembled explains itself instead of opening the picker", () => {
+  const sandbox = { window: {}, document: {} };
+  vm.runInNewContext(rulesJs, sandbox);
+  const R = sandbox.window.PortalBomRules;
+  assert.equal(R.needsTypeOrSourcing({ type: "part", make_or_buy: "assembled" }), true);
+  assert.equal(R.needsTypeOrSourcing({ type: "part", make_or_buy: "purchased" }), false, "a bought part has In the box");
+  assert.equal(R.needsTypeOrSourcing({ type: "sub_assembly", make_or_buy: "assembled" }), false);
+  assert.equal(R.needsTypeOrSourcing({ type: "finished_good", make_or_buy: "purchased" }), false, "a finished good shows no +child at all");
+  assert.ok(/R\.needsTypeOrSourcing\(comp\)[\s\S]*?R\.openCannotHold\(/.test(app), "root-row +child does not route Part + Assembled to the explanation");
+});

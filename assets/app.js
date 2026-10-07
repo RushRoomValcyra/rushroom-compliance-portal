@@ -4228,6 +4228,20 @@
           title: "Add child",
           onclick: (ev) => {
             ev.stopPropagation();
+            const R = window.PortalBomRules;
+            // A Part that says Assembled can take no child at all — ask which is true.
+            if (R && R.needsTypeOrSourcing(comp)) {
+              R.openCannotHold({
+                node: comp, token, onChanged: refreshTree,
+                onResolved: (updated) => R.isBoughtComplete(updated)
+                  ? R.openChildIntent({
+                      node: updated, parentNode: null, token, onChanged: refreshTree,
+                      onAddTo: (target, o) => openAddChildModal(target, allComponents, token, refreshTree, target.id, { reference: !!(o && o.reference) }),
+                    })
+                  : openAddChildModal(updated, allComponents, token, refreshTree, updated.id),
+              });
+              return;
+            }
             // PROP-067: something we buy complete is asked "what is this child?"
             if (window.PortalBomRules && window.PortalBomRules.isBoughtComplete(comp)) {
               window.PortalBomRules.openChildIntent({
@@ -5773,6 +5787,8 @@
     rememberDialogSize("addChild", dialog);
 
     let mode = "existing"; // "existing" | "new"
+    // A part created by "Create new" whose link then failed — reused on retry.
+    let createdNew = null;
 
     // Quantity / reference designator for the Create-new tab. The Link-existing
     // tab carries them per selected part instead — see `picked` below.
@@ -6176,11 +6192,22 @@
           }
         }
 
+        // PROP-067/068: ask the rule BEFORE writing anything. Creating the part
+        // and then having the link refused left an orphan in the registry.
+        const R = window.PortalBomRules;
+        const refused = R && parentNode.make_or_buy ? R.childRule(parentNode.type, parentNode.make_or_buy, isReference) : null;
+        if (refused) return stop(`${parentNode.name}: ${refused}`);
+
         submitBtn.disabled = true;
         const cond = Object.keys(conditionMap).length > 0 ? { ...conditionMap } : null;
         const added = [];
         try {
-          if (mode === "new") {
+          if (mode === "new" && createdNew) {
+            // Created on an earlier press whose link then failed: reuse it.
+            // Creating again would collide on its part number.
+            batch[0].childId = createdNew.id;
+            batch[0].name = createdNew.name;
+          } else if (mode === "new") {
             submitBtn.textContent = "Creating…";
             const r = await API.post(token, "addComponent", {
               part_number: newPN.value.trim() || null,
@@ -6189,7 +6216,11 @@
               make_or_buy: sourcingFor(newType.value, newMob.value),
               category_id: newCat.value || null,
             });
+            createdNew = { id: r.id, part_number: r.part_number, name: newName.value.trim() };
             batch[0].childId = r.id;
+            batch[0].name = createdNew.name;
+            // From here the part exists: its fields are no longer the dialog's to change.
+            [newPN, newName, newType, newMob, newCat].forEach((f) => { f.disabled = true; });
           }
           // Sequential, not Promise.all — and this is correctness, not taste.
           // addBomEdge derives sort_order by reading the current maximum and
@@ -6212,9 +6243,14 @@
           // Say what DID happen. Silently reporting only the failure, after
           // three of five edges were written, is how a BOM ends up with
           // duplicates the next time someone retries the whole batch.
-          errEl.textContent = added.length
-            ? `Added ${added.length} of ${batch.length}, then failed on “${batch[added.length].name || newName.value.trim()}”: ${ex.message}. The ones already added have been removed from the list.`
+          const msg = /part_number_key/.test(ex.message)
+            ? `Part number ${newPN.value.trim()} already exists. Change it, or use Link existing to add that part.`
             : ex.message;
+          errEl.textContent = added.length
+            ? `Added ${added.length} of ${batch.length}, then failed on “${batch[added.length].name || newName.value.trim()}”: ${msg}. The ones already added have been removed from the list.`
+            : mode === "new" && createdNew
+              ? `${createdNew.part_number} “${createdNew.name}” was created, but could not be added under ${parentNode.name}: ${msg} Fix that and press again — it will not be created twice.`
+              : msg;
           submitBtn.disabled = false;
           submitBtn.textContent = submitLabel();
           if (added.length) { paintTray(); buildList(); if (onRefresh) onRefresh(); }

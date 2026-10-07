@@ -222,7 +222,7 @@
     <div class="col col-plan">
       <h3>◇ Next — designed, not built</h3>
       <ul>
-        <li><b>PROP-071 — the part being prepared: built, not deployed</b><span class="s">Inside a Prepared assembly the bought part shows <b>◆ BEING PREPARED</b> and the rest sit under it marked ↳ “fitted to …”. Move says why parts are not offered. db push (0043) → portal-api deploy → git push (v289).</span></li>
+        <li><b>Remove the “◆ BEING PREPARED” label</b> (0044, v291) — built, not deployed<span class="s">It added nothing: Fitted already says where value is added. Label, ↳ indent and the database mark go; Move's one-line explanation stays.</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
         <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
@@ -241,6 +241,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-07</b> “◆ BEING PREPARED” removed again: Fitted already says where value is added — nothing (pick as is), Hub (prepared / pre-assembled) or Site (fitted at the customer).</div>
     <div><b>2026-10-07</b> Door hardware (plate, hinge, handle) is ordered separately and fitted by us at the hub — so it rightly sits in Prepared S Middle Door, not under the door. PROP-071 built so that reads as “door + what is fitted to it”.</div>
     <div><b>2026-10-07</b> PROP-069 live and confirmed. PROP-070 built: In the box gets its own colour (cardboard) in the tree and the list, and a filter chip.</div>
     <div><b>2026-10-07</b> PROP-069 built: two-item menu; a part's children no longer depend on Sourcing; Prepared assembly from any part. Hub/Site kept on In the box — and made a general principle: where something is installed <i>or modified</i> must always be sayable.</div>
@@ -287,9 +288,10 @@
         <div class="tq">⧉ Prepared assembly → one line to confirm the name</div>
         <div class="ta">“Prepared L LED Profile including milky cover” is created under <b>Assemblies</b> with the part ×1 inside, then the picker opens on it. Inside an assembly's tree it takes the part's place there; from the Parts list it stands on its own. If one already exists, the menu offers it instead.</div>
         <div class="tree"><ul><li><span class="n">Prepared S Middle Door - White - White Handle</span>
-          <ul><li><span class="n">S Middle Door - White</span> <span class="b" style="background:#15803d12;color:#15803d;border:1px solid #15803d55">◆ BEING PREPARED</span></li>
-              <li><span class="n" style="padding-left:14px">↳ Half overlay Hinge</span> ×4 <span class="b b-hub">Hub</span></li>
-              <li><span class="n" style="padding-left:14px">↳ Half moon door handles - White</span> ×1 <span class="b b-hub">Hub</span></li></ul></li></ul></div>
+          <ul><li><span class="n">S Middle Door - White</span> ×1</li>
+              <li><span class="n">Half overlay Hinge</span> ×4 <span class="b b-hub">Hub</span></li>
+              <li><span class="n">Half moon door handles - White</span> ×1 <span class="b b-hub">Hub</span></li></ul></li></ul></div>
+        <div class="ta">Where value is added is said by <b>Fitted</b> on each row — nothing, Hub or Site. No extra label.</div>
       </div>
     </div>
   </div>
@@ -675,7 +677,7 @@
       <div class="qc">A category says what kind of physical thing an item is; a kit is deliberately mixed (panels, fasteners, Prepared wrappers). Which wardrobe module it belongs to (S / M / L / BB) is in its name for now. When filtering by module becomes painful, that is a <b>Module</b> field on assemblies — not a category.</div></li>
     <li><div class="qq">A finished good is always Purchased and never holds children.</div>
       <div class="qc">Hard block in the database. Matches PROP-029 and the 3 in production.</div></li>
-    <li><div class="qq">Where something is installed or modified is always sayable: Hub or Site.</div>
+    <li><div class="qq">Where something is installed or modified is always sayable: Hub or Site. Fitted is the one place that says it.</div>
       <div class="qc">Decided 2026-10-07 as a general principle. Every BOM link carries it, In the box included (some contents are pre-installed at the hub, some on site). The gap: operations — the “modified” half — cannot carry it yet (roadmap Next).</div></li>
     <li><div class="qq">Sourcing is chosen when a component is created — no default.</div>
       <div class="qc">The silent “Purchased” default is what made 90 of 91 parts untrustworthy.</div></li>
@@ -728,6 +730,8 @@
       <div class="qc">Today Order Operations always receives the <b>loose parts</b> — the resolver goes all the way down to items with no children. That is right for something built per order,
         and wrong for a drawer pre-assembled ahead and stocked: the picker would be sent for a hardware set, a bottom and a back panel instead of one finished pre-assembly.
         The same question applies to the Prepared panels. This is a new dimension — <b>stocked or built-to-order</b> — and the resolver would need to stop at stocked items.</div></li>
+    <li><div class="qq">Fitted has three real answers — should “nothing, pick it as is” be a choice of its own?</div>
+      <div class="qc">Today an empty Fitted means “nobody has said yet”, and the strip counts it as <b>not set</b>. In your words there are three answers: do nothing and pick it for the order, Hub, or Site. If “nothing” is a deliberate answer, it should be a third choice (e.g. <b>As is</b>), so “decided: nothing” and “not decided yet” stop looking the same.</div></li>
   </ol>
 
   <p class="industry">

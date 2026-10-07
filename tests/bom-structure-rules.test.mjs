@@ -133,7 +133,7 @@ test("Order Operations never receives a reference child as a pick line", () => {
 });
 
 test("the tree reads the flag, and Sourcing is never assumed", () => {
-  assert.ok(/"id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage, is_reference, is_prepared_part"/.test(api));
+  assert.ok(/"id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage, is_reference"/.test(api));
   assert.ok(/"id, part_number, name, type, make_or_buy, category_id, unit_of_measure/.test(api), "getBom nodes need Sourcing and Category for the edit form");
   assert.ok(!/nodeData\?\.make_or_buy \|\| "purchased"/.test(app), "the edit form defaults Sourcing to Purchased again");
   assert.ok(/Choose its Sourcing: purchased, manufactured, assembled or subcontracted\./.test(api), "addComponent accepts a missing Sourcing");
@@ -220,33 +220,22 @@ test("an In the box filter chip combines with the category", () => {
   assert.ok(cat > 0 && box > cat);
 });
 
-// ---- PROP-071: the part a Prepared assembly prepares ------------------------
-
-const sql43 = read("supabase/migrations/0043_prepared_part.sql");
-
-test("the prepared part is marked on the link, once per assembly, never In the box", () => {
-  assert.ok(/ADD COLUMN IF NOT EXISTS is_prepared_part BOOLEAN NOT NULL DEFAULT false/.test(sql43));
-  assert.ok(/CHECK \(NOT \(is_prepared_part AND is_reference\)\)/.test(sql43));
-  assert.ok(/CREATE UNIQUE INDEX IF NOT EXISTS bom_edges_one_prepared_part\s+ON bom_edges \(parent_id\)\s+WHERE is_prepared_part AND effective_to IS NULL/.test(sql43));
-  assert.ok(!sql43.includes("RR-202609-7C4GCN8M'") || /RR-202609-7C4GCN8M\) is deliberately absent/.test(sql43), "Prepared Mid Panel holds no panel and must not be marked");
-  assert.ok(/VALUES \(p_org, w_id, p_part, 1, 10, current_date, true\)/.test(sql43), "new Prepared assemblies do not mark their part");
-  assert.ok(sql43.includes("REVOKE ALL ON FUNCTION bom_wrap_in_prepared(uuid, uuid, uuid, boolean, text, uuid) FROM PUBLIC, anon, authenticated;"));
-});
-
-test("copy keeps the mark, a move out drops it", () => {
-  const copy = api.match(/if \(action === "copyAssembly"\) \{[\s\S]*?\n  \}\n/)[0];
-  assert.ok(/is_prepared_part: e\.is_prepared_part === true/.test(copy));
-  const move = api.match(/if \(action === "moveComponentToParent"\) \{[\s\S]*?\n  \}\n/)[0];
-  assert.ok(!/is_prepared_part:/.test(move), "a part moved out must not stay 'being prepared' somewhere else");
-});
-
-test("the tree shows the prepared part and what is fitted to it", () => {
-  assert.ok(/"◆ BEING PREPARED"/.test(app));
-  assert.ok(/fittedTo \? `Fitted to \$\{fittedTo\}` : null/.test(app));
-  assert.ok(/prepared && e !== prepared && !e\.is_reference \? preparedName : null/.test(app), "In-the-box rows must not be marked as fitted");
-});
+// ---- Move explains itself (kept when PROP-071's label was removed) ----------
 
 test("Move says why parts are not offered", () => {
   assert.ok(/Parts are not offered: a part only takes In the box\./.test(app));
   assert.ok(/fromPos: posNum, edgeRef \}/.test(app));
+});
+
+test("the 'part being prepared' mark is gone everywhere (decided 2026-10-07)", () => {
+  // Fitted (nothing / Hub / Site) already says where value is added.
+  const sql44 = read("supabase/migrations/0044_drop_prepared_part.sql");
+  assert.ok(/ALTER TABLE bom_edges DROP COLUMN IF EXISTS is_prepared_part;/.test(sql44));
+  assert.ok(sql44.indexOf("CREATE OR REPLACE FUNCTION bom_wrap_in_prepared") < sql44.indexOf("DROP COLUMN"),
+    "the wrap function must stop using the column before it is dropped");
+  assert.ok(sql44.includes("REVOKE ALL ON FUNCTION bom_wrap_in_prepared(uuid, uuid, uuid, boolean, text, uuid) FROM PUBLIC, anon, authenticated;"));
+  for (const [name, src] of [["portal-api", api], ["app.js", app]]) {
+    assert.ok(!src.includes("is_prepared_part"), `${name} still reads the dropped column`);
+  }
+  assert.ok(!app.includes("BEING PREPARED"));
 });

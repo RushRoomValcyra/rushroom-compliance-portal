@@ -4426,28 +4426,20 @@
       // qty is the rolled-up quantity through the tree; edgeQty is what THIS
       // edge carries. The column shows the roll-up, but only edgeQty is editable
       // — editing the roll-up would silently write the wrong number.
-      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage, edgeRef, edgePrepared, fittedTo) {
+      function walk(nodeId, qty, posNum, depth, ancestorLastFlags, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage, edgeRef) {
         const n = nodeMap[nodeId];
         if (!n) return;
         const children = childrenOf[nodeId] || [];
-        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty, edgeStage: edgeStage ?? null, edgeRef: edgeRef === true, edgePrepared: edgePrepared === true, fittedTo: fittedTo || null });
+        rows.push({ n, qty, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: children.length > 0, edgeCondition, parentNode: parentNode || null, edgeId, sibIndex, sibCount, edgeQty, edgeStage: edgeStage ?? null, edgeRef: edgeRef === true });
         if (collapsed.has(posNum)) return;
-        // PROP-071: in a Prepared assembly, everything except the part it
-        // prepares is fitted TO that part — say so on each of those rows.
-        const prepared = children.find((x) => x.is_prepared_part);
-        const preparedName = prepared ? (nodeMap[prepared.child_id] || {}).name : null;
         children.forEach((e, i) => {
-          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity, e.fitting_stage, e.is_reference,
-            e.is_prepared_part, prepared && e !== prepared && !e.is_reference ? preparedName : null);
+          walk(e.child_id, qty * e.quantity, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.variant_condition, n, e.id, i, children.length, e.quantity, e.fitting_stage, e.is_reference);
         });
       }
       // Root is already shown as the list-row header — start from its children
       const topEdges = childrenOf[rootId] || [];
-      const topPrepared = topEdges.find((x) => x.is_prepared_part);
-      const topPreparedName = topPrepared ? (nodeMap[topPrepared.child_id] || {}).name : null;
       topEdges.forEach((e, i) => {
-        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity, e.fitting_stage, e.is_reference,
-          e.is_prepared_part, topPrepared && e !== topPrepared && !e.is_reference ? topPreparedName : null);
+        walk(e.child_id, e.quantity, `${i + 1}`, 0, [], e.variant_condition, nodeMap[rootId] || { id: rootId }, e.id, i, topEdges.length, e.quantity, e.fitting_stage, e.is_reference);
       });
       return rows;
     }
@@ -4520,7 +4512,7 @@
         style: "display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",
       }, ["Pos.", isDynamicBom ? "Configuration" : "Part", "Qty", "Fitted", "Status", ""].map((t, i) => el("span", { style: i >= 2 && i <= 4 ? "text-align:center" : "" }, t))));
 
-      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage, edgeRef, edgePrepared, fittedTo }) => {
+      rows.forEach(({ n, qty, posNum, depth, ancestorLastFlags, hasChildren, edgeCondition, parentNode, edgeId, sibIndex, sibCount, edgeQty, edgeStage, edgeRef }) => {
         const isCollapsed = collapsed.has(posNum);
         const isFamily = n.type === "product_family";
         // PROP-036 — guards say what they MEAN. `depth` is positional only (it
@@ -4696,18 +4688,11 @@
           : null;
 
         // Component cell: connector + toggle | name + badges (line 1) / part# (line 2)
-        // PROP-071: rows fitted to the prepared part sit visibly under it.
-        const nameBlock = el("div", { style: `min-width:0;flex:1;overflow:hidden${fittedTo ? ";padding-left:1.1rem;position:relative" : ""}`, title: fittedTo ? `Fitted to ${fittedTo}` : null }, [
-          fittedTo ? el("span", { "aria-hidden": "true", style: "position:absolute;left:0.1rem;top:0;color:#15803d;font-size:0.8125rem" }, "↳") : null,
+        const nameBlock = el("div", { style: "min-width:0;flex:1;overflow:hidden" }, [
           el("div", { style: "display:flex;align-items:center;gap:0.2rem;min-width:0" }, [
             el("span", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, n.name),
             familyBadge, phantomBadge, condTag,
             edgeRef ? boxBadge("▢ IN THE BOX", "In the box — comes with the order line of the part above. Never ordered or picked on its own.") : null,
-            // PROP-071: the bought part this Prepared assembly prepares.
-            edgePrepared ? el("span", {
-              title: "The bought part this assembly prepares. The rows marked ↳ are fitted to it.",
-              style: "font-size:0.6875rem;font-weight:700;color:#15803d;background:#15803d12;border:1px solid #15803d55;border-radius:4px;padding:0 6px;flex-shrink:0;white-space:nowrap;margin-left:4px",
-            }, "◆ BEING PREPARED") : null,
           ].filter(Boolean)),
           el("div", { style: "font-family:monospace;font-size:0.6875rem;color:var(--muted,#8b93a1);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number),
         ]);
@@ -5451,7 +5436,7 @@
       el("div", { style: "background:#2fa56412;border:1px solid #2fa56440;border-radius:6px;padding:0.45rem 0.7rem;font-size:0.8125rem" },
         "Only this assembly changes. If this component is used elsewhere, those assemblies keep it exactly as they have it."),
       searchInput,
-      // PROP-071: say why some places are missing, instead of leaving it to guess.
+      // Say why some places are missing, instead of leaving it to guess.
       el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" },
         tree && tree.edgeRef
           ? "In the box can only move into another bought part's box — assemblies are not offered."

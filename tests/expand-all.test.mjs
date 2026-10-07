@@ -25,11 +25,12 @@ test("expanding many rows is one wait, not fifteen", () => {
   assert.ok(/await Promise\.all\(targets\.map/.test(fn[0]),
     "the trees are fetched one after another — fifteen round trips of waiting");
   // Already-open rows must not be refetched.
-  assert.ok(/filter\(\(c\) => !expandedTrees\[c\.id\]\)/.test(fn[0]), "open rows are fetched again");
+  // (A row that FAILED is fetched again — that is a retry, not a refetch.)
+  assert.ok(/filter\(\(c\) => !expandedTrees\[c\.id\] \|\| expandedTrees\[c\.id\] === "error"\)/.test(fn[0]), "open rows are fetched again");
   // Something has to show while they load.
   assert.ok(/= "loading"/.test(fn[0]) && /renderAll\(\)/.test(fn[0]), "nothing indicates the rows are loading");
   // A failure on one row must not throw away the others.
-  assert.ok(/catch \{ expandedTrees\[c\.id\] = "error"; \}/.test(fn[0]), "one failed tree rejects the whole batch");
+  assert.ok(/catch \(ex\) \{ expandedTrees\[c\.id\] = "error";/.test(fn[0]), "one failed tree rejects the whole batch");
 });
 
 test("the control is hidden when nothing on screen can expand", () => {
@@ -104,4 +105,15 @@ test("a category chosen on one tab does not follow you to another", () => {
   // Paging resets for the tab being filtered, not always for Parts.
   assert.ok(/categoryByTab\[activeTab\] = id; tabPageShown\[activeTab\] = PAGE_SIZE/.test(app),
     "choosing a category on Assemblies resets the Parts page counter");
+});
+
+test("a tree that failed to load is tried again, and says why it failed", () => {
+  // 2026-10-07: one getBom failed in transit and the tree stayed "Failed to
+  // load" until a full page reload — re-expanding never asked again — and the
+  // reason was thrown away.
+  assert.ok(/!expandedTrees\[comp\.id\] \|\| expandedTrees\[comp\.id\] === "error"/.test(app), "re-expanding does not retry");
+  assert.ok(/!expandedTrees\[c\.id\] \|\| expandedTrees\[c\.id\] === "error"/.test(app), "Expand all skips failed trees");
+  assert.ok(!/catch \{ expandedTrees\[[^\]]+\] = "error"; \}/.test(app), "a failure still discards its reason");
+  assert.ok(/`Failed to load tree: \$\{reason\}`/.test(app));
+  assert.ok(/\}, "Retry"\)/.test(app), "no Retry on a failed tree");
 });

@@ -3789,19 +3789,24 @@
     const PAGE_SIZE = 50;
     const tabPageShown = { components: PAGE_SIZE, assemblies: PAGE_SIZE, dynamic: PAGE_SIZE };
     const expandedTrees = {}; // compId → bom | "loading" | "error"
+    // Why a tree failed, as the server or the browser put it. Shown next to
+    // "Failed to load tree" — "Load failed" (the request died in transit) and an
+    // HTTP error from the function are different problems with different fixes.
+    const treeErrors = {};
     // The rows currently on screen, so Expand all / Collapse all act on what
     // you can see rather than on 86 rows behind a "Load more".
     let expandableShown = [];
 
     async function expandAllShown() {
-      const targets = expandableShown.filter((c) => !expandedTrees[c.id]);
-      expandableShown.forEach((c) => { if (!expandedTrees[c.id]) expandedTrees[c.id] = "loading"; });
+      // A tree that failed before is tried again — "error" is not a result to keep.
+      const targets = expandableShown.filter((c) => !expandedTrees[c.id] || expandedTrees[c.id] === "error");
+      targets.forEach((c) => { expandedTrees[c.id] = "loading"; });
       renderAll();
       // In parallel: fifteen assemblies is fifteen getBom calls, and doing them
       // one after another is fifteen round trips of waiting.
       await Promise.all(targets.map(async (c) => {
         try { expandedTrees[c.id] = await API.post(token, "getBom", { root_component_id: c.id, max_depth: 10 }); }
-        catch { expandedTrees[c.id] = "error"; }
+        catch (ex) { expandedTrees[c.id] = "error"; treeErrors[c.id] = (ex && ex.message) || ""; }
       }));
       renderAll();
     }
@@ -4131,7 +4136,23 @@
         if (!state || state === "loading") {
           treeDiv.replaceChildren(el("div", { class: "loading", style: "font-size:0.8125rem;padding:0.4rem" }, "Loading tree…"));
         } else if (state === "error") {
-          treeDiv.replaceChildren(el("div", { class: "error", style: "font-size:0.8125rem;padding:0.4rem" }, "Failed to load tree."));
+          const reason = treeErrors[comp.id];
+          treeDiv.replaceChildren(el("div", { class: "error", style: "font-size:0.8125rem;padding:0.4rem;display:flex;align-items:center;gap:0.6rem;justify-content:center;flex-wrap:wrap" }, [
+            el("span", {}, reason ? `Failed to load tree: ${reason}` : "Failed to load tree."),
+            el("button", {
+              class: "btn btn-sm", type: "button",
+              onclick: async (ev) => {
+                ev.stopPropagation();
+                expandedTrees[comp.id] = "loading";
+                rebuildTreeDiv();
+                try {
+                  expandedTrees[comp.id] = await API.post(token, "getBom", { root_component_id: comp.id, max_depth: 10 });
+                  delete treeErrors[comp.id];
+                } catch (ex) { expandedTrees[comp.id] = "error"; treeErrors[comp.id] = (ex && ex.message) || ""; }
+                rebuildTreeDiv();
+              },
+            }, "Retry"),
+          ]));
         } else {
           treeDiv.replaceChildren();
           renderBomTree(comp.id, state, treeDiv, detailPanel, token, allComponents, refreshTree, role);
@@ -4152,12 +4173,14 @@
           } else {
             ev.currentTarget.style.transform = "rotate(90deg)";
             ev.currentTarget.title = "Collapse";
-            if (!expandedTrees[comp.id]) {
+            // Re-expanding after a failure tries again (it used to stay failed
+            // until the page was reloaded).
+            if (!expandedTrees[comp.id] || expandedTrees[comp.id] === "error") {
               expandedTrees[comp.id] = "loading";
               rebuildTreeDiv();
               try {
                 expandedTrees[comp.id] = await API.post(token, "getBom", { root_component_id: comp.id, max_depth: 10 });
-              } catch { expandedTrees[comp.id] = "error"; }
+              } catch (ex) { expandedTrees[comp.id] = "error"; treeErrors[comp.id] = (ex && ex.message) || ""; }
             }
             rebuildTreeDiv();
           }
@@ -4363,7 +4386,7 @@
           mark(`re-fetching ${expandedIds.length} expanded BOM tree(s)`);
           await Promise.all(expandedIds.filter((id) => idSet.has(id)).map(async (id) => {
             try { expandedTrees[id] = await API.post(token, "getBom", { root_component_id: id, max_depth: 10 }); }
-            catch { expandedTrees[id] = "error"; }
+            catch (ex) { expandedTrees[id] = "error"; treeErrors[id] = (ex && ex.message) || ""; }
           }));
         }
         mark("data ready, rendering");

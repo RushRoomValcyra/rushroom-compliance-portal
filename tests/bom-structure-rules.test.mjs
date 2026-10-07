@@ -41,9 +41,17 @@ async function serverRule() {
   // The handler imports Deno-only modules; lift out the pure function alone.
   const fn = handler.match(/export function bomChildRule[\s\S]*?\n}\n/);
   assert.ok(fn, "bomChildRule not found in handlers/bom-structure.ts");
+  // CI runs Node 20, which cannot load .ts. The types are only on the
+  // signature line, so strip them there and load plain JavaScript.
+  const [sig, ...body] = fn[0].split("\n");
+  const m = sig.match(/^export function bomChildRule\(([^)]*)\)[^{]*\{$/);
+  assert.ok(m, `unexpected signature: ${sig}`);
+  const params = m[1].split(",").map((p) => p.split(":")[0].trim()).join(", ");
+  const js = [`export function bomChildRule(${params}) {`, ...body].join("\n");
+  assert.ok(!/:\s*(string|boolean|number)\b/.test(body.join("\n")), "types in the body — this stripper only handles the signature");
   const dir = mkdtempSync(join(tmpdir(), "bomrule-"));
-  const file = join(dir, "rule.ts");
-  writeFileSync(file, fn[0]);
+  const file = join(dir, "rule.mjs");
+  writeFileSync(file, js);
   return (await import(file)).bomChildRule;
 }
 

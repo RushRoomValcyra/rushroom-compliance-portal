@@ -158,6 +158,15 @@
   ol.questions li.part::before { background: var(--blue); }
   .resolved { margin-top: 16px; border: 2px solid var(--green); border-radius: 8px; padding: 16px 20px; background: #f7fcf9; }
   @media (max-width: 900px) { .board { grid-template-columns: 1fr; } }
+  .mock { display:grid; grid-template-columns: 1.1fr 1fr; gap: 22px; align-items: start; margin-top: 12px; }
+  .pop { border:1px solid var(--border); border-radius:10px; padding:10px; box-shadow:0 6px 24px rgba(0,0,0,.10); background:#fff; width:360px; }
+  .pop .opt { display:flex; gap:10px; align-items:flex-start; padding:10px; border-radius:8px; }
+  .pop .opt:hover { background: var(--grey-bg); }
+  .pop .ic { width:28px; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-weight:700; flex-shrink:0; }
+  .pop .t { font-weight:700; font-size:14px; } .pop .d { font-size:12px; color:var(--muted); }
+  .rowmock { display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:13px; background:#fff; }
+  .rowmock .btnm { margin-left:auto; border:1px solid var(--border); border-radius:5px; padding:1px 7px; font-size:12px; }
+  .inside { color: var(--muted); }
   .industry { font-size: 13px; color: var(--muted); border-left: 3px solid var(--border); padding: 4px 0 4px 14px; margin-top: 16px; }
 
   @media (max-width: 900px) {
@@ -185,12 +194,12 @@
     <div class="col col-live">
       <h3>✓ Live in production</h3>
       <ul>
-        <li><b>No part holds children</b><span class="s">Was 24 parts / 42 links. Migration 0038, verified by query 2026-10-06.</span></li>
-        <li><b>10 new Prepared wrappers</b>, 8 leftovers retired<span class="s">Plinths, back panels, bottom, seat switch, drawer slides.</span></li>
+        <li><b>No part holds real children</b><span class="s">Was 24 parts / 42 links. Migrations 0038 + 0039, verified by query.</span></li>
+        <li><b>Prepared wrappers</b> work — “Wrap in Prepared…” confirmed OK by you 2026-10-07</li>
         <li><b>18 missing lines now reach Order Operations</b><span class="s">Panels, shelves, plinths — they were not leaves before.</span></li>
-        <li><b>Phantom shown as “Kit”</b> (v282)<span class="s">Pushed. Not yet checked in the UI.</span></li>
-        <li><b>Drawer hardware set is one line</b> (migration 0039)<span class="s">Applied and verified by query 2026-10-06. Prepared Drawer Sets and Doors are Assembled.</span></li>
-        <li><b>Kits renamed “… Module Common Parts KIT”</b><span class="s">Done in the portal 2026-10-06 (question 11).</span></li>
+        <li><b>The database enforces the rule on every path</b> (PROP-067, 0040)<span class="s">add, move, copy, materialise, change of Type/Sourcing.</span></li>
+        <li><b>In the box exists</b> (PROP-068, 0041, v286)<span class="s">…but reaching it takes too many steps — see “Not right yet”.</span></li>
+        <li><b>Kit</b> label, kits renamed “… KIT”, drawer hardware set is one line (0039)</li>
       </ul>
     </div>
     <div class="col col-rule">
@@ -210,30 +219,28 @@
       </ul>
     </div>
     <div class="col col-plan">
-      <h3>◇ Designed, not built</h3>
+      <h3>◇ Next — designed, not built</h3>
       <ul>
-        <li><b>PROP-067 — deployed 2026-10-07, not yet checked in the portal:</b> the “what is this child?” dialog and automatic Prepared wrapper · In the box (never ordered or picked on its own) · one database rule for add / move / copy / materialise · Sourcing chosen on create · no silent change of Type or Sourcing<span class="s">Migration 0040 applied, portal-api redeployed, frontend v283 live.</span></li>
+        <li><b>PROP-069 — Two ways to add to a part</b><span class="s">§0b. One click menu: <b>In the box</b> or <b>Prepared assembly</b>. No Sourcing gate, no long dialogs. Replaces the PROP-067/068 dialogs.</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
-
-        <li><b>PROP-068 — In the box, +child on every part row:</b> built and tested locally, not deployed<span class="s">db push (0041) → portal-api deploy → git push (v284).</span></li>
-        <li><b>Hub/Site on operations</b><span class="s">docs/IDEAS.md · build when the first work order needs it — partly covered now: the LED profile's clips can be In the box with Site</span></li>
-        <li><b>Stocked stop in the planner resolver</b><span class="s">question 13 — <b>parked in the roadmap backlog</b> until the BOM structure is finished. Changes Order Operations → own /build.</span></li>
-
+        <li><b>Hub/Site on operations</b><span class="s">docs/IDEAS.md · partly covered: In-the-box rows can carry Hub/Site</span></li>
+        <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
       </ul>
     </div>
     <div class="col col-issue">
       <h3>! Not right yet</h3>
       <ul>
-        <li><b>Hard block too strict</b><span class="s">+child refuses Dynamic BOMs and manufactured parts; Move still let a part get children silently. <b>Replaced by PROP-067 (deployed 2026-10-07).</b></span></li>
-        <li><b>13 links inside the new wrappers have no Hub/Site</b><span class="s">e.g. L Prepared Plinth → L Plinth. Set in the BOM tree.</span></li>
-        <li><b>Drawers incomplete</b><span class="s">Bottom and back panel parts don't exist yet; drawer and door pre-assemblies are used by no cabinet and no planner mapping; door handle colours open — case G.</span></li>
-        <li><b>Hardware set had children</b><span class="s">Fixed — 0039 applied. 0038's Prepared Drawer Slides wrappers were a mistake (the slides come in the box) and are retired.</span></li>
-        <li><b>Pre-built stock vs pick list</b><span class="s">Order Operations always gets the loose parts, even for a pre-assembly on the shelf — question 13.</span></li>
-        <li><b>Order Operations sees leaves only</b><span class="s">so a Kit's grouping does not reach the pick list as a group yet.</span></li>
+        <li><b>Adding to a part is over-engineered</b><span class="s">Up to three dialogs of text; a Part + Assembled blocks the obvious action. Fixed by PROP-069.</span></li>
+        <li><b>“Load failed” when changing Sourcing from that dialog</b><span class="s">2026-10-07, not reproduced — the API answers normally. The dialog goes away with PROP-069.</span></li>
+        <li><b>L LED Profile still Part + Assembled</b><span class="s">Its clips part exists but is not linked yet.</span></li>
+        <li><b>13 links inside the new wrappers have no Hub/Site</b></li>
+        <li><b>Drawers incomplete</b><span class="s">bottom/back parts missing; drawer & door pre-assemblies used nowhere; door handle colours open — case G.</span></li>
+        <li><b>Order Operations sees leaves only</b><span class="s">a Kit's grouping does not reach the pick list as a group yet.</span></li>
       </ul>
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-07</b> Verdict on first real use: over-engineered. Adding to a part becomes <b style="min-width:0">two options in one click</b> — In the box (visual, no stock of its own) or Prepared assembly — with no Sourcing gate (PROP-069, planned).</div>
     <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
     <div><b>2026-10-07</b> Second try: the refusal named the problem but offered no way out. The add-child dialog now fixes the parent in place (“We buy it complete — add this In the box” / “make it a Sub-assembly”) and keeps the selection.</div>
     <div><b>2026-10-07</b> First real use (LED profile clips) failed: the profile is still Part + Assembled, which can hold no child, and “Create new” left an orphan part behind. Fixed: the dialog checks the rule before writing, a retry reuses the created part, and +child on a Part + Assembled asks which of the two is true.</div>
@@ -250,6 +257,41 @@
     <div class="fact"><div class="big">90 / 91</div><div class="lbl">parts say <b>Purchased</b> — mostly the default, because the create form never asks</div></div>
     <div class="fact"><div class="big">6 → 0</div><div class="lbl">sub-assemblies said <b>Purchased</b> — all drawer or door structures; fixed by 0039</div></div>
     <div class="fact"><div class="big">5</div><div class="lbl">code paths that can attach a child, each with its own (or no) rule</div></div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">0b</span>Adding to a part: two ways, one click <span class="b b-src" style="font-size:12px;vertical-align:middle">PROP-069 · planned</span></h2>
+  <p class="lead">Decided 2026-10-07 after the first real use. <b>A part never holds real children.</b> When you press <b>+child</b> on a part there are exactly two choices — no questions, no long text, and the part's Sourcing does not matter.</p>
+
+  <div class="mock">
+    <div>
+      <div class="rowmock"><b>L LED Profile including milky cover</b> <span class="ghost">RR-202609-9K5ALEB9</span><span class="btnm">+child ▾</span></div>
+      <div class="pop" style="margin:6px 0 0 120px">
+        <div class="opt"><div class="ic" style="background:var(--grey-bg)">▢</div><div><div class="t">In the box</div><div class="d">What comes with this order line. No stock of its own.</div></div></div>
+        <div class="opt"><div class="ic" style="background:var(--green-bg);color:var(--green)">⧉</div><div><div class="t">Prepared assembly</div><div class="d">New assembly with this part inside. Part unchanged.</div></div></div>
+      </div>
+    </div>
+    <div>
+      <div class="truth" style="margin-bottom:10px">
+        <div class="tq">▢ In the box → the normal picker opens straight away</div>
+        <div class="ta">Link existing or create new, with quantities. The rows show under the part in grey with <b>IN THE BOX</b>.</div>
+        <div class="tree"><ul><li><span class="n">L LED Profile including milky cover</span> <span class="ghost">1 order line · 1 stock item</span>
+          <ul><li class="dim"><span class="n">Milky cover</span> <span class="ghost">in the box</span></li><li class="dim"><span class="n">LED Profile Clips</span> ×2 <span class="ghost">in the box</span></li></ul></li></ul></div>
+      </div>
+      <div class="truth likely">
+        <div class="tq">⧉ Prepared assembly → one line to confirm the name</div>
+        <div class="ta">“Prepared L LED Profile including milky cover” is created under <b>Assemblies</b> with the part ×1 inside, then the picker opens on it. Inside an assembly's tree it takes the part's place there; from the Parts list it stands on its own. If one already exists, the menu offers it instead.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rule-box" style="border-color:var(--green);background:#f7fcf9">
+    <h3>Why “In the box” never touches stock below the part</h3>
+    <p style="font-size:14px;margin-top:6px">Checked in the code, 2026-10-07: the only way BOM quantities leave the portal is the planner resolver to Order Operations
+      (Order Operations reads nothing else), and it already skips In-the-box links — so the part stays one order line and one pick line. Work orders take their pull list
+      from product families, not from the BOM tree. In-the-box rows appear only in the portal's own tree and exports, marked as such.</p>
+    <p style="font-size:14px;margin-top:8px"><b>What goes away:</b> the “what is this child?” dialog, the “cannot hold children yet” dialog, the in-dialog fix buttons, and the Sourcing condition on a part's children. A part's children no longer depend on whether someone set its Sourcing correctly.</p>
+    <p style="font-size:14px;margin-top:8px"><b>What stays:</b> a finished good never gets +child · Hub/Site on an In-the-box row stays optional (the LED profile's clips are fitted on site) · Sourcing is still chosen when a part is created.</p>
   </div>
 
   <!-- ============================================================ -->
@@ -301,56 +343,39 @@
   </div>
 
   <!-- ============================================================ -->
-  <h2><span class="num">2</span>The rule matrix</h2>
-  <p class="lead">Every combination of Type and Sourcing, and what the portal would allow. Read across a row: same kind of item, different ways of getting it.</p>
+  <h2><span class="num">2</span>The rule matrix <span class="b b-src" style="font-size:12px;vertical-align:middle">simplified by PROP-069</span></h2>
+  <p class="lead">Which kind of child each type may hold. Since PROP-069 a part's Sourcing no longer matters here — Sourcing only decides it for sub-assemblies (bought complete, or built by us).</p>
 
   <table class="matrix">
     <thead>
-      <tr>
-        <th class="rowh">Type ↓ &nbsp; Sourcing →</th>
-        <th>Purchased</th><th>Manufactured</th><th>Assembled</th><th>Subcontracted</th>
-      </tr>
+      <tr><th class="rowh">Type</th><th>Real children<br><span style="font-weight:400">picked, stocked, fitted</span></th><th>In the box<br><span style="font-weight:400">visual only, no stock of its own</span></th></tr>
     </thead>
     <tbody>
-      <tr>
-        <th class="rowh"><span class="b b-type">part</span></th>
-        <td class="ref"><span class="verdict">◐ In the box only</span>What comes with its order line — loose or fitted, never ordered or picked on its own, may carry Hub/Site. Anything ordered <b>separately</b> and fitted goes into its Prepared wrapper, which the portal builds (§5b). <b>May still have operations</b> done to it, e.g. customer holes.<span class="count">Cleaned 2026-10-06: 0 left (migration 0038)</span></td>
-        <td class="ok q-cell"><span class="verdict">✓ Inputs we consume</span>Sheet, paint, inserts — the material a part is made from. <i>See question 2.</i></td>
-        <td class="no q-cell"><span class="verdict">✕ Contradiction</span>If we put it together, it is a sub-assembly. Suggest retyping. <i>See question 2.</i></td>
-        <td class="ok"><span class="verdict">✓ Inputs we provide</span>E.g. we give our sheet to a laser cutter; it comes back as our part.</td>
-      </tr>
-      <tr>
-        <th class="rowh"><span class="b b-type">sub_assembly</span></th>
-        <td class="ref"><span class="verdict">◐ In the box only</span>One order line (rule 1). What comes with it is In the box: never its own order or pick line, may carry Hub/Site, counts for compliance. <i>Decided — question 4.</i></td>
-        <td class="na q-cell"><span class="verdict">? Same as Assembled</span>Unless we need to tell a welded frame apart from a screwed one. <i>See question 3.</i></td>
-        <td class="ok"><span class="verdict">✓ Build inputs</span>What we pick and put together, at the hub or on site.</td>
-        <td class="ok"><span class="verdict">✓ Supplier's inputs</span>The supplier builds it. Some lines may come from us or be specified by us. <i>See question 5.</i></td>
-      </tr>
-      <tr>
-        <th class="rowh"><span class="b b-type">Kit</span></th>
-        <td class="ok" colspan="4"><span class="verdict">✓ Pick group — the level is kept</span>Never bought, built or stocked as one thing, so Sourcing does not apply to the phantom itself. But it is <b>not dissolved</b>: its children are drawn from stock and appear <b>grouped under it on the pick list</b>. <span class="count">Decided 2026-10-06 — see question 6</span></td>
-      </tr>
-      <tr>
-        <th class="rowh"><span class="b b-type">finished_good</span></th>
-        <td class="no"><span class="verdict">✕ No children — hard block</span>Bought and passed on untouched. <i>Decided — question 7.</i></td>
-        <td class="no" colspan="3"><span class="verdict">✕ Contradiction</span>A finished good is by definition something we don't make. If we make it, it is a sub-assembly. <i>See question 7.</i></td>
-      </tr>
-      <tr>
-        <th class="rowh"><span class="b b-type">product_family</span></th>
-        <td class="ok" colspan="4"><span class="verdict">✓ Variant options</span>Children are the options a configuration chooses between. Sourcing does not apply to the family itself — only to the items inside it.</td>
-      </tr>
+      <tr><th class="rowh"><span class="b b-type">part</span><br><span class="ghost" style="font-size:12px">any Sourcing</span></th>
+        <td class="no"><span class="verdict">✕ → Prepared assembly</span>Real structure lives in an assembly. The part stays exactly what we buy.</td>
+        <td class="ok"><span class="verdict">✓</span>What comes with its order line — the LED profile's cover and clips, the drawer set's slides.</td></tr>
+      <tr><th class="rowh"><span class="b b-type">sub_assembly</span><br><span class="ghost" style="font-size:12px">bought complete</span></th>
+        <td class="no"><span class="verdict">✕</span>One order line (rule 1).</td>
+        <td class="ok"><span class="verdict">✓</span>What is inside it as delivered.</td></tr>
+      <tr><th class="rowh"><span class="b b-type">sub_assembly</span><br><span class="ghost" style="font-size:12px">our build (Prepared …)</span></th>
+        <td class="ok"><span class="verdict">✓</span>What we pick and put together, with Hub / Site.</td>
+        <td class="na"><span class="verdict">—</span>Nothing arrives “in the box” of something we build.</td></tr>
+      <tr><th class="rowh"><span class="b b-type">Kit</span></th>
+        <td class="ok"><span class="verdict">✓</span>A pick group — its children are drawn from stock together.</td>
+        <td class="na"><span class="verdict">—</span></td></tr>
+      <tr><th class="rowh"><span class="b b-type">product_family</span></th>
+        <td class="ok"><span class="verdict">✓</span>Variant options.</td>
+        <td class="na"><span class="verdict">—</span></td></tr>
+      <tr><th class="rowh"><span class="b b-type">finished_good</span></th>
+        <td class="no"><span class="verdict">✕</span>Bought and passed on untouched.</td>
+        <td class="no"><span class="verdict">✕</span>No +child at all.</td></tr>
     </tbody>
   </table>
-  <div class="legend">
-    <span><i style="background:var(--green-bg);border:1px solid var(--green)"></i>Children allowed — real build inputs</span>
-    <span><i style="background:var(--amber-bg);border:1px solid var(--amber)"></i>Children allowed — In the box only (never ordered on their own)</span>
-    <span><i style="background:var(--red-bg);border:1px solid var(--red)"></i>Not allowed / contradiction</span>
-    <span><i style="background:var(--grey-bg);border:1px solid var(--grey)"></i>Not applicable</span>
-    <span><i style="background:#fff;outline:2px dashed var(--amber)"></i>Needs a decision</span>
-  </div>
+  <p style="font-size:13px;color:var(--muted);margin-top:8px"><b>Live today (until PROP-069 is built):</b> a part's children still depend on its Sourcing — a Purchased part takes In the box, a Part + Assembled takes nothing, and a Manufactured / Subcontracted part takes real children. PROP-069 replaces that with the table above.</p>
 
   <!-- ============================================================ -->
-  <h2><span class="num">3</span>What children mean, depending on Sourcing</h2>
+  <h2><span class="num">3</span>What children mean, depending on Sourcing <span class="b" style="font-size:12px;vertical-align:middle;background:var(--grey-bg);color:var(--grey)">background</span></h2>
+  <p style="font-size:13px;color:var(--muted);margin:-2px 0 8px">Background from 2026-10-06. For parts this is superseded by §0b / §2: a part's children are In the box or go into a Prepared assembly, whatever its Sourcing.</p>
   <p class="lead">The same-looking tree carries four different meanings. This is what each one tells the rest of the system — Order Operations pick lists, compliance declarations, and the Hub/Site fitting stage.</p>
 
   <div class="meanings">
@@ -564,7 +589,8 @@
   </div>
 
   <!-- ============================================================ -->
-  <h2><span class="num">5b</span>When someone adds a child to a part we buy — the portal builds the right thing</h2>
+  <h2><span class="num">5b</span>When someone adds a child to a part we buy — the portal builds the right thing <span class="b b-flag" style="font-size:12px;vertical-align:middle">being replaced by §0b</span></h2>
+  <p style="font-size:13px;color:var(--muted);margin:-2px 0 8px">This is the PROP-067/068 flow that is live today. First real use showed it is too many steps and too much text; PROP-069 (§0b) replaces it with two options in one click. Kept here as the record of why.</p>
   <p class="lead"><b>Decided 2026-10-06 (question 10).</b> No warning to click away: the portal asks one question and then builds the correct structure itself.
   The part always stays exactly what we buy.</p>
 
@@ -628,8 +654,8 @@
   <ol class="questions rules">
     <li><div class="qq">Buy unit = BOM line.</div>
       <div class="qc">One thing we order and stock is one <b>pick</b> line, however many pieces arrive in the box. What comes with it is <b>In the box</b>: structured under it, never ordered or picked on its own, and it may carry Hub/Site where we fit it. <i>Example: the LED profile (case D3), the drawer hardware set.</i></div></li>
-    <li><div class="qq">A purchased part never holds children ordered separately — those go in its Prepared wrapper. It may hold what comes In the box.</div>
-      <div class="qc">The work we do to it lives in its <b>Prepared …</b> sub-assembly (Assembled), which the portal builds when someone adds a child that is its own order line (§5b). The test is one question: <b>is it its own order line?</b> <i>Applied to production by migration 0038: 24 parts, 42 links, 10 new wrappers.</i></div></li>
+    <li><div class="qq">A part never holds real children. Two ways to add to it: <b>In the box</b> (visual, no stock of its own) or a <b>Prepared assembly</b> (real structure, under Assemblies).</div>
+      <div class="qc">The work we do to it lives in its <b>Prepared …</b> sub-assembly (Assembled), which the portal builds when you choose “Prepared assembly” (§0b). The test is one question: <b>is it its own order line?</b> Simplified 2026-10-07 (PROP-069): the part's Sourcing no longer matters. <i>Applied to production by migration 0038: 24 parts, 42 links, 10 new wrappers.</i></div></li>
     <li><div class="qq">What we do to it is an operation, not structure.</div>
       <div class="qc">Customer holes, fitting a cover, attaching clips → steps on the work order. The BOM stays what we buy and pick.</div></li>
     <li><div class="qq">What it is made of is materials, not structure.</div>
@@ -643,7 +669,7 @@
     <li><div class="qq">Sourcing is chosen when a component is created — no default.</div>
       <div class="qc">The silent “Purchased” default is what made 90 of 91 parts untrustworthy.</div></li>
     <li><div class="qq">Manufactured and Subcontracted are decided when the first real case arrives.</div>
-      <div class="qc">Production has none today. Questions 2, 3 and 5 wait for that case — “until we hit the wall”.</div></li>
+      <div class="qc">Production has none today. Questions 3 and 5 wait for that case — “until we hit the wall”. For a part, its inputs would go into a Prepared assembly like anything else.</div></li>
   </ol>
 
   <!-- ============================================================ -->
@@ -653,7 +679,8 @@
   <ol class="questions">
     <li class="done"><div class="qq">Is this the right split — Type says <i>whether</i> it may have children, Sourcing says <i>what they mean</i>? <span class="b b-type">Decided — yes</span></div>
       <div class="qc">Agreed 2026-10-06, with Operations as the third dimension (what we do to an item).</div></li>
-    <li class="part"><div class="qq">Part + Manufactured, and Part + Assembled: what do we allow? <span class="b b-src">Deferred to first case</span></div>
+    <li class="done"><div class="qq">Part + Manufactured, and Part + Assembled: what do we allow? <span class="b b-type">Superseded — PROP-069</span></div>
+      <div class="qc">A part never holds real children, whatever its Sourcing: In the box, or a Prepared assembly.</div>
       <div class="qc">Proposed: <b>Manufactured</b> may have inputs (sheet, paint); <b>Assembled</b> means it is really a sub-assembly. But a panel with inserts pressed in — is that a part we manufactured, or something we assembled?</div></li>
     <li class="part"><div class="qq">Do Manufactured and Assembled need to mean different things for a sub-assembly? <span class="b b-src">Deferred to first case</span></div>
       <div class="qc">E.g. a welded frame (can't be taken apart) vs. a screwed unit (can). If the difference doesn't matter to us, the two can behave the same.</div></li>
@@ -672,7 +699,7 @@
       <div class="qc">The portal's work orders can carry a <code>drill</code> step with the customer's hole drawing attached. But the
         customer order lives in <b>Order Operations</b>. Does the drawing start there and flow to the work order, or the other way round?
         And is the drilling done at the <b>Hub</b> or on <b>Site</b>?</div></li>
-    <li class="done"><div class="qq">The flag in 5b: may the user dismiss it and keep a purchased part with children? <span class="b b-type">Decided — the portal builds the wrapper</span></div>
+    <li class="done"><div class="qq">The flag in 5b: may the user dismiss it and keep a purchased part with children? <span class="b b-type">Superseded — two options in one click (§0b)</span></div>
       <div class="qc">Neither dismiss nor block: “we fit it” builds a Prepared wrapper automatically and the part stays as it is; “comes with its order” puts it In the box. See §5b for the proposed details.</div>
       <div class="qc"><b>Dismissable</b> is gentler but lets the 24-case pattern grow again. <b>Must answer</b> keeps the data honest but adds a step every time.
         A middle way: allow “keep as is”, but the row keeps its <span class="b b-flag">review</span> badge until someone answers.</div></li>

@@ -117,3 +117,12 @@ test("a tree that failed to load is tried again, and says why it failed", () => 
   assert.ok(/`Failed to load tree: \$\{reason\}`/.test(app));
   assert.ok(/\}, "Retry"\)/.test(app), "no Retry on a failed tree");
 });
+
+test("a tree's own level buttons show only when it has levels, and are not a second 'Expand all'", () => {
+  // 2026-10-07: every opened tree carried big "Expand all / Collapse all"
+  // buttons — doing nothing on a flat assembly and looking like the list's own.
+  assert.ok(/const hasLevels = \(edges \|\| \[\]\)\.some\(\(e\) => parentIds\.has\(e\.child_id\)\);/.test(app));
+  assert.ok(/hasLevels \? levelBtn\("⌄ Open levels"/.test(app));
+  assert.ok(/hasLevels \? levelBtn\("⌃ Close levels"/.test(app));
+  assert.ok(!/\}, "Expand all"\),\n\s+el\("button", \{ class: "btn btn-sm", type: "button", onclick: \(\) => \{ collapsed\.clear\(\); buildRows/.test(app), "the old per-tree buttons are back");
+});

@@ -4500,12 +4500,22 @@
         }, `${stageTally.asis} as is`) : null,
       ].filter(Boolean) : []);
 
+    // Open / close the levels INSIDE this tree. Only when it has any — on a
+    // flat assembly (a door and its hardware) they did nothing — and named for
+    // what they do, so they are not mistaken for the list's Expand all /
+    // Collapse all above (2026-10-07).
+    const parentIds = new Set((edges || []).map((e) => e.parent_id));
+    const hasLevels = (edges || []).some((e) => parentIds.has(e.child_id));
+    const levelBtn = (label, title, onclick) => el("button", {
+      class: "btn btn-xs", type: "button", title,
+      style: "font-size:0.6875rem;color:var(--muted,#8b93a1)", onclick,
+    }, label);
     wrap.append(el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.4rem;align-items:center;flex-wrap:wrap" }, [
-      el("button", { class: "btn btn-sm", type: "button", onclick: () => { collapsed.clear(); render(); } }, "Expand all"),
-      el("button", { class: "btn btn-sm", type: "button", onclick: () => { collapsed.clear(); buildRows().filter((r) => r.hasChildren).forEach((r) => collapsed.add(r.posNum)); render(); } }, "Collapse all"),
+      hasLevels ? levelBtn("⌄ Open levels", "Open every sub-assembly inside this one", () => { collapsed.clear(); render(); }) : null,
+      hasLevels ? levelBtn("⌃ Close levels", "Close every sub-assembly inside this one", () => { collapsed.clear(); buildRows().filter((r) => r.hasChildren).forEach((r) => collapsed.add(r.posNum)); render(); }) : null,
       el("span", { style: "flex:1" }),
       stageStrip,
-    ]));
+    ].filter(Boolean)));
 
     wrap.append(el("div", {
         style: "display:grid;grid-template-columns:6rem 1fr 4rem 5rem 7rem 15rem;gap:0.5rem;padding:0.2rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:0.15rem;position:sticky;top:0;z-index:1;background:var(--bg,#fff)",

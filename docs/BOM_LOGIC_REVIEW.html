@@ -200,6 +200,8 @@
         <li><b>The database enforces the rule on every path</b> (PROP-067, 0040)<span class="s">add, move, copy, materialise, change of Type/Sourcing.</span></li>
         <li><b>Two ways to add to a part</b> (PROP-069, 0042, v287) — confirmed working by you 2026-10-07<span class="s">+child → In the box, or Prepared assembly. LED profile clips In the box ×8.</span></li>
         <li><b>Kit</b> label, kits renamed “… KIT”, drawer hardware set is one line (0039)</li>
+        <li><b>Move under any row in the structure</b> (v293–v295)<span class="s">Onto a part: In the box, or a Prepared assembly built in place. Never offers the row's own assembly.</span></li>
+        <li><b>Fitted “—” = as is</b>, In the box in its own colour with a filter, failed trees retry — confirmed 2026-10-07</li>
       </ul>
     </div>
     <div class="col col-rule">
@@ -222,7 +224,7 @@
     <div class="col col-plan">
       <h3>◇ Next — designed, not built</h3>
       <ul>
-        <li><b>Move under any row in the structure</b> (v293) — built, not deployed<span class="s">Onto an assembly: as before. Onto a part: the same two ways as +child — In the box, or a Prepared assembly built where the part sits, with the moved row inside. portal-api deploy → git push.</span></li>
+
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
         <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
@@ -232,7 +234,7 @@
       <h3>! Not right yet</h3>
       <ul>
         <li><b>Prepared Mid Panel - White holds no panel</b><span class="s">only pins, legs, holders, dowels and screws — the mid panel part itself is missing, so it has no “part being prepared”.</span></li>
-        <li><b>4 links in Prepared S Middle Door show “—”</b><span class="s">but they are fitted by us at the hub — set them to Hub, or they read as “nothing done”.</span></li>
+        <li><b>Prepared S Middle Door: rows show “—”</b><span class="s">structure kept as is (decided 2026-10-07); the hardware is fitted at the hub, so set Hub when convenient.</span></li>
         <li><b>L LED Profile still Part + Assembled</b><span class="s">Its clips part exists but is not linked yet.</span></li>
         <li><b>Check the 13 “—” links inside the new wrappers</b><span class="s">“—” now means “nothing done, picked as is” — any that are really fitted need Hub or Site.</span></li>
         <li><b>Drawers incomplete</b><span class="s">bottom/back parts missing; drawer & door pre-assemblies used nowhere; door handle colours open — case G.</span></li>
@@ -241,6 +243,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-07</b> Move, In-the-box colours, “as is”, tree retry and the per-tree level buttons (shown only when a tree has levels) all live and confirmed. Prepared S Middle Door left as it is: it is the door with what we fit to it.</div>
     <div><b>2026-10-07</b> Moving a row under another row must always work — that is how a BOM is worked. Move now offers parts too, with the same two ways as +child; the rules stay as they are.</div>
     <div><b>2026-10-07</b> Fitted “—” = do nothing, picked as is (question 14). The strip and picker say so; “not set” is gone.</div>
     <div><b>2026-10-07</b> “◆ BEING PREPARED” removed again: Fitted already says where value is added — nothing (pick as is), Hub (prepared / pre-assembled) or Site (fitted at the customer).</div>

@@ -174,3 +174,18 @@ test("a Part that says Assembled explains itself instead of opening the picker",
   assert.equal(R.needsTypeOrSourcing({ type: "finished_good", make_or_buy: "purchased" }), false, "a finished good shows no +child at all");
   assert.ok(/R\.needsTypeOrSourcing\(comp\)[\s\S]*?R\.openCannotHold\(/.test(app), "root-row +child does not route Part + Assembled to the explanation");
 });
+
+test("a refused parent can be fixed inside the add-child dialog, keeping the selection", () => {
+  // Second real use: the clips were picked, the parent (Part + Assembled)
+  // refused, and the message said "change its Type first" with no way to do it
+  // from there. The way out now sits under the message, on every entry path.
+  const modal = app.slice(app.indexOf("function openAddChildModal"), app.indexOf("PROP-036 option 3"));
+  assert.ok(/let isReference = /.test(modal), "the dialog cannot switch to In the box by itself");
+  assert.ok(/if \(refused\) \{ stop\([^)]*\); showFixes\(\); return; \}/.test(modal), "the pre-check refusal offers no way out");
+  assert.ok(/showFixes\(\);\s+\/\/ a refusal from the database/.test(modal), "a database refusal offers no way out");
+  assert.ok(/We buy it complete — add this In the box/.test(modal));
+  assert.ok(/We put it together — make it a Sub-assembly/.test(modal));
+  assert.ok(/form\.requestSubmit\(\)/.test(modal), "after the fix the user has to press Add again");
+  // The footer is assembled further down, past the slice above.
+  assert.ok(/errEl,\s+fixBar,/.test(app), "the buttons are built but never shown");
+});

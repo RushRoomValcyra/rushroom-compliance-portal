@@ -5772,7 +5772,11 @@
     // PROP-067/068: In the box — what comes with a bought item's order line.
     // Same picker; the links are marked is_reference, so they are never ordered
     // or picked on their own (Hub/Site is set afterwards, on the row).
-    const isReference = !!(opts && opts.reference);
+    // `let`: the dialog can switch mode itself when the parent refuses (below).
+    let isReference = !!(opts && opts.reference);
+    const titleEl = el("h3", { style: "margin:0;font-size:1rem" });
+    const paintTitle = () => { titleEl.textContent = isReference ? `In the box with “${parentNode.name}”` : "Add child component"; };
+    paintTitle();
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     // The picker is the reason this dialog is resizable. A fixed 200px list of
     // 64 parts shows four at a time, and the window it is in has plenty of room
@@ -5801,6 +5805,42 @@
     const submitLabel = () => (mode === "new" ? "Create & add"
       : picked.size > 1 ? `Add ${picked.size} to BOM` : "Add to BOM");
     const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.2rem;margin-top:0.25rem" }, "");
+    // When the parent refuses, the way out is offered right here — fixing the
+    // parent elsewhere and coming back would lose the selection. Each button
+    // fixes the one wrong thing and presses Add again.
+    const fixBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center" });
+    function showFixes() {
+      fixBar.replaceChildren();
+      const R = window.PortalBomRules;
+      if (!R || !parentNode.make_or_buy) return;
+      const fixBtn = (label, run) => el("button", {
+        class: "btn btn-sm", type: "button",
+        onclick: async (ev) => {
+          const b = ev.currentTarget;
+          b.disabled = true; errEl.textContent = "";
+          try { await run(); fixBar.replaceChildren(); form.requestSubmit(); }
+          catch (ex) { errEl.textContent = ex.message; b.disabled = false; }
+        },
+      }, label);
+      const setParent = async (patch) => {
+        await API.post(token, "updateComponent", { component_id: parentNode.id, ...patch });
+        Object.assign(parentNode, patch);
+        if (onRefresh) onRefresh();
+      };
+      if (R.needsTypeOrSourcing(parentNode)) {
+        fixBar.append(
+          fixBtn("We buy it complete — add this In the box", async () => { await setParent({ make_or_buy: "purchased" }); isReference = true; paintTitle(); }),
+          fixBtn("We put it together — make it a Sub-assembly", async () => { await setParent({ type: "sub_assembly" }); isReference = false; paintTitle(); }),
+        );
+      } else if (!isReference && R.childRule(parentNode.type, parentNode.make_or_buy, true) === null) {
+        fixBar.append(
+          fixBtn("It comes with its order — add it In the box", async () => { isReference = true; paintTitle(); }),
+          el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Ordered separately? Use “Wrap in Prepared…” in the part's panel."),
+        );
+      } else if (isReference && R.childRule(parentNode.type, parentNode.make_or_buy, false) === null) {
+        fixBar.append(fixBtn("Add it as a normal child instead", async () => { isReference = false; paintTitle(); }));
+      }
+    }
 
     // Tab bar
     const tabExisting = el("button", { type: "button", style: "flex:1;border-radius:0;border:none;padding:0.4rem 0.75rem;font-size:0.8125rem;font-weight:600;cursor:pointer;transition:background 0.1s" }, "Link existing");
@@ -6196,7 +6236,8 @@
         // and then having the link refused left an orphan in the registry.
         const R = window.PortalBomRules;
         const refused = R && parentNode.make_or_buy ? R.childRule(parentNode.type, parentNode.make_or_buy, isReference) : null;
-        if (refused) return stop(`${parentNode.name}: ${refused}`);
+        if (refused) { stop(`${parentNode.name}: ${refused}`); showFixes(); return; }
+        fixBar.replaceChildren();
 
         submitBtn.disabled = true;
         const cond = Object.keys(conditionMap).length > 0 ? { ...conditionMap } : null;
@@ -6251,6 +6292,7 @@
             : mode === "new" && createdNew
               ? `${createdNew.part_number} “${createdNew.name}” was created, but could not be added under ${parentNode.name}: ${msg} Fix that and press again — it will not be created twice.`
               : msg;
+          showFixes();   // a refusal from the database gets the same way out
           submitBtn.disabled = false;
           submitBtn.textContent = submitLabel();
           if (added.length) { paintTray(); buildList(); if (onRefresh) onRefresh(); }
@@ -6288,7 +6330,7 @@
     form.append(
       el("div", { style: "flex-shrink:0" }, [
         el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem" }, [
-          el("h3", { style: "margin:0;font-size:1rem" }, isReference ? `In the box with “${parentNode.name}”` : "Add child component"),
+          titleEl,
           el("button", { class: "btn btn-xs", type: "button", onclick: () => overlay.remove() }, "✕"),
         ]),
         el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.75rem" }, `Parent: ${parentNode.part_number} — ${parentNode.name}`),
@@ -6304,6 +6346,7 @@
       ]),
       el("div", { style: "flex-shrink:0" }, [
         errEl,
+        fixBar,
         el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
           el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
           submitBtn,

@@ -235,6 +235,7 @@
   </div>
   <div class="timeline">
     <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
+    <div><b>2026-10-07</b> Second try: the refusal named the problem but offered no way out. The add-child dialog now fixes the parent in place (“We buy it complete — add this In the box” / “make it a Sub-assembly”) and keeps the selection.</div>
     <div><b>2026-10-07</b> First real use (LED profile clips) failed: the profile is still Part + Assembled, which can hold no child, and “Create new” left an orphan part behind. Fixed: the dialog checks the rule before writing, a retry reuses the created part, and +child on a Part + Assembled asks which of the two is true.</div>
     <div><b>2026-10-07</b> Rethink: contents of a bought item are things we may work with. “Reference children” become <b style="min-width:0">In the box</b> — may carry Hub/Site; still never their own order line. Every part row gets +child. Built as PROP-068.</div>
     <div><b>2026-10-07</b> PROP-067 built and deployed: the BOM logic decided on this page now enforced by the database on every path. Waiting for a check in the portal.</div>

@@ -21,13 +21,14 @@ state where something looks done and silently is not.
 ## Next
 _Decided, designed, not started._
 
-- **PROP-069 Two ways to add to a part** — decided 2026-10-07 after the first real use (L LED Profile clips): adding to a part took up to three dialogs of text, and a Part + Assembled blocked the obvious action. Design on docs/BOM_LOGIC_REVIEW.html §0b.
+- **PROP-069 Two ways to add to a part** — *built and tested on a copy of production, NOT deployed* (branch `feat/prop-069-two-way-child`; migration 0042, v287; deploy: `supabase db push` → `supabase functions deploy portal-api --no-verify-jwt` → `git push origin main`). Decided 2026-10-07 after the first real use (L LED Profile clips): adding to a part took up to three dialogs of text, and a Part + Assembled blocked the obvious action. Design on docs/BOM_LOGIC_REVIEW.html §0b.
   - **Rule:** a part never holds real children, whatever its Sourcing. Two ways: **In the box** (visual; no stock of its own — the resolver already skips these links, and Order Operations reads nothing else) or **Prepared assembly** (real structure, under Assemblies; part unchanged).
   - **Database (0042):** `bom_child_rule` stops looking at Sourcing for part / raw_material / spare_part — real children refused, In the box allowed. Sub-assemblies keep the Sourcing test (bought complete → In the box; our build → real children). Finished good unchanged. No data to convert.
   - **UX:** `+child` on a part opens a two-item menu (one line each). In the box → the normal picker in In-the-box mode, straight away. Prepared assembly → a one-line name confirm, then the picker on the new assembly; an existing Prepared assembly is offered instead. Inside a tree the wrapper takes the part's place there; from the Parts list it stands alone (the "replace everywhere" checkbox goes).
   - **Removed:** the "what is this child?" dialog, the "cannot hold children yet" dialog, the in-dialog fix buttons. The "we work on the part" option goes too (operations live on work orders).
   - **Kept:** optional Hub/Site on In-the-box rows; Sourcing required on create; finished goods have no +child.
   - **Effort:** ~4–6 h. **Risk:** low — no data changes, Order Operations output unchanged.
+- **Hub/Site on operations** — promoted from docs/IDEAS.md 2026-10-07. Principle: *where something is installed or modified must always be sayable — Hub or Site.* BOM links (In the box included) carry it since PROP-056/068; `family_routing_steps` and `work_order_steps` do not, so "drill the customer's holes at the hub" or "fit the clips on site" as an operation cannot say where. Same nullable column and CHECK as migration 0036, a stage control on each step, and the Hub/Site counts extended to operations.
 
 ## Built — Awaiting Verification
 _Everything here is deployed and live. Nothing is waiting on a command; each line states the check that has not been done yet. Audited against production 2026-09-27: both migrations applied, all three edge functions healthy, `origin/main` at v277._

@@ -215,15 +215,16 @@
         <li>What comes with a bought item's order = <b>In the box</b>: never its own order line, may carry Hub/Site</li>
         <li>Finished good: Purchased, never children</li>
         <li>Sourcing chosen on create, no default</li>
+        <li><b>Where it is installed or modified is always sayable — Hub or Site</b></li>
         <li>Manufactured / Subcontracted: decide at first case</li>
       </ul>
     </div>
     <div class="col col-plan">
       <h3>◇ Next — designed, not built</h3>
       <ul>
-        <li><b>PROP-069 — Two ways to add to a part</b><span class="s">§0b. One click menu: <b>In the box</b> or <b>Prepared assembly</b>. No Sourcing gate, no long dialogs. Replaces the PROP-067/068 dialogs.</span></li>
+        <li><b>PROP-069 — Two ways to add to a part: built, tested on a copy of production, not deployed</b><span class="s">§0b. One-click menu: <b>In the box</b> or <b>Prepared assembly</b>. No Sourcing gate, no long dialogs. db push (0042) → portal-api deploy → git push (v287).</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
-        <li><b>Hub/Site on operations</b><span class="s">docs/IDEAS.md · partly covered: In-the-box rows can carry Hub/Site</span></li>
+        <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
       </ul>
     </div>
@@ -240,6 +241,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-07</b> PROP-069 built: two-item menu; a part's children no longer depend on Sourcing; Prepared assembly from any part. Hub/Site kept on In the box — and made a general principle: where something is installed <i>or modified</i> must always be sayable.</div>
     <div><b>2026-10-07</b> Verdict on first real use: over-engineered. Adding to a part becomes <b style="min-width:0">two options in one click</b> — In the box (visual, no stock of its own) or Prepared assembly — with no Sourcing gate (PROP-069, planned).</div>
     <div><b>2026-10-05</b> Hard block added: only assemblies may hold children (too strict — see board).</div>
     <div><b>2026-10-07</b> Second try: the refusal named the problem but offered no way out. The add-child dialog now fixes the parent in place (“We buy it complete — add this In the box” / “make it a Sub-assembly”) and keeps the selection.</div>
@@ -260,7 +262,7 @@
   </div>
 
   <!-- ============================================================ -->
-  <h2><span class="num">0b</span>Adding to a part: two ways, one click <span class="b b-src" style="font-size:12px;vertical-align:middle">PROP-069 · planned</span></h2>
+  <h2><span class="num">0b</span>Adding to a part: two ways, one click <span class="b b-src" style="font-size:12px;vertical-align:middle">PROP-069 · built, not deployed</span></h2>
   <p class="lead">Decided 2026-10-07 after the first real use. <b>A part never holds real children.</b> When you press <b>+child</b> on a part there are exactly two choices — no questions, no long text, and the part's Sourcing does not matter.</p>
 
   <div class="mock">
@@ -291,7 +293,7 @@
       (Order Operations reads nothing else), and it already skips In-the-box links — so the part stays one order line and one pick line. Work orders take their pull list
       from product families, not from the BOM tree. In-the-box rows appear only in the portal's own tree and exports, marked as such.</p>
     <p style="font-size:14px;margin-top:8px"><b>What goes away:</b> the “what is this child?” dialog, the “cannot hold children yet” dialog, the in-dialog fix buttons, and the Sourcing condition on a part's children. A part's children no longer depend on whether someone set its Sourcing correctly.</p>
-    <p style="font-size:14px;margin-top:8px"><b>What stays:</b> a finished good never gets +child · Hub/Site on an In-the-box row stays optional (the LED profile's clips are fitted on site) · Sourcing is still chosen when a part is created.</p>
+    <p style="font-size:14px;margin-top:8px"><b>What stays:</b> a finished good never gets +child · <b>Hub/Site on In-the-box rows</b> — decided 2026-10-07: some contents are pre-installed at the hub, some fitted on site · Sourcing is still chosen when a part is created.</p>
   </div>
 
   <!-- ============================================================ -->
@@ -666,6 +668,8 @@
       <div class="qc">A category says what kind of physical thing an item is; a kit is deliberately mixed (panels, fasteners, Prepared wrappers). Which wardrobe module it belongs to (S / M / L / BB) is in its name for now. When filtering by module becomes painful, that is a <b>Module</b> field on assemblies — not a category.</div></li>
     <li><div class="qq">A finished good is always Purchased and never holds children.</div>
       <div class="qc">Hard block in the database. Matches PROP-029 and the 3 in production.</div></li>
+    <li><div class="qq">Where something is installed or modified is always sayable: Hub or Site.</div>
+      <div class="qc">Decided 2026-10-07 as a general principle. Every BOM link carries it, In the box included (some contents are pre-installed at the hub, some on site). The gap: operations — the “modified” half — cannot carry it yet (roadmap Next).</div></li>
     <li><div class="qq">Sourcing is chosen when a component is created — no default.</div>
       <div class="qc">The silent “Purchased” default is what made 90 of 91 parts untrustworthy.</div></li>
     <li><div class="qq">Manufactured and Subcontracted are decided when the first real case arrives.</div>

@@ -16,6 +16,8 @@ const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 const sql = read("supabase/migrations/0040_bom_structure_rules.sql");
 // PROP-068 rewords the matrix and lifts the Hub/Site ban on In-the-box links.
 const sql41 = read("supabase/migrations/0041_in_the_box.sql");
+// PROP-069: the latest definition of the rule.
+const sql42 = read("supabase/migrations/0042_two_ways_to_add_to_a_part.sql");
 const handler = read("supabase/functions/portal-api/handlers/bom-structure.ts");
 const api = read("supabase/functions/portal-api/index.ts");
 const app = read("assets/app.js");
@@ -24,13 +26,13 @@ const rulesJs = read("assets/bom-structure.js");
 const TYPES = ["part", "raw_material", "spare_part", "sub_assembly", "phantom_assembly", "finished_good", "product_family"];
 const SOURCING = ["purchased", "manufactured", "assembled", "subcontracted"];
 
-// The decisions, restated independently (docs/BOM_LOGIC_REVIEW.html §2, §5b).
+// The decisions, restated independently (docs/BOM_LOGIC_REVIEW.html §0b, §2).
+// PROP-069: a part's children no longer depend on its Sourcing.
 function decided(type, mob, ref) {
-  if (type === "finished_good") return false;                       // Q7
-  if (ref) return mob === "purchased" && !["phantom_assembly", "product_family"].includes(type); // Q4
-  if (mob === "purchased" && ["part", "raw_material", "spare_part", "sub_assembly"].includes(type)) return false; // rule 2
-  if (mob === "assembled" && ["part", "raw_material", "spare_part"].includes(type)) return false; // part we put together = sub-assembly
-  return true;   // incl. Manufactured / Subcontracted parts — deferred, left open
+  if (type === "finished_good") return false;                                      // Q7
+  if (["part", "raw_material", "spare_part"].includes(type)) return ref;           // In the box only
+  if (type === "sub_assembly") return mob === "purchased" ? ref : !ref;           // bought complete → In the box
+  return !ref;                                                                     // Kit, Dynamic BOM: real children
 }
 
 function browserRule() {
@@ -70,7 +72,7 @@ test("browser and API apply the decided matrix to every combination", async () =
 
 test("the database refuses with the same four sentences", () => {
   // The latest definition of bom_child_rule is the one in force.
-  const sqlMsgs = [...sql41.matchAll(/THEN '([^']+)'/g)].map((m) => m[1].replace(/''/g, "'")).sort();
+  const sqlMsgs = [...sql42.matchAll(/THEN '([^']+)'/g)].map((m) => m[1].replace(/''/g, "'")).sort();
   const jsMsgs = [...rulesJs.matchAll(/return "([^"]+)";/g)].map((m) => m[1]).sort();
   assert.equal(sqlMsgs.length, 4, "bom_child_rule should have four refusals");
   assert.deepEqual(sqlMsgs, jsMsgs, "SQL and browser messages differ");
@@ -164,28 +166,32 @@ test("a part created on a failed press is reused, never created twice", () => {
   assert.ok(/part_number_key/.test(app), "a duplicate part number must read as a sentence, not a Postgres error");
 });
 
-test("a Part that says Assembled explains itself instead of opening the picker", () => {
+// ---- PROP-069: two ways to add to a part ------------------------------------
+
+test("+child on a part opens the two-item menu, on the Parts list and in trees", () => {
   const sandbox = { window: {}, document: {} };
   vm.runInNewContext(rulesJs, sandbox);
   const R = sandbox.window.PortalBomRules;
-  assert.equal(R.needsTypeOrSourcing({ type: "part", make_or_buy: "assembled" }), true);
-  assert.equal(R.needsTypeOrSourcing({ type: "part", make_or_buy: "purchased" }), false, "a bought part has In the box");
-  assert.equal(R.needsTypeOrSourcing({ type: "sub_assembly", make_or_buy: "assembled" }), false);
-  assert.equal(R.needsTypeOrSourcing({ type: "finished_good", make_or_buy: "purchased" }), false, "a finished good shows no +child at all");
-  assert.ok(/R\.needsTypeOrSourcing\(comp\)[\s\S]*?R\.openCannotHold\(/.test(app), "root-row +child does not route Part + Assembled to the explanation");
+  for (const mob of ["purchased", "assembled", "manufactured", "subcontracted"]) {
+    assert.equal(R.takesInTheBox({ type: "part", make_or_buy: mob }), true, `a ${mob} part must get the menu`);
+  }
+  assert.equal(R.takesInTheBox({ type: "sub_assembly", make_or_buy: "purchased" }), true);
+  assert.equal(R.takesInTheBox({ type: "sub_assembly", make_or_buy: "assembled" }), false);
+  assert.ok(/R\.takesInTheBox\(comp\)[\s\S]*?R\.openAddMenu\(/.test(app), "Parts-list +child does not open the menu");
+  assert.ok(/boughtComplete\s*\? window\.PortalBomRules\.openAddMenu\(/.test(app), "tree-row +child does not open the menu");
 });
 
-test("a refused parent can be fixed inside the add-child dialog, keeping the selection", () => {
-  // Second real use: the clips were picked, the parent (Part + Assembled)
-  // refused, and the message said "change its Type first" with no way to do it
-  // from there. The way out now sits under the message, on every entry path.
-  const modal = app.slice(app.indexOf("function openAddChildModal"), app.indexOf("PROP-036 option 3"));
-  assert.ok(/let isReference = /.test(modal), "the dialog cannot switch to In the box by itself");
-  assert.ok(/if \(refused\) \{ stop\([^)]*\); showFixes\(\); return; \}/.test(modal), "the pre-check refusal offers no way out");
-  assert.ok(/showFixes\(\);\s+\/\/ a refusal from the database/.test(modal), "a database refusal offers no way out");
-  assert.ok(/We buy it complete — add this In the box/.test(modal));
-  assert.ok(/We put it together — make it a Sub-assembly/.test(modal));
-  assert.ok(/form\.requestSubmit\(\)/.test(modal), "after the fix the user has to press Add again");
-  // The footer is assembled further down, past the slice above.
-  assert.ok(/errEl,\s+fixBar,/.test(app), "the buttons are built but never shown");
+test("the menu has exactly the two options, and the old dialogs are gone", () => {
+  const items = rulesJs.match(/option\("[^"]+", "[^"]+", "([^"]+)"/g) || [];
+  assert.deepEqual(items.map((m) => m.match(/"([^"]+)"$/)[1]), ["In the box", "Prepared assembly"]);
+  for (const gone of ["openChildIntent", "openCannotHold", "needsTypeOrSourcing", "showFixes"]) {
+    assert.ok(!rulesJs.includes(gone) && !app.includes(gone), `${gone} is still referenced`);
+  }
+});
+
+test("a Prepared assembly can be made from any part, whatever its Sourcing", () => {
+  assert.ok(/IF NOT \(part\.type IN \('part', 'raw_material', 'spare_part'\)/.test(sql42));
+  assert.ok(!/part\.make_or_buy <> 'purchased'/.test(sql42), "0042 still demands a Purchased part");
+  assert.ok(sql42.includes("REVOKE ALL ON FUNCTION bom_wrap_in_prepared(uuid, uuid, uuid, boolean, text, uuid) FROM PUBLIC, anon, authenticated;"));
+  assert.ok(/RAISE EXCEPTION '0042: existing links break the simplified rule/.test(sql42));
 });

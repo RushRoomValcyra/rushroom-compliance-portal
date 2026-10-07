@@ -1,49 +1,41 @@
-/* Rushroom AB — Engineering & Compliance Platform: BOM structure rules (PROP-067)
+/* Rushroom AB — Engineering & Compliance Platform: adding to a part (PROP-069)
  *
- * Which parent may hold which child is decided by the database (migration
- * 0040). This file holds the browser's side of that rule:
+ * A part never holds real children. +child on a part offers two things, one
+ * line each (docs/BOM_LOGIC_REVIEW.html §0b):
  *
- *   childRule        the same matrix, so the tree only offers what the
- *                    database will accept (three copies exist — SQL,
- *                    portal-api/handlers/bom-structure.ts and this one;
- *                    tests/bom-structure-rules.test.mjs fails if they differ)
- *   openChildIntent  "+child" on something we buy complete: what is this child?
- *                      1. we fit it        → a Prepared wrapper (openWrap)
- *                      2. comes with its order → In the box (PROP-068)
- *                      3. we work on the part  → an operation, nothing added
- *   openWrap         build "Prepared <name>" around a bought part, or add to the
- *                    Prepared assembly it already sits in
+ *   In the box         what comes with this order line — visual, no stock of
+ *                      its own, may carry Hub/Site. Opens the normal picker.
+ *   Prepared assembly  a new assembly with this part inside, the part
+ *                      unchanged. One field to confirm, then the picker on it.
  *
- * See docs/BOM_LOGIC_REVIEW.html §5b. Exposed as window.PortalBomRules, the
- * same way viewer.js exposes PortalViewer — app.js is a closed function.
+ * childRule mirrors bom_child_rule() in the database (latest: migration 0042)
+ * and bomChildRule() in portal-api/handlers/bom-structure.ts;
+ * tests/bom-structure-rules.test.mjs fails if the three disagree.
+ * Exposed as window.PortalBomRules — app.js is a closed function.
  */
 (() => {
-  const BOUGHT_COMPLETE_TYPES = ["part", "raw_material", "spare_part", "sub_assembly"];
+  const PART_TYPES = ["part", "raw_material", "spare_part"];
 
-  // null = allowed; otherwise the reason it is not. Keep in step with
-  // bom_child_rule() in supabase/migrations/0040_bom_structure_rules.sql.
+  // null = allowed; otherwise the reason it is not.
   function childRule(type, makeOrBuy, isReference) {
     if (type === "finished_good") {
       return "A finished good is bought and passed on untouched — it never holds children.";
     }
-    if (isReference && (makeOrBuy !== "purchased" || type === "phantom_assembly" || type === "product_family")) {
-      return "Only something we buy complete has an In the box: what comes with its order line.";
+    if (PART_TYPES.includes(type) && !isReference) {
+      return "A part never holds real children. Put it In the box, or make a Prepared assembly.";
     }
-    if (!isReference && makeOrBuy === "purchased" && BOUGHT_COMPLETE_TYPES.includes(type)) {
-      return "This is bought complete. Something ordered separately and fitted to it goes into its Prepared wrapper; something that comes with its order is In the box.";
+    if (type === "sub_assembly" && makeOrBuy === "purchased" && !isReference) {
+      return "This assembly is bought complete — what is inside it goes In the box.";
     }
-    if (!isReference && makeOrBuy === "assembled" && ["part", "raw_material", "spare_part"].includes(type)) {
-      return "A part we put together is a sub-assembly. Change its Type first.";
+    if (isReference && ["sub_assembly", "phantom_assembly", "product_family"].includes(type) && !(type === "sub_assembly" && makeOrBuy === "purchased")) {
+      return "Only a part, or an assembly we buy complete, has an In the box.";
     }
     return null;
   }
 
-  // Bought complete: fitted children are refused, reference children are not.
-  const isBoughtComplete = (c) => !!c && c.make_or_buy === "purchased" && BOUGHT_COMPLETE_TYPES.includes(c.type);
-  // A Part that says Assembled takes no child of either kind — its Type and
-  // Sourcing contradict each other, and only a person can say which is wrong.
-  const needsTypeOrSourcing = (c) => !!c && !!c.make_or_buy && c.type !== "finished_good"
-    && childRule(c.type, c.make_or_buy, false) !== null && childRule(c.type, c.make_or_buy, true) !== null;
+  // Takes In the box rather than real children: any part, whatever its
+  // Sourcing, and an assembly we buy complete.
+  const takesInTheBox = (c) => !!c && (PART_TYPES.includes(c.type) || (c.type === "sub_assembly" && c.make_or_buy === "purchased"));
 
   function el(tag, attrs = {}, kids = []) {
     const n = document.createElement(tag);
@@ -61,181 +53,113 @@
     return n;
   }
 
-  // Same chrome as the portal's other BOM dialogs (openMoveModal).
-  function shell(title) {
-    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
-    const body = el("div", { style: "display:flex;flex-direction:column;gap:0.75rem" });
-    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
-    const onKey = (ev) => { if (ev.key === "Escape") close(); };
-    const dialog = el("div", {
-      role: "dialog", "aria-modal": "true", "aria-label": title,
-      style: "background:var(--bg,#1a1f2e);border:1px solid var(--border,#2d3748);border-radius:10px;padding:1.25rem 1.5rem;width:min(640px,96vw);max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;gap:0.75rem",
-    }, [
-      el("div", { style: "display:flex;align-items:center;gap:0.5rem" }, [
-        el("strong", { style: "flex:1;font-size:1rem" }, title),
-        el("button", { class: "btn btn-xs", type: "button", "aria-label": "Close", onclick: close }, "✕"),
-      ]),
-      body,
-    ]);
-    overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(); });
-    document.addEventListener("keydown", onKey);
-    overlay.append(dialog);
-    document.body.append(overlay);
-    return { body, close };
-  }
+  const MUTED = "color:var(--muted,#8b93a1)";
 
-  const note = (text) => el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);line-height:1.45" }, text);
-  const errorLine = () => el("div", { role: "alert", style: "color:#e05454;font-size:0.8125rem;min-height:1.1rem" }, "");
-
-  function choice(title, detail, onclick) {
+  function option(icon, iconStyle, title, detail, onclick) {
     return el("button", {
-      type: "button", class: "btn",
-      style: "display:block;width:100%;text-align:left;padding:0.7rem 0.9rem;white-space:normal;line-height:1.4",
+      type: "button", role: "menuitem",
+      style: "display:flex;gap:0.6rem;align-items:flex-start;width:100%;text-align:left;padding:0.55rem 0.6rem;border:0;border-radius:6px;background:transparent;cursor:pointer;color:inherit;font:inherit",
+      onmouseenter: (ev) => { ev.currentTarget.style.background = "var(--hover,#f1f5f9)"; },
+      onmouseleave: (ev) => { ev.currentTarget.style.background = "transparent"; },
       onclick,
     }, [
-      el("div", { style: "font-weight:700;font-size:0.875rem" }, title),
-      el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-top:2px;font-weight:400" }, detail),
+      el("span", { style: `width:1.6rem;height:1.6rem;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;${iconStyle}` }, icon),
+      el("span", {}, [
+        el("div", { style: "font-weight:700;font-size:0.875rem" }, title),
+        el("div", { style: `font-size:0.75rem;${MUTED}` }, detail),
+      ]),
     ]);
   }
 
-  // node:       the bought item the user pressed +child on
-  // parentNode: the assembly it sits in on screen (null outside a tree)
-  // onAddTo(target, opts): open the normal add-child picker on target;
-  //                        opts.reference = true for path 2
-  function openChildIntent({ node, parentNode, token, onAddTo, onChanged }) {
-    const { body, close } = shell("What is this child?");
-    body.append(
-      note(`You buy ${node.name} complete. What you add under it decides what gets built.`),
-      choice("We order it separately and fit it to this part",
-        "Its own order line — hardware, pins, a switch we mount. It goes into a Prepared assembly next to the part, which stays exactly what we buy.",
-        () => { close(); openWrap({ node, parentNode, token, onAddTo, onChanged }); }),
-      choice("It comes In the box with this part",
-        "Part of the same order line — loose or already fitted. Never ordered or picked on its own; you can still say where we fit it (Hub or Site). Counts for compliance.",
+  // The two-item menu, anchored under the +child button that opened it.
+  // onAddTo(target, { reference }) opens the portal's normal add-child picker.
+  function openAddMenu({ anchor, node, parentNode, token, onAddTo, onChanged }) {
+    document.querySelectorAll("[data-add-menu]").forEach((m) => m.remove());
+    const menu = el("div", {
+      "data-add-menu": "", role: "menu", "aria-label": `Add to ${node.name}`,
+      style: "position:fixed;z-index:1000;width:min(340px,92vw);padding:0.35rem;border:1px solid var(--border,#e2e8f0);border-radius:10px;background:var(--bg,#fff);box-shadow:0 8px 28px rgba(0,0,0,.16)",
+    });
+    const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); document.removeEventListener("keydown", onKey, true); };
+    const outside = (ev) => { if (!menu.contains(ev.target) && ev.target !== anchor) close(); };
+    const onKey = (ev) => { if (ev.key === "Escape") { ev.stopPropagation(); close(); } };
+    menu.append(
+      option("▢", "background:var(--grey-bg,#f1f5f9)", "In the box",
+        "What comes with this order line. No stock of its own.",
         () => { close(); onAddTo(node, { reference: true }); }),
-      choice("We work on the part — holes, cut-outs, a finish",
-        "That is an operation on the work order, not a part. Nothing is added here.",
-        () => {
-          body.replaceChildren(
-            note("Work done to a part — customer holes, cut-outs, fitting a cover — belongs on the work order as an operation (BOM rule 3). The BOM stays what we buy and pick, so nothing is added."),
-            el("div", { style: "display:flex;justify-content:flex-end" },
-              el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Close")),
-          );
-        }),
+      option("⧉", "background:#e8f5ec;color:#15803d", "Prepared assembly",
+        "New assembly with this part inside. Part unchanged.",
+        () => { close(); openWrap({ node, parentNode, token, onAddTo, onChanged }); }),
     );
+    document.body.append(menu);
+    const r = anchor.getBoundingClientRect();
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8))}px`;
+    menu.style.top = `${r.bottom + 4 + h > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
+    document.addEventListener("mousedown", outside, true);
+    document.addEventListener("keydown", onKey, true);
+    menu.querySelector("button").focus();
   }
 
-  // Build "Prepared <name>" around a bought part — or, if the part already sits
-  // in an assembly we build, offer that one instead of a second wrapper.
+  // Prepared assembly: one field. An existing Prepared assembly for this part
+  // is offered first, so a second one is never made by accident. Inside a tree
+  // the new one takes the part's place there; from the Parts list it stands alone.
   async function openWrap({ node, parentNode, token, onAddTo, onChanged }) {
-    const { body, close } = shell(`Prepared assembly for ${node.name}`);
-    body.append(note("Checking where this part is used…"));
-    let links = [];
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
+    const body = el("div", { style: "display:flex;flex-direction:column;gap:0.6rem" });
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (ev) => { if (ev.key === "Escape") close(); };
+    overlay.append(el("div", {
+      role: "dialog", "aria-modal": "true", "aria-label": "Prepared assembly",
+      style: "background:var(--bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:1.1rem 1.25rem;width:min(480px,94vw);display:flex;flex-direction:column;gap:0.6rem",
+    }, [el("strong", { style: "font-size:1rem" }, "Prepared assembly"), body]));
+    overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(); });
+    document.addEventListener("keydown", onKey);
+    document.body.append(overlay);
+
+    let existing = [];
     try {
       const r = await window.PortalAPI.post(token, "listParentsOf", { component_id: node.id });
-      links = (r.parents || []).filter((l) => l.parent && !l.is_reference);
-    } catch (ex) {
-      body.replaceChildren(note(`Could not load where ${node.name} is used: ${ex.message}`));
-      return;
+      existing = (r.parents || []).filter((l) => l.parent && !l.is_reference)
+        .map((l) => l.parent).filter((p) => p.type === "sub_assembly" && p.make_or_buy === "assembled");
+    } catch { /* offering an existing one is a convenience, not a requirement */ }
+
+    const nameInput = el("input", { class: "up-text", type: "text", value: `Prepared ${node.name}`, maxlength: "200", "aria-label": "Name", style: "width:100%;box-sizing:border-box" });
+    const err = el("div", { role: "alert", style: "color:#e05454;font-size:0.8125rem;min-height:1rem" }, "");
+    const createBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Create");
+
+    if (existing.length) {
+      body.append(...existing.map((w) => el("button", {
+        class: "btn btn-sm", type: "button", style: "text-align:left;white-space:normal",
+        onclick: () => { close(); if (onAddTo) onAddTo(w, { reference: false }); },
+      }, `Use ${w.name}`)));
+      body.append(el("div", { style: `font-size:0.75rem;${MUTED}` }, "or create a new one:"));
     }
+    body.append(nameInput, err, el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end" }, [
+      el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"),
+      createBtn,
+    ]));
 
-    const wrappers = links.map((l) => l.parent).filter((p) => p.type === "sub_assembly" && p.make_or_buy === "assembled");
-    const others = links.map((l) => l.parent).filter((p) => !parentNode || p.id !== parentNode.id);
-    body.replaceChildren();
-
-    if (wrappers.length && onAddTo) {
-      body.append(
-        el("div", { style: "font-weight:700;font-size:0.875rem" }, "It already sits in an assembly we build"),
-        ...wrappers.map((w) => choice(`Add the child to ${w.name}`,
-          `${w.part_number} — no new assembly is created.`,
-          () => { close(); onAddTo(w, { reference: false }); })),
-        el("div", { style: "border-top:1px solid var(--border,#2d3748);margin:0.25rem 0" }),
-      );
-    } else if (wrappers.length) {
-      // Opened from the part's panel: no picker to hand over to, but a second
-      // wrapper should still be a deliberate choice, not an accident.
-      body.append(note(`It already sits in an assembly we build: ${wrappers.map((w) => w.name).join(", ")}. Add what you fit there — open it under Assemblies — unless you really want a second one.`));
-    }
-
-    const nameInput = el("input", { class: "up-text", type: "text", value: `Prepared ${node.name}`, maxlength: "200", style: "width:100%;box-sizing:border-box" });
-    const everywhere = el("input", { type: "checkbox" });
-    const err = errorLine();
-    const createBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Create assembly");
-
-    body.append(
-      el("div", { style: "font-weight:700;font-size:0.875rem" }, wrappers.length ? "Or create a new assembly" : "Create a new assembly"),
-      note(parentNode
-        ? `It takes the place of ${node.name} in ${parentNode.name} — same quantity, same Hub/Site. ${node.name} stays exactly as it is, inside it ×1. It appears under Assemblies.`
-        : `It is created on its own under Assemblies, holding ${node.name} ×1. ${node.name} stays exactly as it is.`),
-      el("label", { style: "display:flex;flex-direction:column;gap:0.25rem;font-size:0.8125rem" }, ["Name", nameInput]),
-      others.length
-        ? el("label", { style: "display:flex;gap:0.5rem;align-items:flex-start;font-size:0.8125rem;line-height:1.4" }, [
-            everywhere,
-            el("span", {}, [
-              parentNode ? "Also replace it in " : "Replace it in ",
-              el("strong", {}, others.map((p) => p.name).join(", ")),
-            ]),
-          ])
-        : null,
-      err,
-      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end" }, [
-        el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"),
-        createBtn,
-      ]),
-    );
-
-    createBtn.addEventListener("click", async () => {
+    const create = async () => {
       const name = nameInput.value.trim();
-      if (!name) { err.textContent = "Give the assembly a name."; nameInput.focus(); return; }
-      createBtn.disabled = true; createBtn.textContent = "Creating…"; err.textContent = "";
+      if (!name) { err.textContent = "Give it a name."; nameInput.focus(); return; }
+      createBtn.disabled = true; err.textContent = "";
       try {
         const r = await window.PortalAPI.post(token, "wrapInPrepared", {
-          part_id: node.id,
-          parent_id: parentNode ? parentNode.id : null,
-          replace_everywhere: everywhere.checked,
-          name,
+          part_id: node.id, parent_id: parentNode ? parentNode.id : null, name,
         });
         close();
         if (onChanged) onChanged();
-        const wrapper = { id: r.wrapper_id, name: r.name, part_number: r.part_number, type: "sub_assembly", make_or_buy: "assembled" };
-        if (onAddTo) onAddTo(wrapper, { reference: false });
+        if (onAddTo) onAddTo({ id: r.wrapper_id, name: r.name, part_number: r.part_number, type: "sub_assembly", make_or_buy: "assembled" }, { reference: false });
       } catch (ex) {
         err.textContent = ex.message;
-        createBtn.disabled = false; createBtn.textContent = "Create assembly";
+        createBtn.disabled = false;
       }
-    });
+    };
+    createBtn.addEventListener("click", create);
+    nameInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") create(); });
     nameInput.focus();
     nameInput.select();
   }
 
-  // +child on a part whose Type and Sourcing contradict (Part + Assembled):
-  // say so, let the user fix the one that is wrong, then carry on.
-  // onResolved(updatedNode) continues into the right next step.
-  function openCannotHold({ node, token, onChanged, onResolved }) {
-    const { body, close } = shell(`${node.name} cannot hold children yet`);
-    const err = errorLine();
-    const fix = (patch, label) => async (ev) => {
-      ev.currentTarget.disabled = true; err.textContent = "";
-      try {
-        await window.PortalAPI.post(token, "updateComponent", { component_id: node.id, ...patch });
-        close();
-        if (onChanged) onChanged();
-        if (onResolved) onResolved({ ...node, ...patch });
-      } catch (ex) {
-        err.textContent = `${label}: ${ex.message}`;
-        ev.currentTarget.disabled = false;
-      }
-    };
-    body.append(
-      note(`It is a Part with Sourcing “Assembled”. A part we put together is really a sub-assembly — and if we buy it complete, its Sourcing is Purchased. Which is true?`),
-      choice("We buy it complete — one order line",
-        "Sourcing becomes Purchased. Then you choose: comes In the box with it, or ordered separately (Prepared wrapper).",
-        fix({ make_or_buy: "purchased" }, "Could not change Sourcing")),
-      choice("We put it together ourselves",
-        "Type becomes Sub-assembly, so its parts are added as normal children.",
-        fix({ type: "sub_assembly" }, "Could not change Type")),
-      err,
-    );
-  }
-
-  window.PortalBomRules = { childRule, isBoughtComplete, needsTypeOrSourcing, openChildIntent, openWrap, openCannotHold };
+  window.PortalBomRules = { childRule, takesInTheBox, openAddMenu, openWrap };
 })();

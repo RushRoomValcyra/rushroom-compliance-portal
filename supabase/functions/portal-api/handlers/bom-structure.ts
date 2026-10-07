@@ -16,19 +16,23 @@ import { json } from "../../_shared/http.ts";
 import { db } from "../../_shared/env.ts";
 
 // NULL-equivalent: returns null when allowed, otherwise the reason it is not.
-// Keep in step with bom_child_rule() — latest definition in supabase/migrations/0041.
+// Keep in step with bom_child_rule() — latest definition in supabase/migrations/0042.
+// PROP-069: a part's children no longer depend on its Sourcing.
+// Self-contained on purpose: tests/bom-structure-rules.test.mjs lifts this
+// function out of the file on its own to compare it with the other copies.
 export function bomChildRule(type: string, makeOrBuy: string, isReference: boolean): string | null {
+  const PART_TYPES = ["part", "raw_material", "spare_part"];
   if (type === "finished_good") {
     return "A finished good is bought and passed on untouched — it never holds children.";
   }
-  if (isReference && (makeOrBuy !== "purchased" || type === "phantom_assembly" || type === "product_family")) {
-    return "Only something we buy complete has an In the box: what comes with its order line.";
+  if (PART_TYPES.includes(type) && !isReference) {
+    return "A part never holds real children. Put it In the box, or make a Prepared assembly.";
   }
-  if (!isReference && makeOrBuy === "purchased" && ["part", "raw_material", "spare_part", "sub_assembly"].includes(type)) {
-    return "This is bought complete. Something ordered separately and fitted to it goes into its Prepared wrapper; something that comes with its order is In the box.";
+  if (type === "sub_assembly" && makeOrBuy === "purchased" && !isReference) {
+    return "This assembly is bought complete — what is inside it goes In the box.";
   }
-  if (!isReference && makeOrBuy === "assembled" && ["part", "raw_material", "spare_part"].includes(type)) {
-    return "A part we put together is a sub-assembly. Change its Type first.";
+  if (isReference && ["sub_assembly", "phantom_assembly", "product_family"].includes(type) && !(type === "sub_assembly" && makeOrBuy === "purchased")) {
+    return "Only a part, or an assembly we buy complete, has an In the box.";
   }
   return null;
 }

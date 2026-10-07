@@ -4228,24 +4228,11 @@
           title: "Add child",
           onclick: (ev) => {
             ev.stopPropagation();
+            // PROP-069: a part takes no real children — two ways, one menu.
             const R = window.PortalBomRules;
-            // A Part that says Assembled can take no child at all — ask which is true.
-            if (R && R.needsTypeOrSourcing(comp)) {
-              R.openCannotHold({
-                node: comp, token, onChanged: refreshTree,
-                onResolved: (updated) => R.isBoughtComplete(updated)
-                  ? R.openChildIntent({
-                      node: updated, parentNode: null, token, onChanged: refreshTree,
-                      onAddTo: (target, o) => openAddChildModal(target, allComponents, token, refreshTree, target.id, { reference: !!(o && o.reference) }),
-                    })
-                  : openAddChildModal(updated, allComponents, token, refreshTree, updated.id),
-              });
-              return;
-            }
-            // PROP-067: something we buy complete is asked "what is this child?"
-            if (window.PortalBomRules && window.PortalBomRules.isBoughtComplete(comp)) {
-              window.PortalBomRules.openChildIntent({
-                node: comp, parentNode: null, token, onChanged: refreshTree,
+            if (R && R.takesInTheBox(comp)) {
+              R.openAddMenu({
+                anchor: ev.currentTarget, node: comp, parentNode: null, token, onChanged: refreshTree,
                 onAddTo: (target, o) => openAddChildModal(target, allComponents, token, refreshTree, target.id, { reference: !!(o && o.reference) }),
               });
               return;
@@ -4483,11 +4470,10 @@
         // `depth > 0` is one level off. That mismatch caused the v202 data loss.
         const isTreeRow  = !!parentNode;                    // every row inside a tree has a parent
         const canUnlink  = isTreeRow;                       // unlink the edge, never delete the component
-        // PROP-067: assemblies take children directly; something we buy
-        // complete takes them through the "what is this child?" dialog, which
-        // builds a Prepared wrapper or puts the child In the box (PROP-068).
-        // An In-the-box row may hold structure of its own, like any bought item.
-        const boughtComplete = !!(window.PortalBomRules && window.PortalBomRules.isBoughtComplete(n));
+        // PROP-069: assemblies take children directly; a part (any Sourcing)
+        // or an assembly we buy complete gets the two-item menu — In the box,
+        // or Prepared assembly. An In-the-box row may hold its own In the box.
+        const boughtComplete = !!(window.PortalBomRules && window.PortalBomRules.takesInTheBox(n));
         const canAddChild = n.type === "sub_assembly" || n.type === "phantom_assembly" || boughtComplete;
         // Always rendered on a tree row, disabled when there is nothing to swap
         // with. Hiding them on single-child assemblies made the control invisible
@@ -4691,10 +4677,10 @@
             // PROP-068: beside an In-the-box row, a sibling goes In the box too.
             isTreeRow ? el("button", { class: "btn btn-xs", type: "button", title: edgeRef ? "Add to the same box" : "Add sibling", style: "font-size:0.6875rem", onclick: () => openAddChildModal(parentNode, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom, reference: edgeRef }) }, "+sib") : null,
             canAddChild ? el("button", {
-              class: "btn btn-xs", type: "button", title: boughtComplete ? "Add child — bought complete, so you will be asked what it is" : "Add child", style: "font-size:0.6875rem",
-              onclick: () => boughtComplete
-                ? window.PortalBomRules.openChildIntent({
-                    node: n, parentNode: isTreeRow ? parentNode : null, token, onChanged: onRefresh,
+              class: "btn btn-xs", type: "button", title: boughtComplete ? "Add — In the box, or a Prepared assembly" : "Add child", style: "font-size:0.6875rem",
+              onclick: (ev) => boughtComplete
+                ? window.PortalBomRules.openAddMenu({
+                    anchor: ev.currentTarget, node: n, parentNode: isTreeRow ? parentNode : null, token, onChanged: onRefresh,
                     onAddTo: (target, o) => openAddChildModal(target, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom, reference: !!(o && o.reference) }),
                   })
                 : openAddChildModal(n, allComponents, token, onRefresh, rootId, { linkExistingOnly: isDynamicBom }),
@@ -5772,8 +5758,7 @@
     // PROP-067/068: In the box — what comes with a bought item's order line.
     // Same picker; the links are marked is_reference, so they are never ordered
     // or picked on their own (Hub/Site is set afterwards, on the row).
-    // `let`: the dialog can switch mode itself when the parent refuses (below).
-    let isReference = !!(opts && opts.reference);
+    const isReference = !!(opts && opts.reference);
     const titleEl = el("h3", { style: "margin:0;font-size:1rem" });
     const paintTitle = () => { titleEl.textContent = isReference ? `In the box with “${parentNode.name}”` : "Add child component"; };
     paintTitle();
@@ -5805,43 +5790,6 @@
     const submitLabel = () => (mode === "new" ? "Create & add"
       : picked.size > 1 ? `Add ${picked.size} to BOM` : "Add to BOM");
     const errEl = el("span", { style: "color:#e05454;font-size:0.8125rem;display:block;min-height:1.2rem;margin-top:0.25rem" }, "");
-    // When the parent refuses, the way out is offered right here — fixing the
-    // parent elsewhere and coming back would lose the selection. Each button
-    // fixes the one wrong thing and presses Add again.
-    const fixBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center" });
-    function showFixes() {
-      fixBar.replaceChildren();
-      const R = window.PortalBomRules;
-      if (!R || !parentNode.make_or_buy) return;
-      const fixBtn = (label, run) => el("button", {
-        class: "btn btn-sm", type: "button",
-        onclick: async (ev) => {
-          const b = ev.currentTarget;
-          b.disabled = true; errEl.textContent = "";
-          try { await run(); fixBar.replaceChildren(); form.requestSubmit(); }
-          catch (ex) { errEl.textContent = ex.message; b.disabled = false; }
-        },
-      }, label);
-      const setParent = async (patch) => {
-        await API.post(token, "updateComponent", { component_id: parentNode.id, ...patch });
-        Object.assign(parentNode, patch);
-        if (onRefresh) onRefresh();
-      };
-      if (R.needsTypeOrSourcing(parentNode)) {
-        fixBar.append(
-          fixBtn("We buy it complete — add this In the box", async () => { await setParent({ make_or_buy: "purchased" }); isReference = true; paintTitle(); }),
-          fixBtn("We put it together — make it a Sub-assembly", async () => { await setParent({ type: "sub_assembly" }); isReference = false; paintTitle(); }),
-        );
-      } else if (!isReference && R.childRule(parentNode.type, parentNode.make_or_buy, true) === null) {
-        fixBar.append(
-          fixBtn("It comes with its order — add it In the box", async () => { isReference = true; paintTitle(); }),
-          el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Ordered separately? Use “Wrap in Prepared…” in the part's panel."),
-        );
-      } else if (isReference && R.childRule(parentNode.type, parentNode.make_or_buy, false) === null) {
-        fixBar.append(fixBtn("Add it as a normal child instead", async () => { isReference = false; paintTitle(); }));
-      }
-    }
-
     // Tab bar
     const tabExisting = el("button", { type: "button", style: "flex:1;border-radius:0;border:none;padding:0.4rem 0.75rem;font-size:0.8125rem;font-weight:600;cursor:pointer;transition:background 0.1s" }, "Link existing");
     const tabNew      = el("button", { type: "button", style: "flex:1;border-radius:0;border:none;padding:0.4rem 0.75rem;font-size:0.8125rem;font-weight:600;cursor:pointer;transition:background 0.1s" }, "Create new");
@@ -6236,8 +6184,7 @@
         // and then having the link refused left an orphan in the registry.
         const R = window.PortalBomRules;
         const refused = R && parentNode.make_or_buy ? R.childRule(parentNode.type, parentNode.make_or_buy, isReference) : null;
-        if (refused) { stop(`${parentNode.name}: ${refused}`); showFixes(); return; }
-        fixBar.replaceChildren();
+        if (refused) return stop(`${parentNode.name}: ${refused}`);
 
         submitBtn.disabled = true;
         const cond = Object.keys(conditionMap).length > 0 ? { ...conditionMap } : null;
@@ -6292,7 +6239,6 @@
             : mode === "new" && createdNew
               ? `${createdNew.part_number} “${createdNew.name}” was created, but could not be added under ${parentNode.name}: ${msg} Fix that and press again — it will not be created twice.`
               : msg;
-          showFixes();   // a refusal from the database gets the same way out
           submitBtn.disabled = false;
           submitBtn.textContent = submitLabel();
           if (added.length) { paintTray(); buildList(); if (onRefresh) onRefresh(); }
@@ -6346,7 +6292,6 @@
       ]),
       el("div", { style: "flex-shrink:0" }, [
         errEl,
-        fixBar,
         el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
           el("button", { class: "btn btn-sm", type: "button", onclick: () => overlay.remove() }, "Cancel"),
           submitBtn,
@@ -7851,11 +7796,11 @@
           el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
           // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
           // part from where it lives starts here.
-          window.PortalBomRules && window.PortalBomRules.isBoughtComplete(nodeData) ? el("div", {
+          window.PortalBomRules && window.PortalBomRules.takesInTheBox(nodeData) ? el("div", {
             style: "display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border,#e2e8f0)",
           }, [
             el("span", { style: "flex:1;font-size:0.75rem;color:var(--muted,#8b93a1)" },
-              "Bought complete. Anything we fit to it belongs in a Prepared assembly; the part stays as it is."),
+              "Real structure for this part lives in a Prepared assembly; the part stays as it is."),
             el("button", {
               class: "btn btn-sm", type: "button", style: "white-space:nowrap",
               onclick: () => window.PortalBomRules.openWrap({

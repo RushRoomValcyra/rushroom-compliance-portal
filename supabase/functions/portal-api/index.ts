@@ -3257,7 +3257,7 @@ Deno.serve(async (req) => {
         .select("id, name, part_number, type").in("id", ids);
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const { data: edges } = await tdb("bom_edges")
-        .select("id, parent_id, child_id, quantity, reference_designator, sort_order, fitting_stage, variant_condition, is_reference")
+        .select("id, parent_id, child_id, quantity, reference_designator, sort_order, fitting_stage, variant_condition, is_reference, is_prepared_part")
         .in("parent_id", ids).is("effective_to", null)
         .order("sort_order", { ascending: true });
       const next: string[] = [];
@@ -3340,6 +3340,7 @@ Deno.serve(async (req) => {
           sort_order: e.sort_order ?? 0, fitting_stage: e.fitting_stage ?? null,
           variant_condition: e.variant_condition ?? null,
           is_reference: e.is_reference === true,   // PROP-067
+          is_prepared_part: e.is_prepared_part === true,   // PROP-071: the copy prepares its own part
         });
       }
     }
@@ -3531,7 +3532,7 @@ Deno.serve(async (req) => {
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const currentDepth = batch[0].depth;
       if (currentDepth >= depthLimit) continue;
-      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage, is_reference")
+      const { data: childEdges } = await db.from("bom_edges").select("id, parent_id, child_id, quantity, reference_designator, variant_condition, sort_order, fitting_stage, is_reference, is_prepared_part")
         .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId)
         .order("sort_order", { ascending: true }).order("id", { ascending: true });
       (childEdges || []).forEach((e: any) => {
@@ -3736,6 +3737,8 @@ Deno.serve(async (req) => {
         // A move keeps where the part is fitted and what kind of link it is.
         // Before PROP-067 the stage was silently dropped on every move.
         fitting_stage: edge.fitting_stage ?? null, is_reference: edge.is_reference === true,
+        // is_prepared_part is NOT carried: moved out of its Prepared assembly,
+        // a part is no longer the thing that assembly prepares (PROP-071).
         effective_from: today, sort_order: nextOrder,
       }).select("id").maybeSingle();
       if (insErr || !created) throw new Error(insErr?.message || "Edge insert returned no data");

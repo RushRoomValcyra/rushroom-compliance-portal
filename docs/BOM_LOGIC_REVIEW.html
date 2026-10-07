@@ -222,7 +222,7 @@
     <div class="col col-plan">
       <h3>◇ Next — designed, not built</h3>
       <ul>
-        <li><b>PROP-070 — In the box visible and filterable: built, not deployed</b><span class="s">Cardboard colour on In-the-box rows and on the parts that hold them (“▢ In the box · 1”), and a “▢ In the box” filter chip that combines with the category. portal-api deploy → git push (v288).</span></li>
+        <li><b>PROP-071 — the part being prepared: built, not deployed</b><span class="s">Inside a Prepared assembly the bought part shows <b>◆ BEING PREPARED</b> and the rest sit under it marked ↳ “fitted to …”. Move says why parts are not offered. db push (0043) → portal-api deploy → git push (v289).</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
         <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
@@ -231,7 +231,8 @@
     <div class="col col-issue">
       <h3>! Not right yet</h3>
       <ul>
-        <li><b>In the box looks like structure</b><span class="s">a part with contents shows the same green arrow as an assembly — fixed by PROP-070.</span></li>
+        <li><b>Prepared Mid Panel - White holds no panel</b><span class="s">only pins, legs, holders, dowels and screws — the mid panel part itself is missing, so it has no “part being prepared”.</span></li>
+        <li><b>4 links in Prepared S Middle Door have no Hub/Site</b><span class="s">all fitted by us at the hub (2026-10-07) — to be set.</span></li>
         <li><b>L LED Profile still Part + Assembled</b><span class="s">Its clips part exists but is not linked yet.</span></li>
         <li><b>13 links inside the new wrappers have no Hub/Site</b></li>
         <li><b>Drawers incomplete</b><span class="s">bottom/back parts missing; drawer & door pre-assemblies used nowhere; door handle colours open — case G.</span></li>
@@ -240,6 +241,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-07</b> Door hardware (plate, hinge, handle) is ordered separately and fitted by us at the hub — so it rightly sits in Prepared S Middle Door, not under the door. PROP-071 built so that reads as “door + what is fitted to it”.</div>
     <div><b>2026-10-07</b> PROP-069 live and confirmed. PROP-070 built: In the box gets its own colour (cardboard) in the tree and the list, and a filter chip.</div>
     <div><b>2026-10-07</b> PROP-069 built: two-item menu; a part's children no longer depend on Sourcing; Prepared assembly from any part. Hub/Site kept on In the box — and made a general principle: where something is installed <i>or modified</i> must always be sayable.</div>
     <div><b>2026-10-07</b> Verdict on first real use: over-engineered. Adding to a part becomes <b style="min-width:0">two options in one click</b> — In the box (visual, no stock of its own) or Prepared assembly — with no Sourcing gate (PROP-069, planned).</div>
@@ -284,6 +286,10 @@
       <div class="truth likely">
         <div class="tq">⧉ Prepared assembly → one line to confirm the name</div>
         <div class="ta">“Prepared L LED Profile including milky cover” is created under <b>Assemblies</b> with the part ×1 inside, then the picker opens on it. Inside an assembly's tree it takes the part's place there; from the Parts list it stands on its own. If one already exists, the menu offers it instead.</div>
+        <div class="tree"><ul><li><span class="n">Prepared S Middle Door - White - White Handle</span>
+          <ul><li><span class="n">S Middle Door - White</span> <span class="b" style="background:#15803d12;color:#15803d;border:1px solid #15803d55">◆ BEING PREPARED</span></li>
+              <li><span class="n" style="padding-left:14px">↳ Half overlay Hinge</span> ×4 <span class="b b-hub">Hub</span></li>
+              <li><span class="n" style="padding-left:14px">↳ Half moon door handles - White</span> ×1 <span class="b b-hub">Hub</span></li></ul></li></ul></div>
       </div>
     </div>
   </div>

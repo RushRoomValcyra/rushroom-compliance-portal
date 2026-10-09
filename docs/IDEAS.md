@@ -1664,3 +1664,45 @@ Decision 2026-10-06 (*Buy unit = BOM line*) keeps a bought article as one BOM li
 **Sketch:** a nullable `fitting_stage` (`hub` / `site`, NULL = not decided) on `family_routing_steps` and `work_order_steps`, with the same CHECK as migration 0036; a stage control on each step; the existing Hub/Site counts extended to operations.
 
 **Status:** Raw idea — build when the first work order needs it ("until we hit the wall").
+
+---
+### BOM Cost Simulation — Landed Cost in SEK, What-If, Deviations — 2026-10-09
+**One sentence:** Give every bought item a unit cost, transport and customs in SEK ex VAT, roll them up through any assembly's BOM, and let the user try changes in place — showing what moved since a saved baseline and where the money and the gaps are.
+
+**Problem it solves:**
+Nobody can say what an L module, a COMPLETE Drawer Set or a Prepared door costs. Prices live in quotes and heads, transport and customs are forgotten, and swapping a supplier, a size (S→M→L) or a part is a spreadsheet exercise that is out of date the day it is made. The BOM already knows the structure and the quantities — it only lacks the numbers.
+
+**This reverses a decision — say so.** PROP-013 built a cost layer (5 tables, scenarios, cost maturity, currency adjustment) and PROP-019 removed it on 2026-08-29 because "financial analysis belongs in ERP". There will be no ERP: Rushroom builds the whole stack in-house, and the user has asked for this explicitly *without* any ERP connection. The reason for the removal no longer holds. What must not come back is the old weight: no scenarios table, no currencies, no maturity levels, no ERP references.
+
+**MVP scope:**
+- **Cost fields, per component, SEK ex VAT:** unit cost · transport per unit · customs % (of unit cost) · a short source note ("quote Häfele 2026-10"). Landed unit cost = unit + transport + unit × customs %. Entered on the component panel *and* in a grid on the cost view, so 100 parts can be filled in one sitting.
+- **Cost view on any assembly:** the tree rolled up — per line: qty, landed unit, line total, share of total; per level: subtotals; at the top: total landed cost ex VAT, and how much of it is unit price vs transport vs customs.
+- **Rules it follows from the BOM logic already decided:** In-the-box children carry no cost of their own (they come with the parent's order line — its unit cost includes them); Kits and Prepared/sub-assemblies are the sum of their children; Fitted (Hub/Site) does not change cost in the MVP.
+- **What-if, in place:** change a unit cost, transport or customs %, or swap a part (reusing the copy dialog's *Replace…* picker) in the cost view — not saved to the master data — and see the new total and the delta per line. "Apply" writes a changed value to the component only when the user chooses to.
+- **Deviations:** "Save baseline" stores the rolled-up lines and total for that assembly with a date and a name. The cost view then shows the change since the baseline per line (price moved, part swapped, quantity changed, line added/removed) and in total.
+- **Opportunities (computed, no AI):** the few lines that make up 80 % of the cost; lines where transport + customs exceed a set share of the unit price; parts with **no cost** entered (the total is shown as incomplete, never silently low); the same component at different landed costs in different assemblies is impossible by design (one cost per component) — but the same *function* at different costs (e.g. two hinge suppliers) shows up as a swap opportunity when both exist in the registry.
+
+**Tables involved:**
+- `component_costs` (new) — one row per component: `organization_id` NOT NULL, `component_id` UNIQUE, `unit_cost_sek` NUMERIC ≥ 0, `transport_sek` NUMERIC ≥ 0, `customs_pct` NUMERIC 0–100, `source_note`, `updated_at`, `updated_by`. Not on `component_metadata`, which is snapshotted on every version bump — cost changes far more often than the part does.
+- `cost_baselines` (new) — `organization_id` NOT NULL, `root_component_id`, `name`, `created_at`, `created_by`, `total_sek`, `lines` JSONB (component, path, qty, landed unit at the time). One row per saved baseline.
+- Both added to `TENANT_TABLES`. Reads `bom_components`, `bom_edges` (incl. `is_reference`), and reuses the explosion logic of `_shared/planner-resolver-core.mjs`.
+- Costs are **rushroom-role only**: `supplier.html` loads the same `app.js`, so every cost action and screen must check the role server-side.
+
+**Branch name:** `feat/bom-cost-simulation`
+
+**Effort estimate:** 14–18 h. Tables + actions (`getCostView`, `setComponentCost`, `saveCostBaseline`, `listCostBaselines`) ~5 h · cost view with roll-up, shares and what-if ~6 h · baseline compare and opportunities ~3 h · grid entry ~2 h · tests ~2 h.
+
+**Risks:**
+- **Scope creep back into PROP-013.** The first request will be scenarios, then currencies, then labour. Keep SEK only and in-memory what-if until a real need shows; labour and hub work are a later, separate step.
+- **Data-entry burden.** A cost view that is 70 % "no cost" is worse than none. The grid and the "incomplete" total are what keep it honest; a CSV import is the obvious next step.
+- **Double counting In the box.** If someone enters a cost on an In-the-box child *and* the parent's price already includes it, the total is inflated. The roll-up must skip In-the-box children; the cost field on them should say so.
+- **Prepared / hub work not costed.** A Prepared door will show only its parts, under-stating the real cost. State it on the screen rather than imply completeness.
+- **Exposure:** costs must never reach the supplier view or the planner resolver output to Order Operations.
+
+**Related PROPs:**
+- **PROP-013 / PROP-019** — the original cost layer and its removal; this is a deliberate, much smaller return (see above).
+- **Stocked pre-assemblies** (roadmap Backlog) — a stocked Prepared assembly will want a stock value = this roll-up; build cost first and that becomes one call.
+- **PROP-030 Manufacturing** — labour per routing step is the natural home for hub work cost later, not this MVP.
+- **Copy assembly (Replace…)** — the what-if part swap reuses that picker.
+
+**Status:** Raw idea

@@ -41,6 +41,7 @@
       "suggestDocumentVersion", "runDeviationScan", "extractStandardClauses",
       "generateInterpretations", "suggestRequirementLinks", "generateComplianceNarrative",
       "suggestClassifications", "extractComponentSpecs", "extractDrawingMeta",
+      "extractCostsFromDocument",   // PROP-073
     ]),
     "portal-cellar": new Set([
       "addDirective", "syncDirectiveRelations", "inferDirectiveRelations",

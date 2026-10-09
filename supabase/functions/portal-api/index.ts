@@ -33,6 +33,7 @@ import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
+import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
 
 const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
 const PLANNER_RESOLVER_MAX_REQUIREMENTS = 250;
@@ -1936,6 +1937,11 @@ Deno.serve(async (req) => {
     return json({ error: "Action 'suggestFileMetadata' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
   }
 
+  if (action === "extractCostsFromDocument") {
+    // PROP-073: served by portal-ai (document reading). A client posting it here is stale.
+    return json({ error: "Action 'extractCostsFromDocument' is served by portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
+  }
+
   if (action === "extractDrawingMeta") {
     // Never lived here, but answered anyway: if portal-ai is behind the frontend
     // during a deploy, "served elsewhere" is a far more useful reply than
@@ -3590,6 +3596,9 @@ Deno.serve(async (req) => {
   if (COST_ACTIONS.has(action)) {
     return await handleCostAction(action, body, { role, tdb, uid: (session.uid as string) || null });
   }
+  if (COST_REVIEW_ACTIONS.has(action)) {
+    return await handleCostReviewAction(action, body, { role, tdb, uid: (session.uid as string) || null });
+  }
 
   // --- BOM: wrap a bought part in a Prepared sub-assembly (PROP-067) --------
   if (action === "wrapInPrepared") {
@@ -4048,7 +4057,8 @@ Deno.serve(async (req) => {
         notes: `Document uploaded & linked: ${docName} (${compCat})`,
       });
     }
-    return json({ ok: true });
+    // version_id: PROP-073 links the costs read from a quote to the quote itself.
+    return json({ ok: true, document_id: doc.id, version_id: ver.id });
   }
 
 

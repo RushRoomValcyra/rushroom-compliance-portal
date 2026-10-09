@@ -49,6 +49,8 @@ export const TENANT_TABLES = new Set([
   "planner_mappings", "planner_catalog_entries",
   // PROP-072: BOM cost simulation (migration 0046)
   "component_costs", "currency_rates", "cost_baselines",
+  // PROP-073: full BOM cost reviews (migration 0047)
+  "cost_reviews",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

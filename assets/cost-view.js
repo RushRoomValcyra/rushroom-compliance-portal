@@ -60,13 +60,22 @@
 
     function render() {
       const { view } = st;
-      const result = M().rollup(view, { overrides: st.overrides, swaps: st.swaps });
+      // PROP-073: both roll-ups — actual (what-if applies here) and estimated.
+      const ea = M().estimateVsActual(view, { overrides: st.overrides, swaps: st.swaps });
+      const result = ea.actual;
+      const estLine = (path) => ea.estimatedByPath[path];
+      const estGroup = (path) => ea.estimatedGroupByPath[path];
+      const deltaCell = (act, est) => {
+        if (act === null || est === null || est === undefined) return el("span", { style: "text-align:right" }, "");
+        const d = act - est, rel = est ? d / est : 0;
+        return el("span", { style: `text-align:right;${rel > M().OVER_ESTIMATE ? "color:#b91c1c;font-weight:600" : rel < -0.005 ? "color:#15803d" : ""}`, title: est ? `${(rel * 100).toFixed(1)} % vs estimate` : "" }, signed(d));
+      };
       const cmp = st.baseline ? M().compare(result, view.rates, st.baseline) : null;
       const deltaOf = cmp ? Object.fromEntries(cmp.rows.map((r) => [r.path, r])) : {};
-      const opp = M().opportunities(result);
+      const opp = M().opportunities(result, ea.estimatedByPath);
       const whatIfs = Object.keys(st.overrides).length + Object.keys(st.swaps).length;
       const share = (v) => (result.total ? pct(v / result.total) : "—");
-      const GRID = `display:grid;grid-template-columns:minmax(12rem,1fr) 3.5rem 9rem 8rem 4.5rem 7rem 7.5rem 4rem${cmp ? " 7rem" : ""} 8rem;gap:0.4rem;align-items:center;padding:0.25rem 0.4rem;font-size:0.8125rem;border-bottom:1px solid var(--border,#e2e8f0)`;
+      const GRID = `display:grid;grid-template-columns:minmax(12rem,1fr) 3.5rem 9rem 8rem 4.5rem 7rem 7.5rem 7rem 6.5rem 4rem${cmp ? " 7rem" : ""} 8rem;gap:0.4rem;align-items:center;padding:0.25rem 0.4rem;font-size:0.8125rem;border-bottom:1px solid var(--border,#e2e8f0)`;
 
       const rateDate = el("input", { class: "up-text", type: "date", value: st.rateDate, "aria-label": "Rate date", onchange: (ev) => { st.rateDate = ev.target.value; load(); } });
       const used = Object.entries(view.rates || {}).filter(([c, r]) => c !== "SEK" && r).map(([c, r]) => `${c} ${r.rate} (${r.valid_on})`).join(" · ");
@@ -95,7 +104,10 @@
         if (g) return el("div", { style: `${GRID};background:var(--bg-2,rgba(0,0,0,0.03));font-weight:700` }, [
           el("span", { style: indent }, [g.name, g.incomplete ? el("span", { style: `color:${WARN};font-weight:400` }, " · incomplete") : null]),
           el("span", {}, `×${g.qty}`), el("span"), el("span"), el("span"), el("span"),
-          el("span", { style: "text-align:right" }, M().sek(g.subtotalSEK)), el("span", { style: "text-align:right" }, share(g.subtotalSEK)),
+          el("span", { style: "text-align:right" }, M().sek(g.subtotalSEK)),
+          el("span", { style: "text-align:right;font-weight:400" }, estGroup(g.path) ? M().sek(estGroup(g.path).subtotalSEK) : "—"),
+          deltaCell(g.subtotalSEK, estGroup(g.path) ? estGroup(g.path).subtotalSEK : null),
+          el("span", { style: "text-align:right" }, share(g.subtotalSEK)),
           cmp ? el("span") : null, el("span"),
         ].filter((x) => x !== null));
         const d = deltaOf[l.path];
@@ -106,6 +118,8 @@
           ...costCells(l),
           el("span", { style: `text-align:right${l.missing ? `;color:${WARN}` : ""}` }, l.missing === "cost" ? "no cost" : l.missing === "rate" ? "no rate" : M().sek(l.landedSEK)),
           el("span", { style: "text-align:right;font-weight:600" }, l.missing ? "—" : M().sek(l.lineSEK)),
+          el("span", { style: `text-align:right;${MUTED}` }, estLine(l.path) && !estLine(l.path).missing ? M().sek(estLine(l.path).lineSEK) : "—"),
+          deltaCell(l.missing ? null : l.lineSEK, estLine(l.path) && !estLine(l.path).missing ? estLine(l.path).lineSEK : null),
           el("span", { style: "text-align:right" }, l.missing ? "" : share(l.lineSEK)),
           cmp ? el("span", { style: "text-align:right", title: d ? `qty ${M().sek(d.qty)} · price ${M().sek(d.price)} · rate ${M().sek(d.rate)}` : "" }, d && d.status !== "same" ? `${d.status === "added" ? "new " : d.status === "swapped" ? "swap " : ""}${signed(d.delta)}` : "") : null,
           el("span", { style: "display:flex;gap:0.2rem;justify-content:flex-end" }, [
@@ -128,10 +142,14 @@
           el("span", { style: `font-size:0.75rem;${MUTED}` }, used || "no foreign rates yet"),
           el("button", { class: "btn btn-sm", type: "button", onclick: () => window.PortalCost.openRates(token, load) }, "Rates…"),
           el("span", { style: `font-size:0.75rem;${MUTED}` }, view.rates_updated_on ? `rates last updated ${view.rates_updated_on}` : ""),
-          el("span", { style: "flex:1" }), blSelect, saveBl,
+          el("span", { style: "flex:1" }),
+          window.PortalCost.openReadQuote ? el("button", { class: "btn btn-sm", type: "button", title: "Read prices from a quote, price list or invoice — one document, many parts", onclick: () => window.PortalCost.openReadQuote({ scope: comp, token, onSaved: load }) }, "✨ Read a quote…") : null,
+          blSelect, saveBl,
         ]),
         el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
-          card("Total ex VAT", M().sek(result.total), result.incomplete ? `incomplete — ${result.missing.length} line${result.missing.length === 1 ? "" : "s"} without cost or rate` : "complete", result.incomplete ? WARN : null),
+          card("Actual ex VAT", M().sek(result.total), result.incomplete ? `incomplete — ${result.missing.length} line${result.missing.length === 1 ? "" : "s"} without cost or rate` : "complete", result.incomplete ? WARN : null),
+          card("Estimated", M().sek(ea.estimated.total), ea.estimated.incomplete ? `incomplete — ${ea.estimated.missing.length} without an estimate` : "complete", ea.estimated.incomplete ? WARN : null),
+          card("Actual vs estimated", signed(ea.delta), ea.estimated.total ? `${((ea.delta / ea.estimated.total) * 100).toFixed(1)} %` : "", ea.delta > 0.005 ? "#b91c1c" : ea.delta < -0.005 ? "#15803d" : null),
           card("Price", M().sek(result.parts.price), result.total ? share(result.parts.price) : ""),
           card("Transport", M().sek(result.parts.transport), result.total ? share(result.parts.transport) : ""),
           card("Customs", M().sek(result.parts.customs), result.total ? share(result.parts.customs) : ""),
@@ -139,7 +157,7 @@
           cmp ? card(`Since ${st.baseline.name}`, signed(cmp.delta), `quantity ${signed(cmp.qty)} · price ${signed(cmp.price)} · rate ${signed(cmp.rate)}`) : null,
         ].filter(Boolean)),
         el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
-          ["Item", "Qty", "Unit cost", "Transport", "Customs %", "Landed / unit", "Line", "Share", cmp ? "Δ baseline" : null, ""].filter((x) => x !== null).map((t) => el("span", {}, t))),
+          ["Item", "Qty", "Unit cost", "Transport", "Customs %", "Landed / unit", "Actual", "Estimated", "Δ est.", "Share", cmp ? "Δ baseline" : null, ""].filter((x) => x !== null).map((t) => el("span", {}, t))),
         ...tableRows,
         removed.length ? el("div", { style: `font-size:0.8125rem;margin-top:0.5rem;color:${WARN}` }, `Removed since the baseline: ${removed.map((r) => `${r.line.name} (${signed(r.delta)})`).join(", ")}`) : null,
         el("div", { style: "margin-top:0.9rem;padding:0.6rem 0.8rem;border:1px solid var(--border,#e2e8f0);border-radius:8px;font-size:0.8125rem;display:flex;flex-direction:column;gap:0.3rem" }, [
@@ -147,6 +165,7 @@
           opp.pareto.length ? el("div", {}, `${opp.pareto.length} line${opp.pareto.length === 1 ? "" : "s"} make ${pct(opp.paretoShare)} of the cost: ${opp.pareto.map((l) => l.name).join(", ")}.`) : null,
           opp.overhead.length ? el("div", {}, `Transport + customs above ${pct(M().OVERHEAD_SHARE)} of the unit price: ${opp.overhead.map((l) => l.name).join(", ")}.`) : null,
           Object.keys(opp.exposure).length ? el("div", {}, `Currency exposure: ${Object.entries(opp.exposure).sort((a, b) => b[1] - a[1]).map(([c, v]) => `${c} ${pct(v)}`).join(" · ")}.`) : null,
+          opp.overEstimate.length ? el("div", { style: "color:#b91c1c" }, `Actual above estimate by more than ${pct(M().OVER_ESTIMATE)}: ${opp.overEstimate.map((l) => l.name).join(", ")}.`) : null,
           opp.missing.length ? el("div", { style: `color:${WARN}` }, `No cost or rate: ${opp.missing.map((l) => l.name).join(", ")}.`) : null,
           el("div", { style: `font-size:0.75rem;${MUTED}` }, "In-the-box contents are inside their parent's price. Hub and site work are not costed yet."),
         ].filter(Boolean)),

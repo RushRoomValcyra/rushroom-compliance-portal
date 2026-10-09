@@ -18,7 +18,7 @@
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="./assets/styles.css?v=297" />
+  <link rel="stylesheet" href="./assets/styles.css?v=298" />
 </head>
 <body data-page="full">
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -119,15 +119,22 @@
   </footer>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="./assets/config.js?v=297"></script>
-  <script src="./assets/api.js?v=297"></script>
-  <script src="./assets/gdocs.js?v=297"></script>
-  <script src="./assets/viewer.js?v=297"></script>
-  <script src="./assets/bom-structure.js?v=297"></script>
+  <script src="./assets/config.js?v=298"></script>
+  <script src="./assets/api.js?v=298"></script>
+  <script src="./assets/gdocs.js?v=298"></script>
+  <script src="./assets/viewer.js?v=298"></script>
+  <script src="./assets/bom-structure.js?v=298"></script>
   <!-- PROP-072: BOM cost simulation — index.html only, never supplier.html -->
-  <script src="./assets/cost-math.js?v=297"></script>
-  <script src="./assets/cost-forms.js?v=297"></script>
-  <script src="./assets/cost-view.js?v=297"></script>
-  <script src="./assets/app.js?v=297"></script>
+  <!-- One arithmetic file for browser, server and tests (PROP-073). A module
+       runs after the classic scripts below; cost code only calls it on click. -->
+  <script type="module">
+    import * as CostMath from "./supabase/functions/_shared/cost-math.mjs?v=298";
+    window.PortalCostMath = CostMath;
+  </script>
+  <script src="./assets/cost-forms.js?v=298"></script>
+  <script src="./assets/cost-view.js?v=298"></script>
+  <script src="./assets/cost-ai.js?v=298"></script>
+  <script src="./assets/cost-review-view.js?v=298"></script>
+  <script src="./assets/app.js?v=298"></script>
 </body>
 </html>

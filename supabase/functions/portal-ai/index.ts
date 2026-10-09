@@ -18,6 +18,7 @@ import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 
 import { serve, json, type Ctx } from "../_shared/handler.ts";
 import { db, enc, ANTHROPIC_API_KEY, SCAN_MODEL, META_MODEL, BUCKET, DOC_BUCKET, STD_BUCKET } from "../_shared/env.ts";
+import { extractCostsFromDocument } from "./handlers/cost-extract.ts";
 import { eq } from "../_shared/auth.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 
@@ -983,6 +984,13 @@ For each item, choose exactly one lifecyclePhase and one scope, with a confidenc
       return { id: String(p.id), entityType: it.entityType, label: it.label, sublabel: it.sublabel, lifecyclePhase: p.lifecyclePhase, scope: p.scope, confidence: Math.max(0, Math.min(1, Number(p.confidence) || 0.5)), rationale: String(p.rationale || "").slice(0, 300) };
     });
     return json({ ok: true, proposals, usage: usageOf(apiJson) });
+  }
+
+  // PROP-073: read supplier costs from a quote / price list / invoice.
+  if (action === "extractCostsFromDocument") {
+    return await extractCostsFromDocument(body, {
+      role, tdb, db, apiKey: ANTHROPIC_API_KEY, model: SCAN_MODEL, docBucket: DOC_BUCKET, fileBlock, meterAi,
+    });
   }
 
   if (action === "extractComponentSpecs") {

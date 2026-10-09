@@ -35,17 +35,53 @@ test("handlers read through tdb with named columns", () => {
 
 test("cost code never reaches the supplier page or Order Operations", () => {
   const supplier = read("supplier.html");
-  assert.ok(!/cost-(math|forms|view)\.js/.test(supplier), "cost scripts are loaded on supplier.html");
+  assert.ok(!/cost-(forms|view)\.js/.test(supplier), "cost scripts are loaded on supplier.html");
   const resolver = read("supabase/functions/_shared/planner-resolver-core.mjs");
   assert.ok(!/cost/i.test(resolver), "the planner resolver mentions cost");
   const index = read("index.html");
-  for (const f of ["cost-math.js", "cost-forms.js", "cost-view.js"]) {
+  for (const f of ["cost-forms.js", "cost-view.js"]) {
     assert.ok(index.indexOf(f) > 0 && index.indexOf(f) < index.indexOf("assets/app.js"), `${f} must load before app.js`);
   }
+  assert.ok(/import \* as CostMath from "\.\/supabase\/functions\/_shared\/cost-math\.mjs/.test(index), "the browser does not load the shared arithmetic");
+  assert.ok(!/cost-math/.test(supplier), "the arithmetic is loaded on supplier.html");
 });
 
 test("the panel and toolbar only offer cost to Rushroom", () => {
   const app = read("assets/app.js");
   assert.ok(/role === "rushroom" && window\.PortalCost \? \[\{ id: "cost", label: "Cost" \}\]/.test(app));
   assert.ok(/role === "rushroom" && window\.PortalCost \? el\("button"/.test(app));
+});
+
+// ---- PROP-073 -----------------------------------------------------------------
+
+test("Estimated and Actual are one row each per part", () => {
+  const sql47 = read("supabase/migrations/0047_cost_estimated_and_reviews.sql");
+  assert.ok(/CHECK \(kind IN \('actual', 'estimated'\)\)/.test(sql47));
+  assert.ok(/UNIQUE \(organization_id, component_id, kind\)/.test(sql47));
+  assert.ok(/onConflict: "organization_id,component_id,kind"/.test(handler), "upsert still targets the old one-cost key");
+  assert.ok(tenant.includes('"cost_reviews"'), "cost_reviews missing from TENANT_TABLES");
+  assert.ok(sql47.includes("ALTER TABLE cost_reviews ENABLE ROW LEVEL SECURITY;"));
+});
+
+test("the review and the AI read are Rushroom only and use the shared arithmetic", () => {
+  const review = read("supabase/functions/portal-api/handlers/cost-review.ts");
+  const extract = read("supabase/functions/portal-ai/handlers/cost-extract.ts");
+  for (const [name, src] of [["cost-review", review], ["cost-extract", extract]]) {
+    assert.ok(/if \(ctx\.role !== "rushroom"\) return json\(\{ error: "Not authorised" \}, 403\);/.test(src), `${name} has no role check`);
+    assert.ok(/from "\.\.\/\.\.\/_shared\/cost-math\.mjs"/.test(src), `${name} does its own arithmetic`);
+  }
+  assert.ok(/\.range\(from, from \+ PAGE - 1\)/.test(review), "a review of a BOM past 1000 links would be cut short");
+  assert.ok(/"extractCostsFromDocument",/.test(read("assets/api.js")), "the AI action is not routed to portal-ai");
+  assert.ok(/format: \{ type: "json_schema", schema: SCHEMA \}/.test(extract), "AI output is not schema-constrained");
+  assert.ok(/stop_reason === "max_tokens"/.test(extract) && /stop_reason === "refusal"/.test(extract), "a cut-off or refused read is parsed as if it were whole");
+  assert.ok(/enum: \["", \.\.\.candidates\.map\(\(c\) => c\.id\)\]/.test(extract), "the AI can name a part outside the structure");
+});
+
+test("a quote read for costs is kept, linked, and never shown to suppliers", () => {
+  const ai = read("assets/cost-ai.js");
+  assert.ok(/is_supplier_visible: false/.test(ai));
+  assert.ok(/source_document_version_id: doc\.version_id/.test(ai), "saved costs do not point at their document");
+  assert.ok(/return json\(\{ ok: true, document_id: doc\.id, version_id: ver\.id \}\);/.test(api), "uploadAndLinkComponentDocument does not return the version");
+  const supplier = read("supplier.html");
+  assert.ok(!/cost-ai|cost-review/.test(supplier));
 });

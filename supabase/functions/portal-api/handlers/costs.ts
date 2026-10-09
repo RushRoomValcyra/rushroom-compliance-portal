@@ -9,7 +9,7 @@
 import { json } from "../../_shared/http.ts";
 
 export const COST_ACTIONS = new Set([
-  "getCostView", "getComponentCost", "setComponentCost",
+  "getCostView", "getComponentCost", "setComponentCost", "setComponentCosts",
   "listCurrencyRates", "setCurrencyRate", "deleteCurrencyRate",
   "saveCostBaseline", "listCostBaselines", "getCostBaseline",
 ]);
@@ -18,6 +18,8 @@ const CURRENCIES = ["SEK", "EUR", "USD", "PLN"];
 const RATE_CURRENCIES = ["EUR", "USD", "PLN"];   // SEK is always 1
 const MAX_DEPTH = 10;
 const MAX_BASELINE_LINES = 2000;
+const KINDS = ["actual", "estimated"];   // PROP-073: from documents / our planning cost
+const COST_COLS = "component_id, kind, unit_cost, unit_currency, transport_cost, transport_currency, customs_pct, quoted_on, source_note, source_document_version_id, evidence, updated_at";
 
 type Ctx = {
   role: string;
@@ -64,7 +66,7 @@ export async function handleCostAction(action: string, body: any, ctx: Ctx): Pro
 
     const ids = Object.keys(nodeMap);
     const { data: costs, error: ke } = await tdb("component_costs")
-      .select("component_id, unit_cost, unit_currency, transport_cost, transport_currency, customs_pct, quoted_on, source_note, updated_at")
+      .select(COST_COLS)
       .in("component_id", ids);
     if (ke) return json({ error: ke.message }, 400);
 
@@ -89,55 +91,34 @@ export async function handleCostAction(action: string, body: any, ctx: Ctx): Pro
   if (action === "getComponentCost") {
     const id = body.component_id;
     if (!id) return json({ error: "component_id required" }, 400);
-    const [{ data: cost, error }, { data: kids }] = await Promise.all([
-      tdb("component_costs")
-        .select("unit_cost, unit_currency, transport_cost, transport_currency, customs_pct, quoted_on, source_note, updated_at")
-        .eq("component_id", id).maybeSingle(),
+    const [{ data: rows, error }, { data: kids }] = await Promise.all([
+      tdb("component_costs").select(COST_COLS).eq("component_id", id),
       tdb("bom_edges").select("id").eq("parent_id", id).is("effective_to", null).eq("is_reference", false).limit(1),
     ]);
     if (error) return json({ error: error.message }, 400);
-    return json({ cost: cost || null, has_real_children: (kids || []).length > 0 });
+    const byKind = Object.fromEntries((rows || []).map((r: any) => [r.kind, r]));
+    // `cost` kept for callers that only know one cost (the what-if swap).
+    return json({ cost: byKind.actual || null, actual: byKind.actual || null, estimated: byKind.estimated || null, has_real_children: (kids || []).length > 0 });
   }
 
   if (action === "setComponentCost") {
-    const id = body.component_id;
-    if (!id) return json({ error: "component_id required" }, 400);
-    const { data: comp } = await tdb("bom_components")
-      .select("id, part_number, oem_number, name, description, type, lifecycle_status").eq("id", id).maybeSingle();
-    if (!comp) return json({ error: "Component not found" }, 404);
+    const r = await writeCost(tdb, ctx.uid, body);
+    return r.error ? json({ error: r.error }, r.status || 400) : json({ ok: true });
+  }
 
-    let note: string;
-    if (body.clear === true) {
-      const { error } = await tdb("component_costs").delete().eq("component_id", id);
-      if (error) return json({ error: error.message }, 400);
-      note = "Cost cleared";
-    } else {
-      const unit = num(body.unit_cost), transport = body.transport_cost === undefined ? 0 : num(body.transport_cost);
-      const customs = body.customs_pct === undefined ? 0 : num(body.customs_pct);
-      const uc = String(body.unit_currency || "SEK").toUpperCase(), tc = String(body.transport_currency || uc).toUpperCase();
-      if (!(unit >= 0)) return json({ error: "Unit cost must be a number, 0 or more." }, 400);
-      if (!(transport >= 0)) return json({ error: "Transport must be a number, 0 or more." }, 400);
-      if (!(customs >= 0 && customs <= 100)) return json({ error: "Customs must be a percentage between 0 and 100." }, 400);
-      if (!CURRENCIES.includes(uc) || !CURRENCIES.includes(tc)) return json({ error: `Currency must be one of ${CURRENCIES.join(", ")}.` }, 400);
-      if (body.quoted_on && !isDate(body.quoted_on)) return json({ error: "Quote date must be YYYY-MM-DD." }, 400);
-      const row = {
-        component_id: id, unit_cost: unit, unit_currency: uc, transport_cost: transport, transport_currency: tc,
-        customs_pct: customs, quoted_on: body.quoted_on || null,
-        source_note: body.source_note ? String(body.source_note).slice(0, 500) : null,
-        updated_at: new Date().toISOString(), updated_by: ctx.uid,
-      };
-      const { error } = await tdb("component_costs").upsert(row, { onConflict: "organization_id,component_id" });
-      if (error) return json({ error: error.message }, 400);
-      note = `Cost set to ${unit} ${uc}` + (transport ? ` + ${transport} ${tc} transport` : "") + (customs ? `, ${customs} % customs` : "");
+  // Many at once — the AI quote review saves every ticked line in one call.
+  // Validated in full first: one bad line means nothing is written.
+  if (action === "setComponentCosts") {
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length || items.length > 500) return json({ error: "items must be a list of 1–500 costs." }, 400);
+    for (const it of items) { const bad = validateCost(it); if (bad) return json({ error: `${it.component_id || "?"}: ${bad}` }, 400); }
+    let saved = 0;
+    for (const it of items) {
+      const r = await writeCost(tdb, ctx.uid, { ...it, kind: it.kind || body.kind, source_document_version_id: it.source_document_version_id || body.source_document_version_id });
+      if (r.error) return json({ error: `Saved ${saved} of ${items.length}, then ${it.component_id}: ${r.error}`, saved }, 400);
+      saved++;
     }
-    try {
-      await tdb("bom_component_history").insert({
-        component_id: id, changed_at: new Date().toISOString(), changed_by: ctx.uid, change_type: "updated",
-        part_number: comp.part_number, oem_number: comp.oem_number, name: comp.name,
-        description: comp.description, type: comp.type, lifecycle_status: comp.lifecycle_status, notes: note,
-      });
-    } catch { /* non-fatal — the cost is already saved */ }
-    return json({ ok: true });
+    return json({ ok: true, saved });
   }
 
   // --- dated currency rates --------------------------------------------------
@@ -209,4 +190,60 @@ export async function handleCostAction(action: string, body: any, ctx: Ctx): Pro
   }
 
   return json({ error: `Unknown cost action ${action}` }, 400);
+}
+
+// ---- one cost row: validate, upsert by (component, kind), log it -----------
+function validateCost(b: any): string | null {
+  if (!b || !b.component_id) return "component_id required";
+  if (b.kind !== undefined && !KINDS.includes(b.kind)) return "kind must be actual or estimated";
+  if (b.clear === true) return null;
+  const unit = num(b.unit_cost), transport = b.transport_cost === undefined ? 0 : num(b.transport_cost);
+  const customs = b.customs_pct === undefined ? 0 : num(b.customs_pct);
+  const uc = String(b.unit_currency || "SEK").toUpperCase(), tc = String(b.transport_currency || uc).toUpperCase();
+  if (!(unit >= 0)) return "Unit cost must be a number, 0 or more.";
+  if (!(transport >= 0)) return "Transport must be a number, 0 or more.";
+  if (!(customs >= 0 && customs <= 100)) return "Customs must be a percentage between 0 and 100.";
+  if (!CURRENCIES.includes(uc) || !CURRENCIES.includes(tc)) return `Currency must be one of ${CURRENCIES.join(", ")}.`;
+  if (b.quoted_on && !isDate(b.quoted_on)) return "Quote date must be YYYY-MM-DD.";
+  if (b.evidence !== undefined && b.evidence !== null && (!Array.isArray(b.evidence) || JSON.stringify(b.evidence).length > 4000)) return "evidence must be a short list.";
+  return null;
+}
+
+async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): Promise<{ error?: string; status?: number }> {
+  const bad = validateCost(b);
+  if (bad) return { error: bad };
+  const id = b.component_id, kind = b.kind || "actual";
+  const { data: comp } = await tdb("bom_components")
+    .select("id, part_number, oem_number, name, description, type, lifecycle_status").eq("id", id).maybeSingle();
+  if (!comp) return { error: "Component not found", status: 404 };
+  const label = kind === "estimated" ? "Estimated cost" : "Cost";
+  let note: string;
+  if (b.clear === true) {
+    const { error } = await tdb("component_costs").delete().eq("component_id", id).eq("kind", kind);
+    if (error) return { error: error.message };
+    note = `${label} cleared`;
+  } else {
+    const unit = num(b.unit_cost), transport = b.transport_cost === undefined ? 0 : num(b.transport_cost);
+    const customs = b.customs_pct === undefined ? 0 : num(b.customs_pct);
+    const uc = String(b.unit_currency || "SEK").toUpperCase(), tc = String(b.transport_currency || uc).toUpperCase();
+    const { error } = await tdb("component_costs").upsert({
+      component_id: id, kind, unit_cost: unit, unit_currency: uc, transport_cost: transport, transport_currency: tc,
+      customs_pct: customs, quoted_on: b.quoted_on || null,
+      source_note: b.source_note ? String(b.source_note).slice(0, 500) : null,
+      source_document_version_id: b.source_document_version_id || null,
+      evidence: Array.isArray(b.evidence) ? b.evidence.map((x: unknown) => String(x).slice(0, 300)).slice(0, 10) : null,
+      updated_at: new Date().toISOString(), updated_by: uid,
+    }, { onConflict: "organization_id,component_id,kind" });
+    if (error) return { error: error.message };
+    note = `${label} set to ${unit} ${uc}` + (transport ? ` + ${transport} ${tc} transport` : "") + (customs ? `, ${customs} % customs` : "")
+      + (b.source_document_version_id ? " (read from a document)" : "");
+  }
+  try {
+    await tdb("bom_component_history").insert({
+      component_id: id, changed_at: new Date().toISOString(), changed_by: uid, change_type: "updated",
+      part_number: comp.part_number, oem_number: comp.oem_number, name: comp.name,
+      description: comp.description, type: comp.type, lifecycle_status: comp.lifecycle_status, notes: note,
+    });
+  } catch { /* non-fatal — the cost is already saved */ }
+  return {};
 }

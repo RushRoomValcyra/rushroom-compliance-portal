@@ -3,13 +3,9 @@
 // so its numbers are checked here by hand-worked examples.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import vm from "node:vm";
 
-const src = readFileSync(new URL("../assets/cost-math.js", import.meta.url), "utf8");
-const sandbox = { window: {} };
-vm.runInNewContext(src, sandbox);
-const M = sandbox.window.PortalCostMath;
+// The same module the browser, portal-api and portal-ai import.
+const M = await import(new URL("../supabase/functions/_shared/cost-math.mjs", import.meta.url));
 // Values made inside the sandbox have the sandbox's Array prototype; strict
 // deepEqual would reject them even when the contents match.
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -120,4 +116,63 @@ test("opportunities: the lines making 80 %, heavy transport/customs, currency ex
   assert.deepEqual(plain(o.overhead.map((l) => l.name)), ["Handle"], "5 SEK transport on 10 SEK is 50 %");
   close(Object.values(o.exposure).reduce((a, b) => a + b, 0), 1, "exposure shares sum to 1");
   assert.ok(o.exposure.EUR > 0.5);
+});
+
+// ---- PROP-073 -----------------------------------------------------------------
+
+test("estimated and actual roll up separately; what-if touches only the actual", () => {
+  const view = { ...VIEW, costs: [
+    ...VIEW.costs,
+    { component_id: "set", kind: "estimated", unit_cost: 250, unit_currency: "SEK", transport_cost: 0, customs_pct: 0 },
+    { component_id: "handle", kind: "estimated", unit_cost: 20, unit_currency: "SEK", transport_cost: 0, customs_pct: 0 },
+  ] };
+  const ea = M.estimateVsActual(view, { overrides: { handle: { unit_cost: 30, unit_currency: "SEK" } } });
+  close(ea.estimated.total, 2 * 250 + 20, "estimated total (only estimated rows count)");
+  assert.equal(ea.estimated.incomplete, true, "bottom and front have no estimate");
+  close(ea.actual.total, 2 * 287.502 + 40 + 132.5 + 30, "actual total with the what-if handle");
+  close(ea.estimatedByPath["/prep/set"].landedSEK, 250, "estimate looked up by path");
+  const o = M.opportunities(ea.actual, ea.estimatedByPath);
+  assert.ok(o.overEstimate.some((l) => l.name === "Drawer Set ex Front"), "287.50 against an estimate of 250 is more than 10 % over");
+  assert.ok(o.overEstimate.some((l) => l.name === "Handle"), "30 against 20");
+});
+
+test("the full review costs each product and keeps its lines with the estimate", () => {
+  const graph = {
+    nodes: [...VIEW.nodes, { id: "kit", name: "Kit", type: "phantom_assembly" }],
+    edges: [...VIEW.edges, { parent_id: "kit", child_id: "bottom", quantity: 4 }],
+    costs: [...VIEW.costs, { component_id: "bottom", kind: "estimated", unit_cost: 35, unit_currency: "SEK", transport_cost: 0, customs_pct: 0 }],
+  };
+  const r = M.reviewProducts(graph, ["root", "kit"], RATES);
+  const one = M.rollup({ ...graph, root_id: "root", rates: RATES });
+  close(r[0].actual, one.total, "a review total equals the product's own roll-up");
+  close(r[1].actual, 4 * 40, "kit: 4 bottoms");
+  close(r[1].estimated, 4 * 35, "kit estimate");
+  assert.equal(r[1].baseline_lines[0].estimatedSEK, 35, "baseline lines carry the estimate");
+  assert.equal(r[0].missing_actual, 1, "the handle has no cost");
+});
+
+test("numbers as printed on European, Swedish and US documents", () => {
+  for (const [input, want] of [["1 234,50", 1234.5], ["1.234,50", 1234.5], ["1,234.50", 1234.5], ["12,5", 12.5], ["€ 24", 24], ["24.00 EUR", 24], ["1,234", 1234], ["", null], ["n/a", null]]) {
+    assert.equal(M.parseAmount(input), want, input);
+  }
+  assert.equal(M.normaliseCurrency("€"), "EUR");
+  assert.equal(M.normaliseCurrency("zł"), "PLN");
+  assert.equal(M.normaliseCurrency("kr"), "SEK");
+  assert.equal(M.normaliseCurrency("GBP"), null);
+});
+
+test("AI lines: price per N becomes per unit; unknown parts are unmatched, unusable ones rejected", () => {
+  const out = M.normaliseExtractedLines([
+    { component_id: "set", unit_price: "120,00", per_quantity: "10", currency: "€", confidence: "high", evidence: "Drawer set 120,00 EUR/10 st", quote_date: "2026-10-01" },
+    { component_id: "not-in-scope", unit_price: "5", per_quantity: "", currency: "SEK", confidence: "medium" },
+    { component_id: "", unit_price: "9,90", per_quantity: "1", currency: "SEK", confidence: "low" },
+    { component_id: "front", unit_price: "", per_quantity: "1", currency: "PLN" },
+    { component_id: "handle", unit_price: "3", per_quantity: "1", currency: "GBP" },
+  ], ["set", "front", "handle"]);
+  assert.equal(out.lines.length, 1);
+  assert.equal(out.lines[0].unit_cost, 12);
+  assert.equal(out.lines[0].unit_currency, "EUR");
+  assert.equal(out.lines[0].quote_date, "2026-10-01");
+  assert.equal(out.unmatched.length, 2, "an id outside the structure is never trusted");
+  assert.deepEqual(plain(out.rejected.map((r) => r.reason)), ["no readable price", "currency not SEK/EUR/USD/PLN"]);
 });

@@ -47,6 +47,8 @@ export const TENANT_TABLES = new Set([
   "drawings", "drawing_revisions", "drawing_components", "drawing_dimensions",
   // PIM-owned planner source catalog + planner → PIM BOM registry (0034/0035)
   "planner_mappings", "planner_catalog_entries",
+  // PROP-072: BOM cost simulation (migration 0046)
+  "component_costs", "currency_rates", "cost_baselines",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

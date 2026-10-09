@@ -3907,6 +3907,12 @@
         searchInp,
         el("button", { class: "btn btn-sm", type: "button", onclick: () => refreshTree() }, "↺ Refresh"),
         focusToggle,
+        // PROP-072: dated currency rates for the cost views. Cost code is not
+        // loaded on supplier.html, and the actions refuse any other role.
+        role === "rushroom" && window.PortalCost ? el("button", {
+          class: "btn btn-sm", type: "button", title: "Currency rates to SEK, by date — for BOM cost simulation",
+          onclick: () => window.PortalCost.openRates(token),
+        }, "¤ Rates") : null,
         ...exportButtons(
           () => exportSet,
           () => BOM_EXPORT_COLUMNS((id) => (partCategories.find((c) => c.id === id) || {}).name || ""),
@@ -8450,10 +8456,29 @@
         { id: "images",      label: "Images" },
         { id: "versions",    label: "Versions" },
         { id: "changelog",   label: "Change Log" },
+        // PROP-072: planning cost — Rushroom only, built on first open.
+        ...(role === "rushroom" && window.PortalCost ? [{ id: "cost", label: "Cost" }] : []),
       ];
       const tabPanels = {};
       const tabButtons = [];
+      let costMounted = false;
       function activateDetailTab(id) {
+        if (id === "cost" && !costMounted && tabPanels.cost) {
+          costMounted = true;
+          // An assembly we build (or a Kit) is costed as the sum of its BOM;
+          // anything bought — a part, or an assembly bought complete — has a cost of its own.
+          const rollsUp = nodeData && (nodeData.type === "phantom_assembly"
+            || (nodeData.type === "sub_assembly" && nodeData.make_or_buy !== "purchased"));
+          if (rollsUp) {
+            window.PortalCost.mountAssembly(tabPanels.cost, { id: componentId, name: nodeData.name }, token, {
+              pickComponent: ({ title, excludeIds }, onPick) => pickComponentModal(token, {
+                title, excludeIds, hint: "What-if only — nothing in the BOM changes.", onPick,
+              }),
+            });
+          } else {
+            window.PortalCost.mountPartForm(tabPanels.cost, { id: componentId, name: nodeData?.name || "" }, token);
+          }
+        }
         // An editor left open on another tab would otherwise keep its Save in
         // the header, pointing at a section no longer on screen.
         if (cancelActiveEdit) { const c = cancelActiveEdit; cancelActiveEdit = null; c(); }
@@ -8649,6 +8674,7 @@
       tabPanels["images"]     = el("div", { style: "display:none;padding-top:0.5rem" }, [imagesSection]);
       tabPanels["versions"]   = el("div", { style: "display:none" }, [versionsSection]);
       tabPanels["changelog"]  = el("div", { style: "display:none" }, [changelogSection]);
+      if (TAB_DEFS.some((t) => t.id === "cost")) tabPanels["cost"] = el("div", { style: "display:none;padding-top:0.25rem" });
       activateDetailTab("overview");
 
       panel.replaceChildren(

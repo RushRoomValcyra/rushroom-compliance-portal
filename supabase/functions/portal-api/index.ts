@@ -32,6 +32,7 @@ import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_
 import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
+import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 
 const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door", "cover", "back_cover"];
 const PLANNER_RESOLVER_MAX_REQUIREMENTS = 250;
@@ -3583,6 +3584,11 @@ Deno.serve(async (req) => {
     } catch (e: any) {
       return json({ error: bomEdgeError(String(e?.message || "")) }, 400);
     }
+  }
+
+  // --- BOM cost simulation (PROP-072) — role-checked inside the handler ------
+  if (COST_ACTIONS.has(action)) {
+    return await handleCostAction(action, body, { role, tdb, uid: (session.uid as string) || null });
   }
 
   // --- BOM: wrap a bought part in a Prepared sub-assembly (PROP-067) --------

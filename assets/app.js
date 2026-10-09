@@ -3912,7 +3912,7 @@
         role === "rushroom" && window.PortalCost ? el("button", {
           class: "btn btn-sm", type: "button", title: "Currency rates to SEK, by date — for BOM cost simulation",
           onclick: () => window.PortalCost.openRates(token),
-        }, "¤ Rates") : null,
+        }, "$€ Rates") : null,
         // PROP-073: every top-level product costed now, at the current rates.
         role === "rushroom" && window.PortalCost && window.PortalCost.openCostReview ? el("button", {
           class: "btn btn-sm", type: "button", title: "Full BOM cost review — every product, now, with the current rates",

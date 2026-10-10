@@ -48,6 +48,10 @@
     try { [data, rates] = await Promise.all([post(token, "getComponentCost", { component_id: comp.id }), latestRates(token)]); }
     catch (ex) { container.replaceChildren(el("div", { class: "error" }, `Could not load the cost: ${ex.message}`)); return; }
     const reload = () => mountPartForm(container, comp, token);
+    const histBox = el("div");
+    const paintHistory = (h) => histBox.replaceChildren(...[historyList(h || [], rates)].filter(Boolean));
+    const refreshHistory = async () => { try { paintHistory((await post(token, "getComponentCost", { component_id: comp.id })).history); } catch { /* the save itself succeeded */ } };
+    paintHistory(data.history);
 
     const section = (kind, c) => {
       c = c || {};
@@ -57,7 +61,8 @@
       const trans = el("input", { class: "up-text", type: "number", min: "0", max: "1000", step: "any", value: c.transport_pct ?? "", "aria-label": `${title} transport %`, style: "width:6rem" });
       const customs = el("input", { class: "up-text", type: "number", min: "0", max: "100", step: "any", value: c.customs_pct ?? "", "aria-label": `${title} customs %`, style: "width:6rem" });
       const quoted = el("input", { class: "up-text", type: "date", value: c.quoted_on || "", "aria-label": `${title} date` });
-      const note = el("input", { class: "up-text", type: "text", maxlength: "500", value: c.source_note || "", placeholder: "e.g. quote Häfele 2026-10", style: "width:100%;box-sizing:border-box" });
+      const supplier = el("input", { class: "up-text", type: "text", maxlength: "200", value: c.supplier_name || "", placeholder: "e.g. Häfele", "aria-label": `${title} supplier`, style: "width:100%;box-sizing:border-box" });
+      const note = el("input", { class: "up-text", type: "text", maxlength: "500", value: c.source_note || "", placeholder: "e.g. quote no. 4711, line 3", style: "width:100%;box-sizing:border-box" });
       // The answer the inputs exist for: landed unit cost in SEK, with the
       // arithmetic shown line by line, so nobody has to work it out.
       const preview = el("div", { style: "margin-top:0.6rem" });
@@ -93,9 +98,10 @@
           await post(token, "setComponentCost", {
             component_id: comp.id, kind, unit_cost: unit.value, unit_currency: unitCur.value,
             transport_pct: trans.value || 0, customs_pct: customs.value || 0,
-            quoted_on: quoted.value || null, source_note: note.value.trim() || null,
+            quoted_on: quoted.value || null, supplier_name: supplier.value.trim() || null, source_note: note.value.trim() || null,
           });
           msg.textContent = "Saved.";
+          refreshHistory();   // the save is now the newest line of the history
         } catch (ex) { msg.textContent = ex.message; msg.style.color = "#e05454"; }
         save.disabled = false;
       } }, `Save ${title.toLowerCase()}`);
@@ -114,7 +120,10 @@
           el("label", { style: LBL }, [kind === "actual" ? "Quote date" : "Date", quoted]),
         ]),
         preview,
-        el("label", { style: `${LBL};margin-top:0.5rem` }, ["Source", note]),
+        el("div", { style: "display:grid;grid-template-columns:1fr 1.6fr;gap:0.6rem;margin-top:0.5rem" }, [
+          el("label", { style: LBL }, ["Supplier", supplier]),
+          el("label", { style: LBL }, ["Source", note]),
+        ]),
         c.source_document_version_id ? el("div", { style: `font-size:0.75rem;${MUTED}` }, "Read from a document — see Documents. " + (Array.isArray(c.evidence) && c.evidence[0] ? `“${c.evidence[0]}”` : "")) : null,
         el("div", { style: "display:flex;gap:0.5rem;align-items:center;margin-top:0.6rem" }, [save, clear, msg]),
         c.updated_at ? el("div", { style: `font-size:0.75rem;margin-top:0.3rem;${MUTED}` }, `Last changed ${String(c.updated_at).slice(0, 10)}`) : null,
@@ -124,13 +133,42 @@
     // replaceChildren() prints a null as the text "null" — filter first.
     container.replaceChildren(...[
       el("div", { style: "display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem" }, [
-        el("span", { style: `font-size:0.8125rem;flex:1;${MUTED}` }, "Planning costs per unit, ex VAT. Each amount in its own currency, converted to SEK at dated rates. Customs is a % of the unit cost."),
+        el("span", { style: `font-size:0.8125rem;flex:1;${MUTED}` }, "Planning costs per unit, ex VAT, converted to SEK at dated rates. Transport and customs are a % of the unit cost. Every save is kept below."),
         window.PortalCost.openReadQuote ? el("button", { class: "btn btn-sm", type: "button", onclick: () => window.PortalCost.openReadQuote({ scope: comp, token, onSaved: reload }) }, "✨ Read from document") : null,
         el("button", { class: "btn btn-sm", type: "button", onclick: () => openRates(token, async () => { rates = await latestRates(token); reload(); }) }, "Rates…"),
       ]),
       data.has_real_children ? el("p", { style: "font-size:0.8125rem;color:#b45309;margin:0 0 0.75rem" }, "This has real children — in a cost view its cost is the sum of them, and the values here are ignored.") : null,
       el("div", { style: "display:flex;gap:0.8rem;flex-wrap:wrap" }, [section("actual", data.actual), section("estimated", data.estimated)]),
+      histBox,
     ].filter(Boolean));
+  }
+
+  // 0049: every save and clear, newest first — kept by the database, never edited.
+  // Landed is recomputed at today's rates so old and new prices compare directly.
+  function historyList(history, rates) {
+    if (!history.length) return null;
+    const GRID = "display:grid;grid-template-columns:8.5rem 5.5rem 7rem 4.5rem 4.5rem 6.5rem minmax(7rem,1fr) minmax(8rem,1.4fr) 7rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
+    const when = (iso) => new Date(iso).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
+    return el("div", { style: "margin-top:1rem" }, [
+      el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:0.3rem;${MUTED}` }, `History — ${history.length} save${history.length === 1 ? "" : "s"}`),
+      el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;${MUTED}` },
+        ["Saved", "Cost", "Unit", "Transport", "Customs", "Landed today", "Supplier", "Source", "By"].map((t) => el("span", {}, t))),
+      ...history.map((h) => {
+        const kind = el("span", { style: h.kind === "actual" ? "font-weight:600" : MUTED }, h.kind === "actual" ? "Actual" : "Estimated");
+        if (h.event === "cleared") return el("div", { style: GRID }, [el("span", {}, when(h.saved_at)), kind, el("span", { style: "grid-column:span 6;color:#b45309" }, "cleared"), el("span", { style: MUTED }, h.saved_by_name || "—")]);
+        const l = M().landed(h, rates);
+        return el("div", { style: GRID }, [
+          el("span", {}, when(h.saved_at)), kind,
+          el("span", { style: "font-variant-numeric:tabular-nums" }, `${Number(h.unit_cost)} ${h.unit_currency}`),
+          el("span", {}, `${Number(h.transport_pct || 0)} %`),
+          el("span", {}, `${Number(h.customs_pct || 0)} %`),
+          el("span", { style: "font-variant-numeric:tabular-nums" }, l.missing ? `no ${h.unit_currency} rate` : M().sek(l.landedSEK)),
+          el("span", {}, h.supplier_name || "—"),
+          el("span", { style: MUTED, title: h.source_note || "" }, [h.quoted_on ? `${h.quoted_on} · ` : "", h.source_note || (h.source_document_version_id ? "read from a document" : "—")]),
+          el("span", { style: MUTED }, h.saved_by_name || "—"),
+        ]);
+      }),
+    ]);
   }
 
   async function openRates(token, onChanged) {

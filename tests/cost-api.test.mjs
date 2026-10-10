@@ -115,3 +115,23 @@ test("the cost tab shows the landed unit cost with its arithmetic, and no stray 
     assert.ok(/replaceChildren\(\.\.\.\[[\s\S]*?\]\.filter\(Boolean\)\);/.test(src), `${f} can still print "null"`);
   }
 });
+
+test("every cost save is kept: history by trigger, append-only, tenant-scoped (0049, 2026-10-10)", () => {
+  const m = read("supabase/migrations/0049_cost_history_and_supplier.sql");
+  assert.ok(tenant.includes('"component_cost_history"'), "component_cost_history missing from TENANT_TABLES — every tenant would read every row");
+  assert.ok(/CREATE TABLE IF NOT EXISTS component_cost_history \([\s\S]*?organization_id\s+UUID NOT NULL/.test(m), "history lacks organization_id NOT NULL");
+  assert.ok(m.includes("ALTER TABLE component_cost_history ENABLE ROW LEVEL SECURITY;"), "history has no RLS");
+  // Written by the database, so no save path (form, quote reader, AI fill) can skip it.
+  assert.ok(/AFTER INSERT OR UPDATE OR DELETE ON component_costs/.test(m), "history is not written on every change of a cost");
+  assert.ok(/BEFORE UPDATE OR DELETE ON component_cost_history/.test(m), "history can be edited or deleted");
+  assert.ok(!/component_cost_history"\)\.(insert|update|delete)/.test(handler), "the handler writes history itself — the trigger owns it");
+  assert.ok(/component_cost_history"\)\.select\(HISTORY_COLS\)/.test(handler) && /history \}\);/.test(handler), "getComponentCost does not return the history");
+});
+
+test("the supplier is stored on each cost, from every save path (2026-10-10)", () => {
+  assert.ok(/supplier_name/.test(handler.match(/const COST_COLS = "[^"]*"/)[0]), "supplier_name is not read");
+  assert.ok(/supplier_name: b\.supplier_name \?/.test(handler), "supplier_name is not written");
+  assert.ok(/supplier_name: supplier\.value\.trim\(\) \|\| null/.test(read("assets/cost-forms.js")), "the Cost tab does not save the supplier");
+  assert.ok(/supplier_name: supplier\.value\.trim\(\) \|\| null/.test(read("assets/cost-ai.js")), "the quote reader does not save the supplier");
+  assert.ok(/supplier_name: \(rows\.find\(\(f\) => f\.key === "preferred_supplier_name"\)/.test(read("assets/app.js")), "AI fill does not save the supplier");
+});

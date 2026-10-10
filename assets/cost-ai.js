@@ -90,6 +90,8 @@
       const kind = el("select", { class: "up-text", "aria-label": "Save as" }, [el("option", { value: "actual" }, "Save as Actual"), el("option", { value: "estimated" }, "Save as Estimated")]);
       const err = el("div", { role: "alert", style: "color:#e05454;font-size:0.8125rem;min-height:1rem" });
       const save = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save ticked lines");
+      // Saved on every cost — editable, since a screenshot often shows no supplier.
+      const supplier = el("input", { class: "up-text", type: "text", maxlength: "200", value: out.supplier || "", placeholder: "Supplier — not found, type it", "aria-label": "Supplier", style: "width:16rem;font-weight:600" });
       const GRID = "display:grid;grid-template-columns:1.6rem minmax(12rem,1.2fr) minmax(10rem,1fr) 10rem 7rem 5rem 7rem 4.5rem;gap:0.4rem;align-items:center;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
 
       const lineRow = (r) => {
@@ -111,7 +113,7 @@
 
       body.replaceChildren(...[
         el("div", { style: "display:flex;gap:1rem;flex-wrap:wrap;font-size:0.8125rem" }, [
-          el("span", {}, [el("strong", {}, out.supplier || "Unknown supplier"), ` · ${String(out.document_type || "").replace("_", " ")} · ${out.document_date || "no date"}`]),
+          el("span", { style: "display:flex;gap:0.4rem;align-items:center" }, [supplier, ` · ${String(out.document_type || "").replace("_", " ")} · ${out.document_date || "no date"}`]),
           out.freight_note ? el("span", { style: "color:#b45309" }, `Freight per shipment, not on the lines: ${out.freight_note}`) : null,
           out.notes ? el("span", { style: MUTED }, out.notes) : null,
         ]),
@@ -137,16 +139,16 @@
         try {
           const doc = await post(token, "uploadAndLinkComponentDocument", {
             component_id: scope.id, storage_path: src.path, file_name: src.fileName,
-            doc_name: `${(out.document_type || "Document").replace("_", " ")} — ${out.supplier || "supplier"}${out.document_date ? " " + out.document_date : ""}`,
+            doc_name: `${(out.document_type || "Document").replace("_", " ")} — ${supplier.value.trim() || "supplier"}${out.document_date ? " " + out.document_date : ""}`,
             doc_category: "Supplier pricing", comp_category: "other", label: "Read for costs", is_supplier_visible: false,
           });
           const r = await post(token, "setComponentCosts", {
             kind: kind.value, source_document_version_id: doc.version_id || null,
             items: chosen.map((x) => ({
               component_id: x.component_id, unit_cost: x.unit_cost, unit_currency: x.unit_currency,
-              transport_pct: x.transport_pct || 0,
+              transport_pct: x.transport_pct || 0, supplier_name: supplier.value.trim() || null,
               customs_pct: x.customs_pct || 0, quoted_on: x.quote_date || null,
-              source_note: `${out.supplier || "Supplier"}: ${x.as_printed || x.description}`.slice(0, 500),
+              source_note: String(x.as_printed || x.description || "").slice(0, 500) || null,
               evidence: x.evidence ? [x.evidence] : null,
             })),
           });

@@ -51,6 +51,8 @@ export const TENANT_TABLES = new Set([
   "component_costs", "currency_rates", "cost_baselines",
   // PROP-073: full BOM cost reviews (migration 0047)
   "cost_reviews",
+  // Every cost save, append-only (migration 0049)
+  "component_cost_history",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

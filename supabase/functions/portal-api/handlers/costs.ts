@@ -19,7 +19,10 @@ const RATE_CURRENCIES = ["EUR", "USD", "PLN"];   // SEK is always 1
 const MAX_DEPTH = 10;
 const MAX_BASELINE_LINES = 2000;
 const KINDS = ["actual", "estimated"];   // PROP-073: from documents / our planning cost
-const COST_COLS = "component_id, kind, unit_cost, unit_currency, transport_pct, customs_pct, quoted_on, source_note, source_document_version_id, evidence, updated_at";
+const COST_COLS = "component_id, kind, unit_cost, unit_currency, transport_pct, customs_pct, supplier_name, quoted_on, source_note, source_document_version_id, evidence, updated_at";
+// 0049: every save, kept by a trigger on component_costs.
+const HISTORY_COLS = "id, kind, event, unit_cost, unit_currency, transport_pct, customs_pct, supplier_name, quoted_on, source_note, source_document_version_id, saved_at, saved_by";
+const HISTORY_LIMIT = 100;
 
 type Ctx = {
   role: string;
@@ -91,14 +94,21 @@ export async function handleCostAction(action: string, body: any, ctx: Ctx): Pro
   if (action === "getComponentCost") {
     const id = body.component_id;
     if (!id) return json({ error: "component_id required" }, 400);
-    const [{ data: rows, error }, { data: kids }] = await Promise.all([
+    const [{ data: rows, error }, { data: kids }, { data: hist, error: he }] = await Promise.all([
       tdb("component_costs").select(COST_COLS).eq("component_id", id),
       tdb("bom_edges").select("id").eq("parent_id", id).is("effective_to", null).eq("is_reference", false).limit(1),
+      tdb("component_cost_history").select(HISTORY_COLS).eq("component_id", id)
+        .order("saved_at", { ascending: false }).limit(HISTORY_LIMIT),
     ]);
-    if (error) return json({ error: error.message }, 400);
+    if (error || he) return json({ error: (error || he).message }, 400);
+    // Who saved each entry, by name.
+    const uids = [...new Set((hist || []).map((h: any) => h.saved_by).filter(Boolean))];
+    const { data: people } = uids.length ? await tdb("users").select("id, name").in("id", uids) : { data: [] };
+    const nameOf = Object.fromEntries((people || []).map((u: any) => [u.id, u.name]));
+    const history = (hist || []).map((h: any) => ({ ...h, saved_by_name: nameOf[h.saved_by] || null }));
     const byKind = Object.fromEntries((rows || []).map((r: any) => [r.kind, r]));
     // `cost` kept for callers that only know one cost (the what-if swap).
-    return json({ cost: byKind.actual || null, actual: byKind.actual || null, estimated: byKind.estimated || null, has_real_children: (kids || []).length > 0 });
+    return json({ cost: byKind.actual || null, actual: byKind.actual || null, estimated: byKind.estimated || null, has_real_children: (kids || []).length > 0, history });
   }
 
   if (action === "setComponentCost") {
@@ -208,6 +218,7 @@ function validateCost(b: any): string | null {
   if (!(customs >= 0 && customs <= 100)) return "Customs must be a percentage between 0 and 100.";
   if (!CURRENCIES.includes(uc)) return `Currency must be one of ${CURRENCIES.join(", ")}.`;
   if (b.quoted_on && !isDate(b.quoted_on)) return "Quote date must be YYYY-MM-DD.";
+  if (b.supplier_name !== undefined && b.supplier_name !== null && String(b.supplier_name).length > 200) return "Supplier name must be at most 200 characters.";
   if (b.evidence !== undefined && b.evidence !== null && (!Array.isArray(b.evidence) || JSON.stringify(b.evidence).length > 4000)) return "evidence must be a short list.";
   return null;
 }
@@ -222,6 +233,8 @@ async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): P
   const label = kind === "estimated" ? "Estimated cost" : "Cost";
   let note: string;
   if (b.clear === true) {
+    // Stamp who clears it first — the history trigger records the clear by them.
+    await tdb("component_costs").update({ updated_by: uid }).eq("component_id", id).eq("kind", kind);
     const { error } = await tdb("component_costs").delete().eq("component_id", id).eq("kind", kind);
     if (error) return { error: error.message };
     note = `${label} cleared`;
@@ -232,6 +245,7 @@ async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): P
     const { error } = await tdb("component_costs").upsert({
       component_id: id, kind, unit_cost: unit, unit_currency: uc, transport_pct: transport,
       customs_pct: customs, quoted_on: b.quoted_on || null,
+      supplier_name: b.supplier_name ? String(b.supplier_name).trim().slice(0, 200) || null : null,
       source_note: b.source_note ? String(b.source_note).slice(0, 500) : null,
       source_document_version_id: b.source_document_version_id || null,
       evidence: Array.isArray(b.evidence) ? b.evidence.map((x: unknown) => String(x).slice(0, 300)).slice(0, 10) : null,
@@ -239,6 +253,7 @@ async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): P
     }, { onConflict: "organization_id,component_id,kind" });
     if (error) return { error: error.message };
     note = `${label} set to ${unit} ${uc}` + (transport ? `, ${transport} % transport` : "") + (customs ? `, ${customs} % customs` : "")
+      + (b.supplier_name ? ` from ${String(b.supplier_name).trim().slice(0, 200)}` : "")
       + (b.source_document_version_id ? " (read from a document)" : "");
   }
   try {

@@ -6824,6 +6824,8 @@
               component_id: componentId, kind: "actual",
               unit_cost: cost.unit_cost, unit_currency: cost.unit_currency,
               transport_pct: keep.transport_pct ?? 0,
+              // Who the price is from: the supplier the document names, else the one already on the cost, else the part's preferred supplier.
+              supplier_name: (rows.find((f) => f.key === "preferred_supplier_name") || {}).value || keep.supplier_name || current.preferred_supplier_name || null,
               customs_pct: keep.customs_pct ?? 0, quoted_on: cost.quote_date || null,
               source_note: `AI fill: ${cost.as_printed}`.slice(0, 500), evidence: cost.evidence ? [cost.evidence] : null,
             });

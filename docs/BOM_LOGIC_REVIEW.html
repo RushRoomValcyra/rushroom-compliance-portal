@@ -225,7 +225,7 @@
       <h3>◇ Next — designed, not built</h3>
       <ul>
 
-        <li><b>Cost: transport as a % of the unit cost — built, not deployed</b><span class="s">Landed = unit + transport % + customs %, both on the unit price. PROP-072 (cost simulation) and PROP-073 (AI cost data, Σ Cost review) are live; same roll-up rules as the BOM.</span></li>
+        <li><b>Cost: every save kept, with its supplier — built, not deployed</b><span class="s">Each Actual / Estimated save is kept (append-only) with who and when; supplier is stored on each cost. Transport as a % (live), PROP-072 cost simulation and PROP-073 AI cost data are live; same roll-up rules as the BOM.</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
         <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
@@ -244,6 +244,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-10</b> A cost save no longer overwrites the last one: every save is kept, with supplier, source, who and when, and listed on the Cost tab. Supplier is a field of its own on each cost.</div>
     <div><b>2026-10-10</b> Transport is a % of the unit cost, like customs — no separate transport amount or currency. Older cost baselines keep their transport amounts and still compare correctly.</div>
     <div><b>2026-10-07</b> Move, In-the-box colours, “as is”, tree retry and the per-tree level buttons (shown only when a tree has levels) all live and confirmed. Prepared S Middle Door left as it is: it is the door with what we fit to it.</div>
     <div><b>2026-10-07</b> Moving a row under another row must always work — that is how a BOM is worked. Move now offers parts too, with the same two ways as +child; the rules stay as they are.</div>

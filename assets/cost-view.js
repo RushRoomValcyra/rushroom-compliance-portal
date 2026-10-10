@@ -30,7 +30,7 @@
   const signed = (v) => (v > 0.005 ? "+" : "") + M().sek(v);
 
   async function mountAssembly(container, comp, token, opts = {}) {
-    const st = { view: null, rateDate: new Date().toISOString().slice(0, 10), overrides: {}, swaps: {}, baseline: null, baselines: [] };
+    const st = { view: null, rateDate: new Date().toISOString().slice(0, 10), overrides: {}, swaps: {}, baseline: null, baselines: [], listView: false };
 
     async function load() {
       container.replaceChildren(el("div", { class: "loading" }, "Rolling up the cost…"));
@@ -98,6 +98,32 @@
         sub ? el("div", { style: `font-size:0.75rem;${MUTED}` }, sub) : null,
       ]);
 
+      // ---- flat parts list (toggle view) -----------------------------------------
+      const listGRID = `display:grid;grid-template-columns:minmax(13rem,1fr) 9rem 3.5rem 9rem 4.5rem 4.5rem 7rem 7.5rem;gap:0.4rem;align-items:center;padding:0.25rem 0.4rem;font-size:0.8125rem;border-bottom:1px solid var(--border,#e2e8f0)`;
+      const flatRows = [...result.lines].sort((a, b) => (b.lineSEK || 0) - (a.lineSEK || 0));
+      const flatTable = st.listView ? [
+        el("div", { style: `${listGRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
+          ["Part", "Part number", "Qty", "Unit cost", "Transport %", "Customs %", "Landed / unit", "Total (Actual)"].map((t, i) => el("span", { style: i > 1 ? "text-align:right" : "" }, t))),
+        ...flatRows.map((l) => el("div", { style: listGRID }, [
+          el("span", {}, l.name || "—"),
+          el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, l.part_number || "—"),
+          el("span", { style: "text-align:right" }, `×${l.qty}`),
+          el("span", { style: `text-align:right${l.missing ? `;color:${WARN}` : ""}` },
+            l.unit_cost !== null ? `${Number(l.unit_cost)} ${l.unit_currency}` : el("span", { style: `color:${WARN}` }, "no cost")),
+          el("span", { style: "text-align:right" }, l.transport_pct !== null ? `${Number(l.transport_pct || 0)} %` : "—"),
+          el("span", { style: "text-align:right" }, l.customs_pct !== null ? `${Number(l.customs_pct || 0)} %` : "—"),
+          el("span", { style: `text-align:right${l.missing ? `;color:${WARN}` : ""}` },
+            l.missing === "cost" ? "no cost" : l.missing === "rate" ? "no rate" : M().sek(l.landedSEK)),
+          el("span", { style: `text-align:right;font-weight:600${l.missing ? `;color:${WARN}` : ""}` },
+            l.missing ? "—" : M().sek(l.lineSEK)),
+        ])),
+        flatRows.length ? el("div", { style: `${listGRID};font-weight:700;background:var(--bg-2,rgba(0,0,0,0.03))` }, [
+          el("span", {}, `${flatRows.length} parts`), el("span"), el("span"),
+          el("span"), el("span"), el("span"), el("span"),
+          el("span", { style: "text-align:right" }, M().sek(result.total)),
+        ]) : null,
+      ].filter(Boolean) : null;
+      // ---- tree rows (existing) ---------------------------------------------------
       const rows = [...result.groups.map((g) => ({ g, seq: g.seq })), ...result.lines.map((l) => ({ l, seq: l.seq }))].sort((a, b) => a.seq - b.seq);
       const tableRows = rows.map(({ g, l }) => {
         const indent = `padding-left:${(g || l).depth * 1.1}rem`;
@@ -136,8 +162,13 @@
       });
       const removed = cmp ? cmp.rows.filter((r) => r.status === "removed") : [];
 
+      const viewToggle = el("div", { style: "display:flex;border:1px solid var(--border,#e2e8f0);border-radius:6px;overflow:hidden" }, [
+        el("button", { class: "btn btn-sm", type: "button", style: `border:none;border-radius:0;${!st.listView ? "background:var(--accent,#2fa564);color:#fff;font-weight:700" : ""}`, onclick: () => { st.listView = false; render(); } }, "Structure"),
+        el("button", { class: "btn btn-sm", type: "button", style: `border:none;border-radius:0;border-left:1px solid var(--border,#e2e8f0);${st.listView ? "background:var(--accent,#2fa564);color:#fff;font-weight:700" : ""}`, onclick: () => { st.listView = true; render(); } }, "Parts list"),
+      ]);
       container.replaceChildren(...[
         el("div", { style: "display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem" }, [
+          viewToggle,
           el("label", { style: `font-size:0.75rem;font-weight:600;${MUTED};display:flex;gap:0.3rem;align-items:center` }, ["Rates at", rateDate]),
           el("span", { style: `font-size:0.75rem;${MUTED}` }, used || "no foreign rates yet"),
           el("button", { class: "btn btn-sm", type: "button", onclick: () => window.PortalCost.openRates(token, load) }, "Rates…"),
@@ -156,10 +187,12 @@
           whatIfs ? card("What-if", `${whatIfs} change${whatIfs === 1 ? "" : "s"}`, el("button", { class: "btn btn-xs", type: "button", onclick: () => { st.overrides = {}; st.swaps = {}; render(); } }, "Reset all"), WARN) : null,
           cmp ? card(`Since ${st.baseline.name}`, signed(cmp.delta), `quantity ${signed(cmp.qty)} · price ${signed(cmp.price)} · rate ${signed(cmp.rate)}`) : null,
         ].filter(Boolean)),
-        el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
-          ["Item", "Qty", "Unit cost", "Transport %", "Customs %", "Landed / unit", "Actual", "Estimated", "Δ est.", "Share", cmp ? "Δ baseline" : null, ""].filter((x) => x !== null).map((t) => el("span", {}, t))),
-        ...tableRows,
-        removed.length ? el("div", { style: `font-size:0.8125rem;margin-top:0.5rem;color:${WARN}` }, `Removed since the baseline: ${removed.map((r) => `${r.line.name} (${signed(r.delta)})`).join(", ")}`) : null,
+        ...(st.listView ? flatTable : [
+          el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
+            ["Item", "Qty", "Unit cost", "Transport %", "Customs %", "Landed / unit", "Actual", "Estimated", "Δ est.", "Share", cmp ? "Δ baseline" : null, ""].filter((x) => x !== null).map((t) => el("span", {}, t))),
+          ...tableRows,
+          removed.length ? el("div", { style: `font-size:0.8125rem;margin-top:0.5rem;color:${WARN}` }, `Removed since the baseline: ${removed.map((r) => `${r.line.name} (${signed(r.delta)})`).join(", ")}`) : null,
+        ]),
         el("div", { style: "margin-top:0.9rem;padding:0.6rem 0.8rem;border:1px solid var(--border,#e2e8f0);border-radius:8px;font-size:0.8125rem;display:flex;flex-direction:column;gap:0.3rem" }, [
           el("strong", {}, "Opportunities"),
           opp.pareto.length ? el("div", {}, `${opp.pareto.length} line${opp.pareto.length === 1 ? "" : "s"} make ${pct(opp.paretoShare)} of the cost: ${opp.pareto.map((l) => l.name).join(", ")}.`) : null,

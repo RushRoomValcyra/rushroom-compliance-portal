@@ -44,7 +44,7 @@
       } catch (ex) { container.replaceChildren(el("div", { class: "error" }, `Could not load the cost view: ${ex.message}`)); }
     }
 
-    const costOf = (line) => ({ unit_cost: line.unit_cost ?? 0, unit_currency: line.unit_currency || "SEK", transport_cost: line.transport_cost ?? 0, transport_currency: line.transport_currency || "SEK", customs_pct: line.customs_pct ?? 0 });
+    const costOf = (line) => ({ unit_cost: line.unit_cost ?? 0, unit_currency: line.unit_currency || "SEK", transport_pct: line.transport_pct ?? 0, customs_pct: line.customs_pct ?? 0 });
     const setWhatIf = (line, patch) => { st.overrides[line.component_id] = { ...costOf(line), ...(st.overrides[line.component_id] || {}), ...patch }; render(); };
 
     function costCells(line) {
@@ -53,7 +53,7 @@
       const cur = (key) => el("select", { class: "up-text", disabled: ro, style: "font-size:0.75rem", "aria-label": key, onchange: (ev) => setWhatIf(line, { [key]: ev.target.value }) }, CUR.map((c) => el("option", { value: c, selected: (line[key] || "SEK") === c ? "selected" : null }, c)));
       return [
         el("span", { style: "display:flex;gap:0.2rem" }, [num("unit_cost", "5.5rem"), cur("unit_currency")]),
-        el("span", { style: "display:flex;gap:0.2rem" }, [num("transport_cost", "4.5rem"), cur("transport_currency")]),
+        num("transport_pct", "3.5rem"),
         num("customs_pct", "3.5rem"),
       ];
     }
@@ -75,7 +75,7 @@
       const opp = M().opportunities(result, ea.estimatedByPath);
       const whatIfs = Object.keys(st.overrides).length + Object.keys(st.swaps).length;
       const share = (v) => (result.total ? pct(v / result.total) : "—");
-      const GRID = `display:grid;grid-template-columns:minmax(12rem,1fr) 3.5rem 9rem 8rem 4.5rem 7rem 7.5rem 7rem 6.5rem 4rem${cmp ? " 7rem" : ""} 8rem;gap:0.4rem;align-items:center;padding:0.25rem 0.4rem;font-size:0.8125rem;border-bottom:1px solid var(--border,#e2e8f0)`;
+      const GRID = `display:grid;grid-template-columns:minmax(12rem,1fr) 3.5rem 9rem 4.5rem 4.5rem 7rem 7.5rem 7rem 6.5rem 4rem${cmp ? " 7rem" : ""} 8rem;gap:0.4rem;align-items:center;padding:0.25rem 0.4rem;font-size:0.8125rem;border-bottom:1px solid var(--border,#e2e8f0)`;
 
       const rateDate = el("input", { class: "up-text", type: "date", value: st.rateDate, "aria-label": "Rate date", onchange: (ev) => { st.rateDate = ev.target.value; load(); } });
       const used = Object.entries(view.rates || {}).filter(([c, r]) => c !== "SEK" && r).map(([c, r]) => `${c} ${r.rate} (${r.valid_on})`).join(" · ");
@@ -157,7 +157,7 @@
           cmp ? card(`Since ${st.baseline.name}`, signed(cmp.delta), `quantity ${signed(cmp.qty)} · price ${signed(cmp.price)} · rate ${signed(cmp.rate)}`) : null,
         ].filter(Boolean)),
         el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
-          ["Item", "Qty", "Unit cost", "Transport", "Customs %", "Landed / unit", "Actual", "Estimated", "Δ est.", "Share", cmp ? "Δ baseline" : null, ""].filter((x) => x !== null).map((t) => el("span", {}, t))),
+          ["Item", "Qty", "Unit cost", "Transport %", "Customs %", "Landed / unit", "Actual", "Estimated", "Δ est.", "Share", cmp ? "Δ baseline" : null, ""].filter((x) => x !== null).map((t) => el("span", {}, t))),
         ...tableRows,
         removed.length ? el("div", { style: `font-size:0.8125rem;margin-top:0.5rem;color:${WARN}` }, `Removed since the baseline: ${removed.map((r) => `${r.line.name} (${signed(r.delta)})`).join(", ")}`) : null,
         el("div", { style: "margin-top:0.9rem;padding:0.6rem 0.8rem;border:1px solid var(--border,#e2e8f0);border-radius:8px;font-size:0.8125rem;display:flex;flex-direction:column;gap:0.3rem" }, [

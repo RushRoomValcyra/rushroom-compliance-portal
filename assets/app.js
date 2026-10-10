@@ -6784,7 +6784,7 @@
             el("div", { style: "font-size:0.875rem;font-weight:600" }, `${cost.unit_cost} ${cost.unit_currency}`),
             el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `as printed: ${cost.as_printed}${cost.per_quantity > 1 ? ` — a price per ${cost.per_quantity}, shown per unit` : ""}`),
             cost.evidence ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;margin-top:2px" }, `“${cost.evidence}”`) : null,
-            cur && (Number(cur.transport_cost) || Number(cur.customs_pct)) ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Its transport and customs are kept.") : null,
+            cur && (Number(cur.transport_pct) || Number(cur.customs_pct)) ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Its transport and customs are kept.") : null,
           ].filter(Boolean)),
           el("span", { style: `font-size:0.6875rem;font-weight:700;color:${col}` }, lbl),
         ]));
@@ -6823,7 +6823,7 @@
             await API.post(token, "setComponentCost", {
               component_id: componentId, kind: "actual",
               unit_cost: cost.unit_cost, unit_currency: cost.unit_currency,
-              transport_cost: keep.transport_cost ?? 0, transport_currency: keep.transport_currency || cost.unit_currency,
+              transport_pct: keep.transport_pct ?? 0,
               customs_pct: keep.customs_pct ?? 0, quoted_on: cost.quote_date || null,
               source_note: `AI fill: ${cost.as_printed}`.slice(0, 500), evidence: cost.evidence ? [cost.evidence] : null,
             });

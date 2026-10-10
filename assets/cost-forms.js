@@ -54,7 +54,7 @@
       const title = kind === "actual" ? "Actual" : "Estimated";
       const hint = kind === "actual" ? "What the supplier's quote, price list or invoice says." : "Our planning cost — what we expect it to cost.";
       const unit = numInput(c.unit_cost, `${title} unit cost`), unitCur = curSelect(c.unit_currency || "SEK");
-      const trans = numInput(c.transport_cost, `${title} transport`), transCur = curSelect(c.transport_currency || c.unit_currency || "SEK");
+      const trans = el("input", { class: "up-text", type: "number", min: "0", max: "1000", step: "any", value: c.transport_pct ?? "", "aria-label": `${title} transport %`, style: "width:6rem" });
       const customs = el("input", { class: "up-text", type: "number", min: "0", max: "100", step: "any", value: c.customs_pct ?? "", "aria-label": `${title} customs %`, style: "width:6rem" });
       const quoted = el("input", { class: "up-text", type: "date", value: c.quoted_on || "", "aria-label": `${title} date` });
       const note = el("input", { class: "up-text", type: "text", maxlength: "500", value: c.source_note || "", placeholder: "e.g. quote Häfele 2026-10", style: "width:100%;box-sizing:border-box" });
@@ -65,11 +65,11 @@
       const rateText = (cur) => (cur === "SEK" ? "" : rates[cur] ? ` × ${rates[cur].rate} (${cur} ${rates[cur].valid_on})` : ` × — (no ${cur} rate)`);
       const paint = () => {
         if (unit.value === "") { preview.replaceChildren(el("div", { style: `font-size:0.8125rem;${MUTED}` }, `No ${title.toLowerCase()} cost.`)); return; }
-        const l = M().landed({ unit_cost: unit.value, unit_currency: unitCur.value, transport_cost: trans.value || 0, transport_currency: transCur.value, customs_pct: customs.value || 0 }, rates);
+        const l = M().landed({ unit_cost: unit.value, unit_currency: unitCur.value, transport_pct: trans.value || 0, customs_pct: customs.value || 0 }, rates);
         const row = (label, how, value, strong) => el("div", { style: `display:grid;grid-template-columns:6.5rem 1fr auto;gap:0.5rem;font-size:0.8125rem;${strong ? "font-weight:700;border-top:1px solid var(--border,#e2e8f0);padding-top:0.3rem;margin-top:0.2rem" : ""}` },
           [el("span", { style: strong ? "" : MUTED }, label), el("span", { style: MUTED }, how), el("span", { style: "text-align:right;font-variant-numeric:tabular-nums" }, value)]);
         if (l.missing === "rate") {
-          preview.replaceChildren(el("div", { style: "font-size:0.8125rem;color:#b45309" }, `No ${[unitCur.value, transCur.value].filter((x) => x !== "SEK" && !rates[x]).join(" / ")} rate yet — add one under Rates to see the landed cost.`));
+          preview.replaceChildren(el("div", { style: "font-size:0.8125rem;color:#b45309" }, `No ${unitCur.value} rate yet — add one under Rates to see the landed cost.`));
           return;
         }
         preview.replaceChildren(el("div", { style: "display:flex;gap:1rem;align-items:stretch;flex-wrap:wrap;border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:0.6rem 0.8rem;background:var(--bg,#fff)" }, [
@@ -80,19 +80,19 @@
           ]),
           el("div", { style: "flex:1;min-width:16rem;display:flex;flex-direction:column;gap:0.15rem" }, [
             row("Unit", `${Number(unit.value)} ${unitCur.value}${rateText(unitCur.value)}`, M().sek(l.unitSEK)),
-            row("Transport", Number(trans.value) ? `${Number(trans.value)} ${transCur.value}${rateText(transCur.value)}` : "none", M().sek(l.transportSEK)),
+            row("Transport", Number(trans.value) ? `${Number(trans.value)} % of the unit cost` : "none", M().sek(l.transportSEK)),
             row("Customs", Number(customs.value) ? `${Number(customs.value)} % of the unit cost` : "none", M().sek(l.customsSEK)),
             row("Landed", "", M().sek(l.landedSEK), true),
           ]),
         ]));
       };
-      [unit, unitCur, trans, transCur, customs].forEach((f) => f.addEventListener("input", paint));
+      [unit, unitCur, trans, customs].forEach((f) => f.addEventListener("input", paint));
       const save = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
         save.disabled = true; msg.textContent = ""; msg.style.color = "";
         try {
           await post(token, "setComponentCost", {
             component_id: comp.id, kind, unit_cost: unit.value, unit_currency: unitCur.value,
-            transport_cost: trans.value || 0, transport_currency: transCur.value, customs_pct: customs.value || 0,
+            transport_pct: trans.value || 0, customs_pct: customs.value || 0,
             quoted_on: quoted.value || null, source_note: note.value.trim() || null,
           });
           msg.textContent = "Saved.";
@@ -109,7 +109,7 @@
         el("div", { style: `font-size:0.75rem;margin-bottom:0.6rem;${MUTED}` }, hint),
         el("div", { style: "display:flex;gap:0.8rem;flex-wrap:wrap;align-items:flex-end" }, [
           el("label", { style: LBL }, ["Unit cost", el("span", { style: "display:flex;gap:0.3rem" }, [unit, unitCur])]),
-          el("label", { style: LBL }, ["Transport / unit", el("span", { style: "display:flex;gap:0.3rem" }, [trans, transCur])]),
+          el("label", { style: LBL }, ["Transport % of unit cost", trans]),
           el("label", { style: LBL }, ["Customs %", customs]),
           el("label", { style: LBL }, [kind === "actual" ? "Quote date" : "Date", quoted]),
         ]),

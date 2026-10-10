@@ -94,7 +94,7 @@ test("AI fill reads a price into the Actual cost, not into custom specs (2026-10
   assert.ok(/normaliseExtractedLines\(\[\{ \.\.\.parsed\.price, component_id \}\], \[component_id\]\)/.test(spec), "the price is not cleaned by the shared code");
   const app = read("assets/app.js");
   assert.ok(/if \(costPick && cost\) \{[\s\S]*?"setComponentCost", \{[\s\S]*?kind: "actual"/.test(app), "a ticked price is not saved as the Actual cost");
-  assert.ok(/transport_cost: keep\.transport_cost \?\? 0/.test(app), "applying a price wipes the existing transport");
+  assert.ok(/transport_pct: keep\.transport_pct \?\? 0/.test(app), "applying a price wipes the existing transport");
 });
 
 test("the quote reader takes a pasted screenshot (2026-10-10)", () => {

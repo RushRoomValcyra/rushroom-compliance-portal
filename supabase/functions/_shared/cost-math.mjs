@@ -10,8 +10,10 @@
  *
  *   Landed unit cost in SEK, ex VAT =
  *       unit × rate(unit currency)
- *     + transport × rate(transport currency)
- *     + unit × rate(unit currency) × customs % / 100        (customs on the unit only)
+ *     + unit × rate × transport % / 100      (transport as a % of the unit cost, 0048)
+ *     + unit × rate × customs % / 100        (customs on the unit only)
+ *   Baselines saved before 0048 hold a transport AMOUNT + currency instead;
+ *   landed() still reads those, so comparisons against them stay correct.
  *
  * Roll-up follows the BOM logic already decided (docs/BOM_LOGIC_REVIEW.html):
  * only real links are followed — In-the-box children are inside their parent's
@@ -33,7 +35,12 @@ export const toSEK = (amount, cur, rates) => {
 export function landed(cost, rates) {
   if (!cost) return { unitSEK: 0, transportSEK: 0, customsSEK: 0, landedSEK: 0, missing: "cost" };
   const unitSEK = toSEK(cost.unit_cost, cost.unit_currency, rates);
-  const transportSEK = Number(cost.transport_cost) ? toSEK(cost.transport_cost, cost.transport_currency, rates) : 0;
+  // 2026-10-10: transport is a % of the unit cost. An amount (+ currency) is
+  // only found in baselines saved before migration 0048.
+  const hasPct = cost.transport_pct !== undefined && cost.transport_pct !== null;
+  const transportSEK = hasPct
+    ? (unitSEK === null ? 0 : unitSEK * (Number(cost.transport_pct) || 0) / 100)
+    : Number(cost.transport_cost) ? toSEK(cost.transport_cost, cost.transport_currency, rates) : 0;
   if (unitSEK === null || transportSEK === null) {
     return { unitSEK: unitSEK || 0, transportSEK: transportSEK || 0, customsSEK: 0, landedSEK: 0, missing: "rate" };
   }
@@ -70,13 +77,13 @@ export function rollup(view, opts = {}) {
         continue;
       }
       const base = swap ? swap.cost : costs[node.id];
-      const cost = overrides[node.id] ? { ...(base || { unit_cost: 0, unit_currency: "SEK", transport_cost: 0, transport_currency: "SEK", customs_pct: 0 }), ...overrides[node.id] } : base || null;
+      const cost = overrides[node.id] ? { ...(base || { unit_cost: 0, unit_currency: "SEK", transport_pct: 0, customs_pct: 0 }), ...overrides[node.id] } : base || null;
       const l = landed(cost, rates);
       lines.push({
         seq: seq++, path, parent_path: parentPath, component_id: node.id, part_number: node.part_number, name: node.name,
         depth, qty, edge_qty: Number(e.quantity), swapped_from: swap ? e.child_id : null, overridden: !!overrides[node.id],
         unit_cost: cost ? Number(cost.unit_cost) : null, unit_currency: cost ? cost.unit_currency : null,
-        transport_cost: cost ? Number(cost.transport_cost) : null, transport_currency: cost ? cost.transport_currency : null,
+        transport_pct: cost ? Number(cost.transport_pct ?? 0) : null,
         customs_pct: cost ? Number(cost.customs_pct) : null,
         ...l, lineSEK: l.landedSEK * qty,
       });
@@ -149,8 +156,8 @@ export function opportunities(result, estimatedByPath = null) {
   const overhead = ranked.filter((l) => l.unitSEK > 0 && (l.transportSEK + l.customsSEK) / l.unitSEK > OVERHEAD_SHARE);
   const exposure = {};
   for (const l of ranked) {
-    exposure[l.unit_currency || "SEK"] = (exposure[l.unit_currency || "SEK"] || 0) + (l.unitSEK + l.customsSEK) * l.qty;
-    if (l.transportSEK) exposure[l.transport_currency || "SEK"] = (exposure[l.transport_currency || "SEK"] || 0) + l.transportSEK * l.qty;
+    // Transport and customs are % of the unit price, so they move with its currency.
+    exposure[l.unit_currency || "SEK"] = (exposure[l.unit_currency || "SEK"] || 0) + (l.unitSEK + l.transportSEK + l.customsSEK) * l.qty;
   }
   const share = Object.fromEntries(Object.entries(exposure).map(([c, v]) => [c, total ? v / total : 0]));
   // PROP-073: where the actual landed cost runs above our estimate.
@@ -164,8 +171,8 @@ export function opportunities(result, estimatedByPath = null) {
 // What a baseline stores: the lines as computed, with their costs and rates.
 export const baselineLines = (result, estimatedByPath = null) => result.lines.map((l) => ({
   path: l.path, parent_path: l.parent_path, component_id: l.component_id, part_number: l.part_number, name: l.name,
-  qty: l.qty, unit_cost: l.unit_cost, unit_currency: l.unit_currency, transport_cost: l.transport_cost,
-  transport_currency: l.transport_currency, customs_pct: l.customs_pct, landedSEK: l.landedSEK, missing: l.missing,
+  qty: l.qty, unit_cost: l.unit_cost, unit_currency: l.unit_currency, transport_pct: l.transport_pct,
+  customs_pct: l.customs_pct, landedSEK: l.landedSEK, missing: l.missing,
   estimatedSEK: estimatedByPath && estimatedByPath[l.path] && !estimatedByPath[l.path].missing ? estimatedByPath[l.path].landedSEK : null,
 }));
 
@@ -246,8 +253,12 @@ export function normaliseExtractedLines(raw, candidateIds) {
     const price = parseAmount(r.unit_price);
     const per = parseAmount(r.per_quantity) || 1;
     const cur = normaliseCurrency(r.currency);
-    const transport = parseAmount(r.transport_per_unit);
-    const tcur = normaliseCurrency(r.transport_currency) || cur;
+    // Transport: a % when the document states one; a per-unit amount in the
+    // same currency as the price becomes a % of the unit price; anything else
+    // (another currency, per shipment) is not guessed into a %.
+    const tPct = parseAmount(r.transport_pct);
+    const tAmount = parseAmount(r.transport_per_unit);
+    const tcur = normaliseCurrency(r.transport_currency) || normaliseCurrency(r.currency);
     const customs = parseAmount(r.customs_pct);
     const base = {
       description: String(r.description || ""), as_printed: String(r.as_printed || ""),
@@ -258,9 +269,12 @@ export function normaliseExtractedLines(raw, candidateIds) {
     const line = {
       ...base,
       unit_cost: Math.round((price / per) * 10000) / 10000, unit_currency: cur, per_quantity: per,
-      transport_cost: transport && transport > 0 ? transport : 0, transport_currency: tcur || cur,
+      transport_pct: tPct !== null && tPct >= 0 && tPct <= 1000 ? tPct
+        : tAmount && tAmount > 0 && tcur === cur && price > 0 ? Math.round((tAmount / (price / per)) * 100 * 1000) / 1000 : 0,
       customs_pct: customs !== null && customs >= 0 && customs <= 100 ? customs : 0,
     };
+    // Not silently lost: a per-unit freight we could not turn into a % is shown.
+    if (!line.transport_pct && tAmount && tAmount > 0) line.transport_note = `${tAmount} ${tcur || "?"} per unit — not in ${cur}, enter it as a %`;
     if (r.component_id && allowed.has(r.component_id)) lines.push({ ...line, component_id: r.component_id });
     else unmatched.push(line);
   }

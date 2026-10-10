@@ -1169,7 +1169,7 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
     }
     // The current Actual cost, so applying a new price keeps its transport and customs.
     const { data: currentCost } = cost ? await tdb("component_costs")
-      .select("unit_cost, unit_currency, transport_cost, transport_currency, customs_pct, quoted_on")
+      .select("unit_cost, unit_currency, transport_pct, customs_pct, quoted_on")
       .eq("component_id", component_id).eq("kind", "actual").maybeSingle() : { data: null };
 
     return json({

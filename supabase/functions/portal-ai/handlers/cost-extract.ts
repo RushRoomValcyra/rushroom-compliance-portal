@@ -4,7 +4,7 @@
 // of the structure the user is standing in (or the one part whose panel is
 // open); it returns, per document line, the matched part (or none), the price
 // as printed, the quantity basis, currency, transport and customs when the
-// document states them per unit, the quote date, a verbatim evidence quote and
+// document states them (transport as a % of the unit price), the quote date, a verbatim evidence quote and
 // a confidence. Nothing is written here — the user reviews every line and
 // saves what is right (portal-api setComponentCosts).
 //
@@ -79,7 +79,7 @@ Rules that matter more than coverage:
 - unit_price is the net price as printed for the quantity basis in per_quantity ("120,00" for "120,00 EUR / 10 pcs" with per_quantity "10"). Use the net price after line discounts when the document shows both, and say so in as_printed.
 - Prices are ex VAT. If only a VAT-inclusive price is shown, give it and set confidence "low".
 - currency: SEK, EUR, USD or PLN as printed (symbols are fine). Use the document's currency when a line has none.
-- transport_per_unit only when the document states transport/freight PER UNIT for that line. Freight per shipment or order goes in freight_note, not on lines. customs_pct only when stated.
+- Transport: transport_pct when the document states freight as a percentage; transport_per_unit (+ transport_currency) only when it states freight PER UNIT for that line — we convert it to a % of the unit price. Otherwise both are "". Freight per shipment or order goes in freight_note, not on lines. customs_pct only when stated.
 - quote_date as YYYY-MM-DD: the document's quote/offer/invoice date, unless a line states its own.
 - evidence: a short verbatim quote of the line. confidence: "high" only when part and price are unambiguous; "medium" when the wording is loose; "low" when the unit, basis or match is uncertain.`;
 
@@ -103,6 +103,7 @@ Rules that matter more than coverage:
             unit_price: { type: "string" },
             per_quantity: { type: "string" },
             currency: { type: "string" },
+            transport_pct: { type: "string" },
             transport_per_unit: { type: "string" },
             transport_currency: { type: "string" },
             customs_pct: { type: "string" },
@@ -111,7 +112,7 @@ Rules that matter more than coverage:
             confidence: { type: "string", enum: ["high", "medium", "low"] },
           },
           required: ["component_id", "matched_by", "description", "as_printed", "unit_price", "per_quantity", "currency",
-            "transport_per_unit", "transport_currency", "customs_pct", "quote_date", "evidence", "confidence"],
+            "transport_pct", "transport_per_unit", "transport_currency", "customs_pct", "quote_date", "evidence", "confidence"],
           additionalProperties: false,
         },
       },

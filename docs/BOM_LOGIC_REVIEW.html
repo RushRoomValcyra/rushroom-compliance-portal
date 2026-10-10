@@ -180,7 +180,7 @@
 <div class="container">
 
   <h1>BOM Structure Logic — Review</h1>
-  <div class="subtitle">Rushroom Engineering &amp; Compliance Platform · living overview · last updated 2026-10-06</div>
+  <div class="subtitle">Rushroom Engineering &amp; Compliance Platform · living overview · last updated 2026-10-10</div>
 
   <div class="banner" style="background:var(--green-bg);border-left-color:var(--green)">
     <strong style="color:var(--green)">How to read this page.</strong> This is where BOM structure decisions are followed.
@@ -225,7 +225,7 @@
       <h3>◇ Next — designed, not built</h3>
       <ul>
 
-        <li><b>PROP-073 — AI cost data, Estimated vs Actual, Σ Cost review: built, not deployed</b><span class="s">Same roll-up rules as the cost view; a review covers every top-level product (assembly we build or Kit inside nothing else). PROP-072 (cost simulation) is live.</span></li>
+        <li><b>Cost: transport as a % of the unit cost — built, not deployed</b><span class="s">Landed = unit + transport % + customs %, both on the unit price. PROP-072 (cost simulation) and PROP-073 (AI cost data, Σ Cost review) are live; same roll-up rules as the BOM.</span></li>
         <li><b>Hub/Site consistency check</b><span class="s">§5 · needs trustworthy Sourcing first</span></li>
         <li><b>Hub/Site on operations</b> — promoted to Next<span class="s">Where something is <i>modified</i> must be sayable as well as where it is installed. BOM links (incl. In the box) already carry it; work-order and routing steps do not.</span></li>
         <li><b>Stocked pre-assemblies</b><span class="s">question 13 — roadmap backlog, after the BOM logic is settled</span></li>
@@ -244,6 +244,7 @@
     </div>
   </div>
   <div class="timeline">
+    <div><b>2026-10-10</b> Transport is a % of the unit cost, like customs — no separate transport amount or currency. Older cost baselines keep their transport amounts and still compare correctly.</div>
     <div><b>2026-10-07</b> Move, In-the-box colours, “as is”, tree retry and the per-tree level buttons (shown only when a tree has levels) all live and confirmed. Prepared S Middle Door left as it is: it is the door with what we fit to it.</div>
     <div><b>2026-10-07</b> Moving a row under another row must always work — that is how a BOM is worked. Move now offers parts too, with the same two ways as +child; the rules stay as they are.</div>
     <div><b>2026-10-07</b> Fitted “—” = do nothing, picked as is (question 14). The strip and picker say so; “not set” is gone.</div>

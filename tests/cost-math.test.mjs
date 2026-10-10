@@ -22,6 +22,29 @@ test("landed cost: unit and transport in their own currencies, customs on the un
   assert.equal(l.missing, null);
 });
 
+test("landed cost: transport is a % of the unit cost, like customs (0048)", () => {
+  const l = M.landed({ unit_cost: 24, unit_currency: "EUR", transport_pct: 5, customs_pct: 4 }, RATES);
+  close(l.unitSEK, 268.8, "unit");
+  close(l.transportSEK, 13.44, "transport");   // 268.80 × 5 %
+  close(l.customsSEK, 10.752, "customs");
+  close(l.landedSEK, 292.992, "landed");
+  // The 25 mm steel pin: 0.012 USD at 10, 10 % transport, 5 % customs.
+  close(M.landed({ unit_cost: 0.012, unit_currency: "USD", transport_pct: 10, customs_pct: 5 }, { SEK: { rate: 1 }, USD: { rate: 10 } }).landedSEK, 0.138, "pin");
+  assert.equal(M.landed({ unit_cost: 5, unit_currency: "USD", transport_pct: 10 }, RATES).missing, "rate");
+});
+
+test("AI lines: transport as stated %, or a per-unit amount in the price currency turned into a %", () => {
+  const out = M.normaliseExtractedLines([
+    { component_id: "a", unit_price: "24", per_quantity: "1", currency: "EUR", transport_pct: "6" },
+    { component_id: "b", unit_price: "120", per_quantity: "10", currency: "EUR", transport_per_unit: "0,60", transport_currency: "EUR" },
+    { component_id: "c", unit_price: "24", per_quantity: "1", currency: "EUR", transport_per_unit: "3", transport_currency: "PLN" },
+  ], ["a", "b", "c"]);
+  assert.equal(out.lines[0].transport_pct, 6);
+  assert.equal(out.lines[1].transport_pct, 5, "0.60 on 12 per unit is 5 %");
+  assert.equal(out.lines[2].transport_pct, 0, "another currency is not guessed into a %");
+  assert.ok(/3 PLN per unit/.test(out.lines[2].transport_note), "…but it is shown, not lost");
+});
+
 test("a missing cost or a missing rate is reported, never converted at 0 quietly", () => {
   assert.equal(M.landed(null, RATES).missing, "cost");
   assert.equal(M.landed({ unit_cost: 5, unit_currency: "USD", transport_cost: 0, customs_pct: 0 }, RATES).missing, "rate");

@@ -43,7 +43,7 @@ export async function handleCostReviewAction(action: string, body: any, ctx: Ctx
       [nodes, edges, costs] = await Promise.all([
         all(() => tdb("bom_components").select("id, part_number, name, type, make_or_buy, lifecycle_status").order("id")),
         all(() => tdb("bom_edges").select("id, parent_id, child_id, quantity, sort_order, is_reference").is("effective_to", null).order("id")),
-        all(() => tdb("component_costs").select("component_id, kind, unit_cost, unit_currency, transport_cost, transport_currency, customs_pct").order("id")),
+        all(() => tdb("component_costs").select("component_id, kind, unit_cost, unit_currency, transport_pct, customs_pct").order("id")),
       ]);
     } catch (e: any) { return json({ error: e?.message || "Could not read the BOM" }, 400); }
 

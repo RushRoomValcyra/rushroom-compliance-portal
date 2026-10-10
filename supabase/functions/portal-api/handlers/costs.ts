@@ -19,7 +19,7 @@ const RATE_CURRENCIES = ["EUR", "USD", "PLN"];   // SEK is always 1
 const MAX_DEPTH = 10;
 const MAX_BASELINE_LINES = 2000;
 const KINDS = ["actual", "estimated"];   // PROP-073: from documents / our planning cost
-const COST_COLS = "component_id, kind, unit_cost, unit_currency, transport_cost, transport_currency, customs_pct, quoted_on, source_note, source_document_version_id, evidence, updated_at";
+const COST_COLS = "component_id, kind, unit_cost, unit_currency, transport_pct, customs_pct, quoted_on, source_note, source_document_version_id, evidence, updated_at";
 
 type Ctx = {
   role: string;
@@ -197,13 +197,16 @@ function validateCost(b: any): string | null {
   if (!b || !b.component_id) return "component_id required";
   if (b.kind !== undefined && !KINDS.includes(b.kind)) return "kind must be actual or estimated";
   if (b.clear === true) return null;
-  const unit = num(b.unit_cost), transport = b.transport_cost === undefined ? 0 : num(b.transport_cost);
+  // A page cached from before 0048 still sends a transport amount — refuse it
+  // rather than save the line without its transport.
+  if (b.transport_pct === undefined && Number(b.transport_cost)) return "Transport is now a % of the unit cost — reload the page and enter it again.";
+  const unit = num(b.unit_cost), transport = b.transport_pct === undefined ? 0 : num(b.transport_pct);
   const customs = b.customs_pct === undefined ? 0 : num(b.customs_pct);
-  const uc = String(b.unit_currency || "SEK").toUpperCase(), tc = String(b.transport_currency || uc).toUpperCase();
+  const uc = String(b.unit_currency || "SEK").toUpperCase();
   if (!(unit >= 0)) return "Unit cost must be a number, 0 or more.";
-  if (!(transport >= 0)) return "Transport must be a number, 0 or more.";
+  if (!(transport >= 0 && transport <= 1000)) return "Transport must be a percentage between 0 and 1000.";
   if (!(customs >= 0 && customs <= 100)) return "Customs must be a percentage between 0 and 100.";
-  if (!CURRENCIES.includes(uc) || !CURRENCIES.includes(tc)) return `Currency must be one of ${CURRENCIES.join(", ")}.`;
+  if (!CURRENCIES.includes(uc)) return `Currency must be one of ${CURRENCIES.join(", ")}.`;
   if (b.quoted_on && !isDate(b.quoted_on)) return "Quote date must be YYYY-MM-DD.";
   if (b.evidence !== undefined && b.evidence !== null && (!Array.isArray(b.evidence) || JSON.stringify(b.evidence).length > 4000)) return "evidence must be a short list.";
   return null;
@@ -223,11 +226,11 @@ async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): P
     if (error) return { error: error.message };
     note = `${label} cleared`;
   } else {
-    const unit = num(b.unit_cost), transport = b.transport_cost === undefined ? 0 : num(b.transport_cost);
+    const unit = num(b.unit_cost), transport = b.transport_pct === undefined ? 0 : num(b.transport_pct);
     const customs = b.customs_pct === undefined ? 0 : num(b.customs_pct);
-    const uc = String(b.unit_currency || "SEK").toUpperCase(), tc = String(b.transport_currency || uc).toUpperCase();
+    const uc = String(b.unit_currency || "SEK").toUpperCase();
     const { error } = await tdb("component_costs").upsert({
-      component_id: id, kind, unit_cost: unit, unit_currency: uc, transport_cost: transport, transport_currency: tc,
+      component_id: id, kind, unit_cost: unit, unit_currency: uc, transport_pct: transport,
       customs_pct: customs, quoted_on: b.quoted_on || null,
       source_note: b.source_note ? String(b.source_note).slice(0, 500) : null,
       source_document_version_id: b.source_document_version_id || null,
@@ -235,7 +238,7 @@ async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): P
       updated_at: new Date().toISOString(), updated_by: uid,
     }, { onConflict: "organization_id,component_id,kind" });
     if (error) return { error: error.message };
-    note = `${label} set to ${unit} ${uc}` + (transport ? ` + ${transport} ${tc} transport` : "") + (customs ? `, ${customs} % customs` : "")
+    note = `${label} set to ${unit} ${uc}` + (transport ? `, ${transport} % transport` : "") + (customs ? `, ${customs} % customs` : "")
       + (b.source_document_version_id ? " (read from a document)" : "");
   }
   try {

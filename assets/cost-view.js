@@ -216,7 +216,7 @@
     const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
     const onKey = (ev) => { if (ev.key === "Escape") close(); };
 
-    const GRID = "display:grid;grid-template-columns:minmax(14rem,1.8fr) 9rem 10rem 4.5rem 4.5rem 7.5rem 10rem 6.5rem;gap:0.4rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
+    const GRID = "display:grid;grid-template-columns:minmax(14rem,1.8fr) 9rem 8rem 6rem 5.5rem 7.5rem 9rem 6.5rem;gap:0.4rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
     const WARN = "#b45309";
     const sek = (v) => M().sek(v);
 

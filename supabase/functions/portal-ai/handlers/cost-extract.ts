@@ -163,7 +163,12 @@ Rules that matter more than coverage:
 
   // When freight is per-shipment, compute freight % and pre-fill lines without one.
   const fa = Number(parsed.freight_amount || "");
-  const tov = Number(parsed.total_order_value || "");
+  const rawLinesTotal = (parsed.lines || []).reduce((sum: number, l: any) => {
+    const p = Number(String(l.unit_price || "").replace(",", "."));
+    const qty = Math.max(1, Number(String(l.per_quantity || "1").replace(",", ".")) || 1);
+    return sum + (isNaN(p) ? 0 : p * qty);
+  }, 0);
+  const tov = Number(parsed.total_order_value || "") || rawLinesTotal;
   const fc = (parsed.freight_currency || parsed.currency || "").toUpperCase();
   const dc = (parsed.currency || "").toUpperCase();
   const freightPctComputed = (fa > 0 && tov > 0 && (fc === dc || !parsed.freight_currency))

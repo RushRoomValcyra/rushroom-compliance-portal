@@ -164,7 +164,15 @@ Rules:
   // have no explicit transport_pct.  Only compute when both amounts are in the
   // same currency (so no rate conversion is needed).
   const fa = Number(parsed.freight_amount || "");
-  const tov = Number(parsed.total_order_value || "");
+  // Fall back to summing raw line totals (unit_price × per_quantity) when the
+  // AI does not fill total_order_value — e.g. when the invoice only states a
+  // grand total that includes freight.
+  const rawLinesTotal = (parsed.lines || []).reduce((sum: number, l: any) => {
+    const p = Number(String(l.unit_price || "").replace(",", "."));
+    const qty = Math.max(1, Number(String(l.per_quantity || "1").replace(",", ".")) || 1);
+    return sum + (isNaN(p) ? 0 : p * qty);
+  }, 0);
+  const tov = Number(parsed.total_order_value || "") || rawLinesTotal;
   const fc = (parsed.freight_currency || parsed.currency || "").toUpperCase();
   const dc = (parsed.currency || "").toUpperCase();
   const freightPctComputed = (fa > 0 && tov > 0 && (fc === dc || !parsed.freight_currency))

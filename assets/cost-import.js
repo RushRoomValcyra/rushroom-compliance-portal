@@ -169,7 +169,12 @@
             supplier,
             ` · ${String(out.document_type || "").replace("_", " ")} · ${out.document_date || "no date"}`,
           ]),
-          out.freight_note ? el("span", { style: "color:#b45309" }, `Freight per shipment (not on lines): ${out.freight_note}`) : null,
+          out.freight_note ? el("span", { style: "color:#b45309" }, [
+            `Freight per shipment: ${out.freight_note}`,
+            out.freight_pct_computed != null
+              ? el("span", { style: "margin-left:0.5rem;font-weight:700" }, ` → ${out.freight_pct_computed} % applied to all lines`)
+              : el("span", { style: "margin-left:0.5rem;color:#b91c1c" }, " (currencies differ — enter % manually)"),
+          ]) : null,
           out.notes ? el("span", { style: MUTED }, out.notes) : null,
         ]),
         el("div", { style: `font-size:0.8125rem;${MUTED}` }, `${matched} line${matched === 1 ? "" : "s"} matched to catalogue parts, ${notMatched} not matched. Hover a line to see the text it was read from. Correct any wrong matches, then import.`),

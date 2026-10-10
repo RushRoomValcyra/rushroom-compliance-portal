@@ -79,7 +79,7 @@ Rules that matter more than coverage:
 - unit_price is the net price as printed for the quantity basis in per_quantity ("120,00" for "120,00 EUR / 10 pcs" with per_quantity "10"). Use the net price after line discounts when the document shows both, and say so in as_printed.
 - Prices are ex VAT. If only a VAT-inclusive price is shown, give it and set confidence "low".
 - currency: SEK, EUR, USD or PLN as printed (symbols are fine). Use the document's currency when a line has none.
-- Transport: transport_pct when the document states freight as a percentage; transport_per_unit (+ transport_currency) only when it states freight PER UNIT for that line — we convert it to a % of the unit price. Otherwise both are "". Freight per shipment or order goes in freight_note, not on lines. customs_pct only when stated.
+- Transport: transport_pct when the document states freight as a percentage; transport_per_unit (+ transport_currency) only when it states freight PER UNIT for that line — we convert it to a % of the unit price. Otherwise both are "". Freight per shipment or order goes in freight_note AND also fill freight_amount (the total freight as a number string), freight_currency, and total_order_value (total goods value before freight, as a number string in the same currency). We compute freight_pct = freight_amount / total_order_value and apply it to all lines. customs_pct only when stated.
 - quote_date as YYYY-MM-DD: the document's quote/offer/invoice date, unless a line states its own.
 - evidence: a short verbatim quote of the line. confidence: "high" only when part and price are unambiguous; "medium" when the wording is loose; "low" when the unit, basis or match is uncertain.`;
 
@@ -91,6 +91,9 @@ Rules that matter more than coverage:
       document_date: { type: "string" },
       currency: { type: "string" },
       freight_note: { type: "string" },
+      freight_amount: { type: "string" },
+      freight_currency: { type: "string" },
+      total_order_value: { type: "string" },
       lines: {
         type: "array",
         items: {
@@ -118,7 +121,7 @@ Rules that matter more than coverage:
       },
       notes: { type: "string" },
     },
-    required: ["supplier", "document_type", "document_date", "currency", "freight_note", "lines", "notes"],
+    required: ["supplier", "document_type", "document_date", "currency", "freight_note", "freight_amount", "freight_currency", "total_order_value", "lines", "notes"],
     additionalProperties: false,
   };
 
@@ -156,11 +159,25 @@ Rules that matter more than coverage:
   // Lines without their own date take the document's.
   const docDate = /^\d{4}-\d{2}-\d{2}$/.test(parsed.document_date || "") ? parsed.document_date : null;
   const raw = (parsed.lines || []).map((l: any) => ({ ...l, quote_date: l.quote_date || docDate, currency: l.currency || parsed.currency }));
-  const { lines, unmatched, rejected } = normaliseExtractedLines(raw, candidates.map((c) => c.id));
+  let { lines, unmatched, rejected } = normaliseExtractedLines(raw, candidates.map((c) => c.id));
+
+  // When freight is per-shipment, compute freight % and pre-fill lines without one.
+  const fa = Number(parsed.freight_amount || "");
+  const tov = Number(parsed.total_order_value || "");
+  const fc = (parsed.freight_currency || parsed.currency || "").toUpperCase();
+  const dc = (parsed.currency || "").toUpperCase();
+  const freightPctComputed = (fa > 0 && tov > 0 && (fc === dc || !parsed.freight_currency))
+    ? Math.round((fa / tov) * 10000) / 100
+    : null;
+  if (freightPctComputed !== null) {
+    lines = lines.map((l: any) => (!l.transport_pct ? { ...l, transport_pct: freightPctComputed } : l));
+    unmatched = (unmatched as any[]).map((l: any) => (!l.transport_pct ? { ...l, transport_pct: freightPctComputed } : l));
+  }
+
   const byId = Object.fromEntries(candidates.map((c) => [c.id, c]));
   return json({
     supplier: parsed.supplier || "", document_type: parsed.document_type || "other", document_date: docDate,
-    freight_note: parsed.freight_note || "", notes: parsed.notes || "",
+    freight_note: parsed.freight_note || "", freight_pct_computed: freightPctComputed, notes: parsed.notes || "",
     lines: lines.map((l: any) => ({ ...l, part_number: byId[l.component_id]?.part_number, name: byId[l.component_id]?.name })),
     unmatched, rejected,
     candidates: candidates.map((c) => ({ id: c.id, part_number: c.part_number, name: c.name })),

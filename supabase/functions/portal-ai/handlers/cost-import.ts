@@ -75,7 +75,7 @@ Rules:
 - unit_price is the net price as printed for the quantity basis in per_quantity. Use the net price after line discounts; say so in as_printed.
 - Prices are ex VAT. If only a VAT-inclusive price is shown, give it and set confidence "low".
 - currency: SEK, EUR, USD or PLN as printed. Use the document currency when a line has none.
-- transport_pct when the document states freight as a percentage; transport_per_unit (+ transport_currency) only when it states freight per unit for that line. Otherwise both are "". Freight per shipment goes in freight_note.
+- transport_pct when the document states freight as a percentage; transport_per_unit (+ transport_currency) only when it states freight per unit for that line. Otherwise both are "". Freight per shipment goes in freight_note AND also fill freight_amount (the total freight as a number string), freight_currency, and total_order_value (total goods value before freight, as a number string in the same currency). We compute freight_pct = freight_amount / total_order_value and apply it to all lines.
 - quote_date as YYYY-MM-DD.
 - evidence: short verbatim quote of the line. confidence: "high" only when part and price are unambiguous; "medium" when wording is loose; "low" when unit, basis or match is uncertain.`;
 
@@ -87,6 +87,9 @@ Rules:
       document_date: { type: "string" },
       currency: { type: "string" },
       freight_note: { type: "string" },
+      freight_amount: { type: "string" },
+      freight_currency: { type: "string" },
+      total_order_value: { type: "string" },
       lines: {
         type: "array",
         items: {
@@ -115,7 +118,7 @@ Rules:
       },
       notes: { type: "string" },
     },
-    required: ["supplier", "document_type", "document_date", "currency", "freight_note", "lines", "notes"],
+    required: ["supplier", "document_type", "document_date", "currency", "freight_note", "freight_amount", "freight_currency", "total_order_value", "lines", "notes"],
     additionalProperties: false,
   };
 
@@ -155,7 +158,23 @@ Rules:
   const raw = (parsed.lines || []).map((l: any) => ({
     ...l, quote_date: l.quote_date || docDate, currency: l.currency || parsed.currency,
   }));
-  const { lines, unmatched, rejected } = normaliseExtractedLines(raw, candidates.map((c) => c.id));
+  let { lines, unmatched, rejected } = normaliseExtractedLines(raw, candidates.map((c) => c.id));
+
+  // When freight is a per-shipment amount, compute a % and pre-fill lines that
+  // have no explicit transport_pct.  Only compute when both amounts are in the
+  // same currency (so no rate conversion is needed).
+  const fa = Number(parsed.freight_amount || "");
+  const tov = Number(parsed.total_order_value || "");
+  const fc = (parsed.freight_currency || parsed.currency || "").toUpperCase();
+  const dc = (parsed.currency || "").toUpperCase();
+  const freightPctComputed = (fa > 0 && tov > 0 && (fc === dc || !parsed.freight_currency))
+    ? Math.round((fa / tov) * 10000) / 100  // two decimal places
+    : null;
+  if (freightPctComputed !== null) {
+    lines = lines.map((l: any) => (!l.transport_pct ? { ...l, transport_pct: freightPctComputed } : l));
+    unmatched = (unmatched as any[]).map((l: any) => (!l.transport_pct ? { ...l, transport_pct: freightPctComputed } : l));
+  }
+
   const byId = Object.fromEntries(candidates.map((c) => [c.id, c]));
 
   return json({
@@ -163,6 +182,7 @@ Rules:
     document_type: parsed.document_type || "other",
     document_date: docDate,
     freight_note: parsed.freight_note || "",
+    freight_pct_computed: freightPctComputed,
     notes: parsed.notes || "",
     lines: lines.map((l: any) => ({ ...l, part_number: byId[l.component_id]?.part_number, name: byId[l.component_id]?.name })),
     unmatched,

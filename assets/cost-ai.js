@@ -114,7 +114,12 @@
       body.replaceChildren(...[
         el("div", { style: "display:flex;gap:1rem;flex-wrap:wrap;font-size:0.8125rem" }, [
           el("span", { style: "display:flex;gap:0.4rem;align-items:center" }, [supplier, ` · ${String(out.document_type || "").replace("_", " ")} · ${out.document_date || "no date"}`]),
-          out.freight_note ? el("span", { style: "color:#b45309" }, `Freight per shipment, not on the lines: ${out.freight_note}`) : null,
+          out.freight_note ? el("span", { style: "color:#b45309" }, [
+            `Freight per shipment: ${out.freight_note}`,
+            out.freight_pct_computed != null
+              ? el("span", { style: "margin-left:0.5rem;font-weight:700" }, ` → ${out.freight_pct_computed} % applied to all lines`)
+              : el("span", { style: "margin-left:0.5rem;color:#b91c1c" }, " (currencies differ — enter % manually)"),
+          ]) : null,
           out.notes ? el("span", { style: MUTED }, out.notes) : null,
         ]),
         el("div", { style: `font-size:0.8125rem;${MUTED}` }, `${(out.lines || []).length} line${(out.lines || []).length === 1 ? "" : "s"} matched to our parts, ${(out.unmatched || []).length} not matched (choose a part to save one). Hover a line for the text it was read from.`),

@@ -30,7 +30,7 @@
   function openReadQuote({ scope, token, onSaved }) {
     const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
     const body = el("div", { style: "display:flex;flex-direction:column;gap:0.6rem;min-height:0" });
-    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); document.removeEventListener("paste", onPaste); };
     const onKey = (ev) => { if (ev.key === "Escape") close(); };
     overlay.append(el("div", { role: "dialog", "aria-modal": "true", "aria-label": "Read costs from a document", style: "background:var(--bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:1.1rem 1.25rem;width:min(1180px,96vw);max-height:92vh;overflow:auto;display:flex;flex-direction:column;gap:0.6rem" }, [
       el("div", { style: "display:flex;align-items:center" }, [el("strong", { style: "flex:1;font-size:1rem" }, `✨ Read costs from a document — ${scope.name}`), el("button", { class: "btn btn-xs", type: "button", onclick: close }, "✕")]),
@@ -45,13 +45,29 @@
       ondragover: (ev) => { ev.preventDefault(); drop.style.borderColor = "var(--accent,#2fa564)"; },
       ondragleave: () => { drop.style.borderColor = "var(--border,#e2e8f0)"; },
       ondrop: (ev) => { ev.preventDefault(); const f = ev.dataTransfer?.files?.[0]; if (f) read(f); } }, [
-      el("div", { style: "font-weight:600" }, "Drop a quote, price list or invoice — or click to choose"),
+      el("div", { style: "font-weight:600" }, "Drop a quote, price list or invoice, paste a screenshot (⌘V / Ctrl+V) — or click to choose"),
       el("div", { style: `font-size:0.8125rem;margin-top:0.3rem;${MUTED}` }, "PDF, image, Excel or Word. The AI only reads what the document states; you check every line before anything is saved."),
     ]);
     file.onchange = () => { if (file.files[0]) read(file.files[0]); };
+
+    // A pasted screenshot is read like a dropped file — only while the dialog
+    // is still waiting for one (not over the review table). The panel behind
+    // yields the paste because this overlay carries data-modal-overlay.
+    let waiting = true;
+    function onPaste(ev) {
+      if (!overlay.isConnected || !waiting) return;
+      const item = [...(ev.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
+      if (!item) return;
+      ev.preventDefault();
+      const blob = item.getAsFile();
+      const ext = (item.type.split("/")[1] || "png").replace("jpeg", "jpg");
+      read(new File([blob], `screenshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${ext}`, { type: item.type }));
+    }
+    document.addEventListener("paste", onPaste);
     body.replaceChildren(drop, file);
 
     async function read(f) {
+      waiting = false;
       body.replaceChildren(el("div", { class: "loading" }, `Uploading ${f.name}…`));
       let path;
       try {
@@ -63,7 +79,7 @@
         const out = await post(token, "extractCostsFromDocument", { scope_component_id: scope.id, storage_path: path, file_name: f.name });
         review(out, { path, fileName: f.name });
       } catch (ex) {
-        body.replaceChildren(el("div", { class: "error" }, ex.message), el("button", { class: "btn btn-sm", type: "button", onclick: () => body.replaceChildren(drop, file) }, "Try another file"));
+        body.replaceChildren(el("div", { class: "error" }, ex.message), el("button", { class: "btn btn-sm", type: "button", onclick: () => { waiting = true; body.replaceChildren(drop, file); } }, "Try another file"));
       }
     }
 

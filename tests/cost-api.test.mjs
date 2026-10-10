@@ -96,3 +96,11 @@ test("AI fill reads a price into the Actual cost, not into custom specs (2026-10
   assert.ok(/if \(costPick && cost\) \{[\s\S]*?"setComponentCost", \{[\s\S]*?kind: "actual"/.test(app), "a ticked price is not saved as the Actual cost");
   assert.ok(/transport_cost: keep\.transport_cost \?\? 0/.test(app), "applying a price wipes the existing transport");
 });
+
+test("the quote reader takes a pasted screenshot (2026-10-10)", () => {
+  const ai = read("assets/cost-ai.js");
+  assert.ok(/document\.addEventListener\("paste", onPaste\)/.test(ai), "no paste listener");
+  assert.ok(/document\.removeEventListener\("paste", onPaste\)/.test(ai), "the paste listener outlives the dialog");
+  assert.ok(/i\.type\.startsWith\("image\/"\)/.test(ai) && /read\(new File\(\[blob\]/.test(ai), "a pasted image is not read like a dropped file");
+  assert.ok(/if \(!overlay\.isConnected \|\| !waiting\) return;/.test(ai), "a paste over the review table would start a second read");
+});

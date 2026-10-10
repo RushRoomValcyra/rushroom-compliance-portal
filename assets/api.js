@@ -42,6 +42,7 @@
       "generateInterpretations", "suggestRequirementLinks", "generateComplianceNarrative",
       "suggestClassifications", "extractComponentSpecs", "extractDrawingMeta",
       "extractCostsFromDocument",   // PROP-073
+      "importPartCosts",            // PROP-074
     ]),
     "portal-cellar": new Set([
       "addDirective", "syncDirectiveRelations", "inferDirectiveRelations",

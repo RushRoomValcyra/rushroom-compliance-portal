@@ -292,6 +292,11 @@
     overlay.append(el("div", { role: "dialog", "aria-modal": "true", "aria-label": "All parts cost list", style: "background:var(--bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:1.1rem 1.25rem;width:min(1200px,96vw);height:min(820px,92vh);display:flex;flex-direction:column;gap:0.6rem" }, [
       el("div", { style: "display:flex;align-items:center;gap:0.6rem" }, [
         el("strong", { style: "flex:1;font-size:1rem" }, "All parts — actual & estimated cost"),
+        el("button", {
+          class: "btn btn-sm", type: "button",
+          style: "font-size:0.8125rem",
+          onclick: () => window.PortalCost.openPartCostImport(token, { onSaved: (n) => { load(); } }),
+        }, "✨ Import costs"),
         el("button", { class: "btn btn-xs", type: "button", onclick: close }, "✕"),
       ]),
       body,

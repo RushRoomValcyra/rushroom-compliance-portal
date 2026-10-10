@@ -1942,6 +1942,11 @@ Deno.serve(async (req) => {
     return json({ error: "Action 'extractCostsFromDocument' is served by portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
   }
 
+  if (action === "importPartCosts") {
+    // PROP-074: served by portal-ai (global cost import). A client posting it here is stale.
+    return json({ error: "Action 'importPartCosts' is served by portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
+  }
+
   if (action === "extractDrawingMeta") {
     // Never lived here, but answered anyway: if portal-ai is behind the frontend
     // during a deploy, "served elsewhere" is a far more useful reply than
@@ -5022,6 +5027,17 @@ Deno.serve(async (req) => {
     const { component_id, fileName, contentType } = body;
     if (!component_id || !fileName) return json({ error: "component_id and fileName required" }, 400);
     const path = `component-images/${orgPrefix}${component_id}/${Date.now()}-${safeName(String(fileName))}`;
+    const { data, error } = await db.storage.from(DOC_BUCKET).createSignedUploadUrl(path);
+    if (error) return json({ error: error.message }, 500);
+    return json({ signedUrl: data.signedUrl, token: data.token, path });
+  }
+
+  // PROP-074 — temporary upload for global cost import (no component scope).
+  if (action === "importUploadUrl") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { fileName } = body;
+    if (!fileName) return json({ error: "fileName required" }, 400);
+    const path = `imports/${orgPrefix}${Date.now()}-${safeName(String(fileName))}`;
     const { data, error } = await db.storage.from(DOC_BUCKET).createSignedUploadUrl(path);
     if (error) return json({ error: error.message }, 500);
     return json({ signedUrl: data.signedUrl, token: data.token, path });

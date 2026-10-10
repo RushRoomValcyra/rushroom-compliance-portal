@@ -207,5 +207,82 @@
     await load();
   }
 
-  window.PortalCost = Object.assign(window.PortalCost || {}, { mountAssembly });
+  // --- All parts cost list -------------------------------------------------------
+  // Every bought part in one flat table with its Actual and Estimated costs.
+  // No BOM tree, no hierarchy — pure parts × cost registry.
+  async function openPartCostList(token, opts = {}) {
+    const overlay = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
+    const body = el("div", { style: "flex:1;overflow:auto" });
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (ev) => { if (ev.key === "Escape") close(); };
+
+    const GRID = "display:grid;grid-template-columns:minmax(14rem,1.8fr) 9rem 10rem 4.5rem 4.5rem 7.5rem 10rem 6.5rem;gap:0.4rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
+    const WARN = "#b45309";
+    const sek = (v) => M().sek(v);
+
+    async function load() {
+      body.replaceChildren(el("div", { class: "loading" }, "Loading parts…"));
+      try {
+        const [{ parts }, rates] = await Promise.all([
+          window.PortalAPI.post(token, "listPartCosts", {}),
+          window.PortalAPI.post(token, "listCurrencyRates", {}).then(({ rates: r }) => {
+            const today = new Date().toISOString().slice(0, 10);
+            const out = { SEK: { rate: 1 } };
+            for (const x of r || []) { if (x.valid_on <= today && !out[x.currency]) out[x.currency] = { rate: Number(x.rate_to_sek) }; }
+            return out;
+          }),
+        ]);
+        // Sort: no actual cost first, then by name.
+        const sorted = [...parts].sort((a, b) => {
+          const aHas = !!a.actual, bHas = !!b.actual;
+          if (aHas !== bHas) return aHas ? 1 : -1;
+          return (a.name || "").localeCompare(b.name || "");
+        });
+        const noCost = sorted.filter((p) => !p.actual).length;
+        const statLine = `${parts.length} parts · ${noCost} without an actual cost`;
+        body.replaceChildren(
+          el("div", { style: `font-size:0.8125rem;margin-bottom:0.5rem;${MUTED}` }, statLine),
+          el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
+            ["Part", "Part number", "Actual unit cost", "Transport %", "Customs %", "Actual landed", "Estimated unit cost", "Δ landed"].map((t) => el("span", {}, t))),
+          ...sorted.map((p) => {
+            const a = p.actual, e = p.estimated;
+            const aLanded = a ? M().landed(a, rates) : null;
+            const eLanded = e ? M().landed(e, rates) : null;
+            const delta = aLanded && eLanded && !aLanded.missing && !eLanded.missing ? aLanded.landedSEK - eLanded.landedSEK : null;
+            const nameCell = opts.openPart ? el("button", {
+              class: "btn btn-xs", type: "button", style: "text-align:left;font-size:0.8125rem;padding:0;background:none;border:none;font-weight:600;cursor:pointer",
+              onclick: () => { close(); opts.openPart(p); },
+            }, p.name || "—") : el("span", { style: "font-weight:600" }, p.name || "—");
+            return el("div", { style: GRID }, [
+              nameCell,
+              el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, p.part_number || "—"),
+              a ? el("span", {}, `${Number(a.unit_cost)} ${a.unit_currency}`)
+                : el("span", { style: `color:${WARN}` }, "no cost"),
+              el("span", {}, a ? `${Number(a.transport_pct || 0)} %` : "—"),
+              el("span", {}, a ? `${Number(a.customs_pct || 0)} %` : "—"),
+              aLanded && !aLanded.missing ? el("span", { style: "font-weight:600" }, sek(aLanded.landedSEK))
+                : el("span", { style: `color:${WARN}` }, aLanded ? `no ${a.unit_currency} rate` : "—"),
+              e ? el("span", { style: MUTED }, `${Number(e.unit_cost)} ${e.unit_currency}`) : el("span", { style: MUTED }, "—"),
+              delta !== null ? el("span", { style: `font-weight:600;color:${delta > 0 ? "#b91c1c" : delta < -0.005 ? "#15803d" : ""}` }, (delta > 0.005 ? "+" : "") + sek(delta)) : el("span", {}, "—"),
+            ]);
+          }),
+        );
+      } catch (ex) { body.replaceChildren(el("div", { class: "error" }, ex.message)); }
+    }
+
+    overlay.append(el("div", { role: "dialog", "aria-modal": "true", "aria-label": "All parts cost list", style: "background:var(--bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:1.1rem 1.25rem;width:min(1200px,96vw);height:min(820px,92vh);display:flex;flex-direction:column;gap:0.6rem" }, [
+      el("div", { style: "display:flex;align-items:center;gap:0.6rem" }, [
+        el("strong", { style: "flex:1;font-size:1rem" }, "All parts — actual & estimated cost"),
+        el("span", { style: `font-size:0.75rem;${MUTED}` }, "Every bought part in the system. No BOM tree. Parts without a cost shown first."),
+        el("button", { class: "btn btn-xs", type: "button", onclick: close }, "✕"),
+      ]),
+      body,
+    ]));
+    overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(); });
+    document.addEventListener("keydown", onKey);
+    document.body.append(overlay);
+    await load();
+  }
+
+  window.PortalCost = Object.assign(window.PortalCost || {}, { mountAssembly, openPartCostList });
 })();

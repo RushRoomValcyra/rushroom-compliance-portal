@@ -12,6 +12,7 @@ export const COST_ACTIONS = new Set([
   "getCostView", "getComponentCost", "setComponentCost", "setComponentCosts",
   "listCurrencyRates", "setCurrencyRate", "deleteCurrencyRate",
   "saveCostBaseline", "listCostBaselines", "getCostBaseline",
+  "listPartCosts",
 ]);
 
 const CURRENCIES = ["SEK", "EUR", "USD", "PLN"];
@@ -197,6 +198,30 @@ export async function handleCostAction(action: string, body: any, ctx: Ctx): Pro
     if (error) return json({ error: error.message }, 400);
     if (!data) return json({ error: "Baseline not found" }, 404);
     return json({ baseline: data });
+  }
+
+  // --- flat list of all bought parts with their actual + estimated cost ------
+  // No BOM traversal. Every part / raw material the organisation buys, in one
+  // table, with its two costs side by side. Used for the "All parts" cost list.
+  if (action === "listPartCosts") {
+    const BOUGHT_TYPES = ["part", "raw_material", "spare_part", "finished_good"];
+    const { data: parts, error: pe } = await tdb("bom_components")
+      .select("id, part_number, name, type, make_or_buy, lifecycle_status")
+      .in("type", BOUGHT_TYPES)
+      .neq("lifecycle_status", "replaced")
+      .order("name");
+    if (pe) return json({ error: pe.message }, 400);
+    const ids = (parts || []).map((p: any) => p.id);
+    if (!ids.length) return json({ parts: [] });
+    const { data: costs, error: ce } = await tdb("component_costs")
+      .select(COST_COLS).in("component_id", ids);
+    if (ce) return json({ error: ce.message }, 400);
+    const byId: Record<string, Record<string, any>> = {};
+    for (const c of costs || []) {
+      if (!byId[c.component_id]) byId[c.component_id] = {};
+      byId[c.component_id][c.kind] = c;
+    }
+    return json({ parts: (parts || []).map((p: any) => ({ ...p, actual: byId[p.id]?.actual || null, estimated: byId[p.id]?.estimated || null })) });
   }
 
   return json({ error: `Unknown cost action ${action}` }, 400);

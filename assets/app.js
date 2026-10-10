@@ -3923,6 +3923,15 @@
             },
           }),
         }, "Σ Cost review") : null,
+        role === "rushroom" && window.PortalCost && window.PortalCost.openPartCostList ? el("button", {
+          class: "btn btn-sm", type: "button", title: "All bought parts with their actual and estimated cost — no BOM tree",
+          onclick: () => window.PortalCost.openPartCostList(token, {
+            openPart: (p) => {
+              const comp = allComponents.find((c) => c.id === p.id);
+              if (comp) openComponentDetail(comp.id, token, detailPanel, comp, role);
+            },
+          }),
+        }, "≡ Parts costs") : null,
         ...exportButtons(
           () => exportSet,
           () => BOM_EXPORT_COLUMNS((id) => (partCategories.find((c) => c.id === id) || {}).name || ""),

@@ -243,7 +243,7 @@
         body.replaceChildren(
           el("div", { style: `font-size:0.8125rem;margin-bottom:0.5rem;${MUTED}` }, statLine),
           el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
-            ["Part", "Part number", "Actual unit cost", "Transport %", "Customs %", "Actual landed", "Estimated unit cost", "Δ landed"].map((t) => el("span", {}, t))),
+            ["Part", "Part number", "Actual unit cost", "Transport %", "Customs %", "Actual landed", "Estimated unit cost", "Δ landed"].map((t, i) => el("span", { style: i >= 2 ? "text-align:right" : "" }, t))),
           ...sorted.map((p) => {
             const a = p.actual, e = p.estimated;
             const aLanded = a ? M().landed(a, rates) : null;
@@ -256,14 +256,14 @@
             return el("div", { style: GRID }, [
               nameCell,
               el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, p.part_number || "—"),
-              a ? el("span", {}, `${Number(a.unit_cost)} ${a.unit_currency}`)
-                : el("span", { style: `color:${WARN}` }, "no cost"),
-              el("span", {}, a ? `${Number(a.transport_pct || 0)} %` : "—"),
-              el("span", {}, a ? `${Number(a.customs_pct || 0)} %` : "—"),
-              aLanded && !aLanded.missing ? el("span", { style: "font-weight:600" }, sek(aLanded.landedSEK))
-                : el("span", { style: `color:${WARN}` }, aLanded ? `no ${a.unit_currency} rate` : "—"),
-              e ? el("span", { style: MUTED }, `${Number(e.unit_cost)} ${e.unit_currency}`) : el("span", { style: MUTED }, "—"),
-              delta !== null ? el("span", { style: `font-weight:600;color:${delta > 0 ? "#b91c1c" : delta < -0.005 ? "#15803d" : ""}` }, (delta > 0.005 ? "+" : "") + sek(delta)) : el("span", {}, "—"),
+              a ? el("span", { style: "text-align:right" }, `${Number(a.unit_cost)} ${a.unit_currency}`)
+                : el("span", { style: `text-align:right;color:${WARN}` }, "no cost"),
+              el("span", { style: "text-align:right" }, a ? `${Number(a.transport_pct || 0)} %` : "—"),
+              el("span", { style: "text-align:right" }, a ? `${Number(a.customs_pct || 0)} %` : "—"),
+              aLanded && !aLanded.missing ? el("span", { style: "text-align:right;font-weight:600" }, sek(aLanded.landedSEK))
+                : el("span", { style: `text-align:right;color:${WARN}` }, aLanded ? `no ${a.unit_currency} rate` : "—"),
+              e ? el("span", { style: `text-align:right;${MUTED}` }, `${Number(e.unit_cost)} ${e.unit_currency}`) : el("span", { style: `text-align:right;${MUTED}` }, "—"),
+              delta !== null ? el("span", { style: `text-align:right;font-weight:600;color:${delta > 0 ? "#b91c1c" : delta < -0.005 ? "#15803d" : ""}` }, (delta > 0.005 ? "+" : "") + sek(delta)) : el("span", { style: "text-align:right" }, "—"),
             ]);
           }),
         );
@@ -273,7 +273,6 @@
     overlay.append(el("div", { role: "dialog", "aria-modal": "true", "aria-label": "All parts cost list", style: "background:var(--bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:1.1rem 1.25rem;width:min(1200px,96vw);height:min(820px,92vh);display:flex;flex-direction:column;gap:0.6rem" }, [
       el("div", { style: "display:flex;align-items:center;gap:0.6rem" }, [
         el("strong", { style: "flex:1;font-size:1rem" }, "All parts — actual & estimated cost"),
-        el("span", { style: `font-size:0.75rem;${MUTED}` }, "Every bought part in the system. No BOM tree. Parts without a cost shown first."),
         el("button", { class: "btn btn-xs", type: "button", onclick: close }, "✕"),
       ]),
       body,

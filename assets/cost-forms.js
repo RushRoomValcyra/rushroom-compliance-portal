@@ -147,28 +147,63 @@
   // Landed is recomputed at today's rates so old and new prices compare directly.
   function historyList(history, rates) {
     if (!history.length) return null;
-    const GRID = "display:grid;grid-template-columns:8.5rem 5.5rem 7rem 4.5rem 4.5rem 6.5rem minmax(7rem,1fr) minmax(8rem,1.4fr) 7rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
+    // Tab state — Actual first since it is the more-used kind.
+    let activeKind = history.some((h) => h.kind === "actual") ? "actual" : "estimated";
+    // One column fewer than before: the Kind column is gone because the tab already says it.
+    const GRID = "display:grid;grid-template-columns:8.5rem 7rem 4.5rem 4.5rem 6.5rem minmax(7rem,1fr) minmax(8rem,1.4fr) 7rem;gap:0.5rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
     const when = (iso) => new Date(iso).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
-    return el("div", { style: "margin-top:1rem" }, [
-      el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:0.3rem;${MUTED}` }, `History — ${history.length} save${history.length === 1 ? "" : "s"}`),
-      el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;${MUTED}` },
-        ["Saved", "Cost", "Unit", "Transport", "Customs", "Landed today", "Supplier", "Source", "By"].map((t) => el("span", {}, t))),
-      ...history.map((h) => {
-        const kind = el("span", { style: h.kind === "actual" ? "font-weight:600" : MUTED }, h.kind === "actual" ? "Actual" : "Estimated");
-        if (h.event === "cleared") return el("div", { style: GRID }, [el("span", {}, when(h.saved_at)), kind, el("span", { style: "grid-column:span 6;color:#b45309" }, "cleared"), el("span", { style: MUTED }, h.saved_by_name || "—")]);
-        const l = M().landed(h, rates);
-        return el("div", { style: GRID }, [
-          el("span", {}, when(h.saved_at)), kind,
-          el("span", { style: "font-variant-numeric:tabular-nums" }, `${Number(h.unit_cost)} ${h.unit_currency}`),
-          el("span", {}, `${Number(h.transport_pct || 0)} %`),
-          el("span", {}, `${Number(h.customs_pct || 0)} %`),
-          el("span", { style: "font-variant-numeric:tabular-nums" }, l.missing ? `no ${h.unit_currency} rate` : M().sek(l.landedSEK)),
-          el("span", {}, h.supplier_name || "—"),
-          el("span", { style: MUTED, title: h.source_note || "" }, [h.quoted_on ? `${h.quoted_on} · ` : "", h.source_note || (h.source_document_version_id ? "read from a document" : "—")]),
-          el("span", { style: MUTED }, h.saved_by_name || "—"),
-        ]);
-      }),
+    const countOf = (k) => history.filter((h) => h.kind === k).length;
+
+    const content = el("div");
+    const paintRows = () => {
+      const filtered = history.filter((h) => h.kind === activeKind);
+      if (!filtered.length) { content.replaceChildren(el("div", { style: `padding:0.4rem 0.5rem;font-size:0.8125rem;${MUTED}` }, "No saves yet.")); return; }
+      content.replaceChildren(
+        el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;${MUTED}` },
+          ["Saved", "Unit", "Transport", "Customs", "Landed today", "Supplier", "Source", "By"].map((t) => el("span", {}, t))),
+        ...filtered.map((h) => {
+          if (h.event === "cleared") return el("div", { style: GRID }, [el("span", {}, when(h.saved_at)), el("span", { style: "grid-column:span 6;color:#b45309" }, "cleared"), el("span", { style: MUTED }, h.saved_by_name || "—")]);
+          const l = M().landed(h, rates);
+          return el("div", { style: GRID }, [
+            el("span", {}, when(h.saved_at)),
+            el("span", { style: "font-variant-numeric:tabular-nums" }, `${Number(h.unit_cost)} ${h.unit_currency}`),
+            el("span", {}, `${Number(h.transport_pct || 0)} %`),
+            el("span", {}, `${Number(h.customs_pct || 0)} %`),
+            el("span", { style: "font-variant-numeric:tabular-nums" }, l.missing ? `no ${h.unit_currency} rate` : M().sek(l.landedSEK)),
+            el("span", {}, h.supplier_name || "—"),
+            el("span", { style: MUTED, title: h.source_note || "" }, [h.quoted_on ? `${h.quoted_on} · ` : "", h.source_note || (h.source_document_version_id ? "read from a document" : "—")]),
+            el("span", { style: MUTED }, h.saved_by_name || "—"),
+          ]);
+        }),
+      );
+    };
+
+    const tabBtns = {};
+    const setTab = (k) => {
+      activeKind = k;
+      Object.entries(tabBtns).forEach(([bk, b]) => {
+        b.style.fontWeight = bk === k ? "700" : "";
+        b.style.borderColor = bk === k ? "var(--accent,#2fa564)" : "";
+        b.style.background = bk === k ? "#2fa56412" : "";
+      });
+      paintRows();
+    };
+    const makeTab = (k, label) => {
+      const b = el("button", { class: "btn btn-sm", type: "button", onclick: () => setTab(k) }, `${label} (${countOf(k)})`);
+      tabBtns[k] = b; return b;
+    };
+
+    paintRows();
+    const wrap = el("div", { style: "margin-top:1rem" }, [
+      el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem" }, [
+        el("span", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` }, "History"),
+        makeTab("actual", "Actual"),
+        makeTab("estimated", "Estimated"),
+      ]),
+      el("div", { style: "border:1px solid var(--border,#e2e8f0);border-radius:6px;overflow:hidden" }, [content]),
     ]);
+    setTab(activeKind);   // apply initial active style
+    return wrap;
   }
 
   async function openRates(token, onChanged) {

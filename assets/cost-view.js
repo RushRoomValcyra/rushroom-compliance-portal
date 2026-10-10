@@ -239,20 +239,39 @@
           return (a.name || "").localeCompare(b.name || "");
         });
         const noCost = sorted.filter((p) => !p.actual).length;
-        const statLine = `${parts.length} parts · ${noCost} without an actual cost`;
+        // Compute totals for the summary cards
+        let totalActualLanded = 0, totalEstLanded = 0, countActualLanded = 0, countEstLanded = 0;
+        for (const p of sorted) {
+          const aL = p.actual ? M().landed(p.actual, rates) : null;
+          const eL = p.estimated ? M().landed(p.estimated, rates) : null;
+          if (aL && !aL.missing) { totalActualLanded += aL.landedSEK; countActualLanded++; }
+          if (eL && !eL.missing) { totalEstLanded += eL.landedSEK; countEstLanded++; }
+        }
+        const statCard = (label, value, tone) => el("div", { style: "padding:0.45rem 0.7rem;border:1px solid var(--border,#e2e8f0);border-radius:8px;min-width:9rem" }, [
+          el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` }, label),
+          el("div", { style: `font-size:1.05rem;font-weight:700;${tone ? `color:${tone}` : ""}` }, value),
+        ]);
         body.replaceChildren(
-          el("div", { style: `font-size:0.8125rem;margin-bottom:0.5rem;${MUTED}` }, statLine),
+          el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
+            statCard("Total parts", String(parts.length)),
+            statCard("Without actual cost", String(noCost), noCost ? WARN : undefined),
+            statCard("Actual landed (total)", countActualLanded ? sek(totalActualLanded) : "—"),
+            statCard("Estimated landed (total)", countEstLanded ? sek(totalEstLanded) : "—"),
+            (countActualLanded && countEstLanded)
+              ? statCard("Δ actual vs estimated", (totalActualLanded - totalEstLanded > 0.005 ? "+" : "") + sek(totalActualLanded - totalEstLanded), totalActualLanded > totalEstLanded * 1.05 ? "#b91c1c" : totalActualLanded < totalEstLanded * 0.995 ? "#15803d" : undefined)
+              : null,
+          ].filter(Boolean)),
           el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
-            ["Part", "Part number", "Actual unit cost", "Transport %", "Customs %", "Actual landed", "Estimated unit cost", "Δ landed"].map((t, i) => el("span", { style: i >= 2 ? "text-align:right" : "" }, t))),
+            ["Part", "Part number", "Actual unit cost", "Transport %", "Customs %", "Actual landed", "Estimated unit cost", "Δ landed"].map((t, i) => el("span", { style: i >= 2 ? "text-align:right" : "text-align:left" }, t))),
           ...sorted.map((p) => {
             const a = p.actual, e = p.estimated;
             const aLanded = a ? M().landed(a, rates) : null;
             const eLanded = e ? M().landed(e, rates) : null;
             const delta = aLanded && eLanded && !aLanded.missing && !eLanded.missing ? aLanded.landedSEK - eLanded.landedSEK : null;
             const nameCell = opts.openPart ? el("button", {
-              class: "btn btn-xs", type: "button", style: "text-align:left;font-size:0.8125rem;padding:0;background:none;border:none;font-weight:600;cursor:pointer",
+              class: "btn btn-xs", type: "button", style: "text-align:left;font-size:0.8125rem;padding:0;background:none;border:none;font-weight:600;cursor:pointer;display:block;width:100%",
               onclick: () => { close(); opts.openPart(p); },
-            }, p.name || "—") : el("span", { style: "font-weight:600" }, p.name || "—");
+            }, p.name || "—") : el("span", { style: "font-weight:600;text-align:left;display:block" }, p.name || "—");
             return el("div", { style: GRID }, [
               nameCell,
               el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, p.part_number || "—"),

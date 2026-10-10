@@ -75,7 +75,7 @@
           const d = a - e, rel = d / e;
           return el("span", { style: `text-align:right;${rel > M().OVER_ESTIMATE ? "color:#b91c1c;font-weight:600" : rel < -0.005 ? "color:#15803d" : ""}` }, signed(d));
         };
-        main.replaceChildren(
+        main.replaceChildren(...[
           el("div", { style: "font-size:0.8125rem;margin-bottom:0.5rem" }, [el("strong", {}, when(review.reviewed_at)), el("span", { style: MUTED }, ` · rates: ${rates}${previous ? ` · compared with the review of ${when(previous.reviewed_at)}` : ""}`)]),
           el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
             ["Actual, all products", M().sek(tot("actual"))], ["Estimated", M().sek(tot("estimated"))],
@@ -95,7 +95,7 @@
             el("span", { style: `text-align:right;${p.missing_actual ? "color:#b45309" : MUTED}` }, p.missing_actual ? `${p.missing_actual} of ${p.lines} lines` : "complete"),
           ])),
           el("p", { style: `font-size:0.75rem;margin-top:0.6rem;${MUTED}` }, "A product with lines missing a cost or a rate is understated. Each product's lines are saved as a baseline — open its Cost view and pick this review under “Compare with” to see what changed, split into quantity, price and exchange rate."),
-        );
+        ].filter(Boolean));
       } catch (ex) { main.replaceChildren(el("div", { class: "error" }, ex.message)); }
     }
 

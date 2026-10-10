@@ -185,3 +185,11 @@ test("AI fill price: $0.012 per piece and $1.20 per 100 both give 0.012 USD per 
   assert.equal(b.lines[0].unit_cost, 0.012);
   assert.equal(a.lines[0].unit_currency, "USD");
 });
+
+test("small amounts keep four decimals; normal amounts two", () => {
+  const nb = (s) => s.replace(/\s/g, " ");   // sv-SE uses a narrow no-break space for thousands
+  assert.equal(nb(M.sek(0.126)), "0,1260 kr", "a pin at 0.012 USD must not show as 0,13 kr");
+  assert.equal(nb(M.sek(287.502)), "287,50 kr");
+  assert.equal(nb(M.sek(0)), "0,00 kr");
+  assert.equal(M.sek(null), "—");
+});

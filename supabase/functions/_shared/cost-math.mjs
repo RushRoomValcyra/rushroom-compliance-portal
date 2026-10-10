@@ -169,8 +169,13 @@ export const baselineLines = (result, estimatedByPath = null) => result.lines.ma
   estimatedSEK: estimatedByPath && estimatedByPath[l.path] && !estimatedByPath[l.path].missing ? estimatedByPath[l.path].landedSEK : null,
 }));
 
-export const sek = (v) => (v === null || v === undefined || Number.isNaN(v) ? "—"
-  : `${Number(v).toLocaleString("sv-SE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kr`);
+// Below 1 kr two decimals hide the price of small parts (a pin at 0.012 USD
+// is 0.1260 kr, not "0.13"), and that error multiplies by thousands.
+export const sek = (v) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  const n = Number(v), dp = n !== 0 && Math.abs(n) < 1 ? 4 : 2;
+  return `${n.toLocaleString("sv-SE", { minimumFractionDigits: dp, maximumFractionDigits: dp })} kr`;
+};
 
 // ---- PROP-073: Estimated vs Actual -------------------------------------------
 

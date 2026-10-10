@@ -136,7 +136,7 @@
       });
       const removed = cmp ? cmp.rows.filter((r) => r.status === "removed") : [];
 
-      container.replaceChildren(
+      container.replaceChildren(...[
         el("div", { style: "display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem" }, [
           el("label", { style: `font-size:0.75rem;font-weight:600;${MUTED};display:flex;gap:0.3rem;align-items:center` }, ["Rates at", rateDate]),
           el("span", { style: `font-size:0.75rem;${MUTED}` }, used || "no foreign rates yet"),
@@ -169,7 +169,7 @@
           opp.missing.length ? el("div", { style: `color:${WARN}` }, `No cost or rate: ${opp.missing.map((l) => l.name).join(", ")}.`) : null,
           el("div", { style: `font-size:0.75rem;${MUTED}` }, "In-the-box contents are inside their parent's price. Hub and site work are not costed yet."),
         ].filter(Boolean)),
-      );
+      ].filter(Boolean));
     }
     await load();
   }

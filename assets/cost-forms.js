@@ -58,14 +58,33 @@
       const customs = el("input", { class: "up-text", type: "number", min: "0", max: "100", step: "any", value: c.customs_pct ?? "", "aria-label": `${title} customs %`, style: "width:6rem" });
       const quoted = el("input", { class: "up-text", type: "date", value: c.quoted_on || "", "aria-label": `${title} date` });
       const note = el("input", { class: "up-text", type: "text", maxlength: "500", value: c.source_note || "", placeholder: "e.g. quote Häfele 2026-10", style: "width:100%;box-sizing:border-box" });
-      const preview = el("div", { style: "font-size:0.8125rem;min-height:1.1rem" });
+      // The answer the inputs exist for: landed unit cost in SEK, with the
+      // arithmetic shown line by line, so nobody has to work it out.
+      const preview = el("div", { style: "margin-top:0.6rem" });
       const msg = el("span", { role: "status", style: "font-size:0.8125rem" });
+      const rateText = (cur) => (cur === "SEK" ? "" : rates[cur] ? ` × ${rates[cur].rate} (${cur} ${rates[cur].valid_on})` : ` × — (no ${cur} rate)`);
       const paint = () => {
-        if (unit.value === "") { preview.replaceChildren(el("span", { style: MUTED }, `No ${title.toLowerCase()} cost.`)); return; }
+        if (unit.value === "") { preview.replaceChildren(el("div", { style: `font-size:0.8125rem;${MUTED}` }, `No ${title.toLowerCase()} cost.`)); return; }
         const l = M().landed({ unit_cost: unit.value, unit_currency: unitCur.value, transport_cost: trans.value || 0, transport_currency: transCur.value, customs_pct: customs.value || 0 }, rates);
-        preview.replaceChildren(l.missing === "rate"
-          ? el("span", { style: "color:#b45309" }, `No ${[unitCur.value, transCur.value].filter((x) => x !== "SEK" && !rates[x]).join(" / ")} rate yet — add one under Rates.`)
-          : el("span", {}, ["Landed: ", el("strong", {}, M().sek(l.landedSEK)), el("span", { style: MUTED }, " per unit ex VAT at today's rates")]));
+        const row = (label, how, value, strong) => el("div", { style: `display:grid;grid-template-columns:6.5rem 1fr auto;gap:0.5rem;font-size:0.8125rem;${strong ? "font-weight:700;border-top:1px solid var(--border,#e2e8f0);padding-top:0.3rem;margin-top:0.2rem" : ""}` },
+          [el("span", { style: strong ? "" : MUTED }, label), el("span", { style: MUTED }, how), el("span", { style: "text-align:right;font-variant-numeric:tabular-nums" }, value)]);
+        if (l.missing === "rate") {
+          preview.replaceChildren(el("div", { style: "font-size:0.8125rem;color:#b45309" }, `No ${[unitCur.value, transCur.value].filter((x) => x !== "SEK" && !rates[x]).join(" / ")} rate yet — add one under Rates to see the landed cost.`));
+          return;
+        }
+        preview.replaceChildren(el("div", { style: "display:flex;gap:1rem;align-items:stretch;flex-wrap:wrap;border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:0.6rem 0.8rem;background:var(--bg,#fff)" }, [
+          el("div", { style: "min-width:9rem" }, [
+            el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` }, "Landed unit cost"),
+            el("div", { style: "font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums" }, M().sek(l.landedSEK)),
+            el("div", { style: `font-size:0.75rem;${MUTED}` }, "per unit, ex VAT, today's rates"),
+          ]),
+          el("div", { style: "flex:1;min-width:16rem;display:flex;flex-direction:column;gap:0.15rem" }, [
+            row("Unit", `${Number(unit.value)} ${unitCur.value}${rateText(unitCur.value)}`, M().sek(l.unitSEK)),
+            row("Transport", Number(trans.value) ? `${Number(trans.value)} ${transCur.value}${rateText(transCur.value)}` : "none", M().sek(l.transportSEK)),
+            row("Customs", Number(customs.value) ? `${Number(customs.value)} % of the unit cost` : "none", M().sek(l.customsSEK)),
+            row("Landed", "", M().sek(l.landedSEK), true),
+          ]),
+        ]));
       };
       [unit, unitCur, trans, transCur, customs].forEach((f) => f.addEventListener("input", paint));
       const save = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => {
@@ -94,15 +113,16 @@
           el("label", { style: LBL }, ["Customs %", customs]),
           el("label", { style: LBL }, [kind === "actual" ? "Quote date" : "Date", quoted]),
         ]),
-        el("label", { style: `${LBL};margin-top:0.5rem` }, ["Source", note]),
         preview,
+        el("label", { style: `${LBL};margin-top:0.5rem` }, ["Source", note]),
         c.source_document_version_id ? el("div", { style: `font-size:0.75rem;${MUTED}` }, "Read from a document — see Documents. " + (Array.isArray(c.evidence) && c.evidence[0] ? `“${c.evidence[0]}”` : "")) : null,
         el("div", { style: "display:flex;gap:0.5rem;align-items:center;margin-top:0.6rem" }, [save, clear, msg]),
         c.updated_at ? el("div", { style: `font-size:0.75rem;margin-top:0.3rem;${MUTED}` }, `Last changed ${String(c.updated_at).slice(0, 10)}`) : null,
       ]);
     };
 
-    container.replaceChildren(
+    // replaceChildren() prints a null as the text "null" — filter first.
+    container.replaceChildren(...[
       el("div", { style: "display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem" }, [
         el("span", { style: `font-size:0.8125rem;flex:1;${MUTED}` }, "Planning costs per unit, ex VAT. Each amount in its own currency, converted to SEK at dated rates. Customs is a % of the unit cost."),
         window.PortalCost.openReadQuote ? el("button", { class: "btn btn-sm", type: "button", onclick: () => window.PortalCost.openReadQuote({ scope: comp, token, onSaved: reload }) }, "✨ Read from document") : null,
@@ -110,7 +130,7 @@
       ]),
       data.has_real_children ? el("p", { style: "font-size:0.8125rem;color:#b45309;margin:0 0 0.75rem" }, "This has real children — in a cost view its cost is the sum of them, and the values here are ignored.") : null,
       el("div", { style: "display:flex;gap:0.8rem;flex-wrap:wrap" }, [section("actual", data.actual), section("estimated", data.estimated)]),
-    );
+    ].filter(Boolean));
   }
 
   async function openRates(token, onChanged) {

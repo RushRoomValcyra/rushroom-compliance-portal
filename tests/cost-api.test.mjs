@@ -104,3 +104,14 @@ test("the quote reader takes a pasted screenshot (2026-10-10)", () => {
   assert.ok(/i\.type\.startsWith\("image\/"\)/.test(ai) && /read\(new File\(\[blob\]/.test(ai), "a pasted image is not read like a dropped file");
   assert.ok(/if \(!overlay\.isConnected \|\| !waiting\) return;/.test(ai), "a paste over the review table would start a second read");
 });
+
+test("the cost tab shows the landed unit cost with its arithmetic, and no stray 'null' (2026-10-10)", () => {
+  const forms = read("assets/cost-forms.js");
+  assert.ok(/"Landed unit cost"/.test(forms));
+  for (const part of ['row("Unit"', 'row("Transport"', 'row("Customs"', 'row("Landed"']) assert.ok(forms.includes(part), `the breakdown lacks ${part}`);
+  // replaceChildren() prints null as the text "null"; every cost screen filters first.
+  for (const f of ["assets/cost-forms.js", "assets/cost-view.js", "assets/cost-ai.js", "assets/cost-review-view.js"]) {
+    const src = read(f);
+    assert.ok(/replaceChildren\(\.\.\.\[[\s\S]*?\]\.filter\(Boolean\)\);/.test(src), `${f} can still print "null"`);
+  }
+});

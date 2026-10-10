@@ -109,7 +109,7 @@
         ]);
       };
 
-      body.replaceChildren(
+      body.replaceChildren(...[
         el("div", { style: "display:flex;gap:1rem;flex-wrap:wrap;font-size:0.8125rem" }, [
           el("span", {}, [el("strong", {}, out.supplier || "Unknown supplier"), ` · ${String(out.document_type || "").replace("_", " ")} · ${out.document_date || "no date"}`]),
           out.freight_note ? el("span", { style: "color:#b45309" }, `Freight per shipment, not on the lines: ${out.freight_note}`) : null,
@@ -124,7 +124,7 @@
           el("span", { style: `font-size:0.75rem;${MUTED};flex:1` }, `The document is kept on ${scope.name} (not visible to suppliers) and each saved cost points to it.`),
           kind, el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"), save,
         ]),
-      );
+      ].filter(Boolean));
 
       save.onclick = async () => {
         err.textContent = "";

@@ -85,15 +85,52 @@
             el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` }, l), el("div", { style: "font-weight:700" }, v)]))),
           el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
             ["Product", "Estimated", "Actual", "Δ est.", "Δ %", "Since previous", "Missing"].map((t, i) => el("span", { style: i ? "text-align:right" : "" }, t))),
-          ...rows.map((p) => el("div", { style: `${GRID};cursor:${opts.openProduct ? "pointer" : "default"}`, title: opts.openProduct ? "Open this product's Cost view" : "", onclick: () => { if (opts.openProduct) { close(); opts.openProduct(p.root_id); } } }, [
-            el("span", {}, [el("strong", {}, p.name || "—"), el("span", { style: `font-family:monospace;font-size:0.75rem;margin-left:0.4rem;${MUTED}` }, p.part_number || "")]),
-            el("span", { style: "text-align:right" }, p.estimated ? M().sek(p.estimated) : "—"),
-            el("span", { style: "text-align:right;font-weight:600" }, M().sek(p.actual)),
-            dCell(p.actual, p.estimated),
-            el("span", { style: "text-align:right" }, p.estimated ? `${(((p.actual - p.estimated) / p.estimated) * 100).toFixed(1)} %` : "—"),
-            el("span", { style: "text-align:right" }, prev[p.root_id] ? signed(p.actual - Number(prev[p.root_id].actual || 0)) : "new"),
-            el("span", { style: `text-align:right;${p.missing_actual ? "color:#b45309" : MUTED}` }, p.missing_actual ? `${p.missing_actual} of ${p.lines} lines` : "complete"),
-          ])),
+          ...rows.flatMap((p) => {
+            // Each product may have an expand toggle showing exactly which parts are missing a cost.
+            const missing = p.missing_parts || [];   // compact list added 2026-10-10; absent on old reviews
+            const expandState = { open: false };
+            const expandPanel = el("div", { style: "display:none;grid-column:1/-1;padding:0.25rem 0.5rem 0.5rem;background:var(--bg-2,rgba(0,0,0,0.02));border-top:1px solid var(--border,#e2e8f0)" });
+            const toggleBtn = missing.length ? el("button", {
+              class: "btn btn-xs", type: "button", style: "font-size:0.75rem;padding:0.1rem 0.4rem",
+              title: "Show / hide which parts are missing a cost",
+              onclick: (ev) => {
+                ev.stopPropagation();   // don't trigger openProduct on the row
+                expandState.open = !expandState.open;
+                expandPanel.style.display = expandState.open ? "" : "none";
+                toggleBtn.textContent = expandState.open ? "▲ hide" : "▼ show";
+                if (expandState.open && !expandPanel.childNodes.length) {
+                  // Render on first open — depth-sorted so the BOM path is readable.
+                  const byDepth = [...missing].sort((a, b) => (a.path || "").localeCompare(b.path || ""));
+                  expandPanel.replaceChildren(
+                    el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED};margin-bottom:0.3rem` }, `${missing.length} part${missing.length === 1 ? "" : "s"} without an actual cost`),
+                    el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem 1rem" },
+                      byDepth.map((m) => el("div", { style: "font-size:0.8125rem;display:flex;gap:0.3rem;align-items:baseline" }, [
+                        el("span", { style: "color:#b45309" }, "○"),
+                        el("span", {}, m.name || "—"),
+                        m.part_number ? el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, m.part_number) : null,
+                      ])),
+                    ),
+                    opts.openProduct ? el("button", { class: "btn btn-xs", type: "button", style: "margin-top:0.4rem", onclick: () => { close(); opts.openProduct(p.root_id); } }, "Open Cost view →") : null,
+                  );
+                }
+              },
+            }, "▼ show") : null;
+            const missingCell = p.missing_actual
+              ? el("span", { style: "text-align:right;display:flex;align-items:center;gap:0.3rem;justify-content:flex-end" }, [
+                  el("span", { style: "color:#b45309" }, `${p.missing_actual} of ${p.lines}`), toggleBtn,
+                ])
+              : el("span", { style: `text-align:right;${MUTED}` }, "complete");
+            const row = el("div", { style: `${GRID};cursor:${opts.openProduct && !p.missing_actual ? "pointer" : "default"}`, onclick: () => { if (opts.openProduct && !p.missing_actual) { close(); opts.openProduct(p.root_id); } } }, [
+              el("span", {}, [el("strong", {}, p.name || "—"), el("span", { style: `font-family:monospace;font-size:0.75rem;margin-left:0.4rem;${MUTED}` }, p.part_number || "")]),
+              el("span", { style: "text-align:right" }, p.estimated ? M().sek(p.estimated) : "—"),
+              el("span", { style: "text-align:right;font-weight:600" }, M().sek(p.actual)),
+              dCell(p.actual, p.estimated),
+              el("span", { style: "text-align:right" }, p.estimated ? `${(((p.actual - p.estimated) / p.estimated) * 100).toFixed(1)} %` : "—"),
+              el("span", { style: "text-align:right" }, prev[p.root_id] ? signed(p.actual - Number(prev[p.root_id].actual || 0)) : "new"),
+              missingCell,
+            ]);
+            return [row, expandPanel];
+          }),
           el("p", { style: `font-size:0.75rem;margin-top:0.6rem;${MUTED}` }, "A product with lines missing a cost or a rate is understated. Each product's lines are saved as a baseline — open its Cost view and pick this review under “Compare with” to see what changed, split into quantity, price and exchange rate."),
         ].filter(Boolean));
       } catch (ex) { main.replaceChildren(el("div", { class: "error" }, ex.message)); }

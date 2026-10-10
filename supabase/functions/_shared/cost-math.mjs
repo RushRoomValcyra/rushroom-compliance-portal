@@ -211,6 +211,8 @@ export function reviewProducts(graph, rootIds, rates) {
       actual: actual.total, estimated: estimated.total,
       missing_actual: actual.missing.length, missing_estimated: estimated.missing.length,
       lines: actual.lines.length, incomplete: actual.incomplete,
+      // Compact list so the review UI can show which parts are missing without loading the full baseline.
+      missing_parts: actual.missing.map((l) => ({ name: l.name, part_number: l.part_number, path: l.path })),
       baseline_lines: baselineLines(actual, estimatedByPath),
     };
   });

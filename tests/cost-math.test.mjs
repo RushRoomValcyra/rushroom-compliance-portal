@@ -176,3 +176,12 @@ test("AI lines: price per N becomes per unit; unknown parts are unmatched, unusa
   assert.equal(out.unmatched.length, 2, "an id outside the structure is never trusted");
   assert.deepEqual(plain(out.rejected.map((r) => r.reason)), ["no readable price", "currency not SEK/EUR/USD/PLN"]);
 });
+
+test("AI fill price: $0.012 per piece and $1.20 per 100 both give 0.012 USD per unit", () => {
+  // The snapshot of 2026-10-10: "price 1 $0.012", "price 2 $1.20", MOQ 100.
+  const a = M.normaliseExtractedLines([{ component_id: "pin", unit_price: "$0.012", per_quantity: "1", currency: "$", confidence: "medium" }], ["pin"]);
+  const b = M.normaliseExtractedLines([{ component_id: "pin", unit_price: "1.20", per_quantity: "100", currency: "USD", confidence: "medium" }], ["pin"]);
+  assert.equal(a.lines[0].unit_cost, 0.012);
+  assert.equal(b.lines[0].unit_cost, 0.012);
+  assert.equal(a.lines[0].unit_currency, "USD");
+});

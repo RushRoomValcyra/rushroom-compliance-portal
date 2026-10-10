@@ -85,3 +85,14 @@ test("a quote read for costs is kept, linked, and never shown to suppliers", () 
   const supplier = read("supplier.html");
   assert.ok(!/cost-ai|cost-review/.test(supplier));
 });
+
+test("AI fill reads a price into the Actual cost, not into custom specs (2026-10-10)", () => {
+  const ai = read("supabase/functions/portal-ai/index.ts");
+  const spec = ai.slice(ai.indexOf('if (action === "extractComponentSpecs")'), ai.indexOf("PROP-046: read a drawing's title block"));
+  assert.ok(/A PRICE for this part goes in \\`price\\`, never in \\`unmapped\\`/.test(spec), "the model is not told where prices go");
+  assert.ok(/required: \["matched_part", "confident_part_match", "summary", "fields", "unmapped", "price"\]/.test(spec));
+  assert.ok(/normaliseExtractedLines\(\[\{ \.\.\.parsed\.price, component_id \}\], \[component_id\]\)/.test(spec), "the price is not cleaned by the shared code");
+  const app = read("assets/app.js");
+  assert.ok(/if \(costPick && cost\) \{[\s\S]*?"setComponentCost", \{[\s\S]*?kind: "actual"/.test(app), "a ticked price is not saved as the Actual cost");
+  assert.ok(/transport_cost: keep\.transport_cost \?\? 0/.test(app), "applying a price wipes the existing transport");
+});

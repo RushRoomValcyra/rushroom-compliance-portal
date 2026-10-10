@@ -19,6 +19,7 @@ import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 import { serve, json, type Ctx } from "../_shared/handler.ts";
 import { db, enc, ANTHROPIC_API_KEY, SCAN_MODEL, META_MODEL, BUCKET, DOC_BUCKET, STD_BUCKET } from "../_shared/env.ts";
 import { extractCostsFromDocument } from "./handlers/cost-extract.ts";
+import { normaliseExtractedLines } from "../_shared/cost-math.mjs";
 import { eq } from "../_shared/auth.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 
@@ -1040,7 +1041,8 @@ Rules that matter more than coverage:
 - If the document covers several parts (a catalogue page, a family table), set confident_part_match=false and matched_part to what you believe it describes. Do not guess a row.
 - incoming_inspection_method must be exactly one of: none, visual, dimensional, functional, chemical, destructive, certificate_only.
 - country_of_origin is an ISO 3166-1 alpha-2 code.
-- Anything the document states that does not fit one of the field keys goes in \`unmapped\` with a suggested snake_case key. This is how missing schema fields get discovered, so do not discard it.
+- A PRICE for this part goes in \`price\`, never in \`unmapped\`: the net unit price as printed, the quantity it is for (per_quantity "100" for "$1.20 / 100 pcs"; "1" if per piece), the currency, and the quote date if shown. If several prices are shown for different order quantities, give the per-piece one (or the smallest basis) and put the others in as_printed. Set price.found=false when no price is stated — never estimate one.
+- Anything else the document states that does not fit one of the field keys goes in \`unmapped\` with a suggested snake_case key. This is how missing schema fields get discovered, so do not discard it.
 
 Valid field keys: ${FIELD_KEYS.join(", ")}`;
 
@@ -1078,8 +1080,25 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
             additionalProperties: false,
           },
         },
+        // 2026-10-10: a price on a datasheet/screenshot becomes the part's
+        // Actual cost (PROP-073) instead of landing in custom specs.
+        price: {
+          type: "object",
+          properties: {
+            found: { type: "boolean" },
+            unit_price: { type: "string" },
+            per_quantity: { type: "string" },
+            currency: { type: "string" },
+            quote_date: { type: "string" },
+            as_printed: { type: "string" },
+            evidence: { type: "string" },
+            confidence: { type: "string", enum: ["high", "medium", "low"] },
+          },
+          required: ["found", "unit_price", "per_quantity", "currency", "quote_date", "as_printed", "evidence", "confidence"],
+          additionalProperties: false,
+        },
       },
-      required: ["matched_part", "confident_part_match", "summary", "fields", "unmapped"],
+      required: ["matched_part", "confident_part_match", "summary", "fields", "unmapped", "price"],
       additionalProperties: false,
     };
 
@@ -1140,12 +1159,26 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
       return [{ key, value, as_printed: String(f.as_printed ?? ""), confidence: String(f.confidence ?? "low"), evidence: String(f.evidence ?? "") }];
     });
 
+    // The price, cleaned by the same code as a quote read (per-N → per unit,
+    // decimal commas, currency symbols). An unusable price is reported, not guessed.
+    let cost = null, costRejected = null;
+    if (parsed.price && parsed.price.found) {
+      const out = normaliseExtractedLines([{ ...parsed.price, component_id }], [component_id]);
+      cost = out.lines[0] || null;
+      costRejected = cost ? null : (out.rejected[0] && out.rejected[0].reason) || "price could not be read";
+    }
+    // The current Actual cost, so applying a new price keeps its transport and customs.
+    const { data: currentCost } = cost ? await tdb("component_costs")
+      .select("unit_cost, unit_currency, transport_cost, transport_currency, customs_pct, quoted_on")
+      .eq("component_id", component_id).eq("kind", "actual").maybeSingle() : { data: null };
+
     return json({
       fields,
       unmapped: parsed.unmapped || [],
       matched_part: parsed.matched_part || "",
       confident_part_match: !!parsed.confident_part_match,
       summary: parsed.summary || "",
+      cost, cost_rejected: costRejected, current_cost: currentCost || null,
     });
   }
 

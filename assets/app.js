@@ -6710,7 +6710,10 @@
     // ---- step 3: review and apply ----------------------------------------
     function renderResults(res) {
       const rows = res.fields || [];
-      if (!rows.length) {
+      // 2026-10-10: a price the document states becomes the part's Actual cost.
+      const cost = res.cost || null;
+      let costPick = !!cost && cost.confidence !== "low";
+      if (!rows.length && !cost) {
         body.replaceChildren(
           el("p", { style: "padding:1rem;font-size:0.875rem" }, "Nothing could be read from that document."),
           el("p", { style: "padding:0 1rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, res.summary || ""),
@@ -6727,7 +6730,7 @@
 
       const applyBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Apply");
       const syncApply = () => {
-        const n = Object.values(picks).filter(Boolean).length + Object.values(unmappedPicks).filter(Boolean).length;
+        const n = Object.values(picks).filter(Boolean).length + Object.values(unmappedPicks).filter(Boolean).length + (costPick ? 1 : 0);
         applyBtn.textContent = n ? `Apply ${n} field${n > 1 ? "s" : ""}` : "Apply";
         applyBtn.disabled = !n;
       };
@@ -6765,7 +6768,29 @@
           `⚠ This document may not describe this component${res.matched_part ? ` — it looks like "${res.matched_part}"` : ""}. Check each value before applying.`));
       }
       if (res.summary) kids.push(el("p", { style: "margin:0 0 0.5rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, res.summary));
-      kids.push(head, ...fieldRows);
+      if (rows.length) kids.push(head, ...fieldRows);
+
+      if (cost) {
+        const cur = res.current_cost;
+        const box = el("input", { type: "checkbox", style: "cursor:pointer;margin-top:3px" });
+        box.checked = costPick;
+        box.onchange = () => { costPick = box.checked; syncApply(); };
+        const [col, lbl] = CONF[cost.confidence] || CONF.low;
+        kids.push(el("div", { style: `${GRID};padding:0.4rem 0.5rem;border-top:1px solid var(--border,#2d3748);margin-top:0.4rem;background:#8a6d3b0d` }, [
+          box,
+          el("span", { style: "font-size:0.8125rem;font-weight:600" }, ["Cost (Actual)", el("div", { style: "font-size:0.6875rem;font-weight:400;color:var(--muted,#8b93a1)" }, "per unit, ex VAT")]),
+          el("span", { style: `font-size:0.8125rem;${cur ? "" : "color:var(--muted,#8b93a1);opacity:0.6"}` }, cur ? `${Number(cur.unit_cost)} ${cur.unit_currency}` : "— empty —"),
+          el("div", {}, [
+            el("div", { style: "font-size:0.875rem;font-weight:600" }, `${cost.unit_cost} ${cost.unit_currency}`),
+            el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `as printed: ${cost.as_printed}${cost.per_quantity > 1 ? ` — a price per ${cost.per_quantity}, shown per unit` : ""}`),
+            cost.evidence ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;margin-top:2px" }, `“${cost.evidence}”`) : null,
+            cur && (Number(cur.transport_cost) || Number(cur.customs_pct)) ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Its transport and customs are kept.") : null,
+          ].filter(Boolean)),
+          el("span", { style: `font-size:0.6875rem;font-weight:700;color:${col}` }, lbl),
+        ]));
+      } else if (res.cost_rejected) {
+        kids.push(el("p", { style: "font-size:0.8125rem;color:#b45309;margin:0.5rem 0 0" }, `A price was found but not used: ${res.cost_rejected}.`));
+      }
 
       // Values the document states that no field can hold — the signal for
       // which columns the schema is still missing. Kept in custom_specs.
@@ -6792,7 +6817,17 @@
           const custom = { ...(current.custom_specs || {}) };
           (res.unmapped || []).forEach((u, i) => { if (unmappedPicks[i]) custom[u.suggested_key || u.label] = u.value; });
           if (Object.keys(custom).length) payload.custom_specs = custom;
-          await API.post(token, "upsertComponentMetadata", payload);
+          if (Object.keys(payload).length > 1) await API.post(token, "upsertComponentMetadata", payload);
+          if (costPick && cost) {
+            const keep = res.current_cost || {};
+            await API.post(token, "setComponentCost", {
+              component_id: componentId, kind: "actual",
+              unit_cost: cost.unit_cost, unit_currency: cost.unit_currency,
+              transport_cost: keep.transport_cost ?? 0, transport_currency: keep.transport_currency || cost.unit_currency,
+              customs_pct: keep.customs_pct ?? 0, quoted_on: cost.quote_date || null,
+              source_note: `AI fill: ${cost.as_printed}`.slice(0, 500), evidence: cost.evidence ? [cost.evidence] : null,
+            });
+          }
           close();
           openComponentDetail(componentId, token, panel, nodeData, role);
         } catch (ex) {

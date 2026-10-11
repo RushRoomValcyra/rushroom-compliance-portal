@@ -216,86 +216,175 @@
     const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
     const onKey = (ev) => { if (ev.key === "Escape") close(); };
 
-    const GRID = "display:grid;grid-template-columns:minmax(14rem,1.8fr) 9rem 8rem 6rem 5.5rem 7.5rem 9rem 6.5rem;gap:0.4rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
+    const VIEW_GRID = "display:grid;grid-template-columns:minmax(14rem,1.8fr) 9rem 8rem 6rem 5.5rem 7.5rem 9rem 6.5rem;gap:0.4rem;align-items:center;padding:0.3rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
+    const EDIT_GRID = "display:grid;grid-template-columns:minmax(14rem,1.5fr) 8rem 7rem 5rem 5rem 4.5rem 9rem;gap:0.4rem;align-items:center;padding:0.25rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem";
     const WARN = "#b45309";
+    const CUR = ["SEK", "EUR", "USD", "PLN"];
     const sek = (v) => M().sek(v);
+    const post = (action, b) => window.PortalAPI.post(token, action, b);
+
+    let editMode = false;
+    let cachedParts = null, cachedRates = null;
+
+    // Toggle button — swapped into the header after first load.
+    const editBtn = el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.8125rem",
+      onclick: () => { editMode = !editMode; render(); },
+    }, "✏ Manual entry");
+
+    function render() {
+      editBtn.textContent = editMode ? "← View mode" : "✏ Manual entry";
+      if (!cachedParts) return;
+      const sorted = [...cachedParts].sort((a, b) => {
+        const aHas = !!a.actual, bHas = !!b.actual;
+        if (aHas !== bHas) return aHas ? 1 : -1;
+        return (a.name || "").localeCompare(b.name || "");
+      });
+      editMode ? renderEdit(sorted) : renderView(sorted);
+    }
+
+    function renderView(sorted) {
+      const rates = cachedRates;
+      const noCost = sorted.filter((p) => !p.actual).length;
+      let totalActualLanded = 0, totalEstLanded = 0, countActualLanded = 0, countEstLanded = 0;
+      for (const p of sorted) {
+        const aL = p.actual ? M().landed(p.actual, rates) : null;
+        const eL = p.estimated ? M().landed(p.estimated, rates) : null;
+        if (aL && !aL.missing) { totalActualLanded += aL.landedSEK; countActualLanded++; }
+        if (eL && !eL.missing) { totalEstLanded += eL.landedSEK; countEstLanded++; }
+      }
+      const statCard = (label, value, tone) => el("div", { style: "padding:0.45rem 0.7rem;border:1px solid var(--border,#e2e8f0);border-radius:8px;min-width:9rem" }, [
+        el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` }, label),
+        el("div", { style: `font-size:1.05rem;font-weight:700;${tone ? `color:${tone}` : ""}` }, value),
+      ]);
+      body.replaceChildren(
+        el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
+          statCard("Total parts", String(cachedParts.length)),
+          statCard("Without actual cost", String(noCost), noCost ? WARN : undefined),
+          statCard("Actual landed (total)", countActualLanded ? sek(totalActualLanded) : "—"),
+          statCard("Estimated landed (total)", countEstLanded ? sek(totalEstLanded) : "—"),
+          (countActualLanded && countEstLanded)
+            ? statCard("Δ actual vs estimated", (totalActualLanded - totalEstLanded > 0.005 ? "+" : "") + sek(totalActualLanded - totalEstLanded), totalActualLanded > totalEstLanded * 1.05 ? "#b91c1c" : totalActualLanded < totalEstLanded * 0.995 ? "#15803d" : undefined)
+            : null,
+        ].filter(Boolean)),
+        el("div", { style: `${VIEW_GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
+          ["Part", "Part number", "Actual unit cost", "Transport %", "Customs %", "Actual landed", "Estimated unit cost", "Δ landed"].map((t, i) => el("span", { style: i >= 2 ? "text-align:right" : "text-align:left" }, t))),
+        ...sorted.map((p) => {
+          const a = p.actual, e = p.estimated;
+          const aLanded = a ? M().landed(a, rates) : null;
+          const eLanded = e ? M().landed(e, rates) : null;
+          const delta = aLanded && eLanded && !aLanded.missing && !eLanded.missing ? aLanded.landedSEK - eLanded.landedSEK : null;
+          const nameCell = opts.openPart ? el("button", {
+            class: "btn btn-xs", type: "button", style: "text-align:left;font-size:0.8125rem;padding:0;background:none;border:none;font-weight:600;cursor:pointer;display:block;width:100%",
+            onclick: () => { close(); opts.openPart(p); },
+          }, p.name || "—") : el("span", { style: "font-weight:600;text-align:left;display:block" }, p.name || "—");
+          return el("div", { style: VIEW_GRID }, [
+            nameCell,
+            el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, p.part_number || "—"),
+            a ? el("span", { style: "text-align:right" }, `${Number(a.unit_cost)} ${a.unit_currency}`)
+              : el("span", { style: `text-align:right;color:${WARN}` }, "no cost"),
+            el("span", { style: "text-align:right" }, a ? `${Number(a.transport_pct || 0)} %` : "—"),
+            el("span", { style: "text-align:right" }, a ? `${Number(a.customs_pct || 0)} %` : "—"),
+            aLanded && !aLanded.missing ? el("span", { style: "text-align:right;font-weight:600" }, sek(aLanded.landedSEK))
+              : el("span", { style: `text-align:right;color:${WARN}` }, aLanded ? `no ${a.unit_currency} rate` : "—"),
+            e ? el("span", { style: `text-align:right;${MUTED}` }, `${Number(e.unit_cost)} ${e.unit_currency}`) : el("span", { style: `text-align:right;${MUTED}` }, "—"),
+            delta !== null ? el("span", { style: `text-align:right;font-weight:600;color:${delta > 0 ? "#b91c1c" : delta < -0.005 ? "#15803d" : ""}` }, (delta > 0.005 ? "+" : "") + sek(delta)) : el("span", { style: "text-align:right" }, "—"),
+          ]);
+        }),
+      );
+    }
+
+    function renderEdit(sorted) {
+      // Seed editable rows from existing actual cost; blank for parts without one.
+      const rows = sorted.map((p) => ({
+        id: p.id, name: p.name, part_number: p.part_number,
+        unit_cost: p.actual ? String(Number(p.actual.unit_cost)) : "",
+        unit_currency: p.actual?.unit_currency || "SEK",
+        transport_pct: p.actual ? String(Number(p.actual.transport_pct || 0)) : "",
+        customs_pct: p.actual ? String(Number(p.actual.customs_pct || 0)) : "",
+        supplier_name: p.actual?.supplier_name || "",
+      }));
+      const kindSel = el("select", { class: "up-text", "aria-label": "Kind" },
+        [el("option", { value: "actual" }, "Save as Actual"), el("option", { value: "estimated" }, "Save as Estimated")]);
+      const errDiv = el("div", { role: "alert", style: "color:#e05454;font-size:0.8125rem;min-height:1rem" });
+      const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save filled rows");
+
+      const makeRow = (r) => {
+        const inp = (key, type, extra = {}) => el("input", { class: "up-text", type, value: r[key], style: "width:100%;font-size:0.8125rem", ...extra,
+          onchange: (ev) => { r[key] = ev.target.value; } });
+        const curSel = el("select", { class: "up-text", style: "width:100%;font-size:0.8125rem", "aria-label": "Currency",
+          onchange: (ev) => { r.unit_currency = ev.target.value; } },
+          CUR.map((c) => el("option", { value: c, selected: c === r.unit_currency ? "selected" : null }, c)));
+        return el("div", { style: `${EDIT_GRID};${r.unit_cost ? "" : `background:rgba(0,0,0,0.015)`}` }, [
+          el("span", { style: "font-weight:600;font-size:0.8125rem" }, r.name || "—"),
+          el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, r.part_number || "—"),
+          inp("unit_cost", "number", { min: "0", step: "any", placeholder: "—" }),
+          curSel,
+          inp("transport_pct", "number", { min: "0", max: "1000", step: "any", placeholder: "0" }),
+          inp("customs_pct", "number", { min: "0", max: "1000", step: "any", placeholder: "0" }),
+          inp("supplier_name", "text", { maxlength: "200", placeholder: "Supplier" }),
+        ]);
+      };
+
+      saveBtn.onclick = async () => {
+        errDiv.textContent = "";
+        const items = rows.filter((r) => r.unit_cost !== "" && Number(r.unit_cost) >= 0);
+        if (!items.length) { errDiv.textContent = "Enter at least one unit cost."; return; }
+        saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+        try {
+          const r = await post("setComponentCosts", {
+            kind: kindSel.value,
+            items: items.map((x) => ({
+              component_id: x.id,
+              unit_cost: Number(x.unit_cost),
+              unit_currency: x.unit_currency,
+              transport_pct: Number(x.transport_pct) || 0,
+              customs_pct: Number(x.customs_pct) || 0,
+              supplier_name: x.supplier_name.trim() || null,
+            })),
+          });
+          editMode = false;
+          await load();
+        } catch (ex) { errDiv.textContent = ex.message; saveBtn.disabled = false; saveBtn.textContent = "Save filled rows"; }
+      };
+
+      body.replaceChildren(
+        el("div", { style: `font-size:0.8125rem;margin-bottom:0.5rem;${MUTED}` }, "Fill in the rows you want to set. Rows with no unit cost are skipped. Existing costs are pre-filled and will be overwritten on save."),
+        el("div", { style: `${EDIT_GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
+          ["Part", "Part number", "Unit cost", "Currency", "Transport %", "Customs %", "Supplier"].map((t) => el("span", {}, t))),
+        ...rows.map(makeRow),
+        errDiv,
+        el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;align-items:center;padding-top:0.5rem" }, [
+          kindSel,
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => { editMode = false; render(); } }, "Cancel"),
+          saveBtn,
+        ]),
+      );
+    }
 
     async function load() {
       body.replaceChildren(el("div", { class: "loading" }, "Loading parts…"));
       try {
         const [{ parts }, rates] = await Promise.all([
-          window.PortalAPI.post(token, "listPartCosts", {}),
-          window.PortalAPI.post(token, "listCurrencyRates", {}).then(({ rates: r }) => {
+          post("listPartCosts", {}),
+          post("listCurrencyRates", {}).then(({ rates: r }) => {
             const today = new Date().toISOString().slice(0, 10);
             const out = { SEK: { rate: 1 } };
             for (const x of r || []) { if (x.valid_on <= today && !out[x.currency]) out[x.currency] = { rate: Number(x.rate_to_sek) }; }
             return out;
           }),
         ]);
-        // Sort: no actual cost first, then by name.
-        const sorted = [...parts].sort((a, b) => {
-          const aHas = !!a.actual, bHas = !!b.actual;
-          if (aHas !== bHas) return aHas ? 1 : -1;
-          return (a.name || "").localeCompare(b.name || "");
-        });
-        const noCost = sorted.filter((p) => !p.actual).length;
-        // Compute totals for the summary cards
-        let totalActualLanded = 0, totalEstLanded = 0, countActualLanded = 0, countEstLanded = 0;
-        for (const p of sorted) {
-          const aL = p.actual ? M().landed(p.actual, rates) : null;
-          const eL = p.estimated ? M().landed(p.estimated, rates) : null;
-          if (aL && !aL.missing) { totalActualLanded += aL.landedSEK; countActualLanded++; }
-          if (eL && !eL.missing) { totalEstLanded += eL.landedSEK; countEstLanded++; }
-        }
-        const statCard = (label, value, tone) => el("div", { style: "padding:0.45rem 0.7rem;border:1px solid var(--border,#e2e8f0);border-radius:8px;min-width:9rem" }, [
-          el("div", { style: `font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` }, label),
-          el("div", { style: `font-size:1.05rem;font-weight:700;${tone ? `color:${tone}` : ""}` }, value),
-        ]);
-        body.replaceChildren(
-          el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
-            statCard("Total parts", String(parts.length)),
-            statCard("Without actual cost", String(noCost), noCost ? WARN : undefined),
-            statCard("Actual landed (total)", countActualLanded ? sek(totalActualLanded) : "—"),
-            statCard("Estimated landed (total)", countEstLanded ? sek(totalEstLanded) : "—"),
-            (countActualLanded && countEstLanded)
-              ? statCard("Δ actual vs estimated", (totalActualLanded - totalEstLanded > 0.005 ? "+" : "") + sek(totalActualLanded - totalEstLanded), totalActualLanded > totalEstLanded * 1.05 ? "#b91c1c" : totalActualLanded < totalEstLanded * 0.995 ? "#15803d" : undefined)
-              : null,
-          ].filter(Boolean)),
-          el("div", { style: `${GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
-            ["Part", "Part number", "Actual unit cost", "Transport %", "Customs %", "Actual landed", "Estimated unit cost", "Δ landed"].map((t, i) => el("span", { style: i >= 2 ? "text-align:right" : "text-align:left" }, t))),
-          ...sorted.map((p) => {
-            const a = p.actual, e = p.estimated;
-            const aLanded = a ? M().landed(a, rates) : null;
-            const eLanded = e ? M().landed(e, rates) : null;
-            const delta = aLanded && eLanded && !aLanded.missing && !eLanded.missing ? aLanded.landedSEK - eLanded.landedSEK : null;
-            const nameCell = opts.openPart ? el("button", {
-              class: "btn btn-xs", type: "button", style: "text-align:left;font-size:0.8125rem;padding:0;background:none;border:none;font-weight:600;cursor:pointer;display:block;width:100%",
-              onclick: () => { close(); opts.openPart(p); },
-            }, p.name || "—") : el("span", { style: "font-weight:600;text-align:left;display:block" }, p.name || "—");
-            return el("div", { style: GRID }, [
-              nameCell,
-              el("span", { style: `font-family:monospace;font-size:0.75rem;${MUTED}` }, p.part_number || "—"),
-              a ? el("span", { style: "text-align:right" }, `${Number(a.unit_cost)} ${a.unit_currency}`)
-                : el("span", { style: `text-align:right;color:${WARN}` }, "no cost"),
-              el("span", { style: "text-align:right" }, a ? `${Number(a.transport_pct || 0)} %` : "—"),
-              el("span", { style: "text-align:right" }, a ? `${Number(a.customs_pct || 0)} %` : "—"),
-              aLanded && !aLanded.missing ? el("span", { style: "text-align:right;font-weight:600" }, sek(aLanded.landedSEK))
-                : el("span", { style: `text-align:right;color:${WARN}` }, aLanded ? `no ${a.unit_currency} rate` : "—"),
-              e ? el("span", { style: `text-align:right;${MUTED}` }, `${Number(e.unit_cost)} ${e.unit_currency}`) : el("span", { style: `text-align:right;${MUTED}` }, "—"),
-              delta !== null ? el("span", { style: `text-align:right;font-weight:600;color:${delta > 0 ? "#b91c1c" : delta < -0.005 ? "#15803d" : ""}` }, (delta > 0.005 ? "+" : "") + sek(delta)) : el("span", { style: "text-align:right" }, "—"),
-            ]);
-          }),
-        );
+        cachedParts = parts;
+        cachedRates = rates;
+        render();
       } catch (ex) { body.replaceChildren(el("div", { class: "error" }, ex.message)); }
     }
 
     overlay.append(el("div", { role: "dialog", "aria-modal": "true", "aria-label": "All parts cost list", style: "background:var(--bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:1.1rem 1.25rem;width:min(1200px,96vw);height:min(820px,92vh);display:flex;flex-direction:column;gap:0.6rem" }, [
       el("div", { style: "display:flex;align-items:center;gap:0.6rem" }, [
         el("strong", { style: "flex:1;font-size:1rem" }, "All parts — actual & estimated cost"),
-        el("button", {
-          class: "btn btn-sm", type: "button",
-          style: "font-size:0.8125rem",
-          onclick: () => window.PortalCost.openPartCostImport(token, { onSaved: (n) => { load(); } }),
+        editBtn,
+        el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.8125rem",
+          onclick: () => window.PortalCost.openPartCostImport(token, { onSaved: () => { load(); } }),
         }, "✨ Import costs"),
         el("button", { class: "btn btn-xs", type: "button", onclick: close }, "✕"),
       ]),

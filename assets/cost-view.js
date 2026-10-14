@@ -226,10 +226,26 @@
     let editMode = false;
     let cachedParts = null, cachedRates = null;
 
-    // Toggle button — swapped into the header after first load.
     const editBtn = el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.8125rem",
       onclick: () => { editMode = !editMode; render(); },
     }, "✏ Manual entry");
+
+    // Persistent filter — survives view/edit toggles and re-renders.
+    const filterInput = el("input", {
+      type: "search", placeholder: "Filter by name or part number…",
+      style: "width:100%;padding:0.35rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;font-size:0.875rem;margin-bottom:0.5rem",
+      oninput: () => render(),
+    });
+    const filterRow = el("div", {}, [filterInput]);
+
+    function filtered(sorted) {
+      const q = filterInput.value.trim().toLowerCase();
+      if (!q) return sorted;
+      return sorted.filter((p) =>
+        (p.name || "").toLowerCase().includes(q) ||
+        (p.part_number || "").toLowerCase().includes(q)
+      );
+    }
 
     function render() {
       editBtn.textContent = editMode ? "← View mode" : "✏ Manual entry";
@@ -239,7 +255,7 @@
         if (aHas !== bHas) return aHas ? 1 : -1;
         return (a.name || "").localeCompare(b.name || "");
       });
-      editMode ? renderEdit(sorted) : renderView(sorted);
+      editMode ? renderEdit(filtered(sorted)) : renderView(filtered(sorted));
     }
 
     function renderView(sorted) {
@@ -257,6 +273,7 @@
         el("div", { style: `font-size:1.05rem;font-weight:700;${tone ? `color:${tone}` : ""}` }, value),
       ]);
       body.replaceChildren(
+        filterRow,
         el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
           statCard("Total parts", String(cachedParts.length)),
           statCard("Without actual cost", String(noCost), noCost ? WARN : undefined),
@@ -348,6 +365,7 @@
       };
 
       body.replaceChildren(
+        filterRow,
         el("div", { style: `font-size:0.8125rem;margin-bottom:0.5rem;${MUTED}` }, "Fill in the rows you want to set. Rows with no unit cost are skipped. Existing costs are pre-filled and will be overwritten on save."),
         el("div", { style: `${EDIT_GRID};font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${MUTED}` },
           ["Part", "Part number", "Unit cost", "Currency", "Transport %", "Customs %", "Supplier"].map((t) => el("span", {}, t))),

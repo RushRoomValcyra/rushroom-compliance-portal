@@ -132,6 +132,14 @@ test("the picker can be narrowed by its caller", () => {
   assert.ok(/\.filter\(\(c\) => !filter \|\| filter\(c\)\)/.test(picker[0]), "the filter is accepted but never applied");
 });
 
+test("legacy cutout door mappings can be migrated as one audited action", () => {
+  const v = view();
+  assert.ok(/migrateLegacyCutoutDoorMappings/.test(v), "the mapping screen has no legacy door migration action");
+  assert.ok(/dry_run: true/.test(v), "the migration has no preview before it changes mappings");
+  assert.ok(/Old keys are deactivated and removed from Saved planner keys/.test(v),
+    "the migration confirmation does not explain the old-key cleanup");
+});
+
 test("nothing still loads a target list that no longer exists", () => {
   // loadTargets() existed only to fill the removed select.
   assert.ok(!/loadTargets/.test(app), "loadTargets survives with no caller");

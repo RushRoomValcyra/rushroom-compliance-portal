@@ -9831,6 +9831,32 @@
       } catch (ex) { alert(ex.message); }
     }
 
+    // A Website key rename must not make someone recreate a row for every
+    // already-mapped door. This is deliberately a named, narrowly-scoped
+    // migration rather than a general key editor: source keys remain immutable
+    // audit identifiers outside this known Website vocabulary change.
+    async function migrateLegacyCutoutDoorMappings() {
+      try {
+        const preview = await API.post(token, "migrateLegacyCutoutDoorMappings", { dry_run: true });
+        if (!preview.candidates?.length) {
+          alert(preview.skipped?.length
+            ? `No mappings can be migrated automatically. ${preview.skipped.length} key(s) already have a different new mapping.`
+            : "No active legacy cutout-door mappings were found.");
+          return;
+        }
+        const examples = preview.candidates.slice(0, 3).map((row) => `• ${row.from}\n  → ${row.to}`).join("\n");
+        const more = preview.candidates.length > 3 ? `\n…plus ${preview.candidates.length - 3} more.` : "";
+        if (!confirm(
+          `Move ${preview.candidates.length} mapped door key(s) to the new handle_cutout format?\n\n`
+          + `${examples}${more}\n\n`
+          + "Each mapping keeps its BOM target and quantity rule. Old keys are deactivated and removed from Saved planner keys; their mapping history remains."
+        )) return;
+        const result = await API.post(token, "migrateLegacyCutoutDoorMappings");
+        alert(`Migrated ${result.migrated} mapping(s).${result.skipped?.length ? ` ${result.skipped.length} were skipped because their new key already maps to another BOM target.` : ""}`);
+        await Promise.all([reload(), loadCatalog()]);
+      } catch (ex) { alert(ex.message || "The door-key migration could not be completed."); }
+    }
+
     async function reload() {
       list.replaceChildren(el("div", { class: "loading" }, "Loading planner mappings…"));
       try {
@@ -9978,6 +10004,7 @@
       ]),
       el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
         actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }), actionBtn("Refresh mappings", "refresh", { onClick: reload }), actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
+        actionBtn("Migrate legacy cutout doors", "refresh", { onClick: migrateLegacyCutoutDoorMappings }),
         el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
       ]), list,
     );

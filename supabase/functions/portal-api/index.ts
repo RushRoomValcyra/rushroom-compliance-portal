@@ -2997,6 +2997,79 @@ Deno.serve(async (req) => {
     return json({ ok: true, id: created?.id, mapping_revision: created?.mapping_revision });
   }
 
+  // Website planner v2 made the door handle style explicit. For a cutout
+  // handle, `..._handle_color_white` became
+  // `..._handle_cutout_color_white`. This is a controlled vocabulary rename,
+  // not a generic source-key editor: mappings are otherwise immutable so the
+  // resolver's audit trail remains trustworthy.
+  if (action === "migrateLegacyCutoutDoorMappings") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const dryRun = body.dry_run === true;
+    const legacyPattern = /^door_.+_handle_color_(white|silver)$/;
+    const renamed = (key: string) => key.replace(/_handle_color_(white|silver)$/, "_handle_cutout_color_$1");
+    const { data: activeRows, error: activeError } = await tdb("planner_mappings")
+      .select("id, source_type, source_key, target_component_id, quantity_rule, fixed_quantity, release_label, mapping_revision")
+      .eq("source_type", "door").eq("is_active", true);
+    if (activeError) return json({ error: activeError.message }, 400);
+    const legacy = (activeRows || []).filter((row: any) => legacyPattern.test(row.source_key));
+    if (!legacy.length) return json({ ok: true, dry_run: dryRun, candidates: [], skipped: [] });
+
+    const newKeys = [...new Set(legacy.map((row: any) => renamed(row.source_key)))];
+    const { data: newRows, error: newRowsError } = await tdb("planner_mappings")
+      .select("id, source_key, target_component_id, is_active, mapping_revision")
+      .eq("source_type", "door").in("source_key", newKeys);
+    if (newRowsError) return json({ error: newRowsError.message }, 400);
+
+    const byNewKey = new Map<string, any[]>();
+    for (const row of newRows || []) byNewKey.set(row.source_key, [...(byNewKey.get(row.source_key) || []), row]);
+    const candidates: any[] = [];
+    const skipped: any[] = [];
+    for (const old of legacy) {
+      const source_key = renamed(old.source_key);
+      const rows = byNewKey.get(source_key) || [];
+      const active = rows.find((row: any) => row.is_active);
+      if (active && active.target_component_id !== old.target_component_id) {
+        skipped.push({ from: old.source_key, to: source_key, reason: "new_key_has_different_active_target" });
+      } else {
+        candidates.push({ old, source_key, existing: active || null, next_revision: Math.max(0, ...rows.map((row: any) => Number(row.mapping_revision) || 0)) + 1 });
+      }
+    }
+    if (dryRun) return json({ ok: true, dry_run: true, candidates: candidates.map((row) => ({ from: row.old.source_key, to: row.source_key })), skipped });
+
+    const now = new Date().toISOString();
+    const catalogItems = candidates.map((row) => ({
+      source_type: "door", source_key: row.source_key, label: row.source_key,
+      updated_at: now, created_by: session.uid ?? null, updated_by: session.uid ?? null,
+    }));
+    if (catalogItems.length) {
+      const { error } = await tdb("planner_catalog_entries")
+        .upsert(catalogItems, { onConflict: "organization_id,source_type,source_key" });
+      if (error) return json({ error: error.message }, 400);
+    }
+
+    let migrated = 0;
+    for (const row of candidates) {
+      if (!row.existing) {
+        const release = [row.old.release_label, "Planner key rename: handle_cutout"].filter(Boolean).join(" · ").slice(0, 160);
+        const { error } = await tdb("planner_mappings").insert({
+          source_type: "door", source_key: row.source_key, target_component_id: row.old.target_component_id,
+          quantity_rule: row.old.quantity_rule, fixed_quantity: row.old.fixed_quantity,
+          mapping_revision: row.next_revision, release_label: release || null,
+          supersedes_id: row.old.id, created_by: session.uid ?? null,
+        });
+        if (error) return json({ error: error.message, migrated, skipped }, 400);
+      }
+      const { error: closeError } = await tdb("planner_mappings")
+        .update({ is_active: false, superseded_at: now }).eq("id", row.old.id).eq("is_active", true);
+      if (closeError) return json({ error: closeError.message, migrated, skipped }, 400);
+      const { error: catalogError } = await tdb("planner_catalog_entries")
+        .delete().eq("source_type", "door").eq("source_key", row.old.source_key);
+      if (catalogError) return json({ error: catalogError.message, migrated, skipped }, 400);
+      migrated += 1;
+    }
+    return json({ ok: true, migrated, skipped });
+  }
+
   if (action === "deactivatePlannerMapping") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const mappingId = String(body.mapping_id ?? "");

@@ -224,27 +224,50 @@
     const post = (action, b) => window.PortalAPI.post(token, action, b);
 
     let editMode = false;
-    let cachedParts = null, cachedRates = null;
+    let cachedParts = null, cachedRates = null, cachedCategories = [];
+    let catFilter = "all";
 
     const editBtn = el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.8125rem",
       onclick: () => { editMode = !editMode; render(); },
     }, "✏ Manual entry");
 
-    // Persistent filter — survives view/edit toggles and re-renders.
+    // Persistent filter + chip bar — both survive view/edit toggles.
     const filterInput = el("input", {
       type: "search", placeholder: "Filter by name or part number…",
-      style: "width:100%;padding:0.35rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;font-size:0.875rem;margin-bottom:0.5rem",
+      style: "width:100%;padding:0.35rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;font-size:0.875rem",
       oninput: () => render(),
     });
-    const filterRow = el("div", {}, [filterInput]);
+    const chipBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.4rem" });
+    const filterRow = el("div", { style: "display:flex;flex-direction:column;gap:0.4rem;margin-bottom:0.5rem" }, [chipBar, filterInput]);
+
+    function chip(id, label, count) {
+      const active = catFilter === id;
+      return el("button", {
+        type: "button",
+        style: "padding:0.25rem 0.65rem;font-size:0.75rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;"
+          + (active
+            ? "background:var(--accent,#2fa564);color:#fff;border:1px solid var(--accent,#2fa564)"
+            : `background:transparent;color:var(--muted,#8b93a1);border:1px solid var(--border,#e2e8f0)${count === 0 ? ";opacity:0.4" : ""}`),
+        onclick: () => { catFilter = id; render(); },
+      }, `${label} (${count})`);
+    }
+
+    function rebuildChips(all) {
+      const countFor = (id) => id === "all" ? all.length
+        : id === "none" ? all.filter((p) => !p.category_id).length
+        : all.filter((p) => p.category_id === id).length;
+      const chips = [chip("all", "All", all.length)];
+      for (const c of cachedCategories) chips.push(chip(c.id, c.name, countFor(c.id)));
+      if (countFor("none")) chips.push(chip("none", "Uncategorised", countFor("none")));
+      chipBar.replaceChildren(...chips);
+    }
 
     function filtered(sorted) {
+      let list = sorted;
+      if (catFilter !== "all") list = list.filter((p) => catFilter === "none" ? !p.category_id : p.category_id === catFilter);
       const q = filterInput.value.trim().toLowerCase();
-      if (!q) return sorted;
-      return sorted.filter((p) =>
-        (p.name || "").toLowerCase().includes(q) ||
-        (p.part_number || "").toLowerCase().includes(q)
-      );
+      if (q) list = list.filter((p) => (p.name || "").toLowerCase().includes(q) || (p.part_number || "").toLowerCase().includes(q));
+      return list;
     }
 
     function render() {
@@ -255,6 +278,7 @@
         if (aHas !== bHas) return aHas ? 1 : -1;
         return (a.name || "").localeCompare(b.name || "");
       });
+      rebuildChips(sorted);
       editMode ? renderEdit(filtered(sorted)) : renderView(filtered(sorted));
     }
 
@@ -382,7 +406,7 @@
     async function load() {
       body.replaceChildren(el("div", { class: "loading" }, "Loading parts…"));
       try {
-        const [{ parts }, rates] = await Promise.all([
+        const [{ parts }, rates, { categories }] = await Promise.all([
           post("listPartCosts", {}),
           post("listCurrencyRates", {}).then(({ rates: r }) => {
             const today = new Date().toISOString().slice(0, 10);
@@ -390,9 +414,11 @@
             for (const x of r || []) { if (x.valid_on <= today && !out[x.currency]) out[x.currency] = { rate: Number(x.rate_to_sek) }; }
             return out;
           }),
+          post("listPartCategories", {}),
         ]);
         cachedParts = parts;
         cachedRates = rates;
+        cachedCategories = categories || [];
         render();
       } catch (ex) { body.replaceChildren(el("div", { class: "error" }, ex.message)); }
     }

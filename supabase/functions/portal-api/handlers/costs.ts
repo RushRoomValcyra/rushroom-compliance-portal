@@ -206,7 +206,7 @@ export async function handleCostAction(action: string, body: any, ctx: Ctx): Pro
   if (action === "listPartCosts") {
     const BOUGHT_TYPES = ["part", "raw_material", "spare_part", "finished_good"];
     const { data: parts, error: pe } = await tdb("bom_components")
-      .select("id, part_number, name, type, make_or_buy, lifecycle_status")
+      .select("id, part_number, name, type, make_or_buy, lifecycle_status, category_id")
       .in("type", BOUGHT_TYPES)
       .neq("lifecycle_status", "replaced")
       .order("name");

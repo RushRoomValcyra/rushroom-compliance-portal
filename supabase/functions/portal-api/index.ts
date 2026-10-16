@@ -3937,6 +3937,9 @@ Deno.serve(async (req) => {
     await tdb("component_routing_steps").delete().eq("component_id", component_id);
     await tdb("product_family_members").delete().eq("component_id", component_id);
 
+    // Delete planner mappings that target this component
+    await tdb("planner_mappings").delete().eq("target_component_id", component_id);
+
     // Delete all BOM edges where this component is parent or child (both directions)
     await tdb("bom_edges").delete().eq("parent_id", component_id);
     await tdb("bom_edges").delete().eq("child_id", component_id);

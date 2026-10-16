@@ -7954,6 +7954,7 @@
                 component_id: componentId,
                 name: newName,
                 part_number: pnInp.value.trim() || undefined,
+                oem_number: oemInp.value.trim() || null,
                 description: descInp.value.trim() || null,
                 type: typeSel.value,
                 // Only what someone actually chose — "— not set —" sends nothing.

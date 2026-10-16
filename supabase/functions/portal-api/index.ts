@@ -3097,12 +3097,20 @@ Deno.serve(async (req) => {
     (parentRows || []).forEach((r: any) => { if (r.is_reference) boxCount[r.parent_id] = (boxCount[r.parent_id] || 0) + 1; });
     const search = body.search ? String(body.search).trim() : null;
     let q = tdb("bom_components")
-      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id, description")
+      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id, description, component_metadata(manufacturer_part_number)")
       .order("name");
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
     const { data: comps, error: ce } = await q;
     if (ce) return json({ error: ce.message }, 400);
-    const components = (comps || []).map((c: any) => ({ ...c, has_children: parentIdSet.has(c.id), box_count: boxCount[c.id] || 0 }));
+    // PROP-029: component_metadata.manufacturer_part_number is the canonical OEM field.
+    // Fall back to bom_components.oem_number for legacy rows that predate migration 0029.
+    const components = (comps || []).map((c: any) => ({
+      ...c,
+      oem_number: (c.component_metadata as any)?.[0]?.manufacturer_part_number || c.oem_number || null,
+      component_metadata: undefined,
+      has_children: parentIdSet.has(c.id),
+      box_count: boxCount[c.id] || 0,
+    }));
     return json({ components, root_ids: components.map((c: any) => c.id) });
   }
 

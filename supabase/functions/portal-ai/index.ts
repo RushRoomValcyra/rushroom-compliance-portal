@@ -1046,7 +1046,7 @@ Rules that matter more than coverage:
 - UNITS ARE CRITICAL. weight_g is GRAMS: a sheet quoting 1.2 kg must yield value "1200". Lengths are MILLIMETRES. If a unit is ambiguous or missing, use confidence "low".
 - \`evidence\` must be a short verbatim quote from the document showing where the value came from.
 - confidence: "high" only when the document states the value unambiguously for THIS component; "medium" when it is stated but the wording is loose; "low" when a unit is missing, the layout is ambiguous, or the value might belong to a different variant.
-- If the document covers several parts (a catalogue page, a family table), set confident_part_match=false and matched_part to what you believe it describes. Do not guess a row.
+- If the document covers several parts (a catalogue page, a family table), set confident_part_match=false and matched_part to what you believe it describes. Still extract values that are identical across ALL variants shown (confidence "medium"); use confidence "low" for values that differ between variants. Only omit a field entirely when the document gives no value for it at all.
 - incoming_inspection_method must be exactly one of: none, visual, dimensional, functional, chemical, destructive, certificate_only.
 - country_of_origin is an ISO 3166-1 alpha-2 code.
 - A PRICE for this part goes in \`price\`, never in \`unmapped\`: the net unit price as printed, the quantity it is for (per_quantity "100" for "$1.20 / 100 pcs"; "1" if per piece), the currency, and the quote date if shown. If several prices are shown for different order quantities, give the per-piece one (or the smallest basis) and put the others in as_printed. Set price.found=false when no price is stated — never estimate one.

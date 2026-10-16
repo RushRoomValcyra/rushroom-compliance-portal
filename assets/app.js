@@ -6722,7 +6722,7 @@
       // 2026-10-10: a price the document states becomes the part's Actual cost.
       const cost = res.cost || null;
       let costPick = !!cost && cost.confidence !== "low";
-      if (!rows.length && !cost) {
+      if (!rows.length && !cost && !(res.unmapped || []).length) {
         body.replaceChildren(
           el("p", { style: "padding:1rem;font-size:0.875rem" }, "Nothing could be read from that document."),
           el("p", { style: "padding:0 1rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, res.summary || ""),

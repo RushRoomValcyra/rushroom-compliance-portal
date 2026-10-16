@@ -5142,6 +5142,7 @@
     { label: "Category", get: (c) => categoryName(c.category_id) },
     { label: "Sourcing", get: (c) => c.make_or_buy || "" },
     { label: "Status", get: (c) => c.lifecycle_status || "" },
+    { label: "Supplier", get: (c) => c.supplier_name || "" },
     { label: "OEM number", get: (c) => c.oem_number || "" },
     { label: "Description", get: (c) => c.description || "" },
   ];

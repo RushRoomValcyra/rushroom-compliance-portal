@@ -3104,16 +3104,20 @@ Deno.serve(async (req) => {
       q,
       // PROP-029: manufacturer_part_number is the canonical OEM field; oem_number on
       // bom_components is legacy. Fetch in parallel and merge below.
-      tdb("component_metadata").select("component_id, manufacturer_part_number"),
+      tdb("component_metadata").select("component_id, manufacturer_part_number, preferred_supplier_name"),
     ]);
     if (ce) return json({ error: ce.message }, 400);
-    const metaOem: Record<string, string> = {};
+    const metaByComp: Record<string, { oem?: string; supplier?: string }> = {};
     for (const m of (metaRows || [])) {
-      if (m.manufacturer_part_number) metaOem[m.component_id] = m.manufacturer_part_number;
+      metaByComp[m.component_id] = {
+        oem: m.manufacturer_part_number || undefined,
+        supplier: m.preferred_supplier_name || undefined,
+      };
     }
     const components = (comps || []).map((c: any) => ({
       ...c,
-      oem_number: metaOem[c.id] || c.oem_number || null,
+      oem_number: metaByComp[c.id]?.oem || c.oem_number || null,
+      supplier_name: metaByComp[c.id]?.supplier || null,
       has_children: parentIdSet.has(c.id),
       box_count: boxCount[c.id] || 0,
     }));

@@ -46,6 +46,34 @@ test("an actively mapped leaf resolves with the requested cart quantity regardle
   assert.equal(result.mapping_evidence.records[0].mapping_revision, 2);
 });
 
+test("a mapped assembly is exploded through nested sub-assemblies to its leaf parts", () => {
+  const result = resolvePlannerGraph({
+    requirements: [{ source_type: "door", source_key: "door_left_588mm_color_white_handle_cutout_color_silver", quantity: 2 }],
+    mappings: [{ id: "map-door", source_type: "door", source_key: "door_left_588mm_color_white_handle_cutout_color_silver", target_component_id: "door-assembly", quantity_rule: "cart_quantity", fixed_quantity: null, mapping_revision: 1 }],
+    components: [
+      { id: "door-assembly", part_number: "ASM-DOOR", name: "Prepared door", unit_of_measure: "each" },
+      { id: "hardware-sub-assembly", part_number: "ASM-HW", name: "Door hardware set", unit_of_measure: "each" },
+      { id: "door-panel", part_number: "PANEL-588", name: "Door panel", unit_of_measure: "each" },
+      { id: "hinge", part_number: "HINGE-01", name: "Hinge", unit_of_measure: "each" },
+      { id: "handle", part_number: "HANDLE-01", name: "Cutout handle insert", unit_of_measure: "each" },
+    ],
+    edges: [
+      { parent_id: "door-assembly", child_id: "door-panel", quantity: 1 },
+      { parent_id: "door-assembly", child_id: "hardware-sub-assembly", quantity: 1 },
+      { parent_id: "hardware-sub-assembly", child_id: "hinge", quantity: 3 },
+      { parent_id: "hardware-sub-assembly", child_id: "handle", quantity: 1 },
+    ],
+    maxDepth: 20, maxExpansions: 5000,
+  });
+  assert.equal(result.status, "resolved");
+  assert.deepEqual(result.unresolved_requirements, []);
+  assert.deepEqual(result.bom_entries, [
+    { pim_component_id: "handle", part_number: "HANDLE-01", component_name: "Cutout handle insert", unit: "each", quantity: 2 },
+    { pim_component_id: "hinge", part_number: "HINGE-01", component_name: "Hinge", unit: "each", quantity: 6 },
+    { pim_component_id: "door-panel", part_number: "PANEL-588", component_name: "Door panel", unit: "each", quantity: 2 },
+  ]);
+});
+
 test("a wholly unmapped configuration produces needs_mapping without BOM entries", () => {
   const result = resolvePlannerGraph({
     requirements: [{ source_type: "module", source_key: "S", quantity: 1 }], mappings: [],

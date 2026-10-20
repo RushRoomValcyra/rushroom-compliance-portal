@@ -84,6 +84,7 @@ The complete request body is:
 {
   "action": "resolvePlannerBom",
   "contract_version": 1,
+  "include_assembly_tree": true,
   "requirements": [
     { "source_type": "module", "source_key": "M", "quantity": 2 }
   ]
@@ -95,7 +96,9 @@ finite numeric quantities. Duplicate identities and any unrecognised top-level
 field are rejected. PIM resolves only active mappings. `cart_quantity` applies
 the requested quantity; `fixed` applies the mapping's `fixed_quantity`.
 
-Every valid response has exactly these top-level fields:
+Every valid response has these top-level fields. `assembly_tree` is returned only
+when the caller explicitly sets `include_assembly_tree: true`, keeping existing
+service consumers compatible:
 
 ```json
 {
@@ -104,7 +107,8 @@ Every valid response has exactly these top-level fields:
   "resolved_at": "ISO timestamp or null",
   "mapping_evidence": { "records": [] },
   "unresolved_requirements": [],
-  "bom_entries": []
+  "bom_entries": [],
+  "assembly_tree": []
 }
 ```
 
@@ -120,6 +124,10 @@ explicitly active planner mapping. Each unresolved requirement carries its exact
 Active `bom_edges` are expanded recursively with depth/expansion bounds; a leaf
 target stays a leaf and entries aggregate by PIM component. The active mapping,
 not the component lifecycle field, controls whether a planner key resolves.
+When requested, `assembly_tree` preserves the unaggregated tree for each mapped
+planner requirement. Every node carries its resolved quantity and children, so
+an assembly and every nested sub-assembly remain visible alongside the flat
+inventory pick list.
 
 ## Version and release metadata
 

@@ -1051,8 +1051,9 @@ Deno.serve(async (req) => {
     if (!resolverKey) return json({ error: "Planner BOM resolver is not configured" }, 503);
     const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
     if (!constantTimeSecretEqual(suppliedKey, resolverKey)) return json({ error: "Invalid resolver credential" }, 401);
-    const allowedKeys = new Set(["action", "contract_version", "requirements"]);
+    const allowedKeys = new Set(["action", "contract_version", "requirements", "include_assembly_tree"]);
     if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "Resolver accepts only contract_version and derived requirements" }, 400);
+    if (body.include_assembly_tree !== undefined && typeof body.include_assembly_tree !== "boolean") return json({ error: "include_assembly_tree must be a boolean when provided" }, 400);
     if (body.contract_version !== 1 || !Array.isArray(body.requirements) || body.requirements.length === 0 || body.requirements.length > PLANNER_RESOLVER_MAX_REQUIREMENTS) {
       return json({ error: `contract_version 1 and between 1 and ${PLANNER_RESOLVER_MAX_REQUIREMENTS} requirements are required` }, 400);
     }
@@ -1074,7 +1075,7 @@ Deno.serve(async (req) => {
     const resolverTdb = makeTdb(RUSHROOM_ORG_ID);
     const [mappingRes, componentRes, edgeRes] = await Promise.all([
       resolverTdb("planner_mappings").select("id, source_type, source_key, target_component_id, quantity_rule, fixed_quantity, mapping_revision").eq("is_active", true),
-      resolverTdb("bom_components").select("id, part_number, name, unit_of_measure, lifecycle_status"),
+      resolverTdb("bom_components").select("id, part_number, name, type, unit_of_measure, lifecycle_status"),
       // PROP-067/068: In-the-box children come with their parent's order line,
       // never on their own — skipping them keeps that item a leaf, one pick line.
       resolverTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).eq("is_reference", false).order("parent_id").order("child_id"),
@@ -1086,7 +1087,12 @@ Deno.serve(async (req) => {
       requirements, mappings: mappingRes.data || [], components: componentRes.data || [], edges: edgeRes.data || [],
       maxDepth: PLANNER_RESOLVER_MAX_DEPTH, maxExpansions: PLANNER_RESOLVER_MAX_EXPANSIONS,
     });
-    return json({ ...resolution, resolved_at: resolution.status === "resolved" ? new Date().toISOString() : null });
+    const { assembly_tree, ...response } = resolution;
+    return json({
+      ...response,
+      ...(body.include_assembly_tree ? { assembly_tree } : {}),
+      resolved_at: resolution.status === "resolved" ? new Date().toISOString() : null,
+    });
   }
 
   // --- everything else requires a valid token -----------------------------

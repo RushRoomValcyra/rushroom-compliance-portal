@@ -10,34 +10,52 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
     const key = `${source.source_type}:${source.source_key}`;
     if (!unresolvedByIdentity.has(key)) unresolvedByIdentity.set(key, { ...source, quantity, reason });
   };
-  const records = [], leaves = new Map(); let expansions = 0;
+  const records = [], leaves = new Map(), assembly_tree = []; let expansions = 0;
   for (const requirement of [...requirements].sort((a, b) => `${a.source_type}:${a.source_key}`.localeCompare(`${b.source_type}:${b.source_key}`))) {
     const source = { source_type: requirement.source_type, source_key: requirement.source_key };
     const mapping = mappingBySource.get(`${source.source_type}:${source.source_key}`);
     if (!mapping) { block(source, requirement.quantity, "missing_or_inactive_mapping"); continue; }
     const rootQuantity = mapping.quantity_rule === "fixed" ? Number(mapping.fixed_quantity) : requirement.quantity;
     records.push({ mapping_id: mapping.id, mapping_revision: mapping.mapping_revision, source, target_component_id: mapping.target_component_id, requested_quantity: requirement.quantity, resolved_quantity: Number.isFinite(rootQuantity) ? rootQuantity : null });
+    // Preserve the exploded structure as a separate view of the same graph.
+    // The flat leaf list below remains the inventory pick list; this tree is
+    // for production to see which assemblies and sub-assemblies produced it.
     const walk = (componentId, quantity, depth, path) => {
       expansions++;
-      if (expansions > maxExpansions) { block(source, requirement.quantity, "traversal_limit"); return; }
-      if (depth > maxDepth) { block(source, requirement.quantity, "max_depth_exceeded"); return; }
-      if (path.has(componentId)) { block(source, requirement.quantity, "bom_cycle"); return; }
+      if (expansions > maxExpansions) { block(source, requirement.quantity, "traversal_limit"); return null; }
+      if (depth > maxDepth) { block(source, requirement.quantity, "max_depth_exceeded"); return null; }
+      if (path.has(componentId)) { block(source, requirement.quantity, "bom_cycle"); return null; }
       const component = componentById.get(componentId);
-      if (!component) { block(source, requirement.quantity, "missing_target"); return; }
+      if (!component) { block(source, requirement.quantity, "missing_target"); return null; }
       // The active planner mapping is the publishing decision for this
       // integration. Component lifecycle remains PIM metadata and must not
       // prevent an explicitly mapped planner part from being exploded.
       const childEdges = children.get(componentId) || [];
-      if (!childEdges.length) { leaves.set(componentId, (leaves.get(componentId) || 0) + quantity); return; }
+      const node = {
+        pim_component_id: componentId,
+        part_number: component.part_number,
+        component_name: component.name,
+        component_type: component.type ?? "component",
+        unit: component.unit_of_measure,
+        quantity,
+        children: [],
+      };
+      if (!childEdges.length) { leaves.set(componentId, (leaves.get(componentId) || 0) + quantity); return node; }
       const nextPath = new Set(path); nextPath.add(componentId);
       for (const edge of childEdges) {
         const edgeQuantity = Number(edge.quantity);
         if (!Number.isFinite(edgeQuantity) || edgeQuantity <= 0) { block(source, requirement.quantity, "invalid_edge_quantity"); continue; }
-        walk(edge.child_id, quantity * edgeQuantity, depth + 1, nextPath);
+        const child = walk(edge.child_id, quantity * edgeQuantity, depth + 1, nextPath);
+        if (child) node.children.push(child);
       }
+      return node;
     };
     if (!Number.isFinite(rootQuantity) || rootQuantity <= 0) { block(source, requirement.quantity, "invalid_mapping_quantity"); continue; }
-    walk(mapping.target_component_id, rootQuantity, 0, new Set());
+    const root = walk(mapping.target_component_id, rootQuantity, 0, new Set());
+    if (root) assembly_tree.push({
+      source, mapping_id: mapping.id, mapping_revision: mapping.mapping_revision,
+      requested_quantity: requirement.quantity, resolved_quantity: rootQuantity, root,
+    });
   }
   const unresolved_requirements = [...unresolvedByIdentity.values()].sort((a, b) => `${a.source_type}:${a.source_key}`.localeCompare(`${b.source_type}:${b.source_key}`));
   const bom_entries = [...leaves.entries()].map(([id, quantity]) => {
@@ -63,5 +81,6 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
     mapping_evidence: { records },
     unresolved_requirements,
     bom_entries: status === "resolved" || status === "partially_resolved" ? bom_entries : [],
+    assembly_tree: status === "resolved" || status === "partially_resolved" ? assembly_tree : [],
   };
 }

@@ -72,6 +72,20 @@ test("a mapped assembly is exploded through nested sub-assemblies to its leaf pa
     { pim_component_id: "hinge", part_number: "HINGE-01", component_name: "Hinge", unit: "each", quantity: 6 },
     { pim_component_id: "door-panel", part_number: "PANEL-588", component_name: "Door panel", unit: "each", quantity: 2 },
   ]);
+  assert.deepEqual(result.assembly_tree, [{
+    source: { source_type: "door", source_key: "door_left_588mm_color_white_handle_cutout_color_silver" },
+    mapping_id: "map-door", mapping_revision: 1, requested_quantity: 2, resolved_quantity: 2,
+    root: {
+      pim_component_id: "door-assembly", part_number: "ASM-DOOR", component_name: "Prepared door", component_type: "component", unit: "each", quantity: 2,
+      children: [
+        { pim_component_id: "door-panel", part_number: "PANEL-588", component_name: "Door panel", component_type: "component", unit: "each", quantity: 2, children: [] },
+        { pim_component_id: "hardware-sub-assembly", part_number: "ASM-HW", component_name: "Door hardware set", component_type: "component", unit: "each", quantity: 2, children: [
+          { pim_component_id: "hinge", part_number: "HINGE-01", component_name: "Hinge", component_type: "component", unit: "each", quantity: 6, children: [] },
+          { pim_component_id: "handle", part_number: "HANDLE-01", component_name: "Cutout handle insert", component_type: "component", unit: "each", quantity: 2, children: [] },
+        ] },
+      ],
+    },
+  }]);
 });
 
 test("a wholly unmapped configuration produces needs_mapping without BOM entries", () => {

@@ -7936,7 +7936,7 @@
         catSel.style.cssText = "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)";
 
         const propSaveErr = el("span", { style: "font-size:0.75rem;color:#e05454;flex:1" }, "");
-        const propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save and close");
+        const propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save");
         propSaveBtn.onclick = async () => {
           const newName = nameInp.value.trim();
           if (!newName) { propSaveErr.textContent = "Name cannot be empty."; return; }
@@ -7981,7 +7981,7 @@
             }, 400);
           } catch (ex) {
             propSaveErr.textContent = ex.message;
-            propSaveBtn.disabled = false; propSaveBtn.textContent = "Save and close";
+            propSaveBtn.disabled = false; propSaveBtn.textContent = "Save";
           }
         };
 

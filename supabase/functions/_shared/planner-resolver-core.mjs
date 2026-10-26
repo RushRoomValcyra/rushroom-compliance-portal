@@ -40,7 +40,12 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
         quantity,
         children: [],
       };
-      if (!childEdges.length) { leaves.set(componentId, (leaves.get(componentId) || 0) + quantity); return node; }
+      // phantom_assembly (Kit) is a pick group — stop here so it appears as one
+      // line in the pick list. Its children are picked together under it; Order
+      // Operations fetches their identities separately when building the list.
+      if (!childEdges.length || component.type === "phantom_assembly") {
+        leaves.set(componentId, (leaves.get(componentId) || 0) + quantity); return node;
+      }
       const nextPath = new Set(path); nextPath.add(componentId);
       for (const edge of childEdges) {
         const edgeQuantity = Number(edge.quantity);
@@ -60,7 +65,7 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
   const unresolved_requirements = [...unresolvedByIdentity.values()].sort((a, b) => `${a.source_type}:${a.source_key}`.localeCompare(`${b.source_type}:${b.source_key}`));
   const bom_entries = [...leaves.entries()].map(([id, quantity]) => {
     const component = componentById.get(id);
-    return { pim_component_id: id, part_number: component.part_number, component_name: component.name, unit: component.unit_of_measure, quantity };
+    return { pim_component_id: id, part_number: component.part_number, component_name: component.name, unit: component.unit_of_measure, type: component.type, quantity };
   }).sort((a, b) => `${a.part_number || ""}:${a.component_name}:${a.pim_component_id}`.localeCompare(`${b.part_number || ""}:${b.component_name}:${b.pim_component_id}`));
   const onlyMissingMappings = unresolved_requirements.length > 0
     && unresolved_requirements.every((item) => item.reason === "missing_or_inactive_mapping");

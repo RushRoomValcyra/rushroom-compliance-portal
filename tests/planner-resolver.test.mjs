@@ -37,12 +37,12 @@ test("an actively mapped leaf resolves with the requested cart quantity regardle
   const result = resolvePlannerGraph({
     requirements: [{ source_type: "module", source_key: "M", quantity: 3 }],
     mappings: [{ id: "map-1", source_type: "module", source_key: "M", target_component_id: "part-1", quantity_rule: "cart_quantity", fixed_quantity: null, mapping_revision: 2 }],
-    components: [{ id: "part-1", part_number: "RR-001", name: "Leaf part", unit_of_measure: "each", lifecycle_status: "inactive" }],
+    components: [{ id: "part-1", part_number: "RR-001", name: "Leaf part", unit_of_measure: "each", lifecycle_status: "inactive", type: "part" }],
     edges: [], maxDepth: 20, maxExpansions: 5000,
   });
   assert.equal(result.status, "resolved");
   assert.deepEqual(result.unresolved_requirements, []);
-  assert.deepEqual(result.bom_entries, [{ pim_component_id: "part-1", part_number: "RR-001", component_name: "Leaf part", unit: "each", quantity: 3 }]);
+  assert.deepEqual(result.bom_entries, [{ pim_component_id: "part-1", part_number: "RR-001", component_name: "Leaf part", unit: "each", type: "part", quantity: 3 }]);
   assert.equal(result.mapping_evidence.records[0].mapping_revision, 2);
 });
 
@@ -51,11 +51,11 @@ test("a mapped assembly is exploded through nested sub-assemblies to its leaf pa
     requirements: [{ source_type: "door", source_key: "door_left_588mm_color_white_handle_cutout_color_silver", quantity: 2 }],
     mappings: [{ id: "map-door", source_type: "door", source_key: "door_left_588mm_color_white_handle_cutout_color_silver", target_component_id: "door-assembly", quantity_rule: "cart_quantity", fixed_quantity: null, mapping_revision: 1 }],
     components: [
-      { id: "door-assembly", part_number: "ASM-DOOR", name: "Prepared door", unit_of_measure: "each" },
-      { id: "hardware-sub-assembly", part_number: "ASM-HW", name: "Door hardware set", unit_of_measure: "each" },
-      { id: "door-panel", part_number: "PANEL-588", name: "Door panel", unit_of_measure: "each" },
-      { id: "hinge", part_number: "HINGE-01", name: "Hinge", unit_of_measure: "each" },
-      { id: "handle", part_number: "HANDLE-01", name: "Cutout handle insert", unit_of_measure: "each" },
+      { id: "door-assembly", part_number: "ASM-DOOR", name: "Prepared door", unit_of_measure: "each", type: "sub_assembly" },
+      { id: "hardware-sub-assembly", part_number: "ASM-HW", name: "Door hardware set", unit_of_measure: "each", type: "sub_assembly" },
+      { id: "door-panel", part_number: "PANEL-588", name: "Door panel", unit_of_measure: "each", type: "part" },
+      { id: "hinge", part_number: "HINGE-01", name: "Hinge", unit_of_measure: "each", type: "part" },
+      { id: "handle", part_number: "HANDLE-01", name: "Cutout handle insert", unit_of_measure: "each", type: "part" },
     ],
     edges: [
       { parent_id: "door-assembly", child_id: "door-panel", quantity: 1 },
@@ -68,20 +68,20 @@ test("a mapped assembly is exploded through nested sub-assemblies to its leaf pa
   assert.equal(result.status, "resolved");
   assert.deepEqual(result.unresolved_requirements, []);
   assert.deepEqual(result.bom_entries, [
-    { pim_component_id: "handle", part_number: "HANDLE-01", component_name: "Cutout handle insert", unit: "each", quantity: 2 },
-    { pim_component_id: "hinge", part_number: "HINGE-01", component_name: "Hinge", unit: "each", quantity: 6 },
-    { pim_component_id: "door-panel", part_number: "PANEL-588", component_name: "Door panel", unit: "each", quantity: 2 },
+    { pim_component_id: "handle", part_number: "HANDLE-01", component_name: "Cutout handle insert", unit: "each", type: "part", quantity: 2 },
+    { pim_component_id: "hinge", part_number: "HINGE-01", component_name: "Hinge", unit: "each", type: "part", quantity: 6 },
+    { pim_component_id: "door-panel", part_number: "PANEL-588", component_name: "Door panel", unit: "each", type: "part", quantity: 2 },
   ]);
   assert.deepEqual(result.assembly_tree, [{
     source: { source_type: "door", source_key: "door_left_588mm_color_white_handle_cutout_color_silver" },
     mapping_id: "map-door", mapping_revision: 1, requested_quantity: 2, resolved_quantity: 2,
     root: {
-      pim_component_id: "door-assembly", part_number: "ASM-DOOR", component_name: "Prepared door", component_type: "component", unit: "each", quantity: 2,
+      pim_component_id: "door-assembly", part_number: "ASM-DOOR", component_name: "Prepared door", component_type: "sub_assembly", unit: "each", quantity: 2,
       children: [
-        { pim_component_id: "door-panel", part_number: "PANEL-588", component_name: "Door panel", component_type: "component", unit: "each", quantity: 2, children: [] },
-        { pim_component_id: "hardware-sub-assembly", part_number: "ASM-HW", component_name: "Door hardware set", component_type: "component", unit: "each", quantity: 2, children: [
-          { pim_component_id: "hinge", part_number: "HINGE-01", component_name: "Hinge", component_type: "component", unit: "each", quantity: 6, children: [] },
-          { pim_component_id: "handle", part_number: "HANDLE-01", component_name: "Cutout handle insert", component_type: "component", unit: "each", quantity: 2, children: [] },
+        { pim_component_id: "door-panel", part_number: "PANEL-588", component_name: "Door panel", component_type: "part", unit: "each", quantity: 2, children: [] },
+        { pim_component_id: "hardware-sub-assembly", part_number: "ASM-HW", component_name: "Door hardware set", component_type: "sub_assembly", unit: "each", quantity: 2, children: [
+          { pim_component_id: "hinge", part_number: "HINGE-01", component_name: "Hinge", component_type: "part", unit: "each", quantity: 6, children: [] },
+          { pim_component_id: "handle", part_number: "HANDLE-01", component_name: "Cutout handle insert", component_type: "part", unit: "each", quantity: 2, children: [] },
         ] },
       ],
     },
@@ -105,10 +105,31 @@ test("missing mappings return a partial BOM for the requirements that do resolve
       { source_type: "door", source_key: "unmapped", quantity: 1 },
     ],
     mappings: [{ id: "map-1", source_type: "module", source_key: "M", target_component_id: "part-1", quantity_rule: "cart_quantity", fixed_quantity: null, mapping_revision: 2 }],
-    components: [{ id: "part-1", part_number: "RR-001", name: "Leaf part", unit_of_measure: "each", lifecycle_status: "released" }],
+    components: [{ id: "part-1", part_number: "RR-001", name: "Leaf part", unit_of_measure: "each", lifecycle_status: "released", type: "part" }],
     edges: [], maxDepth: 20, maxExpansions: 5000,
   });
   assert.equal(result.status, "partially_resolved");
-  assert.deepEqual(result.bom_entries, [{ pim_component_id: "part-1", part_number: "RR-001", component_name: "Leaf part", unit: "each", quantity: 2 }]);
+  assert.deepEqual(result.bom_entries, [{ pim_component_id: "part-1", part_number: "RR-001", component_name: "Leaf part", unit: "each", type: "part", quantity: 2 }]);
   assert.deepEqual(result.unresolved_requirements, [{ source_type: "door", source_key: "unmapped", quantity: 1, reason: "missing_or_inactive_mapping" }]);
+});
+
+test("phantom_assembly (Kit) stops the walk and appears as a single pick-group entry", () => {
+  const result = resolvePlannerGraph({
+    requirements: [{ source_type: "interior", source_key: "drawer-kit", quantity: 2 }],
+    mappings: [{ id: "map-1", source_type: "interior", source_key: "drawer-kit", target_component_id: "kit-1", quantity_rule: "cart_quantity", fixed_quantity: null, mapping_revision: 1 }],
+    components: [
+      { id: "kit-1", part_number: "KIT-001", name: "Drawer Hardware Set", unit_of_measure: "set", lifecycle_status: "released", type: "phantom_assembly" },
+      { id: "part-a", part_number: "RR-A", name: "Slide", unit_of_measure: "each", lifecycle_status: "released", type: "part" },
+      { id: "part-b", part_number: "RR-B", name: "Screw", unit_of_measure: "each", lifecycle_status: "released", type: "part" },
+    ],
+    edges: [
+      { parent_id: "kit-1", child_id: "part-a", quantity: 2 },
+      { parent_id: "kit-1", child_id: "part-b", quantity: 8 },
+    ],
+    maxDepth: 20, maxExpansions: 5000,
+  });
+  assert.equal(result.status, "resolved");
+  assert.deepEqual(result.bom_entries, [
+    { pim_component_id: "kit-1", part_number: "KIT-001", component_name: "Drawer Hardware Set", unit: "set", type: "phantom_assembly", quantity: 2 },
+  ]);
 });

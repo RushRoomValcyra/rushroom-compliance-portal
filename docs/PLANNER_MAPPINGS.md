@@ -129,6 +129,34 @@ planner requirement. Every node carries its resolved quantity and children, so
 an assembly and every nested sub-assembly remain visible alongside the flat
 inventory pick list.
 
+## Operations → PIM article lookup (contract v1)
+
+Order Operations' receiving identifies each delivered article by its article number (its `docs/integrations/gateway-article-lookup.md` is the same contract seen from the caller). `lookupArticle` uses the same endpoint, key and boundary as the resolver above: `POST` to `portal-api` with `Authorization: Bearer <key>` checked against `OPERATIONS_PIM_RESOLVER_KEY`; it does not accept a browser session, and it always looks in the seed Rushroom organization.
+
+Request, with no other keys:
+
+```json
+{ "action": "lookupArticle", "contract_version": 1, "article_number": "RR-LED-30W" }
+```
+
+- The article number is matched exactly, ignoring case and surrounding spaces.
+- Product families (dynamic BOMs) and phantom assemblies are not articles and are never returned.
+
+Answers, status 200:
+
+```json
+{ "contract_version": 1, "status": "found",
+  "article": { "pim_component_id": "<bom_components.id>", "article_number": "RR-LED-30W", "name": "LED strip 30 W", "unit": "ea" } }
+```
+
+```json
+{ "contract_version": 1, "status": "not_found" }
+```
+
+- `article_number` is the spelling stored here, `name` falls back to the article number when empty, and `unit` falls back to `ea` when `unit_of_measure` is empty.
+- 400 for any other request shape, 401 for a wrong key, 503 when the key is not configured, 409 when two components share the number in different case, 502 when the data cannot be read.
+- The matching rules live in `supabase/functions/_shared/article-lookup-core.mjs` and are tested by `tests/article-lookup.test.mjs`.
+
 ## Version and release metadata
 
 Every edit creates a new row with a higher `mapping_revision`, `supersedes_id`,

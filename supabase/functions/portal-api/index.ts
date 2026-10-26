@@ -31,6 +31,7 @@ import { RUSHROOM_ORG_ID, TENANT_TABLES, makeTdb } from "../_shared/tenant.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
+import { ARTICLE_LOOKUP_MAX_LENGTH, exactIlikePattern, matchArticle, normaliseArticleNumber } from "../_shared/article-lookup-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
@@ -1093,6 +1094,36 @@ Deno.serve(async (req) => {
       ...(body.include_assembly_tree ? { assembly_tree } : {}),
       resolved_at: resolution.status === "resolved" ? new Date().toISOString() : null,
     });
+  }
+
+  // --- Operations → PIM single-article lookup (service authentication only) --
+  // Order Operations' receiving looks up one article number at a time (contract
+  // v1, docs/PLANNER_MAPPINGS.md). Same key and seed org as the resolver above;
+  // nothing about the caller's deliveries or orders is sent or stored here.
+  if (action === "lookupArticle") {
+    const resolverKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY");
+    if (!resolverKey) return json({ error: "Article lookup is not configured" }, 503);
+    const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (!constantTimeSecretEqual(suppliedKey, resolverKey)) return json({ error: "Invalid resolver credential" }, 401);
+    const allowedKeys = new Set(["action", "contract_version", "article_number"]);
+    if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "Article lookup accepts only contract_version and article_number" }, 400);
+    const articleNumber = normaliseArticleNumber(body.article_number);
+    if (body.contract_version !== 1 || !articleNumber || articleNumber.length > ARTICLE_LOOKUP_MAX_LENGTH) {
+      return json({ error: `contract_version 1 and an article_number of 1 to ${ARTICLE_LOOKUP_MAX_LENGTH} characters are required` }, 400);
+    }
+
+    const lookupTdb = makeTdb(RUSHROOM_ORG_ID);
+    const { data, error } = await lookupTdb("bom_components")
+      .select("id, part_number, name, type, unit_of_measure")
+      .ilike("part_number", exactIlikePattern(articleNumber))
+      .limit(5);
+    if (error) return json({ error: "PIM article data is unavailable" }, 502);
+
+    const result = matchArticle(data || [], articleNumber);
+    if (result.status === "ambiguous") return json({ error: `More than one component has article number ${articleNumber}` }, 409);
+    return json(result.status === "found"
+      ? { contract_version: 1, status: "found", article: result.article }
+      : { contract_version: 1, status: "not_found" });
   }
 
   // --- everything else requires a valid token -----------------------------

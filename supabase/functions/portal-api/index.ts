@@ -32,6 +32,7 @@ import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_
 import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
 import { ARTICLE_LOOKUP_MAX_LENGTH, exactIlikePattern, matchArticle, normaliseArticleNumber } from "../_shared/article-lookup-core.mjs";
+import { ASSEMBLY_TYPES, articleOf, expandAssemblyInputs } from "../_shared/assembly-inputs-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
@@ -1124,6 +1125,55 @@ Deno.serve(async (req) => {
     return json(result.status === "found"
       ? { contract_version: 1, status: "found", article: result.article }
       : { contract_version: 1, status: "not_found" });
+  }
+
+  // --- Operations → PIM pre-assemblies (service authentication only) ------
+  // Order Operations builds stocked assemblies ahead of orders (its item 0018):
+  // it lists what is marked stocked here, and asks what one unit is made of.
+  // Same key and seed org as the resolver; nothing is sent back or stored here.
+  if (action === "listStockedAssemblies" || action === "resolveAssemblyInputs") {
+    const resolverKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY");
+    if (!resolverKey) return json({ error: "Pre-assembly actions are not configured" }, 503);
+    const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (!constantTimeSecretEqual(suppliedKey, resolverKey)) return json({ error: "Invalid resolver credential" }, 401);
+    const allowedKeys = new Set(action === "listStockedAssemblies"
+      ? ["action", "contract_version"]
+      : ["action", "contract_version", "article_number"]);
+    if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: `${action} accepts only ${[...allowedKeys].slice(1).join(" and ")}` }, 400);
+    if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
+    const preTdb = makeTdb(RUSHROOM_ORG_ID);
+
+    if (action === "listStockedAssemblies") {
+      const { data, error } = await preTdb("bom_components")
+        .select("id, part_number, name, unit_of_measure, target_stock_days")
+        .eq("is_stocked", true)
+        .in("type", ASSEMBLY_TYPES)
+        .order("part_number");
+      if (error) return json({ error: "PIM assembly data is unavailable" }, 502);
+      return json({
+        contract_version: 1,
+        assemblies: (data || []).map((row) => ({ ...articleOf(row), target_stock_days: row.target_stock_days ?? null })),
+      });
+    }
+
+    const articleNumber = normaliseArticleNumber(body.article_number);
+    if (!articleNumber || articleNumber.length > ARTICLE_LOOKUP_MAX_LENGTH) {
+      return json({ error: `an article_number of 1 to ${ARTICLE_LOOKUP_MAX_LENGTH} characters is required` }, 400);
+    }
+    const [componentRes, edgeRes] = await Promise.all([
+      preTdb("bom_components").select("id, part_number, name, type, unit_of_measure, is_stocked"),
+      preTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).eq("is_reference", false),
+    ]);
+    if (componentRes.error || edgeRes.error) return json({ error: "PIM assembly data is unavailable" }, 502);
+    const match = matchArticle(componentRes.data || [], articleNumber);
+    if (match.status === "ambiguous") return json({ error: `More than one component has article number ${articleNumber}` }, 409);
+    if (match.status === "not_found") return json({ contract_version: 1, status: "not_found" });
+    const root = (componentRes.data || []).find((row) => row.id === match.article.pim_component_id);
+    if (!ASSEMBLY_TYPES.includes(root.type)) return json({ error: `${articleNumber} is not an assembly` }, 422);
+    const expanded = expandAssemblyInputs({ rootId: root.id, components: componentRes.data || [], edges: edgeRes.data || [] });
+    if (expanded.error) return json({ error: `The BOM of ${articleNumber} cannot be expanded: ${expanded.error}` }, 422);
+    if (!expanded.inputs.length) return json({ error: `${articleNumber} has no inputs in its BOM` }, 422);
+    return json({ contract_version: 1, status: "resolved", assembly: articleOf(root), inputs: expanded.inputs });
   }
 
   // --- everything else requires a valid token -----------------------------

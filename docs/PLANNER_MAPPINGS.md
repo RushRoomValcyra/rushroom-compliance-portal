@@ -157,6 +157,29 @@ Answers, status 200:
 - 400 for any other request shape, 401 for a wrong key, 503 when the key is not configured, 409 when two components share the number in different case, 502 when the data cannot be read.
 - The matching rules live in `supabase/functions/_shared/article-lookup-core.mjs` and are tested by `tests/article-lookup.test.mjs`.
 
+## Operations → PIM pre-assemblies (contract v1)
+
+Order Operations builds stocked assemblies ahead of orders (its item 0018). Two service actions, with the same endpoint, key and boundary as `lookupArticle`:
+
+`listStockedAssemblies`, request `{ "action": "listStockedAssemblies", "contract_version": 1 }`, answers every sub-assembly or finished good with `is_stocked = true`:
+
+```json
+{ "contract_version": 1, "assemblies": [
+  { "pim_component_id": "<id>", "article_number": "RR-DOOR-L", "name": "Door left, handle fitted", "unit": "ea", "target_stock_days": 14 } ] }
+```
+
+`resolveAssemblyInputs`, request `{ "action": "resolveAssemblyInputs", "contract_version": 1, "article_number": "RR-DOOR-L" }`, answers what **one unit** is made of:
+
+```json
+{ "contract_version": 1, "status": "resolved",
+  "assembly": { "pim_component_id": "<id>", "article_number": "RR-DOOR-L", "name": "Door left, handle fitted", "unit": "ea" },
+  "inputs": [ { "pim_component_id": "<id>", "article_number": "RR-HANDLE", "name": "Handle", "unit": "ea", "quantity": 1 } ] }
+```
+
+- Real BOM links only (no "In the box", none ended), expanded until a part or another stocked assembly, which is taken from the shelf as one unit. Kits (phantom assemblies) are expanded to their parts. Quantities are summed per component.
+- `{ "contract_version": 1, "status": "not_found" }` for an unknown article number; 422 when it is not an assembly, has no inputs, or its BOM cannot be expanded (cycle, too deep); 409 when two components share the number.
+- The expansion lives in `supabase/functions/_shared/assembly-inputs-core.mjs` and is tested by `tests/assembly-inputs.test.mjs`.
+
 ## Version and release metadata
 
 Every edit creates a new row with a higher `mapping_revision`, `supersedes_id`,

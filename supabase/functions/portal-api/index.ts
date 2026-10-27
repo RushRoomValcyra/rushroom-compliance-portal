@@ -4199,6 +4199,60 @@ Deno.serve(async (req) => {
 
 
   // ==========================================================================
+  // Pre-assemblies — assemblies built ahead of orders, held on the shelf.
+  // Rushroom-only. The resolver change (stop at is_stocked = true) comes
+  // in a separate commit once the list of stocked assemblies is stable.
+  // ==========================================================================
+
+  if (action === "listPreAssemblies") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { data: rows, error } = await tdb("bom_components")
+      .select("id, part_number, name, type, lifecycle_status, is_stocked, target_stock_days, updated_at")
+      .in("type", ["sub_assembly", "finished_good"])
+      .order("name");
+    if (error) return json({ error: error.message }, 400);
+    const stocked = (rows || []).filter((r) => r.is_stocked);
+    return json({ pre_assemblies: stocked });
+  }
+
+  if (action === "listAssembliesForStocking") {
+    // All assemblies (sub_assembly + finished_good), active lifecycle only,
+    // so the UI can search and promote one to stocked.
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { q: qStr } = body;
+    let q = tdb("bom_components")
+      .select("id, part_number, name, type, lifecycle_status, is_stocked, target_stock_days")
+      .in("type", ["sub_assembly", "finished_good"])
+      .eq("lifecycle_status", "active")
+      .order("name")
+      .limit(100);
+    if (qStr) q = q.ilike("name", `%${String(qStr).replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
+    const { data: rows, error } = await q;
+    if (error) return json({ error: error.message }, 400);
+    return json({ assemblies: rows || [] });
+  }
+
+  if (action === "setAssemblyStocked") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { component_id, is_stocked: flag, target_stock_days: days } = body;
+    if (!component_id || typeof flag !== "boolean") return json({ error: "component_id and is_stocked required" }, 400);
+    if (days !== undefined && days !== null && (!Number.isInteger(days) || days < 1 || days > 365))
+      return json({ error: "target_stock_days must be 1–365" }, 400);
+    const { data: comp, error: fetchErr } = await tdb("bom_components")
+      .select("id, type")
+      .eq("id", component_id)
+      .single();
+    if (fetchErr || !comp) return json({ error: "Component not found" }, 404);
+    if (!["sub_assembly", "finished_good"].includes(comp.type))
+      return json({ error: "Only sub-assemblies and finished goods can be stocked" }, 422);
+    const patch: Record<string, unknown> = { is_stocked: flag, updated_by: userId };
+    if (days !== undefined) patch.target_stock_days = days ?? null;
+    const { error: updErr } = await tdb("bom_components").update(patch).eq("id", component_id);
+    if (updErr) return json({ error: updErr.message }, 400);
+    return json({ ok: true });
+  }
+
+  // ==========================================================================
   // PROP-045: Drawings — a first-class domain, not a document category.
   // Writes are rushroom-only. Reads are open to manufacturing partners through
   // ONE choke point (supplierDrawingScope) so that making visibility selective

@@ -10700,6 +10700,8 @@
     if (acctPanel && API.isAdmin()) renderAccounts(role, acctPanel);
     const l2Panel = $("#level2-panel");
     if (l2Panel && role === "rushroom") renderLevel2(role, l2Panel);
+    const stockPanel = $("#stock-panel");
+    if (stockPanel && role === "rushroom") renderStock(role, stockPanel);
   }
 
   // ==========================================================================
@@ -11425,6 +11427,7 @@
     gate("tab-drawings", "drawings-panel", role === "rushroom" || role === "supplier");
     gate("tab-deviations", "deviations-panel", role === "rushroom");
     gate("tab-level2", "level2-panel", role === "rushroom");
+    gate("tab-stock", "stock-panel", role === "rushroom");
     gate("tab-accounts", "accounts-panel", !!admin);
   }
 
@@ -11616,6 +11619,212 @@
     } catch (err) {
       mount.replaceChildren(el("div", { class: "error" }, `Couldn't load status: ${err.message}. Check the published Sheet URL and sharing.`));
     }
+  }
+
+  // ==========================================================================
+  // Stock — Pre Assemblies
+  //
+  // Assemblies built ahead of orders and held on the shelf. The resolver
+  // change (stop at is_stocked = true) comes once the list is stable.
+  // ==========================================================================
+  async function renderStock(role, mount) {
+    const token = API.getToken(role);
+
+    // State
+    let selected = null;   // currently open pre-assembly
+    let all = [];          // current stocked list
+    let searchQ = "";      // promote-search query
+    let searchResults = [];
+
+    // ---- helpers ----
+    const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
+
+    function statusBadge(lc) {
+      const map = { active: ["green", "Active"], inactive: ["muted", "Inactive"], replaced: ["warn", "Replaced"], flagged: ["red", "Flagged"] };
+      const [cls, label] = map[lc] || ["muted", lc];
+      return el("span", { class: `badge badge-${cls}`, style: "font-size:0.75rem" }, label);
+    }
+
+    // ---- left list ----
+    function buildList() {
+      if (!all.length) {
+        return el("div", { class: "muted", style: "padding:1.25rem 1rem;font-size:0.875rem" },
+          "No pre-assemblies yet. Use the search below to promote an assembly.");
+      }
+      return el("ul", { class: "nav-list", style: "margin:0;padding:0;list-style:none" },
+        all.map((a) => {
+          const active = selected && selected.id === a.id;
+          return el("li", {
+            class: `nav-list-item${active ? " active" : ""}`,
+            style: "cursor:pointer;padding:0.6rem 1rem;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:0.15rem",
+            onclick: () => { selected = a; render(); },
+          }, [
+            el("span", { style: "font-weight:500;font-size:0.875rem" }, a.name),
+            el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, [
+              a.part_number || "—",
+              " · ",
+              a.target_stock_days ? `${a.target_stock_days}d target` : "no target",
+            ]),
+          ]);
+        })
+      );
+    }
+
+    // ---- detail panel ----
+    function buildDetail() {
+      if (!selected) {
+        return el("div", { class: "muted", style: "padding:2rem 1.5rem;font-size:0.875rem" },
+          "Select a pre-assembly on the left.");
+      }
+      const a = selected;
+
+      // Target days editor
+      let daysInput;
+      const saveDays = async () => {
+        const v = daysInput.value.trim();
+        const days = v === "" ? null : parseInt(v, 10);
+        if (v !== "" && (!Number.isFinite(days) || days < 1 || days > 365)) {
+          alert("Target must be 1–365 days."); return;
+        }
+        try {
+          await API.post(token, "setAssemblyStocked", { component_id: a.id, is_stocked: true, target_stock_days: days });
+          a.target_stock_days = days;
+          const listItem = all.find((x) => x.id === a.id);
+          if (listItem) listItem.target_stock_days = days;
+          render();
+        } catch (ex) { alert(`Save failed: ${ex.message}`); }
+      };
+
+      // Unstocking
+      const unstock = async () => {
+        if (!confirm(`Remove "${a.name}" from pre-assemblies?`)) return;
+        try {
+          await API.post(token, "setAssemblyStocked", { component_id: a.id, is_stocked: false });
+          all = all.filter((x) => x.id !== a.id);
+          selected = null;
+          render();
+        } catch (ex) { alert(`Failed: ${ex.message}`); }
+      };
+
+      const panel = el("div", { style: "padding:1.5rem;max-width:560px" }, [
+        el("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1.25rem" }, [
+          el("div", {}, [
+            el("h2", { style: "margin:0 0 0.25rem;font-size:1.125rem" }, a.name),
+            el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);display:flex;gap:0.5rem;align-items:center" }, [
+              a.part_number || "—",
+              statusBadge(a.lifecycle_status),
+            ]),
+          ]),
+          el("button", { class: "btn btn-sm btn-outline-danger", type: "button", onclick: unstock }, "Remove from stock"),
+        ]),
+        el("div", { style: "display:flex;flex-direction:column;gap:0.5rem;margin-bottom:1.5rem" }, [
+          el("label", { style: "font-size:0.8125rem;font-weight:600" }, "Target days cover"),
+          el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [
+            (daysInput = el("input", {
+              type: "number", min: "1", max: "365", step: "1",
+              class: "form-control form-control-sm", style: "width:100px",
+              value: a.target_stock_days ?? "",
+              placeholder: "e.g. 5",
+            })),
+            el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: saveDays }, "Save"),
+          ]),
+          el("div", { class: "muted", style: "font-size:0.75rem" }, "How many days of sales cover to hold. Guides hub build scheduling — not enforced."),
+        ]),
+        el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `Last updated ${fmtDate(a.updated_at)}`),
+      ]);
+      return panel;
+    }
+
+    // ---- promote search ----
+    function buildPromote() {
+      let searchInput;
+      const doSearch = async () => {
+        const q = searchInput.value.trim();
+        searchQ = q;
+        try {
+          const r = await API.post(token, "listAssembliesForStocking", { q });
+          searchResults = r.assemblies || [];
+        } catch (ex) {
+          searchResults = [];
+        }
+        renderResults();
+      };
+
+      let resultsDiv = el("div", {});
+      const renderResults = () => {
+        if (!searchResults.length) {
+          resultsDiv.replaceChildren(el("div", { class: "muted", style: "font-size:0.8125rem;padding:0.5rem 0" },
+            searchQ ? "No assemblies found." : "Type to search assemblies."));
+          return;
+        }
+        resultsDiv.replaceChildren(el("ul", { style: "margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.25rem" },
+          searchResults.map((a) => {
+            const already = all.some((x) => x.id === a.id);
+            return el("li", { style: "display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0.4rem 0;border-bottom:1px solid var(--border)" }, [
+              el("div", {}, [
+                el("div", { style: "font-size:0.875rem;font-weight:500" }, a.name),
+                el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, a.part_number || "—"),
+              ]),
+              already
+                ? el("span", { class: "badge badge-green", style: "font-size:0.75rem" }, "Already stocked")
+                : el("button", { class: "btn btn-xs btn-primary", type: "button", onclick: async () => {
+                    try {
+                      await API.post(token, "setAssemblyStocked", { component_id: a.id, is_stocked: true });
+                      all.push({ ...a, is_stocked: true });
+                      selected = all[all.length - 1];
+                      searchResults = searchResults.filter((x) => x.id !== a.id);
+                      render();
+                    } catch (ex) { alert(`Failed: ${ex.message}`); }
+                  } }, "Add to stock"),
+            ]);
+          })
+        ));
+      };
+
+      return el("div", { style: "padding:1.25rem 1rem;border-top:1px solid var(--border)" }, [
+        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-bottom:0.5rem" }, "Add assembly to pre-assemblies"),
+        el("div", { style: "display:flex;gap:0.5rem;margin-bottom:0.75rem" }, [
+          (searchInput = el("input", {
+            type: "search", class: "form-control form-control-sm",
+            placeholder: "Search assemblies by name…",
+            value: searchQ,
+            oninput: doSearch,
+          })),
+        ]),
+        resultsDiv,
+      ]);
+    }
+
+    // ---- sub-tab shell (Pre Assemblies only for now) ----
+    function render() {
+      mount.replaceChildren(subTabs("stock", [
+        {
+          id: "pre-assemblies",
+          label: "Pre Assemblies",
+          icon: "layers",
+          build: () => {
+            const left = el("div", { style: "width:260px;min-width:220px;border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column" }, [
+              el("div", { style: "padding:0.75rem 1rem;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted,#8b93a1);border-bottom:1px solid var(--border)" }, `Pre Assemblies (${all.length})`),
+              buildList(),
+              buildPromote(),
+            ]);
+            const right = el("div", { style: "flex:1;overflow-y:auto" }, buildDetail());
+            return el("div", { style: "display:flex;height:100%;min-height:0;overflow:hidden" }, [left, right]);
+          },
+        },
+      ]));
+    }
+
+    // ---- initial load ----
+    mount.replaceChildren(el("div", { class: "loading" }, "Loading stock…"));
+    try {
+      const r = await API.post(token, "listPreAssemblies", {});
+      all = r.pre_assemblies || [];
+    } catch (ex) {
+      mount.replaceChildren(el("div", { class: "error" }, `Couldn't load pre-assemblies: ${ex.message}`));
+      return;
+    }
+    render();
   }
 
   if (document.body && document.body.dataset.page === "full") {

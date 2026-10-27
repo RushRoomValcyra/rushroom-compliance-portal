@@ -86,7 +86,7 @@ The dashboard reads the action-plan sheet live, so set that sheet to
 **Anyone with the link → Viewer** in Google Drive. It contains only step statuses (low
 sensitivity), not the documents themselves.
 
-### 3. Publish to GitHub Pages
+### 3. Publish (Rushroom's portal is on Netlify: https://engineeringcompliance.netlify.app, set up by `netlify.toml`; GitHub Pages below still works for a copy)
 1. Push this folder to a repository (its contents at the repo root, so `index.html` is at
    the top level).
 2. In the repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch**,

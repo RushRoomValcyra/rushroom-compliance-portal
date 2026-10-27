@@ -92,7 +92,7 @@ const isSupplierStep = (audience: string[] | null) => Array.isArray(audience) &&
 const safeName = (n: string) => (n || "file").replace(/[^\w.\-]+/g, "_").slice(-120);
 
 // ---- user accounts: registration, verification, admin --------------------
-const APP_BASE = (Deno.env.get("APP_BASE_URL") ?? "https://ziirvass.github.io/rushroom-compliance-portal").replace(/\/+$/, "");
+const APP_BASE = (Deno.env.get("APP_BASE_URL") ?? "https://engineeringcompliance.netlify.app").replace(/\/+$/, "");
 // PROP-056: where an occurrence is fitted. Kept in step with the CHECK in
 // migration 0036 — a value accepted here that the constraint rejects would
 // surface as a raw Postgres error rather than a usable message.

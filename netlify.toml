@@ -1,0 +1,18 @@
+# The portal is static: Netlify publishes the repository as it is, with no
+# build step (the same files GitHub Pages served). Every pull request gets a
+# deploy preview; main is production.
+[build]
+  publish = "."
+  command = ""
+
+# Pages are fetched fresh so a deploy shows at once; scripts and styles are
+# cache-busted with ?v=N on their tags instead.
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache"

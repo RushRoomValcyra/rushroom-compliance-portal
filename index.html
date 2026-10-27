@@ -18,7 +18,7 @@
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="./assets/styles.css?v=319" />
+  <link rel="stylesheet" href="./assets/styles.css?v=320" />
 </head>
 <body data-page="full">
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -79,7 +79,7 @@
         <button class="tab" id="tab-level2" role="tab" aria-selected="false"
                 aria-controls="level2-panel" tabindex="-1">Clauses &amp; DPP</button>
         <button class="tab tab-rushroom" id="tab-stock" role="tab" aria-selected="false"
-                aria-controls="stock-panel" tabindex="-1">Stock</button>
+                aria-controls="stock-panel" tabindex="-1">Pre-assembly eligibility</button>
         <button class="tab tab-admin" id="tab-accounts" role="tab" aria-selected="false"
                 aria-controls="accounts-panel" tabindex="-1">Accounts</button>
       </div>
@@ -109,7 +109,7 @@
       </section>
 
       <section id="stock-panel" role="tabpanel" aria-labelledby="tab-stock" tabindex="0" hidden>
-        <div class="loading">Loading stock…</div>
+        <div class="loading">Loading pre-assembly eligibility…</div>
       </section>
 
       <section id="accounts-panel" role="tabpanel" aria-labelledby="tab-accounts" tabindex="0" hidden>
@@ -125,23 +125,23 @@
   </footer>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="./assets/config.js?v=319"></script>
-  <script src="./assets/api.js?v=319"></script>
-  <script src="./assets/gdocs.js?v=319"></script>
-  <script src="./assets/viewer.js?v=319"></script>
-  <script src="./assets/bom-structure.js?v=319"></script>
+  <script src="./assets/config.js?v=320"></script>
+  <script src="./assets/api.js?v=320"></script>
+  <script src="./assets/gdocs.js?v=320"></script>
+  <script src="./assets/viewer.js?v=320"></script>
+  <script src="./assets/bom-structure.js?v=320"></script>
   <!-- PROP-072: BOM cost simulation — index.html only, never supplier.html -->
   <!-- One arithmetic file for browser, server and tests (PROP-073). A module
        runs after the classic scripts below; cost code only calls it on click. -->
   <script type="module">
-    import * as CostMath from "./supabase/functions/_shared/cost-math.mjs?v=319";
+    import * as CostMath from "./supabase/functions/_shared/cost-math.mjs?v=320";
     window.PortalCostMath = CostMath;
   </script>
-  <script src="./assets/cost-forms.js?v=319"></script>
-  <script src="./assets/cost-view.js?v=319"></script>
-  <script src="./assets/cost-ai.js?v=319"></script>
-  <script src="./assets/cost-import.js?v=319"></script>
-  <script src="./assets/cost-review-view.js?v=319"></script>
+  <script src="./assets/cost-forms.js?v=320"></script>
+  <script src="./assets/cost-view.js?v=320"></script>
+  <script src="./assets/cost-ai.js?v=320"></script>
+  <script src="./assets/cost-import.js?v=320"></script>
+  <script src="./assets/cost-review-view.js?v=320"></script>
   <script src="./assets/app.js?v=322"></script>
 </body>
 </html>

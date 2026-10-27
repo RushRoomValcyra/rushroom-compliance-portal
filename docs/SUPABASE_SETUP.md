@@ -72,7 +72,7 @@ automatically — you do **not** set those.
      functionUrl: "https://<project-ref>.functions.supabase.co/portal-api",
    },
    ```
-3. Commit and push. GitHub Pages redeploys; the portal now shows a **login** that
+3. Merge it into `main`. Netlify publishes it; the portal now shows a **login** that
    accepts the role passwords, with editable status dropdowns and uploads.
 
 ---

@@ -5,7 +5,7 @@ suppliers, installers and reviewers — one place to see **live compliance readi
 reach the **compliance document library** for Rushroom's LED system-furniture product.
 
 Built as plain HTML/CSS/JavaScript (no build step, no framework), so it deploys free on
-**GitHub Pages** and can be extended in any editor.
+**Netlify** (https://engineeringcompliance.netlify.app) and can be extended in any editor.
 
 ---
 
@@ -49,8 +49,8 @@ Built as plain HTML/CSS/JavaScript (no build step, no framework), so it deploys 
 │   └── setup-action-plan.gs   # one-time: adds Status/Priority dropdowns + colours to the Sheet
 ├── docs/                 # SUPABASE_SETUP.md, SYSTEM_OVERVIEW.html, ROADMAP.md, and more
 ├── .gitignore
-├── CNAME.example         # rename to CNAME for a custom domain
-├── .nojekyll             # serve files as-is on GitHub Pages
+├── netlify.toml          # Netlify hosting: publish the repo root, no build step
+├── .nojekyll             # lets the old github.io address serve the forwarding pages as-is
 └── README.md
 ```
 
@@ -86,16 +86,20 @@ The dashboard reads the action-plan sheet live, so set that sheet to
 **Anyone with the link → Viewer** in Google Drive. It contains only step statuses (low
 sensitivity), not the documents themselves.
 
-### 3. Publish (Rushroom's portal is on Netlify: https://engineeringcompliance.netlify.app, set up by `netlify.toml`; GitHub Pages below still works for a copy)
-1. Push this folder to a repository (its contents at the repo root, so `index.html` is at
-   the top level).
-2. In the repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
-   select `main` / `/ (root)`, and save.
-3. The site goes live at `https://<your-username>.github.io/<repo-name>/` within a minute.
+### 3. Publish
+The portal is hosted on Netlify at https://engineeringcompliance.netlify.app, set up by
+`netlify.toml` (publish the repo root, no build command).
+- Merging a pull request into `main` publishes it. Every pull request gets its own deploy
+  preview behind the Netlify team login; previews use the production backend.
+- Netlify needs no environment variables. Public settings live in `assets/config.js`;
+  secrets live in the Supabase project (see `docs/SUPABASE_SETUP.md`).
+- The old address `https://rushroomvalcyra.github.io/rushroom-compliance-portal/` forwards
+  every page, with its query and hash, to the same page on Netlify.
 
 ### 4. (Optional) Custom domain
-Rename `CNAME.example` to `CNAME`, put your domain inside (e.g. `compliance.rushroom.se`),
-add the same domain under Settings → Pages, and create a CNAME DNS record at your provider.
+Add the domain under **Netlify → Domain management**, create the DNS record Netlify shows,
+then set the Supabase secret `APP_BASE_URL` to the new address so email links use it. Add
+the new address to the Google OAuth client's authorised JavaScript origins as well.
 
 ---
 

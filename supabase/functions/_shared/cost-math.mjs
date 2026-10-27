@@ -3,7 +3,7 @@
  * Pure functions, no DOM, no network. ONE file for three users, so the numbers
  * cannot drift apart:
  *   - the browser (index.html imports it and sets window.PortalCostMath;
- *     GitHub Pages serves this folder — .nojekyll is in the repo root)
+ *     Netlify serves this folder as-is)
  *   - portal-api's full cost review (handlers/cost-review.ts)
  *   - portal-ai's cleaning of what the AI read from a quote
  *   - and the tests (tests/cost-math.test.mjs).

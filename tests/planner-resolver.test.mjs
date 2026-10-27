@@ -133,3 +133,55 @@ test("phantom_assembly (Kit) stops the walk and appears as a single pick-group e
     { pim_component_id: "kit-1", part_number: "KIT-001", component_name: "Drawer Hardware Set", unit: "set", type: "phantom_assembly", quantity: 2 },
   ]);
 });
+
+// Contract v2 (Order Operations' item 0039): operations on every node, and a
+// stocked pre-assembly kept whole. v1 must not change.
+const doorFixture = {
+  requirements: [{ source_type: "door", source_key: "door_left", quantity: 2 }],
+  mappings: [{ id: "map-door", source_type: "door", source_key: "door_left", target_component_id: "door-prepared", quantity_rule: "cart_quantity", fixed_quantity: null, mapping_revision: 1 }],
+  components: [
+    { id: "door-prepared", part_number: "RR-PD", name: "Prepared Door", unit_of_measure: "ea", type: "sub_assembly" },
+    { id: "door-panel", part_number: "RR-D", name: "Door panel", unit_of_measure: "ea", type: "part" },
+    { id: "handle", part_number: "RR-H", name: "Handle", unit_of_measure: "ea", type: "part" },
+  ],
+  edges: [
+    { parent_id: "door-prepared", child_id: "door-panel", quantity: 1 },
+    { parent_id: "door-prepared", child_id: "handle", quantity: 1 },
+  ],
+  maxDepth: 20, maxExpansions: 100,
+};
+const drill = { id: "op-1", operation_type: "drill", stage: "hub", instruction_text: "Customer holes", reference_document: null };
+
+test("v1 is unchanged: no operations, no pre_assembly, pre-assemblies exploded", () => {
+  const result = resolvePlannerGraph({ ...doorFixture, preAssemblyIds: new Set(["door-prepared"]), operationsByComponent: new Map([["door-panel", [drill]]]) });
+  assert.equal(result.contract_version, 1);
+  assert.deepEqual(result.bom_entries.map((e) => e.part_number), ["RR-D", "RR-H"]);
+  assert.equal("operations" in result.assembly_tree[0].root, false);
+  assert.equal("pre_assembly" in result.assembly_tree[0].root, false);
+});
+
+test("v2 puts each component's operations on its node", () => {
+  const result = resolvePlannerGraph({ ...doorFixture, contractVersion: 2, operationsByComponent: new Map([["door-panel", [drill]]]) });
+  assert.equal(result.contract_version, 2);
+  const [panel, handle] = result.assembly_tree[0].root.children;
+  assert.deepEqual(panel.operations, [drill]);
+  assert.deepEqual(handle.operations, []);
+  assert.deepEqual(result.assembly_tree[0].root.operations, []);
+});
+
+test("v2 keeps a stocked pre-assembly whole: one pick line from the shelf", () => {
+  const result = resolvePlannerGraph({ ...doorFixture, contractVersion: 2, preAssemblyIds: new Set(["door-prepared"]) });
+  const root = result.assembly_tree[0].root;
+  assert.equal(root.pre_assembly, true);
+  assert.deepEqual(root.children, []);
+  assert.deepEqual(result.bom_entries.map((e) => [e.part_number, e.quantity, e.pre_assembly]), [["RR-PD", 2, true]]);
+  assert.equal(result.status, "resolved");
+});
+
+test("the resolver action answers v1 and v2 and loads operations only for v2", () => {
+  const api = read("supabase/functions/portal-api/index.ts");
+  assert.ok(api.includes("![1, 2].includes(body.contract_version)"), "resolver must accept contract_version 1 and 2");
+  assert.ok(/if \(contractVersion === 2\) \{[\s\S]*?preAssemblyEligibility[\s\S]*?component_routing_steps[\s\S]*?\.is\("family_id", null\)/.test(api),
+    "v2 must use the pre-assembly eligibility and the component's own operations");
+  assert.ok(api.includes("contractVersion, preAssemblyIds, operationsByComponent"), "v2 inputs must reach the resolver core");
+});

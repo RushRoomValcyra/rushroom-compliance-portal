@@ -1,6 +1,13 @@
 // Pure resolver core: no HTTP, secrets, database, or tenant access. Keeping
 // this separate makes the Operations contract executable with fixture tests.
-export function resolvePlannerGraph({ requirements, mappings, components, edges, maxDepth, maxExpansions }) {
+//
+// Contract v2 (Order Operations' item 0039) adds two things and changes nothing
+// else: each tree node carries the operations defined on its component, and a
+// stocked pre-assembly (preAssemblyIds, the same eligibility as
+// listStockedAssemblies) is not expanded, because it is taken from the shelf
+// as one unit. v1 answers stay exactly as before.
+export function resolvePlannerGraph({ requirements, mappings, components, edges, maxDepth, maxExpansions, contractVersion = 1, preAssemblyIds = new Set(), operationsByComponent = new Map() }) {
+  const v2 = contractVersion === 2;
   const mappingBySource = new Map(mappings.map((row) => [`${row.source_type}:${row.source_key}`, row]));
   const componentById = new Map(components.map((row) => [row.id, row]));
   const children = new Map();
@@ -40,6 +47,11 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
         quantity,
         children: [],
       };
+      if (v2) node.operations = operationsByComponent.get(componentId) || [];
+      if (v2 && preAssemblyIds.has(componentId)) {
+        node.pre_assembly = true;
+        leaves.set(componentId, (leaves.get(componentId) || 0) + quantity); return node;
+      }
       // phantom_assembly (Kit) is a pick group — stop here so it appears as one
       // line in the pick list. Its children are picked together under it; Order
       // Operations fetches their identities separately when building the list.
@@ -65,7 +77,8 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
   const unresolved_requirements = [...unresolvedByIdentity.values()].sort((a, b) => `${a.source_type}:${a.source_key}`.localeCompare(`${b.source_type}:${b.source_key}`));
   const bom_entries = [...leaves.entries()].map(([id, quantity]) => {
     const component = componentById.get(id);
-    return { pim_component_id: id, part_number: component.part_number, component_name: component.name, unit: component.unit_of_measure, type: component.type, quantity };
+    const entry = { pim_component_id: id, part_number: component.part_number, component_name: component.name, unit: component.unit_of_measure, type: component.type, quantity };
+    return v2 && preAssemblyIds.has(id) ? { ...entry, pre_assembly: true } : entry;
   }).sort((a, b) => `${a.part_number || ""}:${a.component_name}:${a.pim_component_id}`.localeCompare(`${b.part_number || ""}:${b.component_name}:${b.pim_component_id}`));
   const onlyMissingMappings = unresolved_requirements.length > 0
     && unresolved_requirements.every((item) => item.reason === "missing_or_inactive_mapping");
@@ -80,7 +93,7 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
         ? "needs_mapping"
         : "failed";
   return {
-    contract_version: 1,
+    contract_version: v2 ? 2 : 1,
     status,
     resolved_at: null,
     mapping_evidence: { records },

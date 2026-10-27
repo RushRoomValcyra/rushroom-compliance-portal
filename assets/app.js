@@ -6951,6 +6951,62 @@
     return row;
   }
 
+  // Operations: what we do to this component and where (migration 0052).
+  // Order Operations runs the Hub ones for each customer order, with the
+  // positions the wardrobe planner sends (its item 0039).
+  const OPERATION_LABEL = { drill: "Drill", route: "Route / mill", insert: "Insert", attach: "Attach", cut: "Cut", surface_treat: "Surface treat", inspect: "Inspect", other: "Other" };
+  function operationsRow(componentId, token) {
+    const row = el("div", {
+      class: "operations-row",
+      style: "margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border,#e2e8f0)",
+    });
+    const note = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.3rem 0 0" }, "");
+    const list = el("ol", { style: "margin:0.3rem 0 0;padding-left:1.2rem;font-size:0.8125rem" });
+    const typeSel = el("select", { class: "up-text", "aria-label": "Operation" },
+      Object.entries(OPERATION_LABEL).map(([value, label]) => el("option", { value }, label)));
+    const stageSel = el("select", { class: "up-text", "aria-label": "Where" }, [
+      el("option", { value: "hub" }, "Hub"), el("option", { value: "site" }, "Site"), el("option", { value: "" }, "Not decided"),
+    ]);
+    const instruction = el("input", { class: "up-text", type: "text", maxlength: "2000", "aria-label": "Instruction",
+      placeholder: "e.g. Drill the customer's holes, Ø5 mm, 12 mm deep" });
+    const addBtn = el("button", { class: "btn btn-sm", type: "button" }, "Add operation");
+    const call = async (action, payload) => {
+      note.textContent = "";
+      try { const r = await API.post(token, action, { component_id: componentId, ...payload }); render(r.operations || []); }
+      catch (ex) { note.textContent = ex.message; }
+    };
+    function render(ops) {
+      list.replaceChildren(...ops.map((op, i) => el("li", { style: "margin:0.2rem 0" }, [
+        el("strong", {}, OPERATION_LABEL[op.operation_type] || op.operation_type),
+        ` · ${op.stage === "hub" ? "Hub" : op.stage === "site" ? "Site" : "where not decided"} · `,
+        op.instruction_text, " ",
+        i > 0 ? el("button", { class: "btn btn-sm btn-link", type: "button", "aria-label": "Move up",
+          onclick: () => call("moveComponentOperation", { id: op.id, direction: "up" }) }, "↑") : null,
+        el("button", { class: "btn btn-sm btn-link", type: "button", "aria-label": `Remove ${OPERATION_LABEL[op.operation_type] || op.operation_type}`,
+          onclick: () => { if (confirm("Remove this operation?")) call("deleteComponentOperation", { id: op.id }); } }, "Remove"),
+      ])));
+      if (!ops.length) list.replaceChildren(el("li", { style: "list-style:none;margin-left:-1.2rem;color:var(--muted,#8b93a1)" }, "None. Add one when this is drilled, routed or otherwise worked on."));
+    }
+    addBtn.onclick = async () => {
+      if (!instruction.value.trim()) { note.textContent = "Write what to do."; instruction.focus(); return; }
+      addBtn.disabled = true;
+      await call("saveComponentOperation", { operation_type: typeSel.value, stage: stageSel.value || null, instruction_text: instruction.value });
+      instruction.value = ""; addBtn.disabled = false;
+    };
+    row.replaceChildren(
+      el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em" }, "Operations"),
+      el("span", { style: "display:block;font-size:0.75rem;color:var(--muted,#8b93a1)" },
+        "What we do to it, per customer order. Order Operations runs the Hub ones with the positions from the planner."),
+      list,
+      el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.4rem" }, [typeSel, stageSel, instruction, addBtn]),
+      note,
+    );
+    API.post(token, "listComponentOperations", { component_id: componentId })
+      .then((r) => render(r.operations || []))
+      .catch(() => { row.style.display = "none"; /* the card works without it */ });
+    return row;
+  }
+
   async function openComponentDetail(componentId, token, panel, nodeData, role) {
     if (panel.__show) {
       panel.__show();
@@ -8038,6 +8094,7 @@
           ]),
           el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
           preAssemblyRow(componentId, token),
+          operationsRow(componentId, token),
           // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
           // part from where it lives starts here.
           window.PortalBomRules && window.PortalBomRules.takesInTheBox(nodeData) ? el("div", {

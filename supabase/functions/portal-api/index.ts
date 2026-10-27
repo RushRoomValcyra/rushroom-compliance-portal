@@ -41,6 +41,8 @@ const PLANNER_SOURCE_TYPES = ["module", "interior", "side_panel", "feet", "door"
 const PLANNER_RESOLVER_MAX_REQUIREMENTS = 250;
 const PLANNER_RESOLVER_MAX_DEPTH = 20;
 const PLANNER_RESOLVER_MAX_EXPANSIONS = 5_000;
+// What can be done to a component (CHECK on component_routing_steps).
+const OPERATION_TYPES = ["drill", "route", "insert", "attach", "cut", "surface_treat", "inspect", "other"];
 const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
 const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
 
@@ -178,6 +180,20 @@ async function insertDocumentVersion(tdb: any, row: Record<string, unknown>) {
     res = await tdb("document_versions").insert(clean).select("id").maybeSingle();
   }
   return { ...res, version: String(row.version ?? ""), versionId: res.data?.id ?? null };
+}
+
+// Names of the drawings attached to operations, for the resolver's v2 answer:
+// the document's name and version, never a storage path.
+async function operationDocuments(tdb: any, ops: Array<{ reference_document_id?: string | null }>) {
+  const versionIds = [...new Set(ops.map((op) => op.reference_document_id).filter(Boolean))] as string[];
+  const documents = new Map<string, { name: string; version: string }>();
+  if (!versionIds.length) return documents;
+  const { data: versions } = await tdb("document_versions").select("id, document_id, version").in("id", versionIds);
+  const docIds = [...new Set((versions || []).map((v: any) => v.document_id))];
+  const { data: docs } = docIds.length ? await tdb("documents").select("id, name").in("id", docIds) : { data: [] };
+  const nameOf = new Map((docs || []).map((d: any) => [d.id, d.name]));
+  for (const v of versions || []) documents.set(v.id, { name: nameOf.get(v.document_id) ?? "Drawing", version: v.version || "" });
+  return documents;
 }
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
@@ -1056,9 +1072,12 @@ Deno.serve(async (req) => {
     const allowedKeys = new Set(["action", "contract_version", "requirements", "include_assembly_tree"]);
     if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "Resolver accepts only contract_version and derived requirements" }, 400);
     if (body.include_assembly_tree !== undefined && typeof body.include_assembly_tree !== "boolean") return json({ error: "include_assembly_tree must be a boolean when provided" }, 400);
-    if (body.contract_version !== 1 || !Array.isArray(body.requirements) || body.requirements.length === 0 || body.requirements.length > PLANNER_RESOLVER_MAX_REQUIREMENTS) {
-      return json({ error: `contract_version 1 and between 1 and ${PLANNER_RESOLVER_MAX_REQUIREMENTS} requirements are required` }, 400);
+    // v2 (Order Operations' item 0039): operations on each node, and stocked
+    // pre-assemblies kept whole. v1 is answered exactly as before.
+    if (![1, 2].includes(body.contract_version) || !Array.isArray(body.requirements) || body.requirements.length === 0 || body.requirements.length > PLANNER_RESOLVER_MAX_REQUIREMENTS) {
+      return json({ error: `contract_version 1 or 2 and between 1 and ${PLANNER_RESOLVER_MAX_REQUIREMENTS} requirements are required` }, 400);
     }
+    const contractVersion = body.contract_version;
 
     const requirements: Array<{ source_type: string; source_key: string; quantity: number }> = [];
     const seenRequirements = new Set<string>();
@@ -1077,17 +1096,37 @@ Deno.serve(async (req) => {
     const resolverTdb = makeTdb(RUSHROOM_ORG_ID);
     const [mappingRes, componentRes, edgeRes] = await Promise.all([
       resolverTdb("planner_mappings").select("id, source_type, source_key, target_component_id, quantity_rule, fixed_quantity, mapping_revision").eq("is_active", true),
-      resolverTdb("bom_components").select("id, part_number, name, type, unit_of_measure, lifecycle_status"),
+      resolverTdb("bom_components").select("id, part_number, name, type, unit_of_measure, lifecycle_status, is_stocked"),
       // PROP-067/068: In-the-box children come with their parent's order line,
       // never on their own — skipping them keeps that item a leaf, one pick line.
-      resolverTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).eq("is_reference", false).order("parent_id").order("child_id"),
+      resolverTdb("bom_edges").select("parent_id, child_id, quantity, fitting_stage").is("effective_to", null).eq("is_reference", false).order("parent_id").order("child_id"),
     ]);
     if (mappingRes.error || componentRes.error || edgeRes.error) return json({ error: "PIM resolver data is unavailable" }, 502);
     if ((edgeRes.data || []).length > PLANNER_RESOLVER_MAX_EXPANSIONS) return json({ error: "PIM BOM graph exceeds resolver traversal limit" }, 422);
 
+    let preAssemblyIds = new Set<string>();
+    const operationsByComponent = new Map<string, unknown[]>();
+    if (contractVersion === 2) {
+      preAssemblyIds = new Set(preAssemblyEligibility({ components: componentRes.data || [], edges: edgeRes.data || [] }).keys());
+      const opsRes = await resolverTdb("component_routing_steps")
+        .select("id, component_id, step_number, operation_type, stage, instruction_text, reference_document_id")
+        .is("family_id", null).order("component_id").order("step_number");
+      if (opsRes.error) return json({ error: "PIM operations data is unavailable" }, 502);
+      const documents = await operationDocuments(resolverTdb, opsRes.data || []);
+      for (const op of opsRes.data || []) {
+        const list = operationsByComponent.get(op.component_id) || [];
+        list.push({
+          id: op.id, operation_type: op.operation_type, stage: op.stage ?? null, instruction_text: op.instruction_text,
+          reference_document: op.reference_document_id ? documents.get(op.reference_document_id) ?? null : null,
+        });
+        operationsByComponent.set(op.component_id, list);
+      }
+    }
+
     const resolution = resolvePlannerGraph({
       requirements, mappings: mappingRes.data || [], components: componentRes.data || [], edges: edgeRes.data || [],
       maxDepth: PLANNER_RESOLVER_MAX_DEPTH, maxExpansions: PLANNER_RESOLVER_MAX_EXPANSIONS,
+      contractVersion, preAssemblyIds, operationsByComponent,
     });
     const { assembly_tree, ...response } = resolution;
     return json({
@@ -4296,6 +4335,71 @@ Deno.serve(async (req) => {
     const { error: updErr } = await tdb("bom_components").update(patch).eq("id", component_id);
     if (updErr) return json({ error: updErr.message }, 400);
     return json({ ok: true });
+  }
+
+  // --- Operations on a component (migration 0052, Order Operations' 0039) ---
+  // What we do to a component — drill a customer's holes, route a cut-out —
+  // and where (Hub or Site). Owned by the component (family_id is null);
+  // Order Operations runs the Hub operations for each customer order.
+  if (["listComponentOperations", "saveComponentOperation", "deleteComponentOperation", "moveComponentOperation"].includes(action)) {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const opColumns = "id, component_id, step_number, operation_type, stage, instruction_text";
+    const listOps = async (componentId: string) => {
+      const { data, error } = await tdb("component_routing_steps").select(opColumns)
+        .eq("component_id", componentId).is("family_id", null).order("step_number");
+      if (error) throw new Error(error.message);
+      return data || [];
+    };
+    // Step numbers are unique per component, so a reorder parks rows on high
+    // numbers first and then writes 1..n, as reorderFamilyRoutingSteps does.
+    const renumber = async (ids: string[]) => {
+      for (let i = 0; i < ids.length; i++) await tdb("component_routing_steps").update({ step_number: 10000 + i + 1 }).eq("id", ids[i]);
+      for (let i = 0; i < ids.length; i++) await tdb("component_routing_steps").update({ step_number: i + 1 }).eq("id", ids[i]);
+    };
+    try {
+      if (action === "listComponentOperations") {
+        if (!body.component_id) return json({ error: "component_id required" }, 400);
+        return json({ operations: await listOps(body.component_id) });
+      }
+      if (action === "saveComponentOperation") {
+        const { id: opId, component_id, operation_type, stage } = body;
+        const instruction = String(body.instruction_text ?? "").trim();
+        if (!component_id || !OPERATION_TYPES.includes(operation_type) || !instruction)
+          return json({ error: "component_id, an operation type and an instruction are required" }, 400);
+        if (stage !== null && stage !== undefined && !["hub", "site"].includes(stage))
+          return json({ error: "Where must be Hub, Site or empty" }, 400);
+        if (instruction.length > 2000) return json({ error: "Keep the instruction under 2000 characters" }, 400);
+        const row = { operation_type, stage: stage ?? null, instruction_text: instruction };
+        if (opId) {
+          const { error } = await tdb("component_routing_steps").update(row).eq("id", opId).eq("component_id", component_id).is("family_id", null);
+          if (error) return json({ error: error.message }, 400);
+        } else {
+          const existing = await listOps(component_id);
+          const { error } = await tdb("component_routing_steps").insert({ ...row, component_id, family_id: null, step_number: existing.length + 1 });
+          if (error) return json({ error: error.message }, 400);
+        }
+        return json({ ok: true, operations: await listOps(component_id) });
+      }
+      const { id: opId, component_id } = body;
+      if (!opId || !component_id) return json({ error: "id and component_id required" }, 400);
+      const ops = await listOps(component_id);
+      const index = ops.findIndex((op: any) => op.id === opId);
+      if (index < 0) return json({ error: "Operation not found" }, 404);
+      if (action === "deleteComponentOperation") {
+        const { error } = await tdb("component_routing_steps").delete().eq("id", opId);
+        if (error) return json({ error: error.message }, 400);
+        await renumber(ops.filter((op: any) => op.id !== opId).map((op: any) => op.id));
+      } else {
+        const target = body.direction === "up" ? index - 1 : index + 1;
+        if (target < 0 || target >= ops.length) return json({ ok: true, operations: ops });
+        const ids = ops.map((op: any) => op.id);
+        [ids[index], ids[target]] = [ids[target], ids[index]];
+        await renumber(ids);
+      }
+      return json({ ok: true, operations: await listOps(component_id) });
+    } catch (ex) {
+      return json({ error: (ex as Error).message }, 400);
+    }
   }
 
   // ==========================================================================

@@ -129,6 +129,25 @@ planner requirement. Every node carries its resolved quantity and children, so
 an assembly and every nested sub-assembly remain visible alongside the flat
 inventory pick list.
 
+### Contract v2: operations and stocked pre-assemblies (2026-10-27)
+
+Order Operations (its item 0039) asks with `"contract_version": 2`. The request
+and every v1 field stay the same; `contract_version` in the answer is `2`, and:
+
+- Every `assembly_tree` node carries `operations`: the component's own
+  operations (`component_routing_steps` with no product family, migration
+  0052), in step order, each
+  `{ "id", "operation_type", "stage": "hub" | "site" | null, "instruction_text", "reference_document": { "name", "version" } | null }`.
+  An empty list means nothing is done to it.
+- A **stocked pre-assembly** (eligible: something fitted into it at Hub, or its
+  checkbox ticked; the same rule as `listStockedAssemblies`) is not expanded.
+  Its node has `"pre_assembly": true` and no children, and its `bom_entries` row
+  has `"pre_assembly": true`: it is taken from the shelf as one unit.
+
+A v1 request is answered exactly as before. Operations decide nothing about the
+BOM: a drilled panel is the same article, and the positions for one customer's
+holes come from the wardrobe planner through Order Operations, never from here.
+
 ## Operations → PIM article lookup (contract v1)
 
 Order Operations' receiving identifies each delivered article by its article number (its `docs/integrations/gateway-article-lookup.md` is the same contract seen from the caller). `lookupArticle` uses the same endpoint, key and boundary as the resolver above: `POST` to `portal-api` with `Authorization: Bearer <key>` checked against `OPERATIONS_PIM_RESOLVER_KEY`; it does not accept a browser session, and it always looks in the seed Rushroom organization.

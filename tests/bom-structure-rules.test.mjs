@@ -132,7 +132,8 @@ test("is_reference survives every path that copies a link", () => {
 });
 
 test("Order Operations never receives a reference child as a pick line", () => {
-  assert.ok(/resolverTdb\("bom_edges"\)\.select\("parent_id, child_id, quantity"\)\.is\("effective_to", null\)\.eq\("is_reference", false\)/.test(api));
+  // fitting_stage came with contract v2 (pre-assembly eligibility); the In-the-box filter must stay.
+  assert.ok(/resolverTdb\("bom_edges"\)\.select\("parent_id, child_id, quantity(, fitting_stage)?"\)\.is\("effective_to", null\)\.eq\("is_reference", false\)/.test(api));
 });
 
 test("the tree reads the flag, and Sourcing is never assumed", () => {

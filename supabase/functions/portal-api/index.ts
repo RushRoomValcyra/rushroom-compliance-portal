@@ -1145,14 +1145,14 @@ Deno.serve(async (req) => {
 
     if (action === "listStockedAssemblies") {
       const { data, error } = await preTdb("bom_components")
-        .select("id, part_number, name, unit_of_measure, target_stock_days")
+        .select("id, part_number, name, unit_of_measure")
         .eq("is_stocked", true)
         .in("type", ASSEMBLY_TYPES)
         .order("part_number");
       if (error) return json({ error: "PIM assembly data is unavailable" }, 502);
       return json({
         contract_version: 1,
-        assemblies: (data || []).map((row) => ({ ...articleOf(row), target_stock_days: row.target_stock_days ?? null })),
+        assemblies: (data || []).map(articleOf),
       });
     }
 
@@ -4249,15 +4249,16 @@ Deno.serve(async (req) => {
 
 
   // ==========================================================================
-  // Pre-assemblies — assemblies built ahead of orders, held on the shelf.
-  // Rushroom-only. The resolver change (stop at is_stocked = true) comes
-  // in a separate commit once the list of stocked assemblies is stable.
+  // Pre-assembly eligibility — which assemblies may be built ahead of orders.
+  // Rushroom-only. Stock and how much to hold live in Order Operations (its
+  // decision 0012). The resolver change (stop at is_stocked = true) comes in a
+  // separate commit once the list of eligible assemblies is stable.
   // ==========================================================================
 
   if (action === "listPreAssemblies") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { data: rows, error } = await tdb("bom_components")
-      .select("id, part_number, name, type, lifecycle_status, is_stocked, target_stock_days, updated_at")
+      .select("id, part_number, name, type, lifecycle_status, is_stocked, updated_at")
       .in("type", ["sub_assembly", "finished_good"])
       .order("name");
     if (error) return json({ error: error.message }, 400);
@@ -4271,7 +4272,7 @@ Deno.serve(async (req) => {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { q: qStr } = body;
     let q = tdb("bom_components")
-      .select("id, part_number, name, type, lifecycle_status, is_stocked, target_stock_days")
+      .select("id, part_number, name, type, lifecycle_status, is_stocked")
       .in("type", ["sub_assembly", "finished_good"])
       .eq("lifecycle_status", "active")
       .order("name")
@@ -4284,19 +4285,16 @@ Deno.serve(async (req) => {
 
   if (action === "setAssemblyStocked") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { component_id, is_stocked: flag, target_stock_days: days } = body;
+    const { component_id, is_stocked: flag } = body;
     if (!component_id || typeof flag !== "boolean") return json({ error: "component_id and is_stocked required" }, 400);
-    if (days !== undefined && days !== null && (!Number.isInteger(days) || days < 1 || days > 365))
-      return json({ error: "target_stock_days must be 1–365" }, 400);
     const { data: comp, error: fetchErr } = await tdb("bom_components")
       .select("id, type")
       .eq("id", component_id)
       .single();
     if (fetchErr || !comp) return json({ error: "Component not found" }, 404);
     if (!["sub_assembly", "finished_good"].includes(comp.type))
-      return json({ error: "Only sub-assemblies and finished goods can be stocked" }, 422);
+      return json({ error: "Only sub-assemblies and finished goods can be eligible for pre-assembly" }, 422);
     const patch: Record<string, unknown> = { is_stocked: flag, updated_by: userId };
-    if (days !== undefined) patch.target_stock_days = days ?? null;
     const { error: updErr } = await tdb("bom_components").update(patch).eq("id", component_id);
     if (updErr) return json({ error: updErr.message }, 400);
     return json({ ok: true });

@@ -161,11 +161,11 @@ Answers, status 200:
 
 Order Operations builds stocked assemblies ahead of orders (its item 0018). Two service actions, with the same endpoint, key and boundary as `lookupArticle`:
 
-`listStockedAssemblies`, request `{ "action": "listStockedAssemblies", "contract_version": 1 }`, answers every sub-assembly or finished good with `is_stocked = true`:
+`listStockedAssemblies`, request `{ "action": "listStockedAssemblies", "contract_version": 1 }`, answers every sub-assembly or finished good eligible for pre-assembly (`is_stocked = true`). How many to hold on hand is not kept here; Order Operations owns it (its decision 0012):
 
 ```json
 { "contract_version": 1, "assemblies": [
-  { "pim_component_id": "<id>", "article_number": "RR-DOOR-L", "name": "Door left, handle fitted", "unit": "ea", "target_stock_days": 14 } ] }
+  { "pim_component_id": "<id>", "article_number": "RR-DOOR-L", "name": "Door left, handle fitted", "unit": "ea" } ] }
 ```
 
 `resolveAssemblyInputs`, request `{ "action": "resolveAssemblyInputs", "contract_version": 1, "article_number": "RR-DOOR-L" }`, answers what **one unit** is made of:

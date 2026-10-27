@@ -1413,3 +1413,15 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Status:** Decisions 2 and 4 are in production — 0038 applied (verified by query: 0 part-parents, 10 wrappers); Kit label pushed with cache v282, not yet checked in the UI. Decisions 1 and 3 are data-entry rules. Decision 5 is designed, not built.
 
 **Files changed:** `supabase/migrations/0038_prepared_wrappers.sql`, `tests/prepared-wrappers.test.mjs`, `tests/fitting-stage.test.mjs`, `tests/phantom-assembly.test.mjs`, `assets/app.js`, `index.html`, `supplier.html`, `reset.html`, `verify.html`, `docs/BOM_LOGIC_REVIEW.html`, `docs/DECISIONS.md`, `docs/IDEAS.md`, `docs/ROADMAP.md`.
+
+---
+
+## 2026-10-27 — This portal defines; Order Operations executes and owns stock
+
+**Decision:** The E&C portal defines the product: articles, BOMs and dynamic BOMs, which assemblies are eligible to be built ahead of orders (`is_stocked`), and the manufacturing operations a part or variant needs (routing steps). Order Operations executes everything to do with orders and owns all stock: receiving, stock levels, pre-assembly work orders, running order operations, how much to keep on hand, picking and dispatch. Recorded on the Order Operations side as its decision 0012.
+
+**Why:** The line had blurred: this portal had a "Stock" tab, a target of days of stock to hold, and work orders for customer orders, while Order Operations already held all stock. Stock policy depends on sales pace, space and capital, which Order Operations knows.
+
+**Consequences:** The Stock tab is renamed **Pre-assembly eligibility** and `target_stock_days` moves to Order Operations (migration 0051). The work orders (PROP-030 `work_orders`, `work_order_steps`, `work_order_components` and their actions) are retired once Order Operations runs order operations (its item 0039); the routing steps stay here. PROP-066 is tracked in Order Operations.
+
+**Files changed:** `index.html`, `assets/app.js`, `supabase/functions/portal-api/index.ts`, `supabase/migrations/0051_target_days_to_operations.sql`, `tests/pre-assemblies.test.mjs`, `docs/PLANNER_MAPPINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`.

@@ -17,21 +17,19 @@ test("migration 0050 adds is_stocked and target_stock_days to bom_components", (
   assert.ok(sql.includes("target_stock_days <= 365"), "target_stock_days must be bounded");
 });
 
-test("API actions are rushroom-only and use correct fields", () => {
+test("the panel's eligibility actions are rushroom-only", () => {
   const api = read("supabase/functions/portal-api/index.ts");
-  for (const action of ["listPreAssemblies", "listAssembliesForStocking", "setAssemblyStocked"]) {
-    assert.ok(api.includes(`action === "${action}"`), `missing action: ${action}`);
-    // Each action must check role before touching data
+  for (const action of ["getPreAssemblyEligibility", "setAssemblyStocked"]) {
     const actionIdx = api.indexOf(`action === "${action}"`);
-    const snippet = api.slice(actionIdx, actionIdx + 300);
-    assert.ok(snippet.includes("rushroom"), `${action} must be gated to rushroom`);
+    assert.ok(actionIdx > 0, `missing action: ${action}`);
+    assert.ok(api.slice(actionIdx, actionIdx + 200).includes('role !== "rushroom"'), `${action} must be gated to rushroom`);
   }
 });
 
-test("setAssemblyStocked validates type — only sub_assembly and finished_good allowed", () => {
+test("a Kit or Dynamic BOM cannot be marked", () => {
   const api = read("supabase/functions/portal-api/index.ts");
-  assert.ok(api.includes('"sub_assembly", "finished_good"'), "type guard must name both valid types");
-  assert.ok(api.includes("Only sub-assemblies and finished goods can be eligible for pre-assembly"), "must return a meaningful error");
+  assert.ok(api.includes("flag && !canBeEligibleType(comp.type)"), "setAssemblyStocked must refuse types that are never built");
+  assert.ok(api.includes("A Kit or Dynamic BOM cannot be built ahead of orders"), "must return a meaningful error");
 });
 
 test("target days of stock are not kept here: 0051 drops them, and nothing reads them", () => {
@@ -43,38 +41,17 @@ test("target days of stock are not kept here: 0051 drops them, and nothing reads
   }
 });
 
-test("the tab and its buttons speak of eligibility, not stock", () => {
+test("eligibility is a checkbox in the component card, not a tab of its own", () => {
   const html = read("index.html");
   const app = read("assets/app.js");
-  assert.ok(html.includes(">Pre-assembly eligibility</button>"), "tab label must be Pre-assembly eligibility");
-  for (const label of ['"Mark eligible"', '"Remove eligibility"', '"Already eligible"']) {
-    assert.ok(app.includes(label), `missing button or badge ${label}`);
+  assert.ok(!html.includes("tab-stock") && !html.includes("stock-panel"), "the eligibility tab is still in index.html");
+  for (const gone of ["renderStock", "listPreAssemblies", "listAssembliesForStocking"]) {
+    assert.ok(!app.includes(gone), `assets/app.js still uses ${gone}`);
+    assert.ok(!read("supabase/functions/portal-api/index.ts").includes(gone), `portal-api still has ${gone}`);
   }
-  for (const label of ['"Add to stock"', '"Remove from stock"', '"Already stocked"']) {
-    assert.ok(!app.includes(label), `old stock wording ${label} is still there`);
+  assert.ok(app.includes("preAssemblyRow(componentId, token)"), "the component card must show the pre-assembly checkbox");
+  for (const action of ["getPreAssemblyEligibility", "setAssemblyStocked"]) {
+    assert.ok(app.includes(`"${action}"`), `the checkbox does not call ${action}`);
   }
-});
-
-test("listAssembliesForStocking escapes ILIKE wildcards", () => {
-  const api = read("supabase/functions/portal-api/index.ts");
-  // The ilike query must escape % _ \ to prevent injection
-  assert.ok(api.includes("replace(/[%_\\\\]/g"), "ILIKE wildcard escape missing");
-});
-
-test("Stock tab is gated to rushroom in applyAccess", () => {
-  const app = read("assets/app.js");
-  assert.ok(app.includes('gate("tab-stock", "stock-panel", role === "rushroom")'), "stock tab not gated to rushroom");
-});
-
-test("stock panel is wired to renderStock", () => {
-  const app = read("assets/app.js");
-  assert.ok(app.includes('renderStock(role, stockPanel)'), "stockPanel not wired to renderStock");
-  assert.ok(app.includes("async function renderStock("), "renderStock function missing");
-});
-
-test("renderStock calls all three API actions", () => {
-  const app = read("assets/app.js");
-  for (const action of ["listPreAssemblies", "listAssembliesForStocking", "setAssemblyStocked"]) {
-    assert.ok(app.includes(`"${action}"`), `renderStock does not call ${action}`);
-  }
+  assert.ok(app.includes("fitted at Hub."), "the card must say when eligibility is automatic");
 });

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { expandAssemblyInputs } from "../supabase/functions/_shared/assembly-inputs-core.mjs";
+import { expandAssemblyInputs, preAssemblyEligibility } from "../supabase/functions/_shared/assembly-inputs-core.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
@@ -35,7 +35,7 @@ test("pre-assembly actions use service auth, real links only and the seed org, a
   const end = api.indexOf("// --- everything else requires a valid token");
   assert.ok(at > 0 && at < end, "pre-assembly actions must sit before session auth");
   const block = api.slice(at, end);
-  for (const fragment of ["OPERATIONS_PIM_RESOLVER_KEY", "constantTimeSecretEqual", "allowedKeys", "makeTdb(RUSHROOM_ORG_ID)", '.eq("is_stocked", true)', '.is("effective_to", null)', '.eq("is_reference", false)', "expandAssemblyInputs"]) {
+  for (const fragment of ["OPERATIONS_PIM_RESOLVER_KEY", "constantTimeSecretEqual", "allowedKeys", "makeTdb(RUSHROOM_ORG_ID)", "preAssemblyEligibility", "fitting_stage", '.is("effective_to", null)', '.eq("is_reference", false)', "expandAssemblyInputs"]) {
     assert.ok(block.includes(fragment), `pre-assembly actions lack ${fragment}`);
   }
   assert.ok(read("docs/PLANNER_MAPPINGS.md").includes('"action": "resolveAssemblyInputs"'), "contract is undocumented");
@@ -62,4 +62,41 @@ test("a cycle is reported, not followed forever", () => {
 
 test("a bad link quantity is reported", () => {
   assert.deepEqual(expandAssemblyInputs({ rootId: "door", components, edges: [{ parent_id: "door", child_id: "panel", quantity: 0 }] }), { error: "invalid_edge_quantity" });
+});
+
+test("fitted at Hub makes the parent eligible; a mark makes any part or assembly eligible", () => {
+  const rows = [
+    { id: "front", type: "sub_assembly" },
+    { id: "handle", type: "part" },
+    { id: "drilled", type: "part", is_stocked: true },
+    { id: "kit", type: "phantom_assembly", is_stocked: true },
+    { id: "old", type: "sub_assembly", lifecycle_status: "replaced" },
+    { id: "plain", type: "sub_assembly" },
+  ];
+  const links = [
+    { parent_id: "front", child_id: "handle", fitting_stage: "hub" },
+    { parent_id: "kit", child_id: "handle", fitting_stage: "hub" },
+    { parent_id: "old", child_id: "handle", fitting_stage: "hub" },
+    { parent_id: "plain", child_id: "handle", fitting_stage: "site" },
+  ];
+  assert.deepEqual(Object.fromEntries(preAssemblyEligibility({ components: rows, edges: links })), {
+    front: { marked: false, hub: true },
+    drilled: { marked: true, hub: false },
+  });
+});
+
+test("a component fitted at Hub inside another is taken from the shelf, not rebuilt", () => {
+  const rows = [
+    { id: "door", part_number: "RR-DOOR", type: "sub_assembly" },
+    { id: "front", part_number: "RR-FRONT", type: "sub_assembly" },
+    { id: "panel", part_number: "RR-PANEL", type: "part" },
+    { id: "handle", part_number: "RR-HANDLE", type: "part" },
+  ];
+  const links = [
+    { parent_id: "door", child_id: "front", quantity: 1, fitting_stage: null },
+    { parent_id: "front", child_id: "panel", quantity: 1, fitting_stage: null },
+    { parent_id: "front", child_id: "handle", quantity: 1, fitting_stage: "hub" },
+  ];
+  assert.deepEqual(expandAssemblyInputs({ rootId: "door", components: rows, edges: links }).inputs.map((i) => i.article_number), ["RR-FRONT"]);
+  assert.deepEqual(expandAssemblyInputs({ rootId: "front", components: rows, edges: links }).inputs.map((i) => i.article_number), ["RR-HANDLE", "RR-PANEL"]);
 });

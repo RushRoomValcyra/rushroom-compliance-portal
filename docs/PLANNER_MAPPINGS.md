@@ -159,9 +159,9 @@ Answers, status 200:
 
 ## Operations → PIM pre-assemblies (contract v1)
 
-Order Operations builds stocked assemblies ahead of orders (its item 0018). Two service actions, with the same endpoint, key and boundary as `lookupArticle`:
+Order Operations builds eligible components ahead of orders (its item 0018). Two service actions, with the same endpoint, key and boundary as `lookupArticle`:
 
-`listStockedAssemblies`, request `{ "action": "listStockedAssemblies", "contract_version": 1 }`, answers every sub-assembly or finished good eligible for pre-assembly (`is_stocked = true`). How many to hold on hand is not kept here; Order Operations owns it (its decision 0012):
+`listStockedAssemblies`, request `{ "action": "listStockedAssemblies", "contract_version": 1 }`, answers every component eligible for pre-assembly: something is fitted into it at the Hub (a real link with `fitting_stage = 'hub'`), or its card's checkbox is ticked (`is_stocked = true`). Parts count as well as assemblies; Kits, Dynamic BOMs and replaced components never do. How many to hold on hand is not kept here; Order Operations owns it (its decision 0012):
 
 ```json
 { "contract_version": 1, "assemblies": [
@@ -176,9 +176,9 @@ Order Operations builds stocked assemblies ahead of orders (its item 0018). Two 
   "inputs": [ { "pim_component_id": "<id>", "article_number": "RR-HANDLE", "name": "Handle", "unit": "ea", "quantity": 1 } ] }
 ```
 
-- Real BOM links only (no "In the box", none ended), expanded until a part or another stocked assembly, which is taken from the shelf as one unit. Kits (phantom assemblies) are expanded to their parts. Quantities are summed per component.
-- `{ "contract_version": 1, "status": "not_found" }` for an unknown article number; 422 when it is not an assembly, has no inputs, or its BOM cannot be expanded (cycle, too deep); 409 when two components share the number.
-- The expansion lives in `supabase/functions/_shared/assembly-inputs-core.mjs` and is tested by `tests/assembly-inputs.test.mjs`.
+- Real BOM links only (no "In the box", none ended), expanded until a part or another eligible component, which is taken from the shelf as one unit. Kits (phantom assemblies) are expanded to their parts. Quantities are summed per component.
+- `{ "contract_version": 1, "status": "not_found" }` for an unknown article number; 422 when it is a Kit or Dynamic BOM, has no inputs, or its BOM cannot be expanded (cycle, too deep); 409 when two components share the number.
+- The eligibility rule and the expansion live in `supabase/functions/_shared/assembly-inputs-core.mjs` and is tested by `tests/assembly-inputs.test.mjs`.
 
 ## Version and release metadata
 

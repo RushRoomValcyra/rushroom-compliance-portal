@@ -1425,3 +1425,15 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Consequences:** The Stock tab is renamed **Pre-assembly eligibility** and `target_stock_days` moves to Order Operations (migration 0051). The work orders (PROP-030 `work_orders`, `work_order_steps`, `work_order_components` and their actions) are retired once Order Operations runs order operations (its item 0039); the routing steps stay here. PROP-066 is tracked in Order Operations.
 
 **Files changed:** `index.html`, `assets/app.js`, `supabase/functions/portal-api/index.ts`, `supabase/migrations/0051_target_days_to_operations.sql`, `tests/pre-assemblies.test.mjs`, `docs/PLANNER_MAPPINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`.
+
+---
+
+## 2026-10-27 — Fitted at Hub makes a component eligible for pre-assembly
+
+**Decision:** A part or assembly is eligible to be built ahead of orders when something is fitted into it at the **Hub** (a real BOM link into it with `fitting_stage = 'hub'`). Others are marked by hand with a checkbox in the component's own card (`is_stocked`). Kits, Dynamic BOMs and replaced components are never eligible. The separate eligibility tab is removed.
+
+**Why:** Fitting at Hub already says the component is put together in the hub and not at the customer, so marking it again was double work, and a separate tab to search in was slower than ticking a box where the component is edited (ziirvass, 2026-10-27).
+
+**Consequences:** `listStockedAssemblies` returns every eligible component, parts included, with contract v1 unchanged; `resolveAssemblyInputs` takes any eligible child from the shelf as one unit, Hub-derived ones included. The rule lives in `preAssemblyEligibility` in `_shared/assembly-inputs-core.mjs`.
+
+**Files changed:** `index.html`, `assets/app.js`, `supabase/functions/portal-api/index.ts`, `supabase/functions/_shared/assembly-inputs-core.mjs`, `tests/pre-assemblies.test.mjs`, `tests/assembly-inputs.test.mjs`, `docs/PLANNER_MAPPINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `CLAUDE.md`.

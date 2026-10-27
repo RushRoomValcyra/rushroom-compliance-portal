@@ -6915,6 +6915,42 @@
     }, drawingStatusLabel(status));
   }
 
+  // Pre-assembly eligibility: whether this component may be built in the hub
+  // ahead of orders. Automatic when something is fitted into it at the Hub;
+  // otherwise the checkbox marks it (is_stocked). Order Operations lists every
+  // eligible component under Pre-assemblies and owns the stock (decision 0012).
+  // Saves on its own, apart from the card's Save button.
+  function preAssemblyRow(componentId, token) {
+    const row = el("div", {
+      style: "display:none;align-items:flex-start;gap:0.5rem;margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border,#e2e8f0)",
+    });
+    API.post(token, "getPreAssemblyEligibility", { component_id: componentId }).then((r) => {
+      if (!r.can_be_eligible) return;
+      const hub = r.hub_fitted || [];
+      const box = el("input", { type: "checkbox", id: `pre-assembly-${componentId}`, style: "margin-top:0.15rem" });
+      box.checked = hub.length > 0 || r.is_stocked;
+      box.disabled = hub.length > 0;
+      const note = el("span", { style: "display:block;font-size:0.75rem;color:var(--muted,#8b93a1)" },
+        hub.length ? `Automatic: ${hub.join(", ")} fitted at Hub.` : "Order Operations lists it under Pre-assemblies.");
+      box.onchange = async () => {
+        box.disabled = true;
+        try {
+          await API.post(token, "setAssemblyStocked", { component_id: componentId, is_stocked: box.checked });
+          note.textContent = box.checked ? "Saved. Order Operations lists it under Pre-assemblies." : "Saved. No longer built ahead of orders.";
+        } catch (ex) {
+          box.checked = !box.checked;
+          note.textContent = ex.message;
+        }
+        box.disabled = false;
+      };
+      row.replaceChildren(box, el("label", { for: box.id, style: "flex:1;font-size:0.8125rem" }, [
+        "Pre-assembly: built in the hub ahead of orders", note,
+      ]));
+      row.style.display = "flex";
+    }).catch(() => { /* the card works without it */ });
+    return row;
+  }
+
   async function openComponentDetail(componentId, token, panel, nodeData, role) {
     if (panel.__show) {
       panel.__show();
@@ -8001,6 +8037,7 @@
             el("div", { style: "grid-column:1/3" }, [lbl("Description"), descInp]),
           ]),
           el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
+          preAssemblyRow(componentId, token),
           // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
           // part from where it lives starts here.
           window.PortalBomRules && window.PortalBomRules.takesInTheBox(nodeData) ? el("div", {
@@ -10700,8 +10737,6 @@
     if (acctPanel && API.isAdmin()) renderAccounts(role, acctPanel);
     const l2Panel = $("#level2-panel");
     if (l2Panel && role === "rushroom") renderLevel2(role, l2Panel);
-    const stockPanel = $("#stock-panel");
-    if (stockPanel && role === "rushroom") renderStock(role, stockPanel);
   }
 
   // ==========================================================================
@@ -11427,7 +11462,6 @@
     gate("tab-drawings", "drawings-panel", role === "rushroom" || role === "supplier");
     gate("tab-deviations", "deviations-panel", role === "rushroom");
     gate("tab-level2", "level2-panel", role === "rushroom");
-    gate("tab-stock", "stock-panel", role === "rushroom");
     gate("tab-accounts", "accounts-panel", !!admin);
   }
 
@@ -11619,183 +11653,6 @@
     } catch (err) {
       mount.replaceChildren(el("div", { class: "error" }, `Couldn't load status: ${err.message}. Check the published Sheet URL and sharing.`));
     }
-  }
-
-  // ==========================================================================
-  // Pre-assembly eligibility (shown on the tab that is still called "stock"
-  // in code: tab-stock, stock-panel, renderStock).
-  //
-  // Marks which assemblies may be built ahead of orders (is_stocked). This
-  // portal defines the product; stock, building and how much to hold on hand
-  // live in Order Operations (its decision 0012). The resolver change (stop at
-  // is_stocked = true) comes once the list is stable.
-  // ==========================================================================
-  async function renderStock(role, mount) {
-    const token = API.getToken(role);
-
-    // State
-    let selected = null;   // currently open pre-assembly
-    let all = [];          // current stocked list
-    let searchQ = "";      // promote-search query
-    let searchResults = [];
-
-    // ---- helpers ----
-    const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
-
-    function statusBadge(lc) {
-      const map = { active: ["green", "Active"], inactive: ["muted", "Inactive"], replaced: ["warn", "Replaced"], flagged: ["red", "Flagged"] };
-      const [cls, label] = map[lc] || ["muted", lc];
-      return el("span", { class: `badge badge-${cls}`, style: "font-size:0.75rem" }, label);
-    }
-
-    // ---- left list ----
-    function buildList() {
-      if (!all.length) {
-        return el("div", { class: "muted", style: "padding:1.25rem 1rem;font-size:0.875rem" },
-          "No eligible assemblies yet. Search below to make one eligible.");
-      }
-      return el("ul", { class: "nav-list", style: "margin:0;padding:0;list-style:none" },
-        all.map((a) => {
-          const active = selected && selected.id === a.id;
-          return el("li", {
-            class: `nav-list-item${active ? " active" : ""}`,
-            style: "cursor:pointer;padding:0.6rem 1rem;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:0.15rem",
-            onclick: () => { selected = a; render(); },
-          }, [
-            el("span", { style: "font-weight:500;font-size:0.875rem" }, a.name),
-            el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, a.part_number || "—"),
-          ]);
-        })
-      );
-    }
-
-    // ---- detail panel ----
-    function buildDetail() {
-      if (!selected) {
-        return el("div", { class: "muted", style: "padding:2rem 1.5rem;font-size:0.875rem" },
-          "Select an eligible assembly on the left.");
-      }
-      const a = selected;
-
-      // Removing eligibility
-      const unstock = async () => {
-        if (!confirm(`Make "${a.name}" no longer eligible for pre-assembly?`)) return;
-        try {
-          await API.post(token, "setAssemblyStocked", { component_id: a.id, is_stocked: false });
-          all = all.filter((x) => x.id !== a.id);
-          selected = null;
-          render();
-        } catch (ex) { alert(`Failed: ${ex.message}`); }
-      };
-
-      const panel = el("div", { style: "padding:1.5rem;max-width:560px" }, [
-        el("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1.25rem" }, [
-          el("div", {}, [
-            el("h2", { style: "margin:0 0 0.25rem;font-size:1.125rem" }, a.name),
-            el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);display:flex;gap:0.5rem;align-items:center" }, [
-              a.part_number || "—",
-              statusBadge(a.lifecycle_status),
-            ]),
-          ]),
-          el("button", { class: "btn btn-sm btn-outline-danger", type: "button", onclick: unstock }, "Remove eligibility"),
-        ]),
-        el("p", { class: "muted", style: "font-size:0.8125rem;margin:0 0 1.5rem" },
-          "Eligible to be built ahead of orders. Stock, building and how many to keep on hand are handled in Order Operations → Pre-assemblies."),
-        el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `Last updated ${fmtDate(a.updated_at)}`),
-      ]);
-      return panel;
-    }
-
-    // ---- promote search ----
-    function buildPromote() {
-      let searchInput;
-      const doSearch = async () => {
-        const q = searchInput.value.trim();
-        searchQ = q;
-        try {
-          const r = await API.post(token, "listAssembliesForStocking", { q });
-          searchResults = r.assemblies || [];
-        } catch (ex) {
-          searchResults = [];
-        }
-        renderResults();
-      };
-
-      let resultsDiv = el("div", {});
-      const renderResults = () => {
-        if (!searchResults.length) {
-          resultsDiv.replaceChildren(el("div", { class: "muted", style: "font-size:0.8125rem;padding:0.5rem 0" },
-            searchQ ? "No assemblies found." : "Type to search assemblies."));
-          return;
-        }
-        resultsDiv.replaceChildren(el("ul", { style: "margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.25rem" },
-          searchResults.map((a) => {
-            const already = all.some((x) => x.id === a.id);
-            return el("li", { style: "display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0.4rem 0;border-bottom:1px solid var(--border)" }, [
-              el("div", {}, [
-                el("div", { style: "font-size:0.875rem;font-weight:500" }, a.name),
-                el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, a.part_number || "—"),
-              ]),
-              already
-                ? el("span", { class: "badge badge-green", style: "font-size:0.75rem" }, "Already eligible")
-                : el("button", { class: "btn btn-xs btn-primary", type: "button", onclick: async () => {
-                    try {
-                      await API.post(token, "setAssemblyStocked", { component_id: a.id, is_stocked: true });
-                      all.push({ ...a, is_stocked: true });
-                      selected = all[all.length - 1];
-                      searchResults = searchResults.filter((x) => x.id !== a.id);
-                      render();
-                    } catch (ex) { alert(`Failed: ${ex.message}`); }
-                  } }, "Mark eligible"),
-            ]);
-          })
-        ));
-      };
-
-      return el("div", { style: "padding:1.25rem 1rem;border-top:1px solid var(--border)" }, [
-        el("div", { style: "font-size:0.8125rem;font-weight:600;margin-bottom:0.5rem" }, "Make an assembly eligible"),
-        el("div", { style: "display:flex;gap:0.5rem;margin-bottom:0.75rem" }, [
-          (searchInput = el("input", {
-            type: "search", class: "form-control form-control-sm",
-            placeholder: "Search assemblies by name…",
-            value: searchQ,
-            oninput: doSearch,
-          })),
-        ]),
-        resultsDiv,
-      ]);
-    }
-
-    // ---- sub-tab shell (eligibility only for now) ----
-    function render() {
-      mount.replaceChildren(subTabs("stock", [
-        {
-          id: "pre-assemblies",
-          label: "Eligible assemblies",
-          icon: "layers",
-          build: () => {
-            const left = el("div", { style: "width:260px;min-width:220px;border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column" }, [
-              el("div", { style: "padding:0.75rem 1rem;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted,#8b93a1);border-bottom:1px solid var(--border)" }, `Eligible (${all.length})`),
-              buildList(),
-              buildPromote(),
-            ]);
-            const right = el("div", { style: "flex:1;overflow-y:auto" }, buildDetail());
-            return el("div", { style: "display:flex;height:100%;min-height:0;overflow:hidden" }, [left, right]);
-          },
-        },
-      ]));
-    }
-
-    // ---- initial load ----
-    mount.replaceChildren(el("div", { class: "loading" }, "Loading pre-assembly eligibility…"));
-    try {
-      const r = await API.post(token, "listPreAssemblies", {});
-      all = r.pre_assemblies || [];
-    } catch (ex) {
-      mount.replaceChildren(el("div", { class: "error" }, `Couldn't load pre-assembly eligibility: ${ex.message}`));
-      return;
-    }
-    render();
   }
 
   if (document.body && document.body.dataset.page === "full") {

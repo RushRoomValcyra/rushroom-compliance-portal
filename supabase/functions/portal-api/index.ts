@@ -32,7 +32,7 @@ import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_
 import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
 import { ARTICLE_LOOKUP_MAX_LENGTH, exactIlikePattern, matchArticle, normaliseArticleNumber } from "../_shared/article-lookup-core.mjs";
-import { ASSEMBLY_TYPES, articleOf, expandAssemblyInputs } from "../_shared/assembly-inputs-core.mjs";
+import { articleOf, canBeEligibleType, expandAssemblyInputs, preAssemblyEligibility } from "../_shared/assembly-inputs-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
@@ -1128,9 +1128,10 @@ Deno.serve(async (req) => {
   }
 
   // --- Operations → PIM pre-assemblies (service authentication only) ------
-  // Order Operations builds stocked assemblies ahead of orders (its item 0018):
-  // it lists what is marked stocked here, and asks what one unit is made of.
-  // Same key and seed org as the resolver; nothing is sent back or stored here.
+  // Order Operations builds components ahead of orders (its item 0018): it
+  // lists what is eligible here (fitted at Hub, or marked by hand), and asks
+  // what one unit is made of. Same key and seed org as the resolver; nothing
+  // is sent back or stored here.
   if (action === "listStockedAssemblies" || action === "resolveAssemblyInputs") {
     const resolverKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY");
     if (!resolverKey) return json({ error: "Pre-assembly actions are not configured" }, 503);
@@ -1142,17 +1143,22 @@ Deno.serve(async (req) => {
     if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: `${action} accepts only ${[...allowedKeys].slice(1).join(" and ")}` }, 400);
     if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
     const preTdb = makeTdb(RUSHROOM_ORG_ID);
+    const [componentRes, edgeRes] = await Promise.all([
+      preTdb("bom_components").select("id, part_number, name, type, unit_of_measure, is_stocked, lifecycle_status"),
+      preTdb("bom_edges").select("parent_id, child_id, quantity, fitting_stage").is("effective_to", null).eq("is_reference", false),
+    ]);
+    if (componentRes.error || edgeRes.error) return json({ error: "PIM assembly data is unavailable" }, 502);
+    const components = componentRes.data || [];
+    const edges = edgeRes.data || [];
 
     if (action === "listStockedAssemblies") {
-      const { data, error } = await preTdb("bom_components")
-        .select("id, part_number, name, unit_of_measure")
-        .eq("is_stocked", true)
-        .in("type", ASSEMBLY_TYPES)
-        .order("part_number");
-      if (error) return json({ error: "PIM assembly data is unavailable" }, 502);
+      const eligible = preAssemblyEligibility({ components, edges });
       return json({
         contract_version: 1,
-        assemblies: (data || []).map(articleOf),
+        assemblies: components
+          .filter((row) => eligible.has(row.id) && String(row.part_number ?? "").trim())
+          .map(articleOf)
+          .sort((a, b) => a.article_number.localeCompare(b.article_number)),
       });
     }
 
@@ -1160,17 +1166,12 @@ Deno.serve(async (req) => {
     if (!articleNumber || articleNumber.length > ARTICLE_LOOKUP_MAX_LENGTH) {
       return json({ error: `an article_number of 1 to ${ARTICLE_LOOKUP_MAX_LENGTH} characters is required` }, 400);
     }
-    const [componentRes, edgeRes] = await Promise.all([
-      preTdb("bom_components").select("id, part_number, name, type, unit_of_measure, is_stocked"),
-      preTdb("bom_edges").select("parent_id, child_id, quantity").is("effective_to", null).eq("is_reference", false),
-    ]);
-    if (componentRes.error || edgeRes.error) return json({ error: "PIM assembly data is unavailable" }, 502);
-    const match = matchArticle(componentRes.data || [], articleNumber);
+    const match = matchArticle(components, articleNumber);
     if (match.status === "ambiguous") return json({ error: `More than one component has article number ${articleNumber}` }, 409);
     if (match.status === "not_found") return json({ contract_version: 1, status: "not_found" });
-    const root = (componentRes.data || []).find((row) => row.id === match.article.pim_component_id);
-    if (!ASSEMBLY_TYPES.includes(root.type)) return json({ error: `${articleNumber} is not an assembly` }, 422);
-    const expanded = expandAssemblyInputs({ rootId: root.id, components: componentRes.data || [], edges: edgeRes.data || [] });
+    const root = components.find((row) => row.id === match.article.pim_component_id);
+    if (!canBeEligibleType(root.type)) return json({ error: `${articleNumber} cannot be built ahead of orders` }, 422);
+    const expanded = expandAssemblyInputs({ rootId: root.id, components, edges });
     if (expanded.error) return json({ error: `The BOM of ${articleNumber} cannot be expanded: ${expanded.error}` }, 422);
     if (!expanded.inputs.length) return json({ error: `${articleNumber} has no inputs in its BOM` }, 422);
     return json({ contract_version: 1, status: "resolved", assembly: articleOf(root), inputs: expanded.inputs });
@@ -4249,38 +4250,35 @@ Deno.serve(async (req) => {
 
 
   // ==========================================================================
-  // Pre-assembly eligibility — which assemblies may be built ahead of orders.
-  // Rushroom-only. Stock and how much to hold live in Order Operations (its
-  // decision 0012). The resolver change (stop at is_stocked = true) comes in a
-  // separate commit once the list of eligible assemblies is stable.
+  // Pre-assembly eligibility — whether a component may be built ahead of
+  // orders. Automatic when something is fitted into it at the Hub; otherwise
+  // marked by hand with the checkbox in the component panel (is_stocked).
+  // Stock and how much to hold live in Order Operations (its decision 0012).
   // ==========================================================================
 
-  if (action === "listPreAssemblies") {
+  if (action === "getPreAssemblyEligibility") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { data: rows, error } = await tdb("bom_components")
-      .select("id, part_number, name, type, lifecycle_status, is_stocked, updated_at")
-      .in("type", ["sub_assembly", "finished_good"])
-      .order("name");
-    if (error) return json({ error: error.message }, 400);
-    const stocked = (rows || []).filter((r) => r.is_stocked);
-    return json({ pre_assemblies: stocked });
-  }
-
-  if (action === "listAssembliesForStocking") {
-    // All assemblies (sub_assembly + finished_good), active lifecycle only,
-    // so the UI can search and promote one to stocked.
-    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { q: qStr } = body;
-    let q = tdb("bom_components")
-      .select("id, part_number, name, type, lifecycle_status, is_stocked")
-      .in("type", ["sub_assembly", "finished_good"])
-      .eq("lifecycle_status", "active")
-      .order("name")
-      .limit(100);
-    if (qStr) q = q.ilike("name", `%${String(qStr).replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
-    const { data: rows, error } = await q;
-    if (error) return json({ error: error.message }, 400);
-    return json({ assemblies: rows || [] });
+    const { component_id } = body;
+    if (!component_id) return json({ error: "component_id required" }, 400);
+    const [compRes, edgeRes] = await Promise.all([
+      tdb("bom_components").select("id, type, is_stocked, lifecycle_status").eq("id", component_id).single(),
+      tdb("bom_edges").select("child_id").eq("parent_id", component_id).eq("fitting_stage", "hub")
+        .is("effective_to", null).eq("is_reference", false),
+    ]);
+    if (compRes.error || !compRes.data) return json({ error: "Component not found" }, 404);
+    if (edgeRes.error) return json({ error: edgeRes.error.message }, 400);
+    const childIds = [...new Set((edgeRes.data || []).map((e) => e.child_id))];
+    let hubFitted: string[] = [];
+    if (childIds.length) {
+      const { data: children, error: childErr } = await tdb("bom_components").select("name").in("id", childIds).order("name");
+      if (childErr) return json({ error: childErr.message }, 400);
+      hubFitted = (children || []).map((c) => c.name);
+    }
+    return json({
+      can_be_eligible: canBeEligibleType(compRes.data.type) && compRes.data.lifecycle_status !== "replaced",
+      is_stocked: compRes.data.is_stocked === true,
+      hub_fitted: hubFitted,
+    });
   }
 
   if (action === "setAssemblyStocked") {
@@ -4292,8 +4290,8 @@ Deno.serve(async (req) => {
       .eq("id", component_id)
       .single();
     if (fetchErr || !comp) return json({ error: "Component not found" }, 404);
-    if (!["sub_assembly", "finished_good"].includes(comp.type))
-      return json({ error: "Only sub-assemblies and finished goods can be eligible for pre-assembly" }, 422);
+    if (flag && !canBeEligibleType(comp.type))
+      return json({ error: "A Kit or Dynamic BOM cannot be built ahead of orders" }, 422);
     const patch: Record<string, unknown> = { is_stocked: flag, updated_by: userId };
     const { error: updErr } = await tdb("bom_components").update(patch).eq("id", component_id);
     if (updErr) return json({ error: updErr.message }, 400);

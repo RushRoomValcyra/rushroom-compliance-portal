@@ -115,4 +115,4 @@ supabase db diff --linked          # expect: "No schema changes found"
 - **Full deploy also needs** the edge function and frontend, which are independent of DB
   migrations:
   - `supabase functions deploy portal-api --no-verify-jwt`
-  - frontend: bump `?v=N` in `assets/config.js`, then `git push origin main` (GitHub Pages).
+  - frontend: bump `?v=N` on the changed asset tags, then merge the pull request into `main` (Netlify publishes it).

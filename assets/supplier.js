@@ -26,7 +26,7 @@
   }
 
   /* Declaration upload — links out to a configured form/endpoint (Google Form,
-   * Formspree, Drive upload-request…), since GitHub Pages can't accept uploads. */
+   * Formspree, Drive upload-request…), for suppliers without a portal login. */
   function uploadPanel() {
     if (!CFG.supplierUploadUrl) return null;
     return el("div", { class: "card upload-card" }, [

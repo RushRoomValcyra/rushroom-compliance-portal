@@ -32,9 +32,9 @@ the database and file storage.
 
 Three tiers:
 
-1. **Frontend** — static HTML/CSS/vanilla JS, no build step. Hosted on **GitHub Pages**
-   (repo `ziirvass/rushroom-compliance-portal`). Assets are cache-busted with a shared
-   `?v=N` query string bumped on every release (currently `?v=91`).
+1. **Frontend** — static HTML/CSS/vanilla JS, no build step. Hosted on **Netlify**
+   (https://engineeringcompliance.netlify.app, repo `RushRoomValcyra/rushroom-compliance-portal`;
+   moved from GitHub Pages on 2026-10-27). Assets are cache-busted with a `?v=N` query string.
    - `index.html` (portal shell + tabs), plus `supplier.html`, `verify.html`,
      `reset.html`.
    - `assets/app.js` (UI), `api.js` (edge-function client), `config.js` (function URL +
@@ -147,15 +147,15 @@ Grouped by domain (see `supabase/schema.sql` for exact columns):
 
 ## Deployment
 
-- **Frontend:** commit & push to `main` → GitHub Pages redeploys. Bump the `?v=N`
-  cache-bust on the asset tags in `index.html` (and `supplier.html`) so browsers refetch.
+- **Frontend:** merge a pull request into `main` → Netlify publishes it; every pull request
+  gets a deploy preview. Bump the `?v=N` cache-bust on the changed asset tags.
 - **Edge function:** `supabase functions deploy portal-api --no-verify-jwt` (project is
   linked, so no `--project-ref` needed).
-- **Schema:** paste `supabase/schema.sql` into the Supabase **SQL Editor** and run. It is
-  idempotent (`if not exists` / `on conflict do nothing` / guarded `alter … add column`).
-  There is **no** `migrations/` dir, so `supabase db push` does not apply the schema.
+- **Schema:** numbered files in `supabase/migrations/`, applied with `supabase db push`
+  (see `docs/DEPLOY_RUNBOOK.md`).
 
 **Required Supabase secrets:** `TOKEN_SECRET`, `RUSHROOM_PW_HASH`, `SUPPLIER_PW_HASH`,
 `ANTHROPIC_API_KEY`. **Optional:** `RESEND_API_KEY` + `MAIL_FROM` (email delivery;
-falls back to copyable links), `APP_BASE_URL` (overrides the GitHub Pages base used in
-email links). `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
+falls back to copyable links), `APP_BASE_URL` (the portal address used in email links;
+set to https://engineeringcompliance.netlify.app). `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are injected automatically.

@@ -73,8 +73,8 @@ window.PORTAL_CONFIG = {
   statusSheetViewUrl: "https://docs.google.com/spreadsheets/d/1xR6h5x-fV0R91cFiNB9UqHhGtVvg2VnW28brz8zrF4A/edit",
 
   /* ---- Supplier declaration upload --------------------------------------
-   * GitHub Pages can't receive uploads itself, so point this at a form/endpoint
-   * that can: a Google Form, a Formspree form (https://formspree.io), Typeform,
+   * For suppliers without a portal login, point this at a form/endpoint that
+   * accepts uploads: a Google Form, a Formspree form (https://formspree.io), Typeform,
    * a Drive upload-request link, etc. Suppliers see an "Upload declaration"
    * panel that links here. Leave "" to hide the panel.
    */

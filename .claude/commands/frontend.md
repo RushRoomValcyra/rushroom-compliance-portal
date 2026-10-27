@@ -1,5 +1,5 @@
 The Rushroom Engineering & Compliance Platform frontend is live at:
 
-**https://rushroomvalcyra.github.io/rushroom-compliance-portal/**
+**https://engineeringcompliance.netlify.app/**
 
-Deployed via GitHub Actions on every push to `main`. Assets are cache-busted — append `?v=N` (current N is in `CLAUDE.md`) if you need to force-refresh a specific asset.
+Published by Netlify on every merge to `main`; every pull request gets a deploy preview. The old github.io address forwards here. Assets are cache-busted — append `?v=N` (current N is in `CLAUDE.md`) if you need to force-refresh a specific asset.

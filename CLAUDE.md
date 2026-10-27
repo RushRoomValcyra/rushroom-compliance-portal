@@ -2,7 +2,7 @@
 
 ## What this is
 Compliance portal for Rushroom AB's LED furniture product.
-- Frontend: GitHub Pages (static, cache-busted via ?v=N on the asset tags in index.html)
+- Frontend: Netlify, https://engineeringcompliance.netlify.app (static, no build step, `netlify.toml`; cache-busted via ?v=N on the asset tags in index.html). Every pull request gets a deploy preview; `main` is production. The old github.io address forwards there.
 - Backend: Three Supabase Edge Functions (Deno, --no-verify-jwt), sharing `supabase/functions/_shared/`:
   - `portal-api`    — auth, CRUD, tenants, accounts, BOM (the hot path; no heavy deps)
   - `portal-ai`     — every Anthropic action + document parsing (jszip, pdf-lib)
@@ -17,7 +17,7 @@ Deploy edge functions: supabase functions deploy portal-ai --no-verify-jwt
                        (heavy functions FIRST — the frontend routes to them once pushed;
                         a _shared/ change requires redeploying all three)
 Apply DB migration:    supabase db push
-Deploy frontend:       git push origin main (GitHub Actions → Pages)
+Deploy frontend:       merge to main (Netlify publishes it; pull requests get a deploy preview)
 Bump cache:            increment ?v=N on every asset tag in index.html (and supplier.html if present)
 
 ## Architecture rules — always follow these

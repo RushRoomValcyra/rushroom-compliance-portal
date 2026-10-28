@@ -43,9 +43,13 @@ const PLANNER_RESOLVER_MAX_DEPTH = 20;
 const PLANNER_RESOLVER_MAX_EXPANSIONS = 5_000;
 // What can be done to a component (CHECK on component_routing_steps).
 const OPERATION_TYPES = ["drill", "route", "insert", "attach", "cut", "surface_treat", "inspect", "other"];
-// When an operation applies, in the planner's terms (migration 0052): the face
-// of a side panel as seen from the front, the neighbouring module's size and
-// its interior code. Returns null for "always", undefined when invalid.
+// The planner's interior item kinds (valcyra-site partKeys.js): what a module
+// holds, read by Order Operations from each item's key.
+const ITEM_KINDS = ["drawer_set", "shelf", "hanger", "led_ramp", "beautybox", "removable_panel_back_full"];
+// When an operation applies, in the planner's terms (migrations 0052, 0053): the
+// face of a side panel as seen from the front, the neighbouring module's size,
+// its interior code and an item it holds. Returns null for "always", undefined
+// when invalid.
 function operationCondition(raw: unknown): Record<string, unknown> | null | undefined {
   if (raw === null || raw === undefined) return null;
   if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -55,6 +59,7 @@ function operationCondition(raw: unknown): Record<string, unknown> | null | unde
     if (key === "face" && (value === "left" || value === "right")) out.face = value;
     else if (key === "size" && ["S", "M", "L"].includes(value as string)) out.size = value;
     else if (key === "interior" && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 20) out.interior = Number(value);
+    else if (key === "contains" && ITEM_KINDS.includes(value as string)) out.contains = value;
     else return undefined;
   }
   return Object.keys(out).length ? out : null;
@@ -4411,7 +4416,7 @@ Deno.serve(async (req) => {
           return json({ error: "Where must be Hub, Site or empty" }, 400);
         if (instruction.length > 2000) return json({ error: "Keep the instruction under 2000 characters" }, 400);
         const condition = operationCondition(body.condition);
-        if (condition === undefined) return json({ error: "The condition takes a face (left, right), a size (S, M, L) and an interior code (0–20), each optional" }, 400);
+        if (condition === undefined) return json({ error: `The condition takes a face (left, right), a size (S, M, L), an interior code (0–20) and an item the module holds (${ITEM_KINDS.join(", ")}), each optional` }, 400);
         const drawingId = body.drawing_id || null;
         if (drawingId) {
           const { data: drawing } = await tdb("drawings").select("id").eq("id", drawingId).maybeSingle();

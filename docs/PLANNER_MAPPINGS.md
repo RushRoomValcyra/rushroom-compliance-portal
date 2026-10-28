@@ -144,9 +144,13 @@ and every v1 field stay the same; `contract_version` in the answer is `2`, and:
   0052), in step order, each
   `{ "id", "operation_type", "stage": "hub" | "site" | null, "instruction_text", "condition", "drawing": { "drawing_number", "title", "revision" } | null, "pim_component_id", "part_number", "component_name" }`.
   An empty list means nothing is done to it. `condition` says when it applies,
-  in the planner's terms: `{ "face": "left" | "right", "size": "S" | "M" | "L", "interior": <planner interior code> }`,
+  in the planner's terms: `{ "face": "left" | "right", "size": "S" | "M" | "L", "interior": <planner interior code>, "contains": <item kind> }`,
   each key optional, `null` meaning always. Order Operations matches it against
   the module next to each face of the panel in the customer's configuration.
+  `contains` is an item the module holds, its planner key without size and
+  colour: `drawer_set`, `shelf`, `hanger`, `led_ramp`, `beautybox` or
+  `removable_panel_back_full` (migration 0053). Prefer it to `interior`: one
+  rule covers every preset that holds the item.
 - A **stocked pre-assembly** (eligible: something fitted into it at Hub, or its
   checkbox ticked; the same rule as `listStockedAssemblies`) is not expanded.
   Its node has `"pre_assembly": true` and no children, and its `bom_entries` row

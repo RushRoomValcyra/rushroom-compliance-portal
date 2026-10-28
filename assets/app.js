@@ -6961,12 +6961,15 @@
   const OPERATION_LABEL = { drill: "Drill", route: "Route / mill", insert: "Insert", attach: "Attach", cut: "Cut", surface_treat: "Surface treat", inspect: "Inspect", other: "Other" };
   // The planner's interior codes (valcyra-site spec/interior-variants.json).
   const PLANNER_INTERIORS = ["Fullhäng", "Lådor + häng", "Hyllor", "BeautyBox", "Hyllor + häng", "Dubbelhäng", "Lådor + hyllor", "Dubbelhäng 50/50"];
+  // What a module holds: the planner's item kinds (valcyra-site partKeys.js).
+  const MODULE_ITEMS = { drawer_set: "Drawers", shelf: "Shelves", hanger: "Clothes rail", led_ramp: "LED strip", beautybox: "BeautyBox", removable_panel_back_full: "Back panel" };
   const conditionText = (c) => {
     if (!c) return "always";
     const parts = [];
     if (c.face) parts.push(`${c.face} face`);
     if (c.size) parts.push(`${c.size} module`);
     if (c.interior !== undefined) parts.push(PLANNER_INTERIORS[c.interior] ? `${PLANNER_INTERIORS[c.interior]} (${c.interior})` : `interior ${c.interior}`);
+    if (c.contains) parts.push(`module with ${(MODULE_ITEMS[c.contains] || c.contains).toLowerCase()}`);
     return `when ${parts.join(", ")}`;
   };
   function operationsRow(componentId, token) {
@@ -6983,6 +6986,7 @@
     const faceSel = select("Face", [["", "Any face"], ["left", "Left face"], ["right", "Right face"]]);
     const sizeSel = select("Module size", [["", "Any size"], ["S", "S module"], ["M", "M module"], ["L", "L module"]]);
     const interiorSel = select("Interior", [["", "Any interior"], ...PLANNER_INTERIORS.map((name, code) => [String(code), `${code} ${name}`])]);
+    const containsSel = select("Module has", [["", "Module has anything"], ...Object.entries(MODULE_ITEMS).map(([kind, name]) => [kind, `Has ${name.toLowerCase()}`])]);
     const drawingSel = select("Drawing", [["", "No drawing"]]);
     const instruction = el("input", { class: "up-text", type: "text", maxlength: "2000", "aria-label": "Instruction",
       placeholder: "e.g. Drill 4 runner holes Ø5×12 for the lower drawer pair" });
@@ -7011,7 +7015,7 @@
       addBtn.disabled = true;
       const saved = await call("saveComponentOperation", {
         operation_type: typeSel.value, stage: stageSel.value || null, instruction_text: instruction.value,
-        condition: { face: faceSel.value || null, size: sizeSel.value || null, interior: interiorSel.value === "" ? null : Number(interiorSel.value) },
+        condition: { face: faceSel.value || null, size: sizeSel.value || null, interior: interiorSel.value === "" ? null : Number(interiorSel.value), contains: containsSel.value || null },
         drawing_id: drawingSel.value || null,
       });
       if (saved) instruction.value = "";
@@ -7020,9 +7024,9 @@
     row.replaceChildren(
       el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em" }, "Operations at the hub and on site"),
       el("span", { style: "display:block;font-size:0.75rem;color:var(--muted,#8b93a1)" },
-        "Holes or milling the hub adds, and for which module next to which face. Order Operations runs the Hub ones per customer order."),
+        "Holes or milling the hub adds, and for which module next to which face: say what the module has (drawers, a rail …) rather than its interior, so one rule covers every interior with it. Order Operations runs the Hub ones per customer order."),
       list,
-      el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.4rem" }, [typeSel, stageSel, faceSel, sizeSel, interiorSel, drawingSel, instruction, addBtn]),
+      el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.4rem" }, [typeSel, stageSel, faceSel, sizeSel, containsSel, interiorSel, drawingSel, instruction, addBtn]),
       note,
     );
     API.post(token, "listComponentOperations", { component_id: componentId })

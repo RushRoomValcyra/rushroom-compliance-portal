@@ -28,10 +28,10 @@ test("only Rushroom edits operations, through four actions", () => {
   assert.ok(block.includes("operationCondition(body.condition)"), "the condition is checked");
 });
 
-test("a condition takes only face, size and interior", () => {
+test("a condition takes only face, size, interior and an item the module holds", () => {
   const api = read("supabase/functions/portal-api/index.ts");
   const fn = api.slice(api.indexOf("function operationCondition("), api.indexOf("function operationCondition(") + 1200);
-  for (const rule of ['value === "left" || value === "right"', '["S", "M", "L"].includes', "Number(value) <= 20", "else return undefined"]) {
+  for (const rule of ['value === "left" || value === "right"', '["S", "M", "L"].includes', "Number(value) <= 20", "ITEM_KINDS.includes(value as string)", "else return undefined"]) {
     assert.ok(fn.includes(rule), `operationCondition lacks ${rule}`);
   }
 });
@@ -54,4 +54,14 @@ test("the card's Manufacturing tab holds pre-assembly and operations, after Draw
   const properties = app.slice(app.indexOf("propertiesSection = el("), app.indexOf("propertiesSection = el(") + 2500);
   assert.ok(!properties.includes("preAssemblyRow(") && !properties.includes("operationsRow("), "Overview no longer holds them");
   assert.ok(app.includes('"Built ahead of orders"') && app.includes('"Operations at the hub and on site"'), "the tab has its two headings");
+});
+
+test("the item kinds match the planner's keys and the Manufacturing tab offers each", () => {
+  const api = read("supabase/functions/portal-api/index.ts");
+  const app = read("assets/app.js");
+  const kinds = ["drawer_set", "shelf", "hanger", "led_ramp", "beautybox", "removable_panel_back_full"];
+  assert.ok(api.includes(`const ITEM_KINDS = ${JSON.stringify(kinds).replace(/,/g, ", ")};`), "the API accepts exactly these kinds");
+  const items = app.slice(app.indexOf("const MODULE_ITEMS = {"), app.indexOf("};", app.indexOf("const MODULE_ITEMS = {")));
+  for (const kind of kinds) assert.ok(items.includes(`${kind}:`), `the tab offers ${kind}`);
+  assert.ok(app.includes("contains: containsSel.value || null"), "the choice is saved in the condition");
 });

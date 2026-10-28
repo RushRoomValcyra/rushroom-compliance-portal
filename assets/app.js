@@ -6955,20 +6955,64 @@
   }
 
   // Operations: the side panel work done for each customer order is set per
-  // interior in Order Operations (its item 0039; decision 0012 there, amended
-  // 2026-10-28), not on the part. This section points there; the part's
-  // drawings stay in its Drawings tab.
+  // interior in Order Operations' code (its items 0039 and 0043; decision 0012
+  // there, amended 2026-10-28), not on the part. On a side panel part the card
+  // shows those rules read-only, asked from Order Operations by portal-api; the
+  // Prepared panel it sits in points to it, because the bare panel is worked
+  // before it is assembled.
   const ORDER_SURGERY_RULES_URL = "https://valcyra-order-operations-staging.netlify.app/warehouse/order-surgery/rules";
-  function operationsRow() {
-    return el("div", {
+  const SURGERY_OPERATION = { drill: "Drill", route: "Route / mill", insert: "Insert", attach: "Attach", cut: "Cut", surface_treat: "Surface treat", inspect: "Inspect", other: "Other" };
+  const SURGERY_FACE = { left: "Left face", right: "Right face" };
+  function operationsRow(componentId, token) {
+    const small = "margin:0.3rem 0;font-size:0.8125rem";
+    const rulesLink = (href) => el("a", { href: href || ORDER_SURGERY_RULES_URL, target: "_blank", rel: "noopener", style: "font-size:0.8125rem;font-weight:600" }, "See the rules in Order Operations");
+    const body = el("div", {}, [el("p", { style: small }, "Loading…")]);
+    const row = el("div", {
       class: "operations-row",
       style: "margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border,#e2e8f0)",
     }, [
       el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em" }, "Operations at the hub and on site"),
-      el("p", { style: "margin:0.3rem 0;font-size:0.8125rem" },
-        "The extra holes and milling a side panel needs for a customer order are set per interior in Order Operations, not on the part. Drawings and templates they refer to stay in this part's Drawings tab."),
-      el("a", { href: ORDER_SURGERY_RULES_URL, target: "_blank", rel: "noopener", style: "font-size:0.8125rem;font-weight:600" }, "See the rules in Order Operations"),
+      body,
     ]);
+    const note = () => [
+      el("p", { style: small }, "The extra holes and milling a side panel needs for a customer order are set per interior in Order Operations, not on the part. Drawings and templates they refer to stay in this part's Drawings tab."),
+      rulesLink(),
+    ];
+    const cell = (rules) => !rules || !rules.length
+      ? el("span", { style: "color:var(--muted,#8b93a1)" }, "Supplier's predrilling")
+      : el("div", {}, rules.map((r) => el("div", { style: "margin:0.1rem 0" }, [
+          el("strong", {}, `${r.stage === "site" ? "On site" : "Hub"} · ${SURGERY_OPERATION[r.operation_type] || r.operation_type}`),
+          `${r.size ? ` (${r.size} only)` : ""}: ${r.instruction}${r.drawing_number ? ` · drawing ${r.drawing_number}` : ""}`,
+        ])));
+    API.post(token, "getSidePanelSurgery", { component_id: componentId })
+      .then((r) => {
+        if (!r.role) return body.replaceChildren(...note());
+        if (r.worked === false) {
+          return body.replaceChildren(
+            el("p", { style: small }, `This is an assembly. Its side panel part, ${r.panel.name}${r.panel.part_number ? ` (${r.panel.part_number})` : ""}, is drilled or milled for some customer orders before it is assembled. Open that part to see what is done for each interior.`),
+            rulesLink(),
+          );
+        }
+        if (r.error) return body.replaceChildren(el("p", { style: small }, r.error), rulesLink());
+        const faces = r.rules.faces;
+        const th = "text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.75rem;color:var(--muted,#8b93a1)";
+        const td = "padding:0.35rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);vertical-align:top;font-size:0.8125rem";
+        body.replaceChildren(
+          el("p", { style: small }, "What the hub or the installer does to this panel for each interior next to it, as seen from the front. Set in Order Operations' code; to change it, ask for a change to Order Surgery's rules."),
+          el("div", { style: "overflow-x:auto" }, [
+            el("table", { class: "surgery-rules", style: "border-collapse:collapse;width:100%;margin:0.3rem 0" }, [
+              el("thead", {}, [el("tr", {}, [el("th", { style: th }, "Interior next to it"), ...faces.map((f) => el("th", { style: th }, SURGERY_FACE[f] || f))])]),
+              el("tbody", {}, r.rules.interiors.map((interior) => el("tr", {}, [
+                el("td", { style: td }, interior.name),
+                ...faces.map((f) => el("td", { style: td }, [cell(interior.faces[f])])),
+              ]))),
+            ]),
+          ]),
+          rulesLink(r.rules.rules_page),
+        );
+      })
+      .catch(() => body.replaceChildren(...note()));
+    return row;
   }
 
   async function openComponentDetail(componentId, token, panel, nodeData, role) {
@@ -8783,7 +8827,7 @@
             el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" },
               "How this is made and worked on at the hub. Order Operations reads it: pre-assemblies are built ahead of orders. The side panel work for each customer order is set in Order Operations."),
             preAssemblyRow(componentId, token),
-            operationsRow(),
+            operationsRow(componentId, token),
           ]),
         ]);
       }

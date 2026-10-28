@@ -36,13 +36,25 @@ test("a condition takes only face, size, interior and an item the module holds",
   }
 });
 
-test("the Operations section points to Order Operations' rules instead of an editor", () => {
+test("the Operations section shows Order Operations' rules read-only, never an editor", () => {
   const app = read("assets/app.js");
-  const row = app.slice(app.indexOf("function operationsRow()"), app.indexOf("function operationsRow()") + 1500);
-  assert.ok(row.includes("ORDER_SURGERY_RULES_URL") && row.includes("See the rules in Order Operations"), "it links to the rules page");
-  assert.ok(app.includes('const ORDER_SURGERY_RULES_URL = "https://valcyra-order-operations-staging.netlify.app/warehouse/order-surgery/rules";'));
-  assert.ok(!app.includes('"saveComponentOperation"') && !app.includes('"listComponentOperations"'), "the card no longer edits operations");
-  assert.ok(app.includes("operationsRow(),"), "the row must be mounted");
+  const row = app.slice(app.indexOf("function operationsRow(componentId, token)"), app.indexOf("async function openComponentDetail("));
+  assert.ok(row.includes('"getSidePanelSurgery"'), "it asks portal-api for the rules");
+  assert.ok(row.includes("Supplier's predrilling") && row.includes("See the rules in Order Operations"), "empty cells and the link");
+  assert.ok(row.includes("This is an assembly."), "a Prepared panel points to its panel part");
+  assert.ok(!app.includes('"saveComponentOperation"') && !app.includes('"listComponentOperations"'), "the card does not edit operations");
+  assert.ok(!row.includes("ORDER_OPERATIONS_SURGERY_KEY"), "the key never reaches the browser");
+  assert.ok(app.includes("operationsRow(componentId, token),"), "the row must be mounted");
+});
+
+test("getSidePanelSurgery is Rushroom-only and asks Order Operations with a server-side key", () => {
+  const api = read("supabase/functions/portal-api/index.ts");
+  const block = api.slice(api.indexOf('if (action === "getSidePanelSurgery")'), api.indexOf("// --- Operations on a component"));
+  assert.ok(/if \(role !== "rushroom"\) return json\(\{ error: "Not authorised" \}, 403\);/.test(block.slice(0, 300)), "Rushroom only");
+  for (const fragment of ['Deno.env.get("ORDER_OPERATIONS_URL")', 'Deno.env.get("ORDER_OPERATIONS_SURGERY_KEY")', "Authorization: `Bearer ${key}`", "AbortSignal.timeout(5000)", "sidePanelRole("]) {
+    assert.ok(block.includes(fragment), `getSidePanelSurgery lacks ${fragment}`);
+  }
+  assert.ok(!block.includes("key }") && !/json\([^)]*key/.test(block), "the key is never answered");
 });
 
 test("the card's Manufacturing tab holds pre-assembly and operations, after Drawings, for Rushroom only", () => {
@@ -52,7 +64,7 @@ test("the card's Manufacturing tab holds pre-assembly and operations, after Draw
     "Manufacturing sits right after Drawings");
   assert.ok(tabs.includes('...(role === "rushroom" ? [{ id: "manufacturing", label: "Manufacturing" }] : [])'), "only Rushroom sees it");
   const panel = app.slice(app.indexOf('tabPanels["manufacturing"] = '), app.indexOf('tabPanels["images"]'));
-  assert.ok(panel.includes("preAssemblyRow(componentId, token)") && panel.includes("operationsRow()"), "both live in the Manufacturing tab");
+  assert.ok(panel.includes("preAssemblyRow(componentId, token)") && panel.includes("operationsRow(componentId, token)"), "both live in the Manufacturing tab");
   const properties = app.slice(app.indexOf("propertiesSection = el("), app.indexOf("propertiesSection = el(") + 2500);
   assert.ok(!properties.includes("preAssemblyRow(") && !properties.includes("operationsRow("), "Overview no longer holds them");
   assert.ok(app.includes('"Built ahead of orders"') && app.includes('"Operations at the hub and on site"'), "the tab has its two headings");

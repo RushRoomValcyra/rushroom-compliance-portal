@@ -1428,6 +1428,16 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 
 ---
 
+## 2026-10-27 — Operations belong to the component; Order Operations runs them per order
+
+**Decision:** What we do to a component (drill holes, route a cut-out, fit a cover) is an **operation on the component**, with where it is done (Hub or Site), **when it applies** in the planner's terms (the face of a side panel, the neighbouring module's size and interior; ziirvass 2026-10-28: about 90% of holes come predrilled from the supplier, the hub adds the rest per module setting) and the **drawing** that shows the pattern. It is no longer scoped to a product family. The order resolver's contract v2 returns each node's operations and keeps stocked pre-assemblies whole. Order Operations runs the Hub operations for each customer order, with the positions the wardrobe planner sends (Order Operations' item 0039). The Manufacturing BOM screen's family routing and work orders are retired in a later pull request.
+
+**Why:** Per-order panel work (customer holes, routed cut-outs) must be done for one customer order, before or alongside picking, not by building stock (ziirvass, 2026-10-27). Product families were a named set unrelated to the planner and the dynamic BOM, so an order could never reach their steps; production held 0 routing steps and 1 empty work order.
+
+**Consequences:** migration 0052 (`family_id` optional, `stage`, `drawing_id`, `variant_condition` as the condition), an Operations section in each component's card, the actions `listComponentOperations`, `saveComponentOperation`, `deleteComponentOperation` and `moveComponentOperation`, and `resolvePlannerBom` v2 (`docs/PLANNER_MAPPINGS.md`), which also carries the operations of parts inside a stocked pre-assembly. v1 is unchanged. The cases are worked out first in `docs/hub-operations-matrix.xlsx`.
+
+**Files changed:** `supabase/migrations/0052_operations_on_components.sql`, `supabase/functions/_shared/planner-resolver-core.mjs`, `supabase/functions/portal-api/index.ts`, `assets/app.js`, `index.html`, `tests/planner-resolver.test.mjs`, `tests/operations.test.mjs`, `tests/bom-structure-rules.test.mjs`, `docs/hub-operations-matrix.xlsx`, `tools/build-hub-operations-matrix.py`, `docs/PLANNER_MAPPINGS.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `CLAUDE.md`.
+
 ## 2026-10-27 — Fitted at Hub makes a component eligible for pre-assembly
 
 **Decision:** A part or assembly is eligible to be built ahead of orders when something is fitted into it at the **Hub** (a real BOM link into it with `fitting_stage = 'hub'`). Others are marked by hand with a checkbox in the component's own card (`is_stocked`). Kits, Dynamic BOMs and replaced components are never eligible. The separate eligibility tab is removed.

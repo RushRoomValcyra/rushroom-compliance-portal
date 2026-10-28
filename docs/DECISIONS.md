@@ -1428,6 +1428,16 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 
 ---
 
+## 2026-10-28 — A separate service key for local development
+
+**Decision:** Order Operations' service actions (`resolvePlannerBom`, `lookupArticle`, `listStockedAssemblies`, `resolveAssemblyInputs`) accept `OPERATIONS_PIM_RESOLVER_KEY` (staging and production) or `OPERATIONS_PIM_RESOLVER_LOCAL_KEY` (developers' machines, at least 32 characters), checked in one helper, `operationsServiceRefusal`.
+
+**Why:** The staging key is a Netlify secret and cannot be read back, and a laptop should not carry the key staging uses: with two keys, a leaked local key is revoked without touching staging (ziirvass, 2026-10-28).
+
+**Consequences:** the local key is generated on a developer's machine, written to Order Operations' `.env.local` and set as a Supabase secret without being shown. Revoking it is `supabase secrets unset OPERATIONS_PIM_RESOLVER_LOCAL_KEY`.
+
+**Files changed:** `supabase/functions/portal-api/index.ts`, `tests/planner-resolver.test.mjs`, `tests/article-lookup.test.mjs`, `tests/assembly-inputs.test.mjs`, `docs/PLANNER_MAPPINGS.md`, `docs/DECISIONS.md`.
+
 ## 2026-10-27 — Operations belong to the component; Order Operations runs them per order
 
 **Decision:** What we do to a component (drill holes, route a cut-out, fit a cover) is an **operation on the component**, with where it is done (Hub or Site), **when it applies** in the planner's terms (the face of a side panel, the neighbouring module's size and interior; ziirvass 2026-10-28: about 90% of holes come predrilled from the supplier, the hub adds the rest per module setting) and the **drawing** that shows the pattern. It is no longer scoped to a product family. The order resolver's contract v2 returns each node's operations and keeps stocked pre-assemblies whole. Order Operations runs the Hub operations for each customer order, with the positions the wardrobe planner sends (Order Operations' item 0039). The Manufacturing BOM screen's family routing and work orders are retired in a later pull request.

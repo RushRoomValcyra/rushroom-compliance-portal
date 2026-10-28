@@ -71,6 +71,23 @@ function constantTimeSecretEqual(actual: string, expected: string): boolean {
   return difference === 0;
 }
 
+// Order Operations' service key, for the actions it calls server to server.
+// Staging and production use OPERATIONS_PIM_RESOLVER_KEY; developers' own
+// machines use OPERATIONS_PIM_RESOLVER_LOCAL_KEY, so either can be revoked
+// alone. Every configured key is compared, so the time taken never tells which
+// one came close. Returns the refusal, or null when the caller may go on.
+const MIN_LOCAL_KEY_LENGTH = 32;
+function operationsServiceRefusal(req: Request, notConfigured: string): Response | null {
+  const serviceKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY") ?? "";
+  const localKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_LOCAL_KEY") ?? "";
+  const keys = [serviceKey, localKey.length >= MIN_LOCAL_KEY_LENGTH ? localKey : ""].filter(Boolean);
+  if (!keys.length) return json({ error: notConfigured }, 503);
+  const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  let accepted = false;
+  for (const key of keys) accepted = constantTimeSecretEqual(suppliedKey, key) || accepted;
+  return accepted ? null : json({ error: "Invalid resolver credential" }, 401);
+}
+
 
 
 
@@ -1081,10 +1098,8 @@ Deno.serve(async (req) => {
   // may submit derived planner requirements only; PIM neither receives nor
   // stores cart/customer/order data, and always resolves the seed Rushroom org.
   if (action === "resolvePlannerBom") {
-    const resolverKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY");
-    if (!resolverKey) return json({ error: "Planner BOM resolver is not configured" }, 503);
-    const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-    if (!constantTimeSecretEqual(suppliedKey, resolverKey)) return json({ error: "Invalid resolver credential" }, 401);
+    const refusal = operationsServiceRefusal(req, "Planner BOM resolver is not configured");
+    if (refusal) return refusal;
     const allowedKeys = new Set(["action", "contract_version", "requirements", "include_assembly_tree"]);
     if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "Resolver accepts only contract_version and derived requirements" }, 400);
     if (body.include_assembly_tree !== undefined && typeof body.include_assembly_tree !== "boolean") return json({ error: "include_assembly_tree must be a boolean when provided" }, 400);
@@ -1161,10 +1176,8 @@ Deno.serve(async (req) => {
   // v1, docs/PLANNER_MAPPINGS.md). Same key and seed org as the resolver above;
   // nothing about the caller's deliveries or orders is sent or stored here.
   if (action === "lookupArticle") {
-    const resolverKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY");
-    if (!resolverKey) return json({ error: "Article lookup is not configured" }, 503);
-    const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-    if (!constantTimeSecretEqual(suppliedKey, resolverKey)) return json({ error: "Invalid resolver credential" }, 401);
+    const refusal = operationsServiceRefusal(req, "Article lookup is not configured");
+    if (refusal) return refusal;
     const allowedKeys = new Set(["action", "contract_version", "article_number"]);
     if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "Article lookup accepts only contract_version and article_number" }, 400);
     const articleNumber = normaliseArticleNumber(body.article_number);
@@ -1192,10 +1205,8 @@ Deno.serve(async (req) => {
   // what one unit is made of. Same key and seed org as the resolver; nothing
   // is sent back or stored here.
   if (action === "listStockedAssemblies" || action === "resolveAssemblyInputs") {
-    const resolverKey = Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY");
-    if (!resolverKey) return json({ error: "Pre-assembly actions are not configured" }, 503);
-    const suppliedKey = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-    if (!constantTimeSecretEqual(suppliedKey, resolverKey)) return json({ error: "Invalid resolver credential" }, 401);
+    const refusal = operationsServiceRefusal(req, "Pre-assembly actions are not configured");
+    if (refusal) return refusal;
     const allowedKeys = new Set(action === "listStockedAssemblies"
       ? ["action", "contract_version"]
       : ["action", "contract_version", "article_number"]);

@@ -35,7 +35,7 @@ test("pre-assembly actions use service auth, real links only and the seed org, a
   const end = api.indexOf("// --- everything else requires a valid token");
   assert.ok(at > 0 && at < end, "pre-assembly actions must sit before session auth");
   const block = api.slice(at, end);
-  for (const fragment of ["OPERATIONS_PIM_RESOLVER_KEY", "constantTimeSecretEqual", "allowedKeys", "makeTdb(RUSHROOM_ORG_ID)", "preAssemblyEligibility", "fitting_stage", '.is("effective_to", null)', '.eq("is_reference", false)', "expandAssemblyInputs"]) {
+  for (const fragment of ["operationsServiceRefusal(req, ", "allowedKeys", "makeTdb(RUSHROOM_ORG_ID)", "preAssemblyEligibility", "fitting_stage", '.is("effective_to", null)', '.eq("is_reference", false)', "expandAssemblyInputs"]) {
     assert.ok(block.includes(fragment), `pre-assembly actions lack ${fragment}`);
   }
   assert.ok(read("docs/PLANNER_MAPPINGS.md").includes('"action": "resolveAssemblyInputs"'), "contract is undocumented");

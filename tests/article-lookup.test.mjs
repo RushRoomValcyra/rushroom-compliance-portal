@@ -24,7 +24,7 @@ test("lookup uses service auth, a strict request and the seed org, ahead of sess
   assert.ok(at > 0, "lookupArticle action missing");
   assert.ok(at < api.indexOf("// --- everything else requires a valid token"), "lookup must sit before session auth");
   const block = api.slice(at, api.indexOf("// --- everything else requires a valid token"));
-  for (const fragment of ["OPERATIONS_PIM_RESOLVER_KEY", "constantTimeSecretEqual", "allowedKeys", "contract_version !== 1", "makeTdb(RUSHROOM_ORG_ID)", "exactIlikePattern", "matchArticle"]) {
+  for (const fragment of ["operationsServiceRefusal(req, ", "allowedKeys", "contract_version !== 1", "makeTdb(RUSHROOM_ORG_ID)", "exactIlikePattern", "matchArticle"]) {
     assert.ok(block.includes(fragment), `lookupArticle lacks ${fragment}`);
   }
   const docs = read("docs/PLANNER_MAPPINGS.md");

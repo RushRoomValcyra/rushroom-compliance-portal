@@ -36,11 +36,13 @@ test("a condition takes only face, size, interior and an item the module holds",
   }
 });
 
-test("each component panel shows its operations", () => {
+test("the Operations section points to Order Operations' rules instead of an editor", () => {
   const app = read("assets/app.js");
-  assert.ok(app.includes("function operationsRow(componentId, token)"));
-  assert.ok(app.includes("operationsRow(componentId, token),"), "the row must be mounted");
-  assert.ok(app.includes('"listComponentOperations"') && app.includes('"saveComponentOperation"'));
+  const row = app.slice(app.indexOf("function operationsRow()"), app.indexOf("function operationsRow()") + 1500);
+  assert.ok(row.includes("ORDER_SURGERY_RULES_URL") && row.includes("See the rules in Order Operations"), "it links to the rules page");
+  assert.ok(app.includes('const ORDER_SURGERY_RULES_URL = "https://valcyra-order-operations-staging.netlify.app/warehouse/order-surgery/rules";'));
+  assert.ok(!app.includes('"saveComponentOperation"') && !app.includes('"listComponentOperations"'), "the card no longer edits operations");
+  assert.ok(app.includes("operationsRow(),"), "the row must be mounted");
 });
 
 test("the card's Manufacturing tab holds pre-assembly and operations, after Drawings, for Rushroom only", () => {
@@ -50,18 +52,14 @@ test("the card's Manufacturing tab holds pre-assembly and operations, after Draw
     "Manufacturing sits right after Drawings");
   assert.ok(tabs.includes('...(role === "rushroom" ? [{ id: "manufacturing", label: "Manufacturing" }] : [])'), "only Rushroom sees it");
   const panel = app.slice(app.indexOf('tabPanels["manufacturing"] = '), app.indexOf('tabPanels["images"]'));
-  assert.ok(panel.includes("preAssemblyRow(componentId, token)") && panel.includes("operationsRow(componentId, token)"), "both live in the Manufacturing tab");
+  assert.ok(panel.includes("preAssemblyRow(componentId, token)") && panel.includes("operationsRow()"), "both live in the Manufacturing tab");
   const properties = app.slice(app.indexOf("propertiesSection = el("), app.indexOf("propertiesSection = el(") + 2500);
   assert.ok(!properties.includes("preAssemblyRow(") && !properties.includes("operationsRow("), "Overview no longer holds them");
   assert.ok(app.includes('"Built ahead of orders"') && app.includes('"Operations at the hub and on site"'), "the tab has its two headings");
 });
 
-test("the item kinds match the planner's keys and the Manufacturing tab offers each", () => {
+test("the API still accepts the planner's item kinds in a condition", () => {
   const api = read("supabase/functions/portal-api/index.ts");
-  const app = read("assets/app.js");
   const kinds = ["drawer_set", "shelf", "hanger", "led_ramp", "beautybox", "removable_panel_back_full"];
   assert.ok(api.includes(`const ITEM_KINDS = ${JSON.stringify(kinds).replace(/,/g, ", ")};`), "the API accepts exactly these kinds");
-  const items = app.slice(app.indexOf("const MODULE_ITEMS = {"), app.indexOf("};", app.indexOf("const MODULE_ITEMS = {")));
-  for (const kind of kinds) assert.ok(items.includes(`${kind}:`), `the tab offers ${kind}`);
-  assert.ok(app.includes("contains: containsSel.value || null"), "the choice is saved in the condition");
 });

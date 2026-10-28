@@ -8119,8 +8119,6 @@
             el("div", { style: "grid-column:1/3" }, [lbl("Description"), descInp]),
           ]),
           el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
-          preAssemblyRow(componentId, token),
-          operationsRow(componentId, token),
           // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
           // part from where it lives starts here.
           window.PortalBomRules && window.PortalBomRules.takesInTheBox(nodeData) ? el("div", {
@@ -8620,6 +8618,9 @@
         { id: "materials",   label: "Materials" },
         { id: "documents",   label: `Documents${(docs.documents || []).length ? ` (${(docs.documents || []).length})` : ""}` },
         { id: "drawings",    label: `Drawings${partDrawings.length ? ` (${partDrawings.length})` : ""}` },
+        // How it is built and worked on at the hub: pre-assembly and operations.
+        // Rushroom only, as the actions behind it are.
+        ...(role === "rushroom" ? [{ id: "manufacturing", label: "Manufacturing" }] : []),
         { id: "images",      label: "Images" },
         { id: "versions",    label: "Versions" },
         { id: "changelog",   label: "Change Log" },
@@ -8838,6 +8839,16 @@
       tabPanels["materials"]  = el("div", { style: "display:none" }, [matsSection]);
       tabPanels["documents"]  = el("div", { style: "display:none" }, [docsSection]);
       tabPanels["drawings"]   = el("div", { style: "display:none" }, [drawingsSection]);
+      if (TAB_DEFS.some((t) => t.id === "manufacturing")) {
+        tabPanels["manufacturing"] = el("div", { style: "display:none" }, [
+          el("div", { style: "padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
+            el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" },
+              "How this is made and worked on at the hub. Order Operations reads it: pre-assemblies are built ahead of orders, and Hub operations run for each customer order."),
+            preAssemblyRow(componentId, token),
+            operationsRow(componentId, token),
+          ]),
+        ]);
+      }
       tabPanels["images"]     = el("div", { style: "display:none;padding-top:0.5rem" }, [imagesSection]);
       tabPanels["versions"]   = el("div", { style: "display:none" }, [versionsSection]);
       tabPanels["changelog"]  = el("div", { style: "display:none" }, [changelogSection]);

@@ -49,7 +49,7 @@ test("eligibility is a checkbox in the component card, not a tab of its own", ()
     assert.ok(!app.includes(gone), `assets/app.js still uses ${gone}`);
     assert.ok(!read("supabase/functions/portal-api/index.ts").includes(gone), `portal-api still has ${gone}`);
   }
-  assert.ok(app.includes("preAssemblyRow(componentId, token)"), "the component card must show the pre-assembly checkbox");
+  assert.ok(app.includes("preAssemblyRow(componentId, token)"), "the component card must show the pre-assembly checkbox (Manufacturing tab)");
   for (const action of ["getPreAssemblyEligibility", "setAssemblyStocked"]) {
     assert.ok(app.includes(`"${action}"`), `the checkbox does not call ${action}`);
   }

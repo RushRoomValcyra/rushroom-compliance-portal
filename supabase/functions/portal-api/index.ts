@@ -33,6 +33,7 @@ import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
 import { ARTICLE_LOOKUP_MAX_LENGTH, exactIlikePattern, matchArticle, normaliseArticleNumber } from "../_shared/article-lookup-core.mjs";
 import { articleOf, canBeEligibleType, expandAssemblyInputs, preAssemblyEligibility } from "../_shared/assembly-inputs-core.mjs";
+import { sidePanelRole } from "../_shared/side-panel-role-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
@@ -4371,6 +4372,52 @@ Deno.serve(async (req) => {
     const { error: updErr } = await tdb("bom_components").update(patch).eq("id", component_id);
     if (updErr) return json({ error: updErr.message }, 400);
     return json({ ok: true });
+  }
+
+  // --- Order Surgery on a side panel's part card (Order Operations' 0043) ---
+  // What the hub does to a side panel for each interior next to it lives in
+  // Order Operations' code; the card shows it read-only. Asked here, server
+  // side, so the key never reaches the browser.
+  if (action === "getSidePanelSurgery") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    if (!body.component_id) return json({ error: "component_id required" }, 400);
+    const { data: mappings, error: mappingError } = await tdb("planner_mappings")
+      .select("source_key, target_component_id").eq("source_type", "side_panel").eq("is_active", true);
+    if (mappingError) return json({ error: "The planner mappings could not be read" }, 502);
+    const targets = [...new Set((mappings || []).map((m: any) => m.target_component_id))];
+    const { data: edges, error: edgeError } = targets.length
+      ? await tdb("bom_edges").select("parent_id, child_id").in("parent_id", targets).is("effective_to", null).eq("is_reference", false)
+      : { data: [], error: null };
+    if (edgeError) return json({ error: "The side panels' parts could not be read" }, 502);
+    const ids = [...new Set([...targets, ...(edges || []).map((e: any) => e.child_id)])];
+    const { data: rows, error: componentError } = ids.length
+      ? await tdb("bom_components").select("id, name, part_number").in("id", ids)
+      : { data: [], error: null };
+    if (componentError) return json({ error: "The side panels' parts could not be read" }, 502);
+    const found = sidePanelRole(body.component_id, {
+      mappings: mappings || [],
+      edges: edges || [],
+      components: new Map((rows || []).map((r: any) => [r.id, r])),
+    });
+    if (!found) return json({ role: null });
+    if (!found.worked) return json({ role: found.role, worked: false, panel: found.panel });
+
+    const base = (Deno.env.get("ORDER_OPERATIONS_URL") ?? "").replace(/\/+$/, "");
+    const key = Deno.env.get("ORDER_OPERATIONS_SURGERY_KEY") ?? "";
+    if (!base || !key) return json({ role: found.role, worked: true, error: "Order Operations is not connected yet." });
+    try {
+      const res = await fetch(`${base}/api/v1/surgery-rules?panel=${found.role}`, {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) throw new Error(`Order Operations answered ${res.status}`);
+      const rules = await res.json();
+      if (!rules || !Array.isArray(rules.interiors) || !Array.isArray(rules.faces)) throw new Error("Unexpected answer from Order Operations");
+      return json({ role: found.role, worked: true, rules });
+    } catch (e) {
+      console.error("getSidePanelSurgery", e);
+      return json({ role: found.role, worked: true, error: "Order Operations could not be reached. Try again in a moment." });
+    }
   }
 
   // --- Operations on a component (migration 0052, Order Operations' 0039) ---

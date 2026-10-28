@@ -39,6 +39,19 @@ test("a condition takes only face, size and interior", () => {
 test("each component panel shows its operations", () => {
   const app = read("assets/app.js");
   assert.ok(app.includes("function operationsRow(componentId, token)"));
-  assert.ok(app.includes("operationsRow(componentId, token),"), "the row must be mounted in the properties card");
+  assert.ok(app.includes("operationsRow(componentId, token),"), "the row must be mounted");
   assert.ok(app.includes('"listComponentOperations"') && app.includes('"saveComponentOperation"'));
+});
+
+test("the card's Manufacturing tab holds pre-assembly and operations, after Drawings, for Rushroom only", () => {
+  const app = read("assets/app.js");
+  const tabs = app.slice(app.indexOf("const TAB_DEFS = ["), app.indexOf("const tabPanels = {};"));
+  assert.ok(tabs.indexOf('id: "drawings"') < tabs.indexOf('id: "manufacturing"') && tabs.indexOf('id: "manufacturing"') < tabs.indexOf('id: "images"'),
+    "Manufacturing sits right after Drawings");
+  assert.ok(tabs.includes('...(role === "rushroom" ? [{ id: "manufacturing", label: "Manufacturing" }] : [])'), "only Rushroom sees it");
+  const panel = app.slice(app.indexOf('tabPanels["manufacturing"] = '), app.indexOf('tabPanels["images"]'));
+  assert.ok(panel.includes("preAssemblyRow(componentId, token)") && panel.includes("operationsRow(componentId, token)"), "both live in the Manufacturing tab");
+  const properties = app.slice(app.indexOf("propertiesSection = el("), app.indexOf("propertiesSection = el(") + 2500);
+  assert.ok(!properties.includes("preAssemblyRow(") && !properties.includes("operationsRow("), "Overview no longer holds them");
+  assert.ok(app.includes('"Built ahead of orders"') && app.includes('"Operations at the hub and on site"'), "the tab has its two headings");
 });

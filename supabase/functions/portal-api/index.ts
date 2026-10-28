@@ -43,6 +43,22 @@ const PLANNER_RESOLVER_MAX_DEPTH = 20;
 const PLANNER_RESOLVER_MAX_EXPANSIONS = 5_000;
 // What can be done to a component (CHECK on component_routing_steps).
 const OPERATION_TYPES = ["drill", "route", "insert", "attach", "cut", "surface_treat", "inspect", "other"];
+// When an operation applies, in the planner's terms (migration 0052): the face
+// of a side panel as seen from the front, the neighbouring module's size and
+// its interior code. Returns null for "always", undefined when invalid.
+function operationCondition(raw: unknown): Record<string, unknown> | null | undefined {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === null || value === undefined || value === "") continue;
+    if (key === "face" && (value === "left" || value === "right")) out.face = value;
+    else if (key === "size" && ["S", "M", "L"].includes(value as string)) out.size = value;
+    else if (key === "interior" && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 20) out.interior = Number(value);
+    else return undefined;
+  }
+  return Object.keys(out).length ? out : null;
+}
 const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
 const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
 
@@ -182,18 +198,18 @@ async function insertDocumentVersion(tdb: any, row: Record<string, unknown>) {
   return { ...res, version: String(row.version ?? ""), versionId: res.data?.id ?? null };
 }
 
-// Names of the drawings attached to operations, for the resolver's v2 answer:
-// the document's name and version, never a storage path.
-async function operationDocuments(tdb: any, ops: Array<{ reference_document_id?: string | null }>) {
-  const versionIds = [...new Set(ops.map((op) => op.reference_document_id).filter(Boolean))] as string[];
-  const documents = new Map<string, { name: string; version: string }>();
-  if (!versionIds.length) return documents;
-  const { data: versions } = await tdb("document_versions").select("id, document_id, version").in("id", versionIds);
-  const docIds = [...new Set((versions || []).map((v: any) => v.document_id))];
-  const { data: docs } = docIds.length ? await tdb("documents").select("id, name").in("id", docIds) : { data: [] };
-  const nameOf = new Map((docs || []).map((d: any) => [d.id, d.name]));
-  for (const v of versions || []) documents.set(v.id, { name: nameOf.get(v.document_id) ?? "Drawing", version: v.version || "" });
-  return documents;
+// The drawings attached to operations, for the resolver's v2 answer: number,
+// title and current revision, never a storage path.
+async function operationDrawings(tdb: any, ops: Array<{ drawing_id?: string | null }>) {
+  const ids = [...new Set(ops.map((op) => op.drawing_id).filter(Boolean))] as string[];
+  const drawings = new Map<string, { drawing_number: string; title: string; revision: string | null }>();
+  if (!ids.length) return drawings;
+  const { data: rows } = await tdb("drawings").select("id, drawing_number, title, current_revision_id").in("id", ids);
+  const revIds = (rows || []).map((d: any) => d.current_revision_id).filter(Boolean);
+  const { data: revs } = revIds.length ? await tdb("drawing_revisions").select("id, revision").in("id", revIds) : { data: [] };
+  const revisionOf = new Map((revs || []).map((r: any) => [r.id, r.revision]));
+  for (const d of rows || []) drawings.set(d.id, { drawing_number: d.drawing_number, title: d.title, revision: revisionOf.get(d.current_revision_id) ?? null });
+  return drawings;
 }
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
@@ -1109,15 +1125,19 @@ Deno.serve(async (req) => {
     if (contractVersion === 2) {
       preAssemblyIds = new Set(preAssemblyEligibility({ components: componentRes.data || [], edges: edgeRes.data || [] }).keys());
       const opsRes = await resolverTdb("component_routing_steps")
-        .select("id, component_id, step_number, operation_type, stage, instruction_text, reference_document_id")
+        .select("id, component_id, step_number, operation_type, stage, instruction_text, variant_condition, drawing_id")
         .is("family_id", null).order("component_id").order("step_number");
       if (opsRes.error) return json({ error: "PIM operations data is unavailable" }, 502);
-      const documents = await operationDocuments(resolverTdb, opsRes.data || []);
+      const drawings = await operationDrawings(resolverTdb, opsRes.data || []);
+      const componentOf = new Map((componentRes.data || []).map((c: any) => [c.id, c]));
       for (const op of opsRes.data || []) {
+        const part = componentOf.get(op.component_id);
         const list = operationsByComponent.get(op.component_id) || [];
         list.push({
           id: op.id, operation_type: op.operation_type, stage: op.stage ?? null, instruction_text: op.instruction_text,
-          reference_document: op.reference_document_id ? documents.get(op.reference_document_id) ?? null : null,
+          condition: op.variant_condition ?? null,
+          drawing: op.drawing_id ? drawings.get(op.drawing_id) ?? null : null,
+          pim_component_id: op.component_id, part_number: part?.part_number ?? null, component_name: part?.name ?? "",
         });
         operationsByComponent.set(op.component_id, list);
       }
@@ -4343,7 +4363,7 @@ Deno.serve(async (req) => {
   // Order Operations runs the Hub operations for each customer order.
   if (["listComponentOperations", "saveComponentOperation", "deleteComponentOperation", "moveComponentOperation"].includes(action)) {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const opColumns = "id, component_id, step_number, operation_type, stage, instruction_text";
+    const opColumns = "id, component_id, step_number, operation_type, stage, instruction_text, variant_condition, drawing_id";
     const listOps = async (componentId: string) => {
       const { data, error } = await tdb("component_routing_steps").select(opColumns)
         .eq("component_id", componentId).is("family_id", null).order("step_number");
@@ -4359,7 +4379,17 @@ Deno.serve(async (req) => {
     try {
       if (action === "listComponentOperations") {
         if (!body.component_id) return json({ error: "component_id required" }, 400);
-        return json({ operations: await listOps(body.component_id) });
+        // Drawings that show this part: owned by it, or linked to it.
+        const [owned, linked] = await Promise.all([
+          tdb("drawings").select("id").eq("owner_component_id", body.component_id),
+          tdb("drawing_components").select("drawing_id").eq("component_id", body.component_id),
+        ]);
+        const drawingIds = [...new Set([...(owned.data || []).map((d: any) => d.id), ...(linked.data || []).map((d: any) => d.drawing_id)])];
+        const drawings = await operationDrawings(tdb, drawingIds.map((id) => ({ drawing_id: id })));
+        return json({
+          operations: await listOps(body.component_id),
+          drawings: [...drawings.entries()].map(([id, d]) => ({ id, ...d })).sort((a, b) => a.drawing_number.localeCompare(b.drawing_number)),
+        });
       }
       if (action === "saveComponentOperation") {
         const { id: opId, component_id, operation_type, stage } = body;
@@ -4369,7 +4399,14 @@ Deno.serve(async (req) => {
         if (stage !== null && stage !== undefined && !["hub", "site"].includes(stage))
           return json({ error: "Where must be Hub, Site or empty" }, 400);
         if (instruction.length > 2000) return json({ error: "Keep the instruction under 2000 characters" }, 400);
-        const row = { operation_type, stage: stage ?? null, instruction_text: instruction };
+        const condition = operationCondition(body.condition);
+        if (condition === undefined) return json({ error: "The condition takes a face (left, right), a size (S, M, L) and an interior code (0–20), each optional" }, 400);
+        const drawingId = body.drawing_id || null;
+        if (drawingId) {
+          const { data: drawing } = await tdb("drawings").select("id").eq("id", drawingId).maybeSingle();
+          if (!drawing) return json({ error: "Drawing not found" }, 404);
+        }
+        const row = { operation_type, stage: stage ?? null, instruction_text: instruction, variant_condition: condition, drawing_id: drawingId };
         if (opId) {
           const { error } = await tdb("component_routing_steps").update(row).eq("id", opId).eq("component_id", component_id).is("family_id", null);
           if (error) return json({ error: error.message }, 400);

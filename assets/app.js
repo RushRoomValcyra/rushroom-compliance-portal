@@ -6951,10 +6951,21 @@
     return row;
   }
 
-  // Operations: what we do to this component and where (migration 0052).
-  // Order Operations runs the Hub ones for each customer order, with the
-  // positions the wardrobe planner sends (its item 0039).
+  // Operations: what we do to this component, where, and when (migration 0052).
+  // Order Operations runs the Hub ones for each customer order whose settings
+  // match the condition (its item 0039). Most holes come predrilled from the
+  // supplier; these are the ones the hub adds.
   const OPERATION_LABEL = { drill: "Drill", route: "Route / mill", insert: "Insert", attach: "Attach", cut: "Cut", surface_treat: "Surface treat", inspect: "Inspect", other: "Other" };
+  // The planner's interior codes (valcyra-site spec/interior-variants.json).
+  const PLANNER_INTERIORS = ["Fullhäng", "Lådor + häng", "Hyllor", "BeautyBox", "Hyllor + häng", "Dubbelhäng", "Lådor + hyllor", "Dubbelhäng 50/50"];
+  const conditionText = (c) => {
+    if (!c) return "always";
+    const parts = [];
+    if (c.face) parts.push(`${c.face} face`);
+    if (c.size) parts.push(`${c.size} module`);
+    if (c.interior !== undefined) parts.push(PLANNER_INTERIORS[c.interior] ? `${PLANNER_INTERIORS[c.interior]} (${c.interior})` : `interior ${c.interior}`);
+    return `when ${parts.join(", ")}`;
+  };
   function operationsRow(componentId, token) {
     const row = el("div", {
       class: "operations-row",
@@ -6962,47 +6973,62 @@
     });
     const note = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.3rem 0 0" }, "");
     const list = el("ol", { style: "margin:0.3rem 0 0;padding-left:1.2rem;font-size:0.8125rem" });
-    const typeSel = el("select", { class: "up-text", "aria-label": "Operation" },
-      Object.entries(OPERATION_LABEL).map(([value, label]) => el("option", { value }, label)));
-    const stageSel = el("select", { class: "up-text", "aria-label": "Where" }, [
-      el("option", { value: "hub" }, "Hub"), el("option", { value: "site" }, "Site"), el("option", { value: "" }, "Not decided"),
-    ]);
+    const select = (label, options) => el("select", { class: "up-text", "aria-label": label },
+      options.map(([value, text]) => el("option", { value }, text)));
+    const typeSel = select("Operation", Object.entries(OPERATION_LABEL));
+    const stageSel = select("Where", [["hub", "Hub"], ["site", "Site"], ["", "Not decided"]]);
+    const faceSel = select("Face", [["", "Any face"], ["left", "Left face"], ["right", "Right face"]]);
+    const sizeSel = select("Module size", [["", "Any size"], ["S", "S module"], ["M", "M module"], ["L", "L module"]]);
+    const interiorSel = select("Interior", [["", "Any interior"], ...PLANNER_INTERIORS.map((name, code) => [String(code), `${code} ${name}`])]);
+    const drawingSel = select("Drawing", [["", "No drawing"]]);
     const instruction = el("input", { class: "up-text", type: "text", maxlength: "2000", "aria-label": "Instruction",
-      placeholder: "e.g. Drill the customer's holes, Ø5 mm, 12 mm deep" });
+      placeholder: "e.g. Drill 4 runner holes Ø5×12 for the lower drawer pair" });
     const addBtn = el("button", { class: "btn btn-sm", type: "button" }, "Add operation");
+    let drawingName = new Map();
     const call = async (action, payload) => {
       note.textContent = "";
-      try { const r = await API.post(token, action, { component_id: componentId, ...payload }); render(r.operations || []); }
-      catch (ex) { note.textContent = ex.message; }
+      try { const r = await API.post(token, action, { component_id: componentId, ...payload }); render(r.operations || []); return true; }
+      catch (ex) { note.textContent = ex.message; return false; }
     };
     function render(ops) {
       list.replaceChildren(...ops.map((op, i) => el("li", { style: "margin:0.2rem 0" }, [
         el("strong", {}, OPERATION_LABEL[op.operation_type] || op.operation_type),
-        ` · ${op.stage === "hub" ? "Hub" : op.stage === "site" ? "Site" : "where not decided"} · `,
-        op.instruction_text, " ",
+        ` · ${op.stage === "hub" ? "Hub" : op.stage === "site" ? "Site" : "where not decided"} · ${conditionText(op.variant_condition)} · `,
+        op.instruction_text,
+        op.drawing_id ? ` · ${drawingName.get(op.drawing_id) || "drawing"}` : "", " ",
         i > 0 ? el("button", { class: "btn btn-sm btn-link", type: "button", "aria-label": "Move up",
           onclick: () => call("moveComponentOperation", { id: op.id, direction: "up" }) }, "↑") : null,
         el("button", { class: "btn btn-sm btn-link", type: "button", "aria-label": `Remove ${OPERATION_LABEL[op.operation_type] || op.operation_type}`,
           onclick: () => { if (confirm("Remove this operation?")) call("deleteComponentOperation", { id: op.id }); } }, "Remove"),
       ])));
-      if (!ops.length) list.replaceChildren(el("li", { style: "list-style:none;margin-left:-1.2rem;color:var(--muted,#8b93a1)" }, "None. Add one when this is drilled, routed or otherwise worked on."));
+      if (!ops.length) list.replaceChildren(el("li", { style: "list-style:none;margin-left:-1.2rem;color:var(--muted,#8b93a1)" }, "None. Add one for holes or milling the hub adds to the supplier's part."));
     }
     addBtn.onclick = async () => {
       if (!instruction.value.trim()) { note.textContent = "Write what to do."; instruction.focus(); return; }
       addBtn.disabled = true;
-      await call("saveComponentOperation", { operation_type: typeSel.value, stage: stageSel.value || null, instruction_text: instruction.value });
-      instruction.value = ""; addBtn.disabled = false;
+      const saved = await call("saveComponentOperation", {
+        operation_type: typeSel.value, stage: stageSel.value || null, instruction_text: instruction.value,
+        condition: { face: faceSel.value || null, size: sizeSel.value || null, interior: interiorSel.value === "" ? null : Number(interiorSel.value) },
+        drawing_id: drawingSel.value || null,
+      });
+      if (saved) instruction.value = "";
+      addBtn.disabled = false;
     };
     row.replaceChildren(
       el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em" }, "Operations"),
       el("span", { style: "display:block;font-size:0.75rem;color:var(--muted,#8b93a1)" },
-        "What we do to it, per customer order. Order Operations runs the Hub ones with the positions from the planner."),
+        "Holes or milling the hub adds, and for which module next to which face. Order Operations runs the Hub ones per customer order."),
       list,
-      el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.4rem" }, [typeSel, stageSel, instruction, addBtn]),
+      el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.4rem" }, [typeSel, stageSel, faceSel, sizeSel, interiorSel, drawingSel, instruction, addBtn]),
       note,
     );
     API.post(token, "listComponentOperations", { component_id: componentId })
-      .then((r) => render(r.operations || []))
+      .then((r) => {
+        drawingName = new Map((r.drawings || []).map((d) => [d.id, `${d.drawing_number}${d.revision ? ` rev ${d.revision}` : ""}`]));
+        drawingSel.replaceChildren(el("option", { value: "" }, "No drawing"),
+          ...(r.drawings || []).map((d) => el("option", { value: d.id }, `${d.drawing_number} ${d.title}`)));
+        render(r.operations || []);
+      })
       .catch(() => { row.style.display = "none"; /* the card works without it */ });
     return row;
   }

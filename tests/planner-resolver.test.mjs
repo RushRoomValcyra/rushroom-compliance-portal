@@ -178,10 +178,23 @@ test("v2 keeps a stocked pre-assembly whole: one pick line from the shelf", () =
   assert.equal(result.status, "resolved");
 });
 
+test("v2 carries the operations of the parts inside a stocked pre-assembly", () => {
+  const panelDrill = { ...drill, pim_component_id: "door-panel", part_number: "RR-D", component_name: "Door panel", condition: { face: "left", size: "L", interior: 1 } };
+  const result = resolvePlannerGraph({
+    ...doorFixture, contractVersion: 2, preAssemblyIds: new Set(["door-prepared"]),
+    operationsByComponent: new Map([["door-panel", [panelDrill]]]),
+  });
+  const root = result.assembly_tree[0].root;
+  assert.equal(root.pre_assembly, true);
+  assert.deepEqual(root.operations, [panelDrill], "the panel inside is still drilled for the order");
+});
+
 test("the resolver action answers v1 and v2 and loads operations only for v2", () => {
   const api = read("supabase/functions/portal-api/index.ts");
   assert.ok(api.includes("![1, 2].includes(body.contract_version)"), "resolver must accept contract_version 1 and 2");
   assert.ok(/if \(contractVersion === 2\) \{[\s\S]*?preAssemblyEligibility[\s\S]*?component_routing_steps[\s\S]*?\.is\("family_id", null\)/.test(api),
     "v2 must use the pre-assembly eligibility and the component's own operations");
   assert.ok(api.includes("contractVersion, preAssemblyIds, operationsByComponent"), "v2 inputs must reach the resolver core");
+  assert.ok(api.includes("condition: op.variant_condition ?? null") && api.includes("drawing: op.drawing_id ?"), "v2 operations carry their condition and drawing");
+  assert.ok(!/drawings[^\n]*storage_path|storage_path[^\n]*operationDrawings/.test(api), "the resolver never sends a storage path");
 });

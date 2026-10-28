@@ -5,13 +5,24 @@
 // else: each tree node carries the operations defined on its component, and a
 // stocked pre-assembly (preAssemblyIds, the same eligibility as
 // listStockedAssemblies) is not expanded, because it is taken from the shelf
-// as one unit. v1 answers stay exactly as before.
+// as one unit; it carries the operations of every part inside it, since a side
+// panel taken from the shelf as its Prepared panel is still drilled for the
+// order. Each operation names the part it is done on. v1 answers stay exactly
+// as before.
 export function resolvePlannerGraph({ requirements, mappings, components, edges, maxDepth, maxExpansions, contractVersion = 1, preAssemblyIds = new Set(), operationsByComponent = new Map() }) {
   const v2 = contractVersion === 2;
   const mappingBySource = new Map(mappings.map((row) => [`${row.source_type}:${row.source_key}`, row]));
   const componentById = new Map(components.map((row) => [row.id, row]));
   const children = new Map();
   for (const edge of edges) children.set(edge.parent_id, [...(children.get(edge.parent_id) || []), edge]);
+  const operationsWithin = (componentId, seen = new Set()) => {
+    if (seen.has(componentId)) return [];
+    seen.add(componentId);
+    return [
+      ...(operationsByComponent.get(componentId) || []),
+      ...(children.get(componentId) || []).flatMap((edge) => operationsWithin(edge.child_id, seen)),
+    ];
+  };
   const unresolvedByIdentity = new Map();
   const block = (source, quantity, reason) => {
     const key = `${source.source_type}:${source.source_key}`;
@@ -50,6 +61,7 @@ export function resolvePlannerGraph({ requirements, mappings, components, edges,
       if (v2) node.operations = operationsByComponent.get(componentId) || [];
       if (v2 && preAssemblyIds.has(componentId)) {
         node.pre_assembly = true;
+        node.operations = operationsWithin(componentId);
         leaves.set(componentId, (leaves.get(componentId) || 0) + quantity); return node;
       }
       // phantom_assembly (Kit) is a pick group — stop here so it appears as one

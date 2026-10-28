@@ -78,6 +78,11 @@ organization and requires the Edge Function environment variable named
 caller sends it as standard `Authorization: Bearer <key>`; PIM compares it in
 constant time. An unset key returns `503`; an invalid key returns `401`.
 
+Developers' own machines use a second key, `OPERATIONS_PIM_RESOLVER_LOCAL_KEY`
+(at least 32 characters), so staging and production keep theirs and either can
+be revoked alone (2026-10-28). Every service action checks both through one
+helper, `operationsServiceRefusal`, which compares every configured key.
+
 The complete request body is:
 
 ```json

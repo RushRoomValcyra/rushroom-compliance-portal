@@ -198,3 +198,16 @@ test("the resolver action answers v1 and v2 and loads operations only for v2", (
   assert.ok(api.includes("condition: op.variant_condition ?? null") && api.includes("drawing: op.drawing_id ?"), "v2 operations carry their condition and drawing");
   assert.ok(!/drawings[^\n]*storage_path|storage_path[^\n]*operationDrawings/.test(api), "the resolver never sends a storage path");
 });
+
+// Order Operations' service key (2026-10-28): staging/production and local
+// development have separate keys, each revocable alone, checked in one place.
+test("every service action checks the key through one helper that accepts the service or the local key", () => {
+  const api = read("supabase/functions/portal-api/index.ts");
+  const helper = api.slice(api.indexOf("function operationsServiceRefusal("), api.indexOf("function operationsServiceRefusal(") + 900);
+  for (const fragment of ['Deno.env.get("OPERATIONS_PIM_RESOLVER_KEY")', 'Deno.env.get("OPERATIONS_PIM_RESOLVER_LOCAL_KEY")',
+    "localKey.length >= MIN_LOCAL_KEY_LENGTH", 'req.headers.get("authorization")', "for (const key of keys) accepted = constantTimeSecretEqual(suppliedKey, key) || accepted"]) {
+    assert.ok(helper.includes(fragment), `the key check lacks ${fragment}`);
+  }
+  assert.equal((api.match(/operationsServiceRefusal\(req, /g) || []).length, 3, "resolvePlannerBom, lookupArticle and the pre-assembly actions use it");
+  assert.equal((api.match(/Deno\.env\.get\("OPERATIONS_PIM_RESOLVER_KEY"\)/g) || []).length, 1, "no action reads the key on its own");
+});

@@ -6954,90 +6954,21 @@
     return row;
   }
 
-  // Operations: what we do to this component, where, and when (migration 0052).
-  // Order Operations runs the Hub ones for each customer order whose settings
-  // match the condition (its item 0039). Most holes come predrilled from the
-  // supplier; these are the ones the hub adds.
-  const OPERATION_LABEL = { drill: "Drill", route: "Route / mill", insert: "Insert", attach: "Attach", cut: "Cut", surface_treat: "Surface treat", inspect: "Inspect", other: "Other" };
-  // The planner's interior codes (valcyra-site spec/interior-variants.json).
-  const PLANNER_INTERIORS = ["Fullhäng", "Lådor + häng", "Hyllor", "BeautyBox", "Hyllor + häng", "Dubbelhäng", "Lådor + hyllor", "Dubbelhäng 50/50"];
-  // What a module holds: the planner's item kinds (valcyra-site partKeys.js).
-  const MODULE_ITEMS = { drawer_set: "Drawers", shelf: "Shelves", hanger: "Clothes rail", led_ramp: "LED strip", beautybox: "BeautyBox", removable_panel_back_full: "Back panel" };
-  const conditionText = (c) => {
-    if (!c) return "always";
-    const parts = [];
-    if (c.face) parts.push(`${c.face} face`);
-    if (c.size) parts.push(`${c.size} module`);
-    if (c.interior !== undefined) parts.push(PLANNER_INTERIORS[c.interior] ? `${PLANNER_INTERIORS[c.interior]} (${c.interior})` : `interior ${c.interior}`);
-    if (c.contains) parts.push(`module with ${(MODULE_ITEMS[c.contains] || c.contains).toLowerCase()}`);
-    return `when ${parts.join(", ")}`;
-  };
-  function operationsRow(componentId, token) {
-    const row = el("div", {
+  // Operations: the side panel work done for each customer order is set per
+  // interior in Order Operations (its item 0039; decision 0012 there, amended
+  // 2026-10-28), not on the part. This section points there; the part's
+  // drawings stay in its Drawings tab.
+  const ORDER_SURGERY_RULES_URL = "https://valcyra-order-operations-staging.netlify.app/warehouse/order-surgery/rules";
+  function operationsRow() {
+    return el("div", {
       class: "operations-row",
       style: "margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border,#e2e8f0)",
-    });
-    const note = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.3rem 0 0" }, "");
-    const list = el("ol", { style: "margin:0.3rem 0 0;padding-left:1.2rem;font-size:0.8125rem" });
-    const select = (label, options) => el("select", { class: "up-text", "aria-label": label },
-      options.map(([value, text]) => el("option", { value }, text)));
-    const typeSel = select("Operation", Object.entries(OPERATION_LABEL));
-    const stageSel = select("Where", [["hub", "Hub"], ["site", "Site"], ["", "Not decided"]]);
-    const faceSel = select("Face", [["", "Any face"], ["left", "Left face"], ["right", "Right face"]]);
-    const sizeSel = select("Module size", [["", "Any size"], ["S", "S module"], ["M", "M module"], ["L", "L module"]]);
-    const interiorSel = select("Interior", [["", "Any interior"], ...PLANNER_INTERIORS.map((name, code) => [String(code), `${code} ${name}`])]);
-    const containsSel = select("Module has", [["", "Module has anything"], ...Object.entries(MODULE_ITEMS).map(([kind, name]) => [kind, `Has ${name.toLowerCase()}`])]);
-    const drawingSel = select("Drawing", [["", "No drawing"]]);
-    const instruction = el("input", { class: "up-text", type: "text", maxlength: "2000", "aria-label": "Instruction",
-      placeholder: "e.g. Drill 4 runner holes Ø5×12 for the lower drawer pair" });
-    const addBtn = el("button", { class: "btn btn-sm", type: "button" }, "Add operation");
-    let drawingName = new Map();
-    const call = async (action, payload) => {
-      note.textContent = "";
-      try { const r = await API.post(token, action, { component_id: componentId, ...payload }); render(r.operations || []); return true; }
-      catch (ex) { note.textContent = ex.message; return false; }
-    };
-    function render(ops) {
-      list.replaceChildren(...ops.map((op, i) => el("li", { style: "margin:0.2rem 0" }, [
-        el("strong", {}, OPERATION_LABEL[op.operation_type] || op.operation_type),
-        ` · ${op.stage === "hub" ? "Hub" : op.stage === "site" ? "Site" : "where not decided"} · ${conditionText(op.variant_condition)} · `,
-        op.instruction_text,
-        op.drawing_id ? ` · ${drawingName.get(op.drawing_id) || "drawing"}` : "", " ",
-        i > 0 ? el("button", { class: "btn btn-sm btn-link", type: "button", "aria-label": "Move up",
-          onclick: () => call("moveComponentOperation", { id: op.id, direction: "up" }) }, "↑") : null,
-        el("button", { class: "btn btn-sm btn-link", type: "button", "aria-label": `Remove ${OPERATION_LABEL[op.operation_type] || op.operation_type}`,
-          onclick: () => { if (confirm("Remove this operation?")) call("deleteComponentOperation", { id: op.id }); } }, "Remove"),
-      ])));
-      if (!ops.length) list.replaceChildren(el("li", { style: "list-style:none;margin-left:-1.2rem;color:var(--muted,#8b93a1)" }, "None. Add one for holes or milling the hub adds to the supplier's part."));
-    }
-    addBtn.onclick = async () => {
-      if (!instruction.value.trim()) { note.textContent = "Write what to do."; instruction.focus(); return; }
-      addBtn.disabled = true;
-      const saved = await call("saveComponentOperation", {
-        operation_type: typeSel.value, stage: stageSel.value || null, instruction_text: instruction.value,
-        condition: { face: faceSel.value || null, size: sizeSel.value || null, interior: interiorSel.value === "" ? null : Number(interiorSel.value), contains: containsSel.value || null },
-        drawing_id: drawingSel.value || null,
-      });
-      if (saved) instruction.value = "";
-      addBtn.disabled = false;
-    };
-    row.replaceChildren(
+    }, [
       el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em" }, "Operations at the hub and on site"),
-      el("span", { style: "display:block;font-size:0.75rem;color:var(--muted,#8b93a1)" },
-        "Holes or milling the hub adds, and for which module next to which face: say what the module has (drawers, a rail …) rather than its interior, so one rule covers every interior with it. Order Operations runs the Hub ones per customer order."),
-      list,
-      el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.4rem" }, [typeSel, stageSel, faceSel, sizeSel, containsSel, interiorSel, drawingSel, instruction, addBtn]),
-      note,
-    );
-    API.post(token, "listComponentOperations", { component_id: componentId })
-      .then((r) => {
-        drawingName = new Map((r.drawings || []).map((d) => [d.id, `${d.drawing_number}${d.revision ? ` rev ${d.revision}` : ""}`]));
-        drawingSel.replaceChildren(el("option", { value: "" }, "No drawing"),
-          ...(r.drawings || []).map((d) => el("option", { value: d.id }, `${d.drawing_number} ${d.title}`)));
-        render(r.operations || []);
-      })
-      .catch(() => { row.style.display = "none"; /* the card works without it */ });
-    return row;
+      el("p", { style: "margin:0.3rem 0;font-size:0.8125rem" },
+        "The extra holes and milling a side panel needs for a customer order are set per interior in Order Operations, not on the part. Drawings and templates they refer to stay in this part's Drawings tab."),
+      el("a", { href: ORDER_SURGERY_RULES_URL, target: "_blank", rel: "noopener", style: "font-size:0.8125rem;font-weight:600" }, "See the rules in Order Operations"),
+    ]);
   }
 
   async function openComponentDetail(componentId, token, panel, nodeData, role) {
@@ -8850,9 +8781,9 @@
         tabPanels["manufacturing"] = el("div", { style: "display:none" }, [
           el("div", { style: "padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
             el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" },
-              "How this is made and worked on at the hub. Order Operations reads it: pre-assemblies are built ahead of orders, and Hub operations run for each customer order."),
+              "How this is made and worked on at the hub. Order Operations reads it: pre-assemblies are built ahead of orders. The side panel work for each customer order is set in Order Operations."),
             preAssemblyRow(componentId, token),
-            operationsRow(componentId, token),
+            operationsRow(),
           ]),
         ]);
       }

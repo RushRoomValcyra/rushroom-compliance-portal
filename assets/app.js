@@ -6943,10 +6943,13 @@
         }
         box.disabled = false;
       };
-      row.replaceChildren(box, el("label", { for: box.id, style: "flex:1;font-size:0.8125rem" }, [
-        "Pre-assembly: built in the hub ahead of orders", note,
-      ]));
-      row.style.display = "flex";
+      row.replaceChildren(
+        el("span", { style: "display:block;font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.3rem" }, "Built ahead of orders"),
+        el("div", { style: "display:flex;align-items:flex-start;gap:0.5rem" }, [
+          box, el("label", { for: box.id, style: "flex:1;font-size:0.8125rem" }, ["Pre-assembly: built in the hub ahead of orders", note]),
+        ]),
+      );
+      row.style.display = "block";
     }).catch(() => { /* the card works without it */ });
     return row;
   }
@@ -7015,7 +7018,7 @@
       addBtn.disabled = false;
     };
     row.replaceChildren(
-      el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em" }, "Operations"),
+      el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em" }, "Operations at the hub and on site"),
       el("span", { style: "display:block;font-size:0.75rem;color:var(--muted,#8b93a1)" },
         "Holes or milling the hub adds, and for which module next to which face. Order Operations runs the Hub ones per customer order."),
       list,

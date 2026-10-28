@@ -53,4 +53,5 @@ test("the card's Manufacturing tab holds pre-assembly and operations, after Draw
   assert.ok(panel.includes("preAssemblyRow(componentId, token)") && panel.includes("operationsRow(componentId, token)"), "both live in the Manufacturing tab");
   const properties = app.slice(app.indexOf("propertiesSection = el("), app.indexOf("propertiesSection = el(") + 2500);
   assert.ok(!properties.includes("preAssemblyRow(") && !properties.includes("operationsRow("), "Overview no longer holds them");
+  assert.ok(app.includes('"Built ahead of orders"') && app.includes('"Operations at the hub and on site"'), "the tab has its two headings");
 });

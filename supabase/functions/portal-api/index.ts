@@ -5814,6 +5814,178 @@ Deno.serve(async (req) => {
   // part card's Manufacturing tab), and work orders run in Order Operations.
   // The old actions answer 410 with where the work lives now; their tables are
   // dropped in a later migration once nothing reads them.
+  // --- Surgery templates management (PROP-0059, Rushroom role) ---------------
+  if (["listSurgeryTemplatesPage", "createSurgeryTemplate", "updateSurgeryTemplate",
+       "addSurgeryTemplateFace", "retireSurgeryTemplateFace", "listAllSurgeryRules"].includes(action)) {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+
+    if (action === "listSurgeryTemplatesPage") {
+      const [tplRes, faceRes] = await Promise.all([
+        tdb("surgery_templates").select("id, code, name, drawing_id, status").order("name"),
+        tdb("surgery_template_faces").select("id, template_id, face_code, label, rule_id, status").order("label"),
+      ]);
+      if (tplRes.error || faceRes.error) return json({ error: "Could not load surgery templates" }, 502);
+      const drawingIds = [...new Set((tplRes.data || []).map((t: any) => t.drawing_id).filter(Boolean))];
+      const drawingMap = new Map<string, { id: string; number: string; revision: string | null }>();
+      if (drawingIds.length) {
+        const { data: dwgs, error: dwgErr } = await tdb("drawings")
+          .select("id, drawing_number, current_revision_id").in("id", drawingIds);
+        if (dwgErr) return json({ error: "Could not load drawing data" }, 502);
+        const revIds = (dwgs || []).map((d: any) => d.current_revision_id).filter(Boolean);
+        const revMap = new Map<string, string>();
+        if (revIds.length) {
+          const { data: revs, error: revErr } = await tdb("drawing_revisions").select("id, revision").in("id", revIds);
+          if (revErr) return json({ error: "Could not load drawing revisions" }, 502);
+          for (const r of revs || []) revMap.set(r.id, r.revision);
+        }
+        for (const d of dwgs || []) drawingMap.set(d.id, { id: d.id, number: d.drawing_number, revision: d.current_revision_id ? revMap.get(d.current_revision_id) ?? null : null });
+      }
+      const facesByTemplate = new Map<string, any[]>();
+      for (const f of faceRes.data || []) {
+        const list = facesByTemplate.get(f.template_id) || [];
+        list.push({ id: f.id, face_code: f.face_code, label: f.label, rule_id: f.rule_id, status: f.status });
+        facesByTemplate.set(f.template_id, list);
+      }
+      const templates = (tplRes.data || []).map((t: any) => ({
+        id: t.id, code: t.code, name: t.name, status: t.status,
+        drawing: t.drawing_id ? drawingMap.get(t.drawing_id) ?? null : null,
+        faces: facesByTemplate.get(t.id) || [],
+      }));
+      return json({ templates });
+    }
+
+    if (action === "createSurgeryTemplate") {
+      const code = String(body.code || "").trim();
+      const name = String(body.name || "").trim();
+      if (!code || code.length > 40) return json({ error: "code must be 1–40 characters" }, 400);
+      if (!name || name.length > 200) return json({ error: "name must be 1–200 characters" }, 400);
+      const { data, error } = await tdb("surgery_templates").insert({ code, name, created_by: session?.uid ?? null }).select("id, code, name, status").single();
+      if (error) return json({ error: error.code === "23505" ? `A template with code "${code}" already exists` : error.message }, 409);
+      return json(data);
+    }
+
+    if (action === "updateSurgeryTemplate") {
+      if (!body.id) return json({ error: "id required" }, 400);
+      const patch: Record<string, unknown> = {};
+      if (body.name !== undefined) {
+        const name = String(body.name || "").trim();
+        if (!name || name.length > 200) return json({ error: "name must be 1–200 characters" }, 400);
+        patch.name = name;
+      }
+      if (body.drawing_id !== undefined) patch.drawing_id = body.drawing_id || null;
+      if (body.status !== undefined) {
+        if (!["active", "retired"].includes(body.status)) return json({ error: "status must be active or retired" }, 400);
+        patch.status = body.status;
+      }
+      if (!Object.keys(patch).length) return json({ error: "Nothing to update" }, 400);
+      const { error } = await tdb("surgery_templates").update(patch).eq("id", body.id);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
+    if (action === "addSurgeryTemplateFace") {
+      const template_id = String(body.template_id || "").trim();
+      const face_code = String(body.face_code || "").trim();
+      const label = String(body.label || "").trim();
+      const rule_id = String(body.rule_id || "").trim();
+      if (!template_id) return json({ error: "template_id required" }, 400);
+      if (!face_code || face_code.length > 40) return json({ error: "face_code must be 1–40 characters" }, 400);
+      if (!label || label.length > 200) return json({ error: "label must be 1–200 characters" }, 400);
+      if (!rule_id || rule_id.length > 200) return json({ error: "rule_id must be 1–200 characters" }, 400);
+      const { data, error } = await tdb("surgery_template_faces")
+        .insert({ template_id, face_code, label, rule_id }).select("id").single();
+      if (error) return json({ error: error.code === "23505" ? (error.message.includes("unique_active_rule") ? `Rule "${rule_id}" already has an active face` : `Face code "${face_code}" is already in use`) : error.message }, 409);
+      return json({ id: data.id });
+    }
+
+    if (action === "retireSurgeryTemplateFace") {
+      if (!body.id) return json({ error: "id required" }, 400);
+      const { error } = await tdb("surgery_template_faces").update({ status: "retired" }).eq("id", body.id);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
+    if (action === "listAllSurgeryRules") {
+      const base = (Deno.env.get("ORDER_OPERATIONS_URL") ?? "").replace(/\/+$/, "");
+      const key = Deno.env.get("ORDER_OPERATIONS_SURGERY_KEY") ?? "";
+      if (!base || !key) return json({ rules: [], warning: "Order Operations is not connected" });
+      try {
+        const res = await fetch(`${base}/api/v1/surgery-rules`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(5000) });
+        if (!res.ok) throw new Error(`Order Operations answered ${res.status}`);
+        const data = await res.json();
+        return json({ rules: Array.isArray(data) ? data : (data.rules ?? []) });
+      } catch (e: any) {
+        console.error("listAllSurgeryRules", e);
+        return json({ rules: [], warning: "Order Operations could not be reached" });
+      }
+    }
+  }
+
+  // --- Surgery template register (PROP-0059, service authentication only) ---
+  // Order Operations reads templates + faces to know which physical template is
+  // required for each surgery step. The Gateway owns the register; OO never
+  // edits it. Retired templates / faces are excluded so callers only see what
+  // is currently in use on the shop floor.
+  if (action === "listSurgeryTemplates") {
+    const refusal = operationsServiceRefusal(req, "Surgery template register is not configured");
+    if (refusal) return refusal;
+    const allowedKeys = new Set(["action", "contract_version"]);
+    if (Object.keys(body).some((k) => !allowedKeys.has(k))) return json({ error: "listSurgeryTemplates accepts only contract_version" }, 400);
+    if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
+
+    const regTdb = makeTdb(RUSHROOM_ORG_ID);
+    const [tplRes, faceRes] = await Promise.all([
+      regTdb("surgery_templates")
+        .select("id, code, name, drawing_id, status")
+        .eq("status", "active"),
+      regTdb("surgery_template_faces")
+        .select("id, template_id, face_code, label, rule_id, status")
+        .eq("status", "active"),
+    ]);
+    if (tplRes.error || faceRes.error) return json({ error: "Surgery template register is unavailable" }, 502);
+
+    // Attach drawing number + revision from the denormalised pointer.
+    const drawingIds = [...new Set((tplRes.data || []).map((t: any) => t.drawing_id).filter(Boolean))];
+    const drawingMap = new Map<string, { number: string; revision: string | null }>();
+    if (drawingIds.length) {
+      const { data: dwgs, error: dwgErr } = await regTdb("drawings")
+        .select("id, drawing_number, current_revision_id")
+        .in("id", drawingIds);
+      if (dwgErr) return json({ error: "Surgery drawing data is unavailable" }, 502);
+      const revIds = (dwgs || []).map((d: any) => d.current_revision_id).filter(Boolean);
+      const revMap = new Map<string, string>();
+      if (revIds.length) {
+        const { data: revs, error: revErr } = await regTdb("drawing_revisions")
+          .select("id, revision")
+          .in("id", revIds);
+        if (revErr) return json({ error: "Surgery drawing revisions are unavailable" }, 502);
+        for (const r of revs || []) revMap.set(r.id, r.revision);
+      }
+      for (const d of dwgs || []) {
+        drawingMap.set(d.id, {
+          number: d.drawing_number,
+          revision: d.current_revision_id ? revMap.get(d.current_revision_id) ?? null : null,
+        });
+      }
+    }
+
+    const facesByTemplate = new Map<string, any[]>();
+    for (const f of faceRes.data || []) {
+      const list = facesByTemplate.get(f.template_id) || [];
+      list.push({ face_code: f.face_code, label: f.label, rule_id: f.rule_id });
+      facesByTemplate.set(f.template_id, list);
+    }
+
+    const templates = (tplRes.data || []).map((t: any) => ({
+      code: t.code,
+      name: t.name,
+      drawing: t.drawing_id ? drawingMap.get(t.drawing_id) ?? null : null,
+      faces: facesByTemplate.get(t.id) || [],
+    }));
+
+    return json({ contract_version: 1, templates });
+  }
+
   const RETIRED_ACTIONS: Record<string, string> = {
     listFamilyRoutingSteps: "Operations are now set on each part's Manufacturing tab.",
     listFamilyRoutingOverview: "Operations are now set on each part's Manufacturing tab.",

@@ -5904,6 +5904,14 @@ Deno.serve(async (req) => {
       if (!Object.keys(patch).length) return json({ error: "Nothing to update" }, 400);
       const { error } = await tdb("surgery_templates").update(patch).eq("id", body.id);
       if (error) return json({ error: error.message }, 500);
+      // Cascade: retiring a template retires all its active faces so they no longer
+      // appear as "covered elsewhere" in the Add face modal.
+      if (patch.status === "retired") {
+        await tdb("surgery_template_faces")
+          .update({ status: "retired" })
+          .eq("template_id", body.id)
+          .eq("status", "active");
+      }
       return json({ ok: true });
     }
 

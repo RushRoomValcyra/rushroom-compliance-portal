@@ -10369,28 +10369,31 @@
       draw(data.drawings || []);
     }
 
-    // Type filter chips — Engineering (default) / Surgery Templates / All
+    // Type navigation tabs — Engineering (default) / Surgery Templates / All
     // Rendered once outside draw() so they survive repaint() calls.
-    const typeChipBar = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin-bottom:0.5rem" },
-      [
-        { id: "engineering", label: "Engineering" },
-        { id: "surgery_template", label: "Surgery Templates" },
-        { id: "", label: "All types" },
-      ].map((t) =>
-        el("button", {
-          class: `btn btn-sm${state.typeFilter === t.id ? " btn-primary" : ""}`, type: "button",
-          style: "font-size:0.75rem;padding:2px 10px",
-          onclick: () => {
-            if (state.typeFilter === t.id) return;
-            state.typeFilter = t.id;
-            // Re-render the type chips bar in-place so the active chip updates.
-            typeChipBar.querySelectorAll("button").forEach((btn, i) => {
-              const ids = ["engineering", "surgery_template", ""];
-              btn.className = `btn btn-sm${state.typeFilter === ids[i] ? " btn-primary" : ""}`;
-            });
-            draw(_lastAll);
-          },
-        }, t.label)));
+    const TAB_DEFS = [
+      { id: "engineering",      label: "Engineering" },
+      { id: "surgery_template", label: "Surgery Templates" },
+      { id: "",                 label: "All" },
+    ];
+    function tabStyle(active) {
+      return `padding:9px 20px;font-size:0.875rem;font-weight:${active ? "600" : "400"};background:none;border:none;border-bottom:2px solid ${active ? "var(--brand,#2fa564)" : "transparent"};margin-bottom:-2px;cursor:pointer;white-space:nowrap;color:${active ? "var(--brand,#2fa564)" : "var(--text-muted,#888)"};transition:color .15s,border-color .15s`;
+    }
+    const typeChipBar = el("div", {
+      style: "display:flex;gap:0;border-bottom:2px solid var(--border,#e2e8f0);margin-bottom:1.1rem;overflow-x:auto"
+    }, TAB_DEFS.map((t) =>
+      el("button", {
+        type: "button",
+        style: tabStyle(state.typeFilter === t.id),
+        onclick: () => {
+          if (state.typeFilter === t.id) return;
+          state.typeFilter = t.id;
+          typeChipBar.querySelectorAll("button").forEach((btn, i) => {
+            btn.style.cssText = tabStyle(state.typeFilter === TAB_DEFS[i].id);
+          });
+          draw(_lastAll);
+        },
+      }, t.label)));
 
     let _lastAll = []; // held so type chip onclick can re-call draw()
 
@@ -10469,7 +10472,9 @@
           ? "+ New drawing asks which part the drawing is for, then takes the file and reads what it can from the title block. The drawing number and Rev A are assigned for you. Revising a drawing later advances the revision letter of every part it is on, and is recorded in their Change Log."
           : "No drawings have been shared with you yet.");
 
-      mount.replaceChildren(el("div", { class: "card" }, [
+      mount.replaceChildren(
+        typeChipBar,
+        el("div", { class: "card" }, [
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
           el("h3", { style: "margin:0" }, "Drawings"),
           el("span", { class: "muted", style: "font-size:0.8125rem" }, `${visible.length} drawing${visible.length === 1 ? "" : "s"}`),
@@ -10477,7 +10482,6 @@
           role === "rushroom" ? actionBtn("New drawing", "plus", { primary: true, onClick: () => newDrawingModal(role, load) }) : null,
           actionBtn("Refresh", "refresh", { onClick: load }),
         ]),
-        typeChipBar,
         el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips, freeChip]),
         el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
           el("thead", {}, el("tr", {}, [
@@ -10651,8 +10655,8 @@
         : null;
 
       mount.replaceChildren(
+        typeChipBar,
         el("div", { style: "max-width:860px;padding:1rem 0" }, [
-          typeChipBar,
           header,
           rulesNote,
           uncoveredNotice,

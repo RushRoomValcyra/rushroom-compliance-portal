@@ -10950,7 +10950,7 @@
               const onThis    = coveredByThis.has(rId);
               const elsewhere = !onThis && coveredAnywhere.has(rId);
               const suffix    = onThis ? " (already on this template)" : elsewhere ? " (covered elsewhere)" : "";
-              return el("option", { value: rId, disabled: onThis ? "disabled" : null },
+              return el("option", { value: rId, disabled: (onThis || elsewhere) ? "disabled" : null },
                 ruleLabel(r) + suffix);
             })
           : [el("option", { value: "", disabled: "disabled" }, tplRulesWarning || "Order Operations not connected")]),

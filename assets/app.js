@@ -10655,10 +10655,32 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
                 style: "margin-right:4px",
                 onclick: () => tplOpenFaceHistory(t, f) }, "⟳ History"),
               el("button", { class: "btn btn-xs", type: "button",
-                onclick: async () => {
-                  if (!confirm(`Retire face "${f.label}"? Its QR code will stop being valid.`)) return;
+                onclick: async (ev) => {
+                  ev.target.disabled = true;
+                  const confirmed = await new Promise((resolve) => {
+                    const mo = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
+                    const close = (v) => { mo.remove(); resolve(v); };
+                    mo.onclick = (e) => { if (e.target === mo) close(false); };
+                    mo.append(el("div", { style: "background:var(--bg,#fff);border:2px solid #e05454;border-radius:10px;padding:1.5rem;width:min(440px,95vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px #0003" }, [
+                      el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem" }, [
+                        el("span", { style: "font-size:1.25rem;line-height:1" }, "🗑"),
+                        el("h3", { style: "margin:0;font-size:1rem;color:#e05454" }, `Retire face "${f.label}"?`),
+                      ]),
+                      el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.6rem 0.75rem;margin-bottom:0.75rem" }, [
+                        el("div", { style: "font-size:0.8125rem;font-weight:700;color:#e05454;margin-bottom:0.3rem" }, `⚠ QR code ${f.face_code} will stop being valid`),
+                        el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "The rule will be freed and can be assigned to a new template."),
+                      ]),
+                      el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 1.1rem" }, "The full history is preserved."),
+                      el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+                        el("button", { class: "btn btn-sm", type: "button", onclick: () => close(false) }, "Cancel"),
+                        el("button", { type: "button", style: "background:#e05454;color:#fff;border:none;border-radius:6px;padding:0.45rem 1.1rem;font-size:0.875rem;font-weight:700;cursor:pointer;letter-spacing:0.01em", onclick: () => close(true) }, "Retire Face"),
+                      ]),
+                    ]));
+                    document.body.append(mo);
+                  });
+                  if (!confirmed) { ev.target.disabled = false; return; }
                   try { await API.post(token, "retireSurgeryTemplateFace", { id: f.id }); await reloadTemplates(); }
-                  catch (ex) { alert(`Couldn't retire face: ${ex.message}`); }
+                  catch (ex) { ev.target.disabled = false; alert(`Couldn't retire face: ${ex.message}`); }
                 } }, "Retire"),
             ]),
           ])
@@ -10692,10 +10714,34 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             : null,
           t.status === "active"
             ? el("button", { class: "btn btn-xs", type: "button",
-                onclick: async () => {
-                  if (!confirm(`Retire template "${t.name}"?\n\nAll its active faces (QR sticker assignments) will also be retired, freeing those rules to be assigned to a new template. The full history is preserved.`)) return;
+                onclick: async (ev) => {
+                  ev.target.disabled = true;
+                  const confirmed = await new Promise((resolve) => {
+                    const mo = el("div", { "data-modal-overlay": "", class: "modal-scrim" });
+                    const close = (v) => { mo.remove(); resolve(v); };
+                    mo.onclick = (e) => { if (e.target === mo) close(false); };
+                    const rows = [
+                      el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem" }, [
+                        el("span", { style: "font-size:1.25rem;line-height:1" }, "🗑"),
+                        el("h3", { style: "margin:0;font-size:1rem;color:#e05454" }, `Retire template "${t.name}"?`),
+                      ]),
+                    ];
+                    if (activeFaces.length) rows.push(el("div", { style: "background:#e0545415;border:1px solid #e0545450;border-radius:6px;padding:0.6rem 0.75rem;margin-bottom:0.75rem" }, [
+                      el("div", { style: "font-size:0.8125rem;font-weight:700;color:#e05454;margin-bottom:0.3rem" }, `⚠ ${activeFaces.length} active QR sticker assignment${activeFaces.length > 1 ? "s" : ""} will also be retired:`),
+                      el("ul", { style: "margin:0.2rem 0 0.3rem;padding-left:1.2rem;font-size:0.8125rem" }, activeFaces.map((f) => el("li", {}, `${f.face_code} — ${f.label}`))),
+                      el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "Those rules will be freed and can be assigned to a new template."),
+                    ]));
+                    rows.push(el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 1.1rem" }, "The full history is preserved."));
+                    rows.push(el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+                      el("button", { class: "btn btn-sm", type: "button", onclick: () => close(false) }, "Cancel"),
+                      el("button", { type: "button", style: "background:#e05454;color:#fff;border:none;border-radius:6px;padding:0.45rem 1.1rem;font-size:0.875rem;font-weight:700;cursor:pointer;letter-spacing:0.01em", onclick: () => close(true) }, "Retire Template"),
+                    ]));
+                    mo.append(el("div", { style: "background:var(--bg,#fff);border:2px solid #e05454;border-radius:10px;padding:1.5rem;width:min(440px,95vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px #0003" }, rows));
+                    document.body.append(mo);
+                  });
+                  if (!confirmed) { ev.target.disabled = false; return; }
                   try { await API.post(token, "updateSurgeryTemplate", { id: t.id, status: "retired" }); await reloadTemplates(); }
-                  catch (ex) { alert(`Couldn't retire: ${ex.message}`); }
+                  catch (ex) { ev.target.disabled = false; alert(`Couldn't retire: ${ex.message}`); }
                 } }, "Retire")
             : el("button", { class: "btn btn-xs", type: "button",
                 onclick: async () => {

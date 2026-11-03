@@ -10666,6 +10666,8 @@
       const uploaded = { path: null, fileName: null };
 
       const titleInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
+      const codeInp  = el("input", { class: "up-text", type: "text", placeholder: "e.g. DH-5050 or TPL-001", maxlength: "20",
+        style: "text-transform:uppercase" });
       const status   = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
 
       const zone = uploadZone(role, "documents", {
@@ -10681,7 +10683,9 @@
 
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = titleInp.value.trim();
+        const code  = codeInp.value.trim().toUpperCase();
         if (!title)         { status.textContent = "Drawing title is required."; return; }
+        if (!code)          { status.textContent = "Template code is required — this is the short identifier on the QR sticker."; return; }
         if (!uploaded.path) { status.textContent = "Upload the CAD drawing file first."; return; }
         ev.target.disabled = true; status.textContent = "Creating drawing…";
         try {
@@ -10690,7 +10694,7 @@
             drawing_type: "surgery_template",
           });
           status.textContent = "Creating template…";
-          await API.post(token, "createSurgeryTemplate", { name: title, drawing_id: dwgRes.id });
+          await API.post(token, "createSurgeryTemplate", { code, name: title, drawing_id: dwgRes.id });
           close(); await reloadTemplates();
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Create");
@@ -10699,6 +10703,13 @@
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
           "A surgery template is a controlled CAD drawing. It gets a drawing number and revision letter assigned automatically — that number also becomes its template code on the QR label."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing title"), titleInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [
+          el("div", { class: "form-label" }, [
+            "Template code",
+            el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(short — printed on QR sticker, can never change)"),
+          ]),
+          codeInp,
+        ]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), zone.el]),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
@@ -10852,22 +10863,22 @@
         // Mirror face.
         const mirror = findMirror(r);
         if (mirror) {
-          const mirrorId     = mirror.id || mirror.rule_id;
-          const alreadyHere  = coveredByThis.has(mirrorId);
-          const mirrorSuffix = mirror.face === "left" ? "-L" : mirror.face === "right" ? "-R" : "";
+          const mirrorId        = mirror.id || mirror.rule_id;
+          const alreadyHere     = coveredByThis.has(mirrorId);
+          const alreadyElsewhere = !alreadyHere && coveredAnywhere.has(mirrorId);
+          const alreadyCovered  = alreadyHere || alreadyElsewhere;
+          const mirrorSuffix    = mirror.face === "left" ? "-L" : mirror.face === "right" ? "-R" : "";
           mirrorCodeInp.value  = `${t.code}${mirrorSuffix}`;
           mirrorLabelInp.value = ruleLabel(mirror);
           mirrorSection.style.display = "";
-          mirrorSection.querySelector(".mirror-fields").style.display = "";
-          mirrorChk.checked  = !alreadyHere;
-          mirrorChk.disabled = alreadyHere;
-          if (alreadyHere) {
-            mirrorSection.querySelector("label").lastChild.textContent =
-              " Mirrored face (already on this template)";
-          } else {
-            mirrorSection.querySelector("label").lastChild.textContent =
-              " Also add mirrored face (same drawing, other side)";
-          }
+          mirrorChk.checked  = !alreadyCovered;
+          mirrorChk.disabled = alreadyCovered;
+          const noteText = alreadyHere
+            ? " Mirrored face already on this template"
+            : alreadyElsewhere
+              ? " Mirrored face already covered on another template"
+              : " Also add mirrored face (same drawing, other side)";
+          mirrorSection.querySelector("label").lastChild.textContent = noteText;
           mirrorSection.querySelector(".mirror-fields").style.display = mirrorChk.checked ? "" : "none";
         } else {
           mirrorSection.style.display = "none";
@@ -10894,6 +10905,13 @@
         const mirror = r ? findMirror(r) : null;
 
         ev.target.disabled = true; status.textContent = "Saving…";
+        // Humanise raw rule-ID errors the backend may return.
+        function friendlyErr(msg) {
+          return msg.replace(/Rule "([^"]+)" already has an active face/, (_, rId) => {
+            const found = tplAllRules.find((r) => (r.id || r.rule_id) === rId);
+            return `"${found ? ruleLabel(found) : rId}" already has an active face`;
+          });
+        }
         try {
           await API.post(token, "addSurgeryTemplateFace", { template_id: t.id, face_code, label, rule_id });
           if (addMirror && mirror) {
@@ -10905,7 +10923,7 @@
             });
           }
           close(); await reloadTemplates();
-        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+        } catch (ex) { status.textContent = friendlyErr(ex.message); ev.target.disabled = false; }
       } }, "Add face");
 
       const close = openModal(`Add face — ${t.name}`, el("div", {}, [

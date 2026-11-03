@@ -10581,13 +10581,17 @@
             el("td", { style: "padding:3px 8px;font-size:0.8125rem;font-family:monospace" }, f.face_code),
             el("td", { style: "padding:3px 8px;font-size:0.8125rem" }, f.label),
             el("td", { style: "padding:3px 8px;font-size:0.8125rem;color:#555" }, tplRuleLabel(f.rule_id)),
-            el("td", { style: "padding:3px 8px" },
+            el("td", { style: "padding:3px 8px;white-space:nowrap" }, [
+              el("button", { class: "btn btn-xs", type: "button", title: "View history",
+                style: "margin-right:4px",
+                onclick: () => tplOpenFaceHistory(t, f) }, "⟳ History"),
               el("button", { class: "btn btn-xs", type: "button",
                 onclick: async () => {
                   if (!confirm(`Retire face "${f.label}"? Its QR code will stop being valid.`)) return;
                   try { await API.post(token, "retireSurgeryTemplateFace", { id: f.id }); await reloadTemplates(); }
                   catch (ex) { alert(`Couldn't retire face: ${ex.message}`); }
-                } }, "Retire")),
+                } }, "Retire"),
+            ]),
           ])
         );
 
@@ -10660,6 +10664,85 @@
       );
     }
 
+    // --- Face event history timeline ---
+    async function tplOpenFaceHistory(t, focusFace) {
+      const status = el("span", { style: "font-size:0.8125rem;color:#888" }, "Loading…");
+      const body = el("div", {}, [status]);
+      const close = openModal(`Face history — ${t.name}`, body);
+      try {
+        const res = await API.post(token, "listSurgeryTemplateFaceHistory", { template_id: t.id });
+        const evts = res.events || [];
+
+        function eventBadge(type) {
+          const cfg = {
+            created:     { bg: "#d1fae5", color: "#065f46", label: "Created" },
+            retired:     { bg: "#fee2e2", color: "#991b1b", label: "Retired" },
+            reactivated: { bg: "#dbeafe", color: "#1e40af", label: "Reactivated" },
+          }[type] || { bg: "#f1f5f9", color: "#475569", label: type };
+          return el("span", { style: `display:inline-block;font-size:0.7rem;font-weight:600;padding:1px 7px;border-radius:9px;background:${cfg.bg};color:${cfg.color}` }, cfg.label);
+        }
+
+        function fmtDate(iso) {
+          if (!iso) return "—";
+          try { return new Date(iso).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" }); }
+          catch { return iso; }
+        }
+
+        // Group events by face_code for display.
+        const grouped = new Map();
+        for (const e of evts) {
+          const key = e.face_code || e.face_id;
+          if (!grouped.has(key)) grouped.set(key, { face_code: e.face_code, label: e.label, events: [] });
+          grouped.get(key).events.push(e);
+        }
+
+        if (!grouped.size) {
+          body.replaceChildren(el("div", { class: "muted", style: "font-size:0.875rem" }, "No history recorded yet."));
+          return;
+        }
+
+        const backfillNote = evts.some((e) => e.reason && e.reason.startsWith("Backfilled"))
+          ? el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.8rem" },
+              "★ Entries marked 'Backfilled' predate PROP-075 — exact original dates are unknown.")
+          : null;
+
+        const sections = [...grouped.entries()].map(([key, g]) => {
+          const isFocus = focusFace && (g.face_code === focusFace.face_code);
+          const rows = g.events.map((e) =>
+            el("tr", {}, [
+              el("td", { style: "padding:3px 10px;font-size:0.8125rem;white-space:nowrap" }, fmtDate(e.created_at)),
+              el("td", { style: "padding:3px 10px" }, eventBadge(e.event_type)),
+              el("td", { style: "padding:3px 10px;font-size:0.8125rem;color:#555" }, e.actor_email || "system"),
+              el("td", { style: "padding:3px 10px;font-size:0.8125rem;color:#777" }, e.reason || ""),
+            ])
+          );
+          return el("div", { style: `margin-bottom:1rem${isFocus ? ";padding:6px;border-radius:6px;background:var(--surface-subtle,#f8fafc);border:1px solid var(--border,#e2e8f0)" : ""}` }, [
+            el("div", { style: "font-size:0.875rem;font-weight:600;margin-bottom:0.3rem;font-family:monospace" },
+              `${g.face_code}  `, el("span", { style: "font-weight:400;font-family:inherit;color:#555" }, g.label || "")),
+            el("table", { style: "border-collapse:collapse;width:100%" }, [
+              el("thead", {}, el("tr", {}, [
+                el("th", { style: "padding:2px 10px;font-size:0.75rem;text-align:left;color:#888;font-weight:500" }, "Date"),
+                el("th", { style: "padding:2px 10px;font-size:0.75rem;text-align:left;color:#888;font-weight:500" }, "Event"),
+                el("th", { style: "padding:2px 10px;font-size:0.75rem;text-align:left;color:#888;font-weight:500" }, "Actor"),
+                el("th", { style: "padding:2px 10px;font-size:0.75rem;text-align:left;color:#888;font-weight:500" }, "Reason"),
+              ])),
+              el("tbody", {}, rows),
+            ]),
+          ]);
+        });
+
+        body.replaceChildren(
+          ...(backfillNote ? [backfillNote] : []),
+          ...sections,
+          el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.5rem" }, [
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Close"),
+          ])
+        );
+      } catch (ex) {
+        body.replaceChildren(el("div", { style: "color:#e05454;font-size:0.875rem" }, `Could not load history: ${ex.message}`));
+      }
+    }
+
     // --- New surgery template: upload CAD file → create drawing + template ---
     function openCreateTemplateWithDrawing() {
       // Captured once uploadZone fires onReady.
@@ -10675,6 +10758,16 @@
       const autoCode = genCode();
 
       const titleInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
+
+      // Optional: this template supersedes an older one.
+      const supersedesOpts = [
+        el("option", { value: "" }, "— none —"),
+        ...tplAllTemplates.map((t) =>
+          el("option", { value: t.id }, `${t.code} · ${t.name}${t.status === "retired" ? " (retired)" : ""}`)
+        ),
+      ];
+      const supersedesSel = el("select", { class: "up-text" }, supersedesOpts);
+
       const status   = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
 
       const zone = uploadZone(role, "documents", {
@@ -10699,7 +10792,8 @@
             drawing_type: "surgery_template",
           });
           status.textContent = "Creating template…";
-          await API.post(token, "createSurgeryTemplate", { code: autoCode, name: title, drawing_id: dwgRes.id });
+          const supersedes_id = supersedesSel.value || undefined;
+          await API.post(token, "createSurgeryTemplate", { code: autoCode, name: title, drawing_id: dwgRes.id, supersedes_id });
           close(); await reloadTemplates();
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Create");
@@ -10708,6 +10802,13 @@
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
           "A surgery template is a controlled CAD drawing. Provide a title and upload the file — the template code and drawing number are assigned automatically."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing title"), titleInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [
+          el("div", { class: "form-label" }, [
+            "Supersedes",
+            el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(optional — if this replaces an existing template)"),
+          ]),
+          supersedesSel,
+        ]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), zone.el]),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [

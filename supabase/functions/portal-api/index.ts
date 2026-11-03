@@ -5826,12 +5826,13 @@ Deno.serve(async (req) => {
   // dropped in a later migration once nothing reads them.
   // --- Surgery templates management (PROP-0059, Rushroom role) ---------------
   if (["listSurgeryTemplatesPage", "createSurgeryTemplate", "updateSurgeryTemplate",
-       "addSurgeryTemplateFace", "retireSurgeryTemplateFace", "listAllSurgeryRules"].includes(action)) {
+       "addSurgeryTemplateFace", "retireSurgeryTemplateFace", "listAllSurgeryRules",
+       "listSurgeryTemplateFaceHistory"].includes(action)) {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
 
     if (action === "listSurgeryTemplatesPage") {
       const [tplRes, faceRes] = await Promise.all([
-        tdb("surgery_templates").select("id, code, name, drawing_id, status").order("name"),
+        tdb("surgery_templates").select("id, code, name, drawing_id, status, supersedes_id").order("name"),
         tdb("surgery_template_faces").select("id, template_id, face_code, label, rule_id, status").order("label"),
       ]);
       if (tplRes.error || faceRes.error) return json({ error: "Could not load surgery templates" }, 502);
@@ -5858,6 +5859,7 @@ Deno.serve(async (req) => {
       }
       const templates = (tplRes.data || []).map((t: any) => ({
         id: t.id, code: t.code, name: t.name, status: t.status,
+        supersedes_id: t.supersedes_id ?? null,
         drawing: t.drawing_id ? drawingMap.get(t.drawing_id) ?? null : null,
         faces: facesByTemplate.get(t.id) || [],
       }));
@@ -5868,15 +5870,21 @@ Deno.serve(async (req) => {
       let code = String(body.code || "").trim();
       const name = String(body.name || "").trim();
       const drawing_id = String(body.drawing_id || "").trim();
+      const supersedes_id = body.supersedes_id ? String(body.supersedes_id).trim() : null;
       if (!name || name.length > 200) return json({ error: "name must be 1–200 characters" }, 400);
       if (!drawing_id) return json({ error: "drawing_id is required — every template must have a controlled drawing" }, 400);
       const { data: dwg } = await tdb("drawings").select("id, drawing_type, drawing_number").eq("id", drawing_id).maybeSingle();
       if (!dwg) return json({ error: "Drawing not found" }, 404);
       if (dwg.drawing_type !== "surgery_template") return json({ error: "The drawing must be of type surgery_template" }, 400);
-      // Auto-assign code from the drawing number if not provided.
       if (!code) code = String((dwg as any).drawing_number || "").trim();
       if (!code || code.length > 40) return json({ error: "could not auto-assign a template code — provide one explicitly" }, 400);
-      const { data, error } = await tdb("surgery_templates").insert({ code, name, drawing_id, created_by: session?.uid ?? null }).select("id, code, name, drawing_id, status").single();
+      if (supersedes_id) {
+        const { data: prev } = await tdb("surgery_templates").select("id").eq("id", supersedes_id).maybeSingle();
+        if (!prev) return json({ error: "Superseded template not found" }, 404);
+      }
+      const { data, error } = await tdb("surgery_templates")
+        .insert({ code, name, drawing_id, supersedes_id, created_by: session?.uid ?? null })
+        .select("id, code, name, drawing_id, status, supersedes_id").single();
       if (error) return json({ error: error.code === "23505" ? `A template with code "${code}" already exists` : error.message }, 409);
       return json(data);
     }
@@ -5904,13 +5912,27 @@ Deno.serve(async (req) => {
       if (!Object.keys(patch).length) return json({ error: "Nothing to update" }, 400);
       const { error } = await tdb("surgery_templates").update(patch).eq("id", body.id);
       if (error) return json({ error: error.message }, 500);
-      // Cascade: retiring a template retires all its active faces so they no longer
-      // appear as "covered elsewhere" in the Add face modal.
+      // Cascade: retiring a template retires all its active faces and writes an
+      // event for each so the history log reflects the cascade accurately.
       if (patch.status === "retired") {
-        await tdb("surgery_template_faces")
-          .update({ status: "retired" })
+        const { data: activeFaces } = await tdb("surgery_template_faces")
+          .select("id, organization_id")
           .eq("template_id", body.id)
           .eq("status", "active");
+        if (activeFaces && activeFaces.length) {
+          await tdb("surgery_template_faces")
+            .update({ status: "retired" })
+            .eq("template_id", body.id)
+            .eq("status", "active");
+          await tdb("surgery_template_face_events").insert(
+            activeFaces.map((f: any) => ({
+              face_id: f.id,
+              event_type: "retired",
+              actor_id: session?.uid ?? null,
+              reason: "Template retired",
+            }))
+          );
+        }
       }
       return json({ ok: true });
     }
@@ -5927,6 +5949,9 @@ Deno.serve(async (req) => {
       const { data, error } = await tdb("surgery_template_faces")
         .insert({ template_id, face_code, label, rule_id }).select("id").single();
       if (error) return json({ error: error.code === "23505" ? (error.message.includes("unique_active_rule") ? `Rule "${rule_id}" already has an active face` : `Face code "${face_code}" is already in use`) : error.message }, 409);
+      await tdb("surgery_template_face_events").insert({
+        face_id: data.id, event_type: "created", actor_id: session?.uid ?? null,
+      });
       return json({ id: data.id });
     }
 
@@ -5934,7 +5959,52 @@ Deno.serve(async (req) => {
       if (!body.id) return json({ error: "id required" }, 400);
       const { error } = await tdb("surgery_template_faces").update({ status: "retired" }).eq("id", body.id);
       if (error) return json({ error: error.message }, 500);
+      await tdb("surgery_template_face_events").insert({
+        face_id: body.id, event_type: "retired",
+        actor_id: session?.uid ?? null,
+        reason: body.reason ? String(body.reason).trim() : null,
+      });
       return json({ ok: true });
+    }
+
+    if (action === "listSurgeryTemplateFaceHistory") {
+      if (!body.template_id) return json({ error: "template_id required" }, 400);
+      // Fetch all events for every face on this template, joined to the face
+      // for display fields and to users for the actor email.
+      const { data: faces, error: fErr } = await tdb("surgery_template_faces")
+        .select("id, face_code, label, rule_id")
+        .eq("template_id", String(body.template_id));
+      if (fErr) return json({ error: fErr.message }, 500);
+      if (!faces || !faces.length) return json({ events: [] });
+      const faceIds = (faces as any[]).map((f: any) => f.id);
+      const faceMap = new Map((faces as any[]).map((f: any) => [f.id, f]));
+      const { data: evts, error: eErr } = await tdb("surgery_template_face_events")
+        .select("id, face_id, event_type, actor_id, reason, created_at")
+        .in("face_id", faceIds)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (eErr) return json({ error: eErr.message }, 500);
+      // Resolve actor emails in one query.
+      const actorIds = [...new Set((evts || []).map((e: any) => e.actor_id).filter(Boolean))];
+      const actorMap = new Map<string, string>();
+      if (actorIds.length) {
+        const { data: actors } = await db.from("users").select("id, email").in("id", actorIds);
+        for (const a of actors || []) actorMap.set(a.id, a.email);
+      }
+      const events = (evts || []).map((e: any) => {
+        const face = faceMap.get(e.face_id) as any;
+        return {
+          id: e.id, face_id: e.face_id,
+          face_code: face?.face_code ?? null,
+          label: face?.label ?? null,
+          rule_id: face?.rule_id ?? null,
+          event_type: e.event_type,
+          actor_email: e.actor_id ? (actorMap.get(e.actor_id) ?? null) : null,
+          reason: e.reason,
+          created_at: e.created_at,
+        };
+      });
+      return json({ events });
     }
 
     if (action === "listAllSurgeryRules") {

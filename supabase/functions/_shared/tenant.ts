@@ -54,7 +54,8 @@ export const TENANT_TABLES = new Set([
   // Every cost save, append-only (migration 0049)
   "component_cost_history",
   // PROP-0059: surgery template register (migration 0054)
-  "surgery_templates", "surgery_template_faces",
+  // PROP-075: versioning ledger (migration 0056)
+  "surgery_templates", "surgery_template_faces", "surgery_template_face_events",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

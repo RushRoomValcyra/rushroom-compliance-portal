@@ -10979,7 +10979,10 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       );
 
       function ruleLabel(r) {
-        const face = r.face === "left" ? "Left face" : r.face === "right" ? "Right face" : r.face || "";
+        // Derive face direction from rule_id text — OO's r.face key is the physical
+        // template face, which is the mirror of the carcass position in the rule_id.
+        const rId = (r.id || r.rule_id || "").toLowerCase();
+        const face = rId.includes("right") ? "Right face" : rId.includes("left") ? "Left face" : r.face || "";
         const stage = r.stage === "hub" ? "Hub" : r.stage === "site" ? "Site" : (r.stage || "");
         const interior = r.interior_name || r.label || r.name || r.id || r.rule_id;
         return `${interior} · ${face} · ${stage}`;
@@ -10998,7 +11001,11 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       }
 
       function autoFaceCode(r) {
-        const suffix = r.face === "left" ? "-L" : r.face === "right" ? "-R" : "";
+        // Use rule_id direction (right-of-carcass → -R, left-of-carcass → -L).
+        // r.face is the physical template face key from OO, which is the mirror
+        // of the carcass position, so we cannot use it for the face code suffix.
+        const rId = (r.id || r.rule_id || "").toLowerCase();
+        const suffix = rId.includes("right") ? "-R" : rId.includes("left") ? "-L" : "";
         return `${t.code}${suffix}`;
       }
 

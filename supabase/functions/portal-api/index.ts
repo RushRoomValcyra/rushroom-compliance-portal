@@ -6011,6 +6011,13 @@ Deno.serve(async (req) => {
       if (!face_code || face_code.length > 40) return json({ error: "face_code must be 1–40 characters" }, 400);
       if (!label || label.length > 200) return json({ error: "label must be 1–200 characters" }, 400);
       if (!rule_id || rule_id.length > 200) return json({ error: "rule_id must be 1–200 characters" }, 400);
+      // Guardrail: face_code suffix must match the carcass direction in rule_id.
+      // OO's `face` key is the physical template face — the mirror of the carcass
+      // position — so we read direction from rule_id, not from the face key.
+      const rIdLower = rule_id.toLowerCase();
+      const expectedSuffix = rIdLower.includes("right") ? "-R" : rIdLower.includes("left") ? "-L" : null;
+      if (expectedSuffix && !face_code.endsWith(expectedSuffix))
+        return json({ error: `Rule "${rule_id}" is for the ${expectedSuffix === "-R" ? "right" : "left"} side — face code must end in ${expectedSuffix}` }, 400);
       const { data, error } = await tdb("surgery_template_faces")
         .insert({ template_id, face_code, label, rule_id }).select("id").single();
       if (error) return json({ error: error.code === "23505" ? (error.message.includes("unique_active_rule") ? `Rule "${rule_id}" already has an active face` : `Face code "${face_code}" is already in use`) : error.message }, 409);

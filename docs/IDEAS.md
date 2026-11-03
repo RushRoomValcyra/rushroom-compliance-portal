@@ -1825,3 +1825,41 @@ Nobody can say what an L module, a COMPLETE Drawer Set or a Prepared door costs.
 - **Copy assembly (Replace…)** — the what-if part swap reuses that picker.
 
 **Status:** Raw idea
+
+---
+
+### Surgery Template Versioning — Immutable Face-Rule History and Template Lifecycle — 2026-11-03
+
+**One sentence:** Make every face-rule assignment append-only with a full audit trail, add a `supersedes_id` chain between template generations, and surface the history in the EC portal so no QR sticker assignment is ever lost.
+
+**Problem it solves:** The current model treats face-rule connections as mutable records you can freely retire or re-add with no history. But once a QR sticker is printed and glued to a physical jig, the assignment it encodes is an immutable manufacturing fact. If the rule behind a face changes — because a new jig supersedes the old one, or a rule is split into two — there is currently no way to know what was active when, who changed it, or which jig a scanned code belonged to at a given point in time. The "covered elsewhere" logic in Add face also silently inherits retired connections (fixed by the cascade patch on 2026-11-03, but the root cause — no lifecycle model — remains).
+
+**MVP scope:**
+1. `surgery_template_face_events` table — append-only ledger: `{id, organization_id NOT NULL, face_id FK→surgery_template_faces, event_type (created|retired|reactivated), actor_id FK→users NULLABLE, reason TEXT NULLABLE, created_at}`. Written by the backend on every status change, never by the frontend.
+2. `surgery_templates.supersedes_id FK→surgery_templates NULLABLE` — when a new template is created to replace an old one, the old template id is recorded here. Enables a "this replaced TPL-X7K2 on [date]" chain in the UI.
+3. Backend: `addSurgeryTemplateFace` writes a `created` event; `retireSurgeryTemplateFace` (and the cascade in `updateSurgeryTemplate`) write a `retired` event.
+4. `listSurgeryTemplateFaceHistory` API action — returns the event log for a given template's faces, ordered by `created_at desc`.
+5. Frontend: face row in template card shows a "History" icon that opens a small timeline: created → retired → reactivated, with actor and timestamp.
+6. Create template modal: optional "Supersedes" field — pick an existing active or retired template; sets `supersedes_id`.
+
+**Tables involved:**
+- `surgery_templates` — add `supersedes_id UUID NULLABLE FK→surgery_templates`
+- `surgery_template_faces` — no schema change (status field already exists)
+- `surgery_template_face_events` — new table (see above)
+
+**Branch name:** `feat/prop-075-template-versioning`
+
+**Effort estimate:** 6–9 h. Migration + new table ~1 h · backend event writes + listHistory action ~2 h · supersedes_id on create modal ~1 h · frontend history timeline per face ~2 h · tests ~1 h.
+
+**Risks:**
+- **Backfill gap:** existing face rows have no `created` event — history starts from the migration date, not from when the face was first added. Acceptable for MVP; document it clearly in the history UI ("History available from [date]").
+- **Actor attribution:** `addSurgeryTemplateFace` currently has access to `session.uid`. Confirm the session is always present before writing the event; if not, allow `actor_id = NULL` with a note.
+- **Reactivation flow not built yet:** retiring a face is supported; reactivating is not. The event type `reactivated` is reserved in the schema but the action is out of MVP scope — add it only when the need arises.
+- **supersedes_id circular reference:** Postgres FK allows `surgery_templates.supersedes_id → surgery_templates.id` (self-referential). Guard in the backend: a template cannot supersede itself, and there must be no cycle (A supersedes B supersedes A).
+
+**Related PROPs:**
+- **PROP-074** — built the surgery template drawing type and face-code model; this adds the history layer on top of it.
+- **PROP-059** — the original surgery template register (two-table structure).
+- **PROP-012** — `surgery_template_face_events` must be in `TENANT_TABLES` in `_shared/tenant.ts`; tests/tenant-tables.test.mjs will catch it if missed.
+
+**Status:** Raw idea

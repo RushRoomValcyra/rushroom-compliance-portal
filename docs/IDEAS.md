@@ -626,6 +626,121 @@ The frontend has no guard on adding a second child — the +child button on the 
 **Status:** Raw idea — tiny effort, high clarity gain
 
 ---
+### Surgery Templates per Part — Part Card Template Column — 2026-11-02
+**One sentence:** Add a Template column to the Order Surgery table already in each side panel's Manufacturing tab, so the physical template required for each drilling rule is visible on the part — not only in the standalone Surgery Templates register.
+
+**Problem it solves:**
+PROP-0043 (shipped) put a read-only Order Surgery table in each side panel's Manufacturing tab. It shows every interior × face cell: hub/site stage, drill instruction, drawing reference. But it does not name the physical template to pick up. The Surgery Templates register (PROP-0059) holds the answer: each `surgery_template_faces` row names the `rule_id` it serves. An operator or engineer looking at Interior 7 / Right face / Hub / Drill currently sees the instruction but not the template — they have to go to a separate tab and cross-reference. The template should be right there in the table cell.
+
+**Architecture (the full path):**
+1. EC Gateway's `getSidePanelSurgery` (portal-api) determines the part's planner role (left_end / mid / right_end)
+2. It calls OO's `GET /api/v1/surgery-rules?panel=…` (via `ORDER_OPERATIONS_URL` + `ORDER_OPERATIONS_SURGERY_KEY`) and gets back rules keyed by `{ interior, face, rule.id }`
+3. **New step:** before returning, batch-fetch `surgery_template_faces` WHERE `rule_id IN (…all rule ids from step 2)` for this org, joining `surgery_templates` for the name — one query
+4. Zip template data onto each rule row: each rule now carries `{ …existing fields, template: { name, face_label, face_code } | null }`
+5. Frontend: add a Template column to the existing Order Surgery grid — `"Dubbelhäng 50/50 mall · left face"` or `"No template"` when none assigned
+
+The standalone Surgery Templates tab stays as the management register (create, link drawing, add faces, retire). The part card is where templates are read, not managed.
+
+**Multiple templates per part:** A single side panel can be used across many interior configurations — each interior × face combination that applies to this part gets its own rule, and each rule has its own physical template. The Order Surgery table already groups by interior, so multiple template rows per part are the normal case, not an edge case. The Template column will show a different template name per row.
+
+**MVP scope:**
+Extend `getSidePanelSurgery` to batch-fetch matching `surgery_template_faces` (+ join `surgery_templates` for the name) in one Supabase query after calling OO. Return `template` alongside each rule row. Frontend: add a Template column to the existing Order Surgery table in the Manufacturing tab. No new tables. No schema changes. No new API actions.
+
+**Tables involved:**
+- `surgery_template_faces` (read, batch by `(organization_id, rule_id)`)
+- `surgery_templates` (read, join for `name`)
+- Everything else (bom_components, planner_mappings, OO endpoint) — unchanged
+
+**Branch name:** `feat/surgery-template-per-part`
+
+**Effort estimate:** 2–3 hours
+- Extend `getSidePanelSurgery` batch query: 1 h
+- Frontend: Template column in the Order Surgery table: 1–2 h
+
+**Risks:**
+- The OO call and the template lookup both happen in `getSidePanelSurgery` server-side in portal-api — OO never reads EC's template tables. Do the template fetch in one query: `tdb("surgery_template_faces").select("face_code,label,rule_id,surgery_templates(name)").in("rule_id", ruleIds)`.
+- A rule with no active template face must show "No template" explicitly — blank is ambiguous.
+- PROP-012: `surgery_template_faces` is already in TENANT_TABLES; tdb() scoping is automatic.
+
+**Related PROPs:**
+- PROP-0059 (Surgery Template Register — built the tables and the standalone register; the "Part card (optional)" item from its spec, promoted here)
+- PROP-0043 (Surgery rules on part card — the Manufacturing tab Order Surgery table this extends; shipped 2026-10-28)
+
+**Ownership note:**
+EC owns templates; templates point at OO rules — not the other way around. `surgery_template_faces.rule_id` (EC) → OO surgery rule id. Assignment is done in EC's Surgery Templates tab. The OO Edit rule page shows rule mechanics only; the template is not set there. Once the end-to-end link is structural, OO's embedded instruction strings (e.g. `"Drill according to the template 'Smala hyllor mall'."`) can drop the template name — it will be surfaced here in the Template column instead.
+
+**Status:** Raw idea — Part card (optional) from PROP-0059 spec, promoted to full idea after architecture review
+
+---
+### Surgery Template as Drawing Type — Unify Manufacturing Templates with the Drawings Domain — 2026-11-03
+
+**One sentence:** A surgery template is a controlled CAD drawing — add a `drawing_type` field to `drawings`, make `surgery_templates.drawing_id` NOT NULL, remove the standalone Surgery Templates top-nav tab, and fold templates into the Drawings domain with a type filter and a Manufacturing badge on the part card.
+
+**Problem it solves:**
+The system has three overlapping concepts with no clear hierarchy or navigation path:
+1. `drawings` + `drawing_revisions` — revision-controlled CAD files (engineering drawings)
+2. `surgery_templates` + `surgery_template_faces` — physical jig register, with QR codes and OO rule links; optionally linked to a drawing
+3. Top-level "Surgery Templates" nav tab — a standalone register disconnected from the Drawings tab
+
+A surgery template IS a drawing: a CAD file with a drawing number, precise positioning and measurements, and a revision sequence. But today it has no revision letter, doesn't appear in the Drawings tab of the part card, doesn't benefit from the drawing workflow (draft → checked → approved → released), and creates a confusing parallel nav entry. When a revised CAD means cutting a new physical acrylic jig, there is no controlled link between the drawing revision and the new physical template — they're managed in different places.
+
+**The ideal flow:**
+```
+CAD drawing created in Drawings domain (type: surgery_template, revision A)
+  → released → physical acrylic jig cut from that revision
+  → jig registered as surgery_template, drawing_id = this drawing (NOT NULL)
+  → faces added with QR codes, each linked to an OO rule_id
+  → worker scans QR in OO Order Surgery to verify right face
+  → CAD updated → drawing_revision B released → new jig cut → new surgery_template, old one retired
+```
+
+**Many templates per part:**
+A single side panel part can be used in multiple interior configurations (e.g. Interior 7 = Dubbelhäng 50/50, Interior 3 = BeautyBox, Interior 5 = Dubbelhäng, …). Each interior has its own surgery rules, and each rule has its own physical template. So one part card can require several surgery templates — one per interior × face combination it participates in. The Manufacturing tab already organises by interior × face, which is exactly the right structure to present this; the Drawings tab would show all linked surgery template drawings as a flat list with badges. The relationship is many-to-many: one part → many template drawings; one template drawing → potentially many parts (e.g. the same jig used for left-end panels across multiple interiors).
+
+**What stays separate:**
+`surgery_template_faces` (QR codes, rule_id links) is manufacturing-specific metadata that must stay in its own table — QR codes on physical jigs are immutable and can't live in the drawings domain. `surgery_templates` stays as the manufacturing metadata layer on top of a controlled drawing.
+
+**MVP scope:**
+1. Add `drawing_type VARCHAR(40)` to `drawings` table (nullable, NULL = `engineering`; other value: `surgery_template`). New drawings default to `engineering`.
+2. Migration: make `surgery_templates.drawing_id` NOT NULL. Seed placeholder drawings for any existing rows where it is NULL (likely zero in prod).
+3. Remove "Surgery Templates" from the top-level navigation tab list (`index.html`).
+4. Update the Drawings section: add a type filter (All / Engineering / Surgery Templates). Surgery template drawings show a "Surgery Template" badge.
+5. Part card Drawings tab: include ALL surgery template drawings linked to this part (via `drawing_components`) — there will be several for a heavily-used side panel; each shows with a "Surgery Template" badge and the interior name it serves.
+6. Part card Manufacturing tab: in the Order Surgery table, show the template drawing (number + current revision + status) per rule row — each interior × face cell gets its own drawing reference.
+
+**Tables involved:**
+- `drawings` — add `drawing_type` column (migration)
+- `surgery_templates` — make `drawing_id` NOT NULL (migration)
+- `drawing_components` — surgery template drawings linked to side panel parts through this table, same as engineering drawings
+- `surgery_template_faces` — unchanged (QR codes, rule_id links stay here)
+- `portal-api`: `getDrawings`, `getSurgeryTemplates`, `getSidePanelSurgery` actions need updating
+
+**Branch name:** `feat/surgery-template-drawing-type`
+
+**Effort estimate:** 6–8 hours
+- DB migration (drawing_type + NOT NULL surgery_templates.drawing_id): 0.5 h
+- Backend: drawing type filter in `getDrawings`, link surgery template drawing in `getSidePanelSurgery`: 1–2 h
+- Frontend: remove Surgery Templates top-nav tab, update Drawings section with type filter: 1–2 h
+- Part card Drawings tab: surgery template badge: 0.5 h
+- Part card Manufacturing tab: show drawing number + revision per rule (replaces template name string): 1–2 h
+- Surgery Templates create/edit form: require drawing selection: 0.5 h
+
+**Risks:**
+- Existing `surgery_templates` rows with `drawing_id IS NULL` must be handled before making the column NOT NULL — check in prod. If any exist, create a placeholder drawing per row before running the migration.
+- Removing the top-nav Surgery Templates tab breaks any bookmarked or linked URL. The management flow (create/edit templates) moves into the Drawings section — ensure discoverability.
+- `surgery_template_faces.rule_id` immutability is unaffected — this change touches drawings and templates, not faces.
+- PROP-012: `surgery_templates` and `surgery_template_faces` are already in TENANT_TABLES. `drawings` and `drawing_revisions` are also in TENANT_TABLES. No new scoping needed.
+
+**Related PROPs:**
+- PROP-045 (Drawings domain — the base tables this extends with `drawing_type`)
+- PROP-0059 (Surgery Template Register — built the two-table structure this folds into drawings)
+- PROP-0043 (Surgery rules on part card — Manufacturing tab that will show the drawing revision)
+- IDEAS: "Surgery Templates per Part — Part Card Template Column" (builds the Manufacturing tab column; this idea is a prerequisite for showing proper drawing data there)
+- OO PROP-0061 (Surgery rules in UI — once rules are in DB, the instruction strings can drop embedded template names)
+
+**Status:** Raw idea — architectural consolidation; prerequisite for the Part Card Template Column idea
+
+---
 ### Manufacturing Routing — Postponement Model with Variant-Conditional Operations — 2026-09-01
 
 **One sentence:** Attach an ordered, variant-conditional sequence of in-house operations to each Dynamic BOM product family so that resolving a customer configuration yields both the parts to pull from semi-finished stock AND the exact operation sequence to perform — enabling a full postponement manufacturing model where generic inventory is finalised to order.

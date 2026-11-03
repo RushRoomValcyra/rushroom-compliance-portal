@@ -10333,9 +10333,6 @@
     const drawPanel = $("#drawings-panel");
     if (drawPanel && (role === "rushroom" || role === "supplier")) renderDrawings(role, drawPanel);
 
-    const surgTplPanel = $("#surgery-templates-panel");
-    if (surgTplPanel && role === "rushroom") renderSurgeryTemplates(role, surgTplPanel);
-
     const acctPanel = $("#accounts-panel");
     if (acctPanel && API.isAdmin()) renderAccounts(role, acctPanel);
     const l2Panel = $("#level2-panel");
@@ -10353,7 +10350,11 @@
   // ==========================================================================
   async function renderDrawings(role, mount) {
     const token = API.getToken(role);
-    const state = { q: "", status: "", freeOnly: false, sort: "drawing_number", dir: 1 };
+    // typeFilter: "engineering" | "surgery_template" | "" (all)
+    const state = { q: "", status: "", freeOnly: false, typeFilter: "engineering", sort: "drawing_number", dir: 1 };
+
+    // Surgery template data — loaded lazily on first switch to that view.
+    let tplCache = null; // { templates: [], rules: [], rulesWarning: "" }
 
     async function load() {
       mount.replaceChildren(el("div", { class: "loading" }, "Loading drawings…"));
@@ -10364,10 +10365,47 @@
         mount.replaceChildren(el("div", { class: "error" }, `Couldn't load drawings: ${ex.message}`));
         return;
       }
+      tplCache = null; // invalidate template cache on full reload
       draw(data.drawings || []);
     }
 
+    // Type filter chips — Engineering (default) / Surgery Templates / All
+    // Rendered once outside draw() so they survive repaint() calls.
+    const typeChipBar = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin-bottom:0.5rem" },
+      [
+        { id: "engineering", label: "Engineering" },
+        { id: "surgery_template", label: "Surgery Templates" },
+        { id: "", label: "All types" },
+      ].map((t) =>
+        el("button", {
+          class: `btn btn-sm${state.typeFilter === t.id ? " btn-primary" : ""}`, type: "button",
+          style: "font-size:0.75rem;padding:2px 10px",
+          onclick: () => {
+            if (state.typeFilter === t.id) return;
+            state.typeFilter = t.id;
+            // Re-render the type chips bar in-place so the active chip updates.
+            typeChipBar.querySelectorAll("button").forEach((btn, i) => {
+              const ids = ["engineering", "surgery_template", ""];
+              btn.className = `btn btn-sm${state.typeFilter === ids[i] ? " btn-primary" : ""}`;
+            });
+            draw(_lastAll);
+          },
+        }, t.label)));
+
+    let _lastAll = []; // held so type chip onclick can re-call draw()
+
     function draw(all) {
+      _lastAll = all;
+      if (state.typeFilter === "surgery_template") {
+        loadAndDrawTemplates();
+        return;
+      }
+
+      // Engineering view: hide surgery template drawings (they're managed in their own section).
+      const visible = state.typeFilter === "engineering"
+        ? all.filter((d) => d.drawing_type !== "surgery_template")
+        : all;
+
       const search = el("input", {
         class: "up-text", type: "search", placeholder: "Search number or title…",
         value: state.q, style: "min-width:220px",
@@ -10382,7 +10420,7 @@
           }, s.label)));
       // PROP-046: free drawings must be findable, or "free" is just where
       // drawings go to be forgotten.
-      const freeCount = all.filter((d) => d.is_free).length;
+      const freeCount = visible.filter((d) => d.is_free).length;
       const freeChip = el("button", {
         class: `btn btn-sm${state.freeOnly ? " btn-primary" : ""}`, type: "button",
         style: "font-size:0.75rem;padding:2px 10px",
@@ -10397,7 +10435,7 @@
 
       function repaint() {
         const q = state.q.trim().toLowerCase();
-        const rows = all
+        const rows = visible
           .filter((d) => !state.freeOnly || d.is_free)
           .filter((d) => !state.status || d.status === state.status)
           .filter((d) => !q || `${d.drawing_number} ${d.title}`.toLowerCase().includes(q))
@@ -10423,10 +10461,10 @@
                   : el("span", { class: "muted", title: "Withheld from suppliers" }, "No"))
               : null,
           ])) : [el("tr", {}, el("td", { colspan: role === "rushroom" ? 8 : 7, class: "muted", style: "padding:1rem" },
-            all.length ? "No drawings match those filters." : "No drawings yet."))]));
+            visible.length ? "No drawings match those filters." : "No drawings yet."))]));
       }
 
-      const emptyHelp = all.length ? null : el("div", { class: "notice", style: "font-size:0.875rem;margin-top:0.6rem" },
+      const emptyHelp = visible.length ? null : el("div", { class: "notice", style: "font-size:0.875rem;margin-top:0.6rem" },
         role === "rushroom"
           ? "+ New drawing asks which part the drawing is for, then takes the file and reads what it can from the title block. The drawing number and Rev A are assigned for you. Revising a drawing later advances the revision letter of every part it is on, and is recorded in their Change Log."
           : "No drawings have been shared with you yet.");
@@ -10434,11 +10472,12 @@
       mount.replaceChildren(el("div", { class: "card" }, [
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
           el("h3", { style: "margin:0" }, "Drawings"),
-          el("span", { class: "muted", style: "font-size:0.8125rem" }, `${all.length} drawing${all.length === 1 ? "" : "s"}`),
+          el("span", { class: "muted", style: "font-size:0.8125rem" }, `${visible.length} drawing${visible.length === 1 ? "" : "s"}`),
           el("span", { class: "spacer", style: "flex:1" }),
           role === "rushroom" ? actionBtn("New drawing", "plus", { primary: true, onClick: () => newDrawingModal(role, load) }) : null,
           actionBtn("Refresh", "refresh", { onClick: load }),
         ]),
+        typeChipBar,
         el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips, freeChip]),
         el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
           el("thead", {}, el("tr", {}, [
@@ -10451,6 +10490,333 @@
         emptyHelp,
       ]));
       repaint();
+    }
+
+    // ---- Surgery Templates section (PROP-074, previously a standalone tab) ----
+    // Loaded lazily the first time the "Surgery Templates" chip is selected.
+    let tplAllTemplates = [];
+    let tplAllRules = [];
+    let tplRulesWarning = "";
+
+    function tplRuleLabel(ruleId) {
+      const rule = tplAllRules.find((r) => r.id === ruleId || r.rule_id === ruleId);
+      return rule ? (rule.label || rule.name || rule.id || ruleId) : ruleId;
+    }
+    function tplRulesWithoutActiveFace() {
+      const covered = new Set(
+        tplAllTemplates.flatMap((t) => t.faces.filter((f) => f.status === "active").map((f) => f.rule_id))
+      );
+      return tplAllRules.filter((r) => !covered.has(r.id || r.rule_id));
+    }
+
+    async function loadAndDrawTemplates() {
+      if (!tplCache) {
+        mount.replaceChildren(el("div", { class: "loading" }, "Loading surgery templates…"));
+        try {
+          const [tplRes, rulesRes] = await Promise.all([
+            API.post(token, "listSurgeryTemplatesPage", {}),
+            API.post(token, "listAllSurgeryRules", {}),
+          ]);
+          tplCache = {
+            templates: tplRes.templates || [],
+            rules: rulesRes.rules || [],
+            rulesWarning: rulesRes.warning || "",
+          };
+        } catch (ex) {
+          mount.replaceChildren(el("div", { class: "error" }, `Couldn't load surgery templates: ${ex.message}`));
+          return;
+        }
+      }
+      tplAllTemplates = tplCache.templates;
+      tplAllRules = tplCache.rules;
+      tplRulesWarning = tplCache.rulesWarning;
+      drawTemplateSection();
+    }
+
+    async function reloadTemplates() {
+      tplCache = null;
+      await loadAndDrawTemplates();
+    }
+
+    function drawTemplateSection() {
+      const active = tplAllTemplates.filter((t) => t.status === "active");
+      const retired = tplAllTemplates.filter((t) => t.status === "retired");
+      const uncovered = tplRulesWithoutActiveFace();
+
+      const newBtn = role === "rushroom"
+        ? el("button", { class: "btn btn-sm btn-primary", type: "button",
+            onclick: () => openCreateTemplateWithDrawing(),
+          }, "+ New template")
+        : null;
+
+      const header = el("div", { style: "display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem" }, [
+        el("h3", { style: "margin:0" }, "Surgery Templates"),
+        el("span", { class: "muted", style: "font-size:0.8125rem" }, `${active.length} active`),
+        el("span", { style: "flex:1" }),
+        newBtn,
+        actionBtn("Refresh", "refresh", { onClick: reloadTemplates }),
+      ].filter(Boolean));
+
+      const uncoveredNotice = uncovered.length
+        ? el("div", { class: "notice warn", style: "font-size:0.875rem;margin-bottom:1rem" }, [
+            el("strong", {}, `${uncovered.length} rule${uncovered.length > 1 ? "s" : ""} without an active template face: `),
+            uncovered.map((r) => r.label || r.name || r.id || r.rule_id).join(", "),
+          ])
+        : null;
+
+      const rulesNote = tplRulesWarning
+        ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.7rem" }, tplRulesWarning)
+        : null;
+
+      const tplCard = (t) => {
+        const activeFaces = t.faces.filter((f) => f.status === "active");
+        const retiredFaces = t.faces.filter((f) => f.status === "retired");
+        const drawingBadge = t.drawing
+          ? el("span", { style: "font-size:0.75rem;color:#555;margin-left:0.4rem" },
+              `${t.drawing.number}${t.drawing.revision ? ` Rev ${t.drawing.revision}` : ""}`)
+          : el("span", { style: "font-size:0.75rem;color:#e05454;margin-left:0.4rem" }, "no drawing — link one");
+
+        const faceRows = activeFaces.map((f) =>
+          el("tr", {}, [
+            el("td", { style: "padding:3px 8px;font-size:0.8125rem;font-family:monospace" }, f.face_code),
+            el("td", { style: "padding:3px 8px;font-size:0.8125rem" }, f.label),
+            el("td", { style: "padding:3px 8px;font-size:0.8125rem;color:#555" }, tplRuleLabel(f.rule_id)),
+            el("td", { style: "padding:3px 8px" },
+              el("button", { class: "btn btn-xs", type: "button",
+                onclick: async () => {
+                  if (!confirm(`Retire face "${f.label}"? Its QR code will stop being valid.`)) return;
+                  try { await API.post(token, "retireSurgeryTemplateFace", { id: f.id }); await reloadTemplates(); }
+                  catch (ex) { alert(`Couldn't retire face: ${ex.message}`); }
+                } }, "Retire")),
+          ])
+        );
+
+        const facesTable = activeFaces.length
+          ? el("table", { style: "border-collapse:collapse;width:100%;margin-top:0.4rem" }, [
+              el("thead", {}, el("tr", {}, [
+                el("th", { style: "padding:2px 8px;font-size:0.75rem;text-align:left;color:#666;font-weight:500" }, "Face code"),
+                el("th", { style: "padding:2px 8px;font-size:0.75rem;text-align:left;color:#666;font-weight:500" }, "Label"),
+                el("th", { style: "padding:2px 8px;font-size:0.75rem;text-align:left;color:#666;font-weight:500" }, "Rule"),
+                el("th", {}),
+              ])),
+              el("tbody", {}, faceRows),
+            ])
+          : el("div", { style: "font-size:0.8125rem;color:#999;margin-top:0.3rem" }, "No active faces.");
+
+        const actions = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin-top:0.6rem" }, [
+          el("button", { class: "btn btn-xs", type: "button",
+            onclick: () => tplOpenRename(t) }, "Rename"),
+          el("button", { class: "btn btn-xs", type: "button",
+            onclick: () => tplOpenLinkDrawing(t) }, t.drawing ? "Change drawing" : "Link drawing"),
+          el("button", { class: "btn btn-xs", type: "button",
+            onclick: () => tplOpenAddFace(t) }, "+ Add face"),
+          t.status === "active"
+            ? el("button", { class: "btn btn-xs", type: "button",
+                onclick: async () => {
+                  if (!confirm(`Retire template "${t.name}"? Its faces will still work but no new face can be added.`)) return;
+                  try { await API.post(token, "updateSurgeryTemplate", { id: t.id, status: "retired" }); await reloadTemplates(); }
+                  catch (ex) { alert(`Couldn't retire: ${ex.message}`); }
+                } }, "Retire")
+            : el("button", { class: "btn btn-xs", type: "button",
+                onclick: async () => {
+                  try { await API.post(token, "updateSurgeryTemplate", { id: t.id, status: "active" }); await reloadTemplates(); }
+                  catch (ex) { alert(`Couldn't reactivate: ${ex.message}`); }
+                } }, "Reactivate"),
+        ]);
+
+        return el("div", { class: "card", style: "margin-bottom:0.6rem" }, [
+          el("div", { style: "display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap" }, [
+            el("strong", {}, t.name),
+            el("span", { style: "font-size:0.75rem;color:#888;font-family:monospace" }, t.code),
+            drawingBadge,
+            retiredFaces.length
+              ? el("span", { style: "font-size:0.75rem;color:#aaa;margin-left:auto" }, `${retiredFaces.length} retired face${retiredFaces.length > 1 ? "s" : ""}`)
+              : null,
+          ].filter(Boolean)),
+          facesTable,
+          actions,
+        ]);
+      };
+
+      const retiredSection = retired.length
+        ? el("details", { style: "margin-top:1rem" }, [
+            el("summary", { style: "cursor:pointer;font-size:0.875rem;color:#888;margin-bottom:0.5rem" },
+              `${retired.length} retired template${retired.length > 1 ? "s" : ""}`),
+            ...retired.map(tplCard),
+          ])
+        : null;
+
+      mount.replaceChildren(
+        el("div", { style: "max-width:860px;padding:1rem 0" }, [
+          typeChipBar,
+          header,
+          rulesNote,
+          uncoveredNotice,
+          active.length
+            ? el("div", {}, active.map(tplCard))
+            : el("div", { class: "notice", style: "font-size:0.875rem" }, "No templates yet. Use + New template to create the first one."),
+          retiredSection,
+        ].filter(Boolean)),
+      );
+    }
+
+    // --- New surgery template: creates a drawing (type=surgery_template) then the template ---
+    function openCreateTemplateWithDrawing() {
+      // Step 1 inputs
+      const titleInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
+      const codeInp  = el("input", { class: "up-text", type: "text", placeholder: "e.g. TPL-001", maxlength: "40" });
+      const nameInp  = el("input", { class: "up-text", type: "text", placeholder: "Display name (can be changed later)", maxlength: "200" });
+      const fileInp  = el("input", { type: "file", accept: ".pdf,image/*", class: "up-text" });
+      const status   = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+
+      const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+        const title = titleInp.value.trim();
+        const code  = codeInp.value.trim();
+        const name  = nameInp.value.trim() || title;
+        const file  = fileInp.files?.[0];
+        if (!title) { status.textContent = "Drawing title is required."; return; }
+        if (!code)  { status.textContent = "Template code is required."; return; }
+        if (!file)  { status.textContent = "Upload the CAD drawing file (PDF or image)."; return; }
+        ev.target.disabled = true; status.textContent = "Uploading drawing…";
+        try {
+          // Upload the file first (reuse existing upload helper).
+          const { storage_path, file_name } = await uploadDrawingFile(file, token);
+          status.textContent = "Creating drawing…";
+          const dwgRes = await API.post(token, "createDrawingWithRevision", {
+            title, storage_path, file_name, drawing_type: "surgery_template",
+          });
+          status.textContent = "Creating template…";
+          await API.post(token, "createSurgeryTemplate", {
+            code, name, drawing_id: dwgRes.id,
+          });
+          close(); await reloadTemplates();
+        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+      } }, "Create");
+
+      const close = openModal("New surgery template", el("div", {}, [
+        el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
+          "A surgery template is a controlled CAD drawing — it gets a drawing number and a revision letter. The template code is printed on the QR label and can never change."),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing title"), titleInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), fileInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template code (immutable QR payload)"), codeInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template name"), nameInp]),
+        status,
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+          saveBtn,
+        ]),
+      ]));
+      titleInp.focus();
+    }
+
+    // --- Rename template ---
+    function tplOpenRename(t) {
+      const nameInp = el("input", { class: "up-text", type: "text", value: t.name, maxlength: "200" });
+      const status  = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+      const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+        const name = nameInp.value.trim();
+        if (!name) { status.textContent = "Name is required."; return; }
+        ev.target.disabled = true; status.textContent = "Saving…";
+        try {
+          await API.post(token, "updateSurgeryTemplate", { id: t.id, name });
+          close(); await reloadTemplates();
+        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+      } }, "Save");
+      const close = openModal("Rename template", el("div", {}, [
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Name"), nameInp]),
+        status,
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+          saveBtn,
+        ]),
+      ]));
+      nameInp.focus(); nameInp.select();
+    }
+
+    // --- Link drawing (only surgery_template type drawings shown) ---
+    function tplOpenLinkDrawing(t) {
+      const container = el("div", { class: "loading" }, "Loading drawings…");
+      const close = openModal("Link drawing to template", container);
+      API.post(token, "listDrawings", { drawing_type: "surgery_template" }).then(({ drawings: dwgs }) => {
+        if (!dwgs || !dwgs.length) {
+          container.replaceChildren(el("p", { class: "notice" }, "No surgery template drawings yet. Create one with + New template."),
+            el("div", { style: "display:flex;justify-content:flex-end" },
+              el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Close")));
+          return;
+        }
+        const opts = [el("option", { value: "" }, "— no drawing —"),
+          ...dwgs.map((d) => el("option", { value: d.id }, `${d.drawing_number} — ${d.title}${d.revision ? ` Rev ${d.revision}` : ""}`))];
+        const sel = el("select", { class: "up-text" }, opts);
+        sel.value = t.drawing ? t.drawing.id : "";
+        const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+        container.replaceChildren(
+          el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing"), sel]),
+          status,
+          el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+            el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+              ev.target.disabled = true; status.textContent = "Saving…";
+              try {
+                await API.post(token, "updateSurgeryTemplate", { id: t.id, drawing_id: sel.value || null });
+                close(); await reloadTemplates();
+              } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+            } }, "Save"),
+          ]),
+        );
+      }).catch((ex) => container.replaceChildren(el("div", { class: "error" }, ex.message)));
+    }
+
+    // --- Add face ---
+    function tplOpenAddFace(t) {
+      const uncovered = tplRulesWithoutActiveFace().filter((r) => {
+        const rId = r.id || r.rule_id;
+        return !t.faces.some((f) => f.status === "active" && f.rule_id === rId);
+      });
+      const faceCodeInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. F-001-L", maxlength: "40" });
+      const labelInp    = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall, left face", maxlength: "200" });
+      const ruleOpts = [
+        el("option", { value: "" }, "— pick a rule —"),
+        ...(tplAllRules.length
+          ? tplAllRules.map((r) => {
+              const rId = r.id || r.rule_id;
+              const alreadyCovered = tplAllTemplates.some((tmpl) => tmpl.faces.some((f) => f.status === "active" && f.rule_id === rId));
+              return el("option", { value: rId, disabled: alreadyCovered ? "disabled" : null },
+                `${r.label || r.name || rId}${alreadyCovered ? " (covered)" : ""}`);
+            })
+          : [el("option", { value: "", disabled: "disabled" }, tplRulesWarning || "Order Operations not connected")]),
+      ];
+      const ruleSel = el("select", { class: "up-text" }, ruleOpts);
+      const status  = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+      const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+        const face_code = faceCodeInp.value.trim();
+        const label     = labelInp.value.trim();
+        const rule_id   = ruleSel.value;
+        if (!face_code) { status.textContent = "Face code is required."; return; }
+        if (!label)     { status.textContent = "Label is required."; return; }
+        if (!rule_id)   { status.textContent = "Pick a rule."; return; }
+        ev.target.disabled = true; status.textContent = "Saving…";
+        try {
+          await API.post(token, "addSurgeryTemplateFace", { template_id: t.id, face_code, label, rule_id });
+          close(); await reloadTemplates();
+        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+      } }, "Add face");
+      const close = openModal(`Add face — ${t.name}`, el("div", {}, [
+        el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
+          "The face code is printed on the QR label and can never change. One active face per rule is allowed."),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Face code"), faceCodeInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Label (printed next to the QR)"), labelInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Order Surgery rule"), ruleSel]),
+        uncovered.length
+          ? el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.4rem" },
+              `${uncovered.length} rule${uncovered.length > 1 ? "s" : ""} without a face yet`)
+          : null,
+        status,
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+          saveBtn,
+        ]),
+      ].filter(Boolean)));
+      faceCodeInp.focus();
     }
 
     await load();
@@ -11063,312 +11429,9 @@
       if (!ok && p) p.hidden = true;
     };
     gate("tab-drawings", "drawings-panel", role === "rushroom" || role === "supplier");
-    gate("tab-surgery-templates", "surgery-templates-panel", role === "rushroom");
     gate("tab-deviations", "deviations-panel", role === "rushroom");
     gate("tab-level2", "level2-panel", role === "rushroom");
     gate("tab-accounts", "accounts-panel", !!admin);
-  }
-
-  // ==========================================================================
-  // PROP-0059: Surgery template register.
-  //
-  // The Gateway owns every physical drilling template used in Order Surgery.
-  // Each template has one row per face with its own QR code, so scanning always
-  // names the face. Order Operations reads the register via listSurgeryTemplates
-  // (service key); this page lets Rushroom staff manage it.
-  // ==========================================================================
-  async function renderSurgeryTemplates(role, mount) {
-    const token = API.getToken(role);
-    let allTemplates = [];
-    let allRules = [];
-    let rulesWarning = "";
-
-    async function load() {
-      mount.replaceChildren(el("div", { class: "loading" }, "Loading surgery templates…"));
-      try {
-        const [tplRes, rulesRes] = await Promise.all([
-          API.post(token, "listSurgeryTemplatesPage", {}),
-          API.post(token, "listAllSurgeryRules", {}),
-        ]);
-        allTemplates = tplRes.templates || [];
-        allRules = rulesRes.rules || [];
-        rulesWarning = rulesRes.warning || "";
-      } catch (ex) {
-        mount.replaceChildren(el("div", { class: "error" }, `Couldn't load surgery templates: ${ex.message}`));
-        return;
-      }
-      draw();
-    }
-
-    function ruleLabel(ruleId) {
-      const rule = allRules.find((r) => r.id === ruleId || r.rule_id === ruleId);
-      return rule ? (rule.label || rule.name || rule.id || ruleId) : ruleId;
-    }
-
-    function rulesWithoutActiveFace() {
-      const covered = new Set(
-        allTemplates.flatMap((t) => t.faces.filter((f) => f.status === "active").map((f) => f.rule_id))
-      );
-      return allRules.filter((r) => !covered.has(r.id || r.rule_id));
-    }
-
-    function draw() {
-      const active = allTemplates.filter((t) => t.status === "active");
-      const retired = allTemplates.filter((t) => t.status === "retired");
-      const uncovered = rulesWithoutActiveFace();
-
-      const newBtn = el("button", { class: "btn btn-sm btn-primary", type: "button",
-        onclick: () => openCreateTemplate(),
-      }, "+ New template");
-
-      const header = el("div", { style: "display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem" }, [
-        el("h2", { style: "margin:0;font-size:1.1rem;flex:1" }, "Surgery Templates"),
-        newBtn,
-      ]);
-
-      const uncoveredNotice = uncovered.length
-        ? el("div", { class: "notice warn", style: "font-size:0.875rem;margin-bottom:1rem" }, [
-            el("strong", {}, `${uncovered.length} rule${uncovered.length > 1 ? "s" : ""} without an active template face: `),
-            uncovered.map((r) => r.label || r.name || r.id || r.rule_id).join(", "),
-          ])
-        : null;
-
-      const rulesNote = rulesWarning
-        ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.7rem" }, rulesWarning)
-        : null;
-
-      const tplCard = (t) => {
-        const activeFaces = t.faces.filter((f) => f.status === "active");
-        const retiredFaces = t.faces.filter((f) => f.status === "retired");
-        const drawingBadge = t.drawing
-          ? el("span", { style: "font-size:0.75rem;color:#555;margin-left:0.4rem" },
-              `${t.drawing.number}${t.drawing.revision ? ` Rev ${t.drawing.revision}` : ""}`)
-          : el("span", { style: "font-size:0.75rem;color:#999;margin-left:0.4rem" }, "no drawing");
-
-        const faceRows = activeFaces.map((f) =>
-          el("tr", {}, [
-            el("td", { style: "padding:3px 8px;font-size:0.8125rem;font-family:monospace" }, f.face_code),
-            el("td", { style: "padding:3px 8px;font-size:0.8125rem" }, f.label),
-            el("td", { style: "padding:3px 8px;font-size:0.8125rem;color:#555" }, ruleLabel(f.rule_id)),
-            el("td", { style: "padding:3px 8px" },
-              el("button", { class: "btn btn-xs", type: "button",
-                onclick: async () => {
-                  if (!confirm(`Retire face "${f.label}"? Its QR code will stop being valid.`)) return;
-                  try { await API.post(token, "retireSurgeryTemplateFace", { id: f.id }); await load(); }
-                  catch (ex) { alert(`Couldn't retire face: ${ex.message}`); }
-                } }, "Retire")),
-          ])
-        );
-
-        const facesTable = activeFaces.length
-          ? el("table", { style: "border-collapse:collapse;width:100%;margin-top:0.4rem" }, [
-              el("thead", {}, el("tr", {}, [
-                el("th", { style: "padding:2px 8px;font-size:0.75rem;text-align:left;color:#666;font-weight:500" }, "Face code"),
-                el("th", { style: "padding:2px 8px;font-size:0.75rem;text-align:left;color:#666;font-weight:500" }, "Label"),
-                el("th", { style: "padding:2px 8px;font-size:0.75rem;text-align:left;color:#666;font-weight:500" }, "Rule"),
-                el("th", {}),
-              ])),
-              el("tbody", {}, faceRows),
-            ])
-          : el("div", { style: "font-size:0.8125rem;color:#999;margin-top:0.3rem" }, "No active faces.");
-
-        const actions = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin-top:0.6rem" }, [
-          el("button", { class: "btn btn-xs", type: "button",
-            onclick: () => openRenameTemplate(t) }, "Rename"),
-          el("button", { class: "btn btn-xs", type: "button",
-            onclick: () => openLinkDrawing(t) }, t.drawing ? "Change drawing" : "Link drawing"),
-          el("button", { class: "btn btn-xs", type: "button",
-            onclick: () => openAddFace(t) }, "+ Add face"),
-          t.status === "active"
-            ? el("button", { class: "btn btn-xs", type: "button",
-                onclick: async () => {
-                  if (!confirm(`Retire template "${t.name}"? Its faces will still work but no new face can be added.`)) return;
-                  try { await API.post(token, "updateSurgeryTemplate", { id: t.id, status: "retired" }); await load(); }
-                  catch (ex) { alert(`Couldn't retire: ${ex.message}`); }
-                } }, "Retire")
-            : el("button", { class: "btn btn-xs", type: "button",
-                onclick: async () => {
-                  try { await API.post(token, "updateSurgeryTemplate", { id: t.id, status: "active" }); await load(); }
-                  catch (ex) { alert(`Couldn't reactivate: ${ex.message}`); }
-                } }, "Reactivate"),
-        ]);
-
-        return el("div", { class: "card", style: "margin-bottom:0.6rem" }, [
-          el("div", { style: "display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap" }, [
-            el("strong", {}, t.name),
-            el("span", { style: "font-size:0.75rem;color:#888;font-family:monospace" }, t.code),
-            drawingBadge,
-            retiredFaces.length
-              ? el("span", { style: "font-size:0.75rem;color:#aaa;margin-left:auto" }, `${retiredFaces.length} retired face${retiredFaces.length > 1 ? "s" : ""}`)
-              : null,
-          ].filter(Boolean)),
-          facesTable,
-          actions,
-        ]);
-      };
-
-      const retiredSection = retired.length
-        ? el("details", { style: "margin-top:1rem" }, [
-            el("summary", { style: "cursor:pointer;font-size:0.875rem;color:#888;margin-bottom:0.5rem" },
-              `${retired.length} retired template${retired.length > 1 ? "s" : ""}`),
-            ...retired.map(tplCard),
-          ])
-        : null;
-
-      mount.replaceChildren(
-        el("div", { style: "max-width:860px;padding:1rem 0" }, [
-          header,
-          rulesNote,
-          uncoveredNotice,
-          active.length
-            ? el("div", {}, active.map(tplCard))
-            : el("div", { class: "notice", style: "font-size:0.875rem" }, "No templates yet. Use + New template to create the first one."),
-          retiredSection,
-        ].filter(Boolean)),
-      );
-    }
-
-    // --- Create template dialog ---
-    function openCreateTemplate() {
-      const codeInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. TPL-001", maxlength: "40" });
-      const nameInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
-      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
-      const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
-        const code = codeInp.value.trim();
-        const name = nameInp.value.trim();
-        if (!code) { status.textContent = "Code is required."; return; }
-        if (!name) { status.textContent = "Name is required."; return; }
-        ev.target.disabled = true; status.textContent = "Saving…";
-        try {
-          await API.post(token, "createSurgeryTemplate", { code, name });
-          close(); await load();
-        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
-      } }, "Create");
-      const close = openModal("New surgery template", el("div", {}, [
-        el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          "The code is printed on the QR label and can never change. Name can be renamed later."),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Code"), codeInp]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Name"), nameInp]),
-        status,
-        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
-          el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
-          saveBtn,
-        ]),
-      ]));
-      codeInp.focus();
-    }
-
-    // --- Rename template dialog ---
-    function openRenameTemplate(t) {
-      const nameInp = el("input", { class: "up-text", type: "text", value: t.name, maxlength: "200" });
-      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
-      const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
-        const name = nameInp.value.trim();
-        if (!name) { status.textContent = "Name is required."; return; }
-        ev.target.disabled = true; status.textContent = "Saving…";
-        try {
-          await API.post(token, "updateSurgeryTemplate", { id: t.id, name });
-          close(); await load();
-        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
-      } }, "Save");
-      const close = openModal("Rename template", el("div", {}, [
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Name"), nameInp]),
-        status,
-        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
-          el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
-          saveBtn,
-        ]),
-      ]));
-      nameInp.focus(); nameInp.select();
-    }
-
-    // --- Link drawing dialog ---
-    function openLinkDrawing(t) {
-      const container = el("div", { class: "loading" }, "Loading drawings…");
-      const close = openModal("Link drawing to template", container);
-      API.post(token, "listDrawings", {}).then(({ drawings: dwgs }) => {
-        if (!dwgs || !dwgs.length) {
-          container.replaceChildren(el("p", { class: "notice" }, "No drawings yet."),
-            el("div", { style: "display:flex;justify-content:flex-end" },
-              el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Close")));
-          return;
-        }
-        const opts = [el("option", { value: "" }, "— no drawing —"),
-          ...dwgs.map((d) => el("option", { value: d.id }, `${d.drawing_number} — ${d.title}${d.revision ? ` Rev ${d.revision}` : ""}`))];
-        const sel = el("select", { class: "up-text" }, opts);
-        sel.value = t.drawing ? t.drawing.id : "";
-        const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
-        container.replaceChildren(
-          el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing"), sel]),
-          status,
-          el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
-            el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
-            el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
-              ev.target.disabled = true; status.textContent = "Saving…";
-              try {
-                await API.post(token, "updateSurgeryTemplate", { id: t.id, drawing_id: sel.value || null });
-                close(); await load();
-              } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
-            } }, "Save"),
-          ]),
-        );
-      }).catch((ex) => container.replaceChildren(el("div", { class: "error" }, ex.message)));
-    }
-
-    // --- Add face dialog ---
-    function openAddFace(t) {
-      const uncovered = rulesWithoutActiveFace().filter((r) => {
-        const rId = r.id || r.rule_id;
-        return !t.faces.some((f) => f.status === "active" && f.rule_id === rId);
-      });
-      const faceCodeInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. F-001-L", maxlength: "40" });
-      const labelInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall, left face", maxlength: "200" });
-      const ruleOpts = [
-        el("option", { value: "" }, "— pick a rule —"),
-        ...(allRules.length
-          ? allRules.map((r) => {
-              const rId = r.id || r.rule_id;
-              const alreadyCovered = allTemplates.some((tmpl) => tmpl.faces.some((f) => f.status === "active" && f.rule_id === rId));
-              return el("option", { value: rId, disabled: alreadyCovered ? "disabled" : null },
-                `${r.label || r.name || rId}${alreadyCovered ? " (covered)" : ""}`);
-            })
-          : [el("option", { value: "", disabled: "disabled" }, rulesWarning || "Order Operations not connected")]),
-      ];
-      const ruleSel = el("select", { class: "up-text" }, ruleOpts);
-      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
-      const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
-        const face_code = faceCodeInp.value.trim();
-        const label = labelInp.value.trim();
-        const rule_id = ruleSel.value;
-        if (!face_code) { status.textContent = "Face code is required."; return; }
-        if (!label) { status.textContent = "Label is required."; return; }
-        if (!rule_id) { status.textContent = "Pick a rule."; return; }
-        ev.target.disabled = true; status.textContent = "Saving…";
-        try {
-          await API.post(token, "addSurgeryTemplateFace", { template_id: t.id, face_code, label, rule_id });
-          close(); await load();
-        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
-      } }, "Add face");
-      const close = openModal(`Add face — ${t.name}`, el("div", {}, [
-        el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          "The face code is printed on the QR label and can never change. One active face per rule is allowed."),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Face code"), faceCodeInp]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Label (printed next to the QR)"), labelInp]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Order Surgery rule"), ruleSel]),
-        uncovered.length
-          ? el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.4rem" },
-              `${uncovered.length} rule${uncovered.length > 1 ? "s" : ""} without a face yet`)
-          : null,
-        status,
-        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
-          el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
-          saveBtn,
-        ]),
-      ].filter(Boolean)));
-      faceCodeInp.focus();
-    }
-
-    await load();
   }
 
   // Header session cluster: an admin/super-admin badge, the (admin-only)

@@ -4513,9 +4513,10 @@ Deno.serve(async (req) => {
     if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
     let q = tdb("drawings").select(
       "id, drawing_number, title, status, current_revision_id, projection_angle, sheet_size, scale, is_supplier_visible, created_at, "
-      + "owner_component_id, node_sequence, supplier_drawing_number");
+      + "owner_component_id, node_sequence, supplier_drawing_number, drawing_type");
     q = supplierDrawingScope(q, role);
     if (body.status) q = q.eq("status", String(body.status));
+    if (body.drawing_type) q = q.eq("drawing_type", String(body.drawing_type));
     const { data: rows, error } = await q;
     if (error) return json({ error: error.message }, 400);
 
@@ -4556,6 +4557,7 @@ Deno.serve(async (req) => {
       revision: d.current_revision_id ? (revMap[d.current_revision_id] || "") : "",
       projection_angle: d.projection_angle, sheet_size: d.sheet_size, scale: d.scale,
       is_supplier_visible: d.is_supplier_visible,
+      drawing_type: d.drawing_type || "engineering",
       parts_count: partsCount[d.id] || 0,
       owner_component_id: d.owner_component_id || null,
       owner_name: d.owner_component_id ? (ownerMap[d.owner_component_id]?.name || "") : "",
@@ -4811,9 +4813,15 @@ Deno.serve(async (req) => {
     if (!storage_path || !file_name) return json({ error: "storage_path and file_name required" }, 400);
     if (!title) return json({ error: "title required" }, 400);
 
+    // drawing_type: 'engineering' (default) or 'surgery_template'. Surgery
+    // template drawings are always internal (not supplier-visible) and always
+    // free (no owner_component_id — they serve many parts, not one).
+    const drawingType = body.drawing_type === "surgery_template" ? "surgery_template" : "engineering";
+
     // Free drawing = no owner. Explicit, not a default: the modal makes the
     // user choose, so an unattached drawing is a decision, not an oversight.
-    const ownerId = String(body.owner_component_id ?? "").trim() || null;
+    // Surgery template drawings are always free — they belong to no single part.
+    const ownerId = drawingType === "surgery_template" ? null : (String(body.owner_component_id ?? "").trim() || null);
     let owner: any = null;
     if (ownerId) {
       const { data: comps } = await tdb("bom_components").select("id, name, part_number").eq("id", ownerId);
@@ -4836,12 +4844,14 @@ Deno.serve(async (req) => {
 
     const { data: created, error } = await tdb("drawings").insert({
       drawing_number, title: title.slice(0, 200),
+      drawing_type: drawingType,
       owner_component_id: ownerId, node_sequence,
       supplier_drawing_number: body.supplier_drawing_number ? String(body.supplier_drawing_number).slice(0, 120) : null,
       projection_angle: body.projection_angle ? String(body.projection_angle).slice(0, 10) : null,
       sheet_size: body.sheet_size ? String(body.sheet_size).slice(0, 10) : null,
       scale: body.scale ? String(body.scale).slice(0, 20) : null,
-      is_supplier_visible: body.is_supplier_visible === false ? false : true,
+      // Surgery template drawings are internal — never share jig geometry with suppliers.
+      is_supplier_visible: drawingType === "surgery_template" ? false : (body.is_supplier_visible === false ? false : true),
       created_by: session.uid || null,
     }).select("id").maybeSingle();
     if (error) return json({ error: error.message }, 400);
@@ -5857,9 +5867,14 @@ Deno.serve(async (req) => {
     if (action === "createSurgeryTemplate") {
       const code = String(body.code || "").trim();
       const name = String(body.name || "").trim();
+      const drawing_id = String(body.drawing_id || "").trim();
       if (!code || code.length > 40) return json({ error: "code must be 1–40 characters" }, 400);
       if (!name || name.length > 200) return json({ error: "name must be 1–200 characters" }, 400);
-      const { data, error } = await tdb("surgery_templates").insert({ code, name, created_by: session?.uid ?? null }).select("id, code, name, status").single();
+      if (!drawing_id) return json({ error: "drawing_id is required — every template must have a controlled drawing" }, 400);
+      const { data: dwg } = await tdb("drawings").select("id, drawing_type").eq("id", drawing_id).maybeSingle();
+      if (!dwg) return json({ error: "Drawing not found" }, 404);
+      if (dwg.drawing_type !== "surgery_template") return json({ error: "The drawing must be of type surgery_template" }, 400);
+      const { data, error } = await tdb("surgery_templates").insert({ code, name, drawing_id, created_by: session?.uid ?? null }).select("id, code, name, drawing_id, status").single();
       if (error) return json({ error: error.code === "23505" ? `A template with code "${code}" already exists` : error.message }, 409);
       return json(data);
     }
@@ -5872,7 +5887,14 @@ Deno.serve(async (req) => {
         if (!name || name.length > 200) return json({ error: "name must be 1–200 characters" }, 400);
         patch.name = name;
       }
-      if (body.drawing_id !== undefined) patch.drawing_id = body.drawing_id || null;
+      if (body.drawing_id !== undefined) {
+        if (body.drawing_id) {
+          const { data: dwg } = await tdb("drawings").select("id, drawing_type").eq("id", String(body.drawing_id)).maybeSingle();
+          if (!dwg) return json({ error: "Drawing not found" }, 404);
+          if (dwg.drawing_type !== "surgery_template") return json({ error: "The drawing must be of type surgery_template" }, 400);
+        }
+        patch.drawing_id = body.drawing_id || null;
+      }
       if (body.status !== undefined) {
         if (!["active", "retired"].includes(body.status)) return json({ error: "status must be active or retired" }, 400);
         patch.status = body.status;

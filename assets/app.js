@@ -10660,30 +10660,39 @@
       );
     }
 
-    // --- New surgery template: creates a drawing (type=surgery_template) then the template ---
+    // --- New surgery template: upload CAD file → create drawing + template ---
     function openCreateTemplateWithDrawing() {
-      // Step 1 inputs
+      // Captured once uploadZone fires onReady.
+      const uploaded = { path: null, fileName: null };
+
       const titleInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
       const codeInp  = el("input", { class: "up-text", type: "text", placeholder: "e.g. TPL-001", maxlength: "40" });
       const nameInp  = el("input", { class: "up-text", type: "text", placeholder: "Display name (can be changed later)", maxlength: "200" });
-      const fileInp  = el("input", { type: "file", accept: ".pdf,image/*", class: "up-text" });
       const status   = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+
+      const zone = uploadZone(role, "documents", {
+        ariaLabel: "Choose or drop the CAD drawing file",
+        hint: "Drag & drop the drawing here, or",
+        processing: false,
+      });
+      zone.onReady((up, file) => {
+        uploaded.path = up.path;
+        uploaded.fileName = file.name;
+        status.textContent = "";
+      });
 
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = titleInp.value.trim();
         const code  = codeInp.value.trim();
         const name  = nameInp.value.trim() || title;
-        const file  = fileInp.files?.[0];
-        if (!title) { status.textContent = "Drawing title is required."; return; }
-        if (!code)  { status.textContent = "Template code is required."; return; }
-        if (!file)  { status.textContent = "Upload the CAD drawing file (PDF or image)."; return; }
-        ev.target.disabled = true; status.textContent = "Uploading drawing…";
+        if (!title)            { status.textContent = "Drawing title is required."; return; }
+        if (!code)             { status.textContent = "Template code is required."; return; }
+        if (!uploaded.path)    { status.textContent = "Upload the CAD drawing file first."; return; }
+        ev.target.disabled = true; status.textContent = "Creating drawing…";
         try {
-          // Upload the file first (reuse existing upload helper).
-          const { storage_path, file_name } = await uploadDrawingFile(file, token);
-          status.textContent = "Creating drawing…";
           const dwgRes = await API.post(token, "createDrawingWithRevision", {
-            title, storage_path, file_name, drawing_type: "surgery_template",
+            title, storage_path: uploaded.path, file_name: uploaded.fileName,
+            drawing_type: "surgery_template",
           });
           status.textContent = "Creating template…";
           await API.post(token, "createSurgeryTemplate", {
@@ -10697,7 +10706,7 @@
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
           "A surgery template is a controlled CAD drawing — it gets a drawing number and a revision letter. The template code is printed on the QR label and can never change."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing title"), titleInp]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), fileInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), zone.el]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template code (immutable QR payload)"), codeInp]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template name"), nameInp]),
         status,

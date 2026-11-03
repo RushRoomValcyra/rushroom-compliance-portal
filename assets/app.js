@@ -10884,7 +10884,9 @@
     function tplOpenAddFace(t) {
       const coveredByThis = new Set(t.faces.filter((f) => f.status === "active").map((f) => f.rule_id));
       const coveredAnywhere = new Set(
-        tplAllTemplates.flatMap((tmpl) => tmpl.faces.filter((f) => f.status === "active").map((f) => f.rule_id))
+        tplAllTemplates
+          .filter((tmpl) => tmpl.status === "active")
+          .flatMap((tmpl) => tmpl.faces.filter((f) => f.status === "active").map((f) => f.rule_id))
       );
 
       function ruleLabel(r) {

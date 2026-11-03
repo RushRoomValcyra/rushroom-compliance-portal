@@ -10621,7 +10621,7 @@
           t.status === "active"
             ? el("button", { class: "btn btn-xs", type: "button",
                 onclick: async () => {
-                  if (!confirm(`Retire template "${t.name}"? Its faces will still work but no new face can be added.`)) return;
+                  if (!confirm(`Retire template "${t.name}"?\n\nAll its active faces (QR sticker assignments) will also be retired, freeing those rules to be assigned to a new template. The full history is preserved.`)) return;
                   try { await API.post(token, "updateSurgeryTemplate", { id: t.id, status: "retired" }); await reloadTemplates(); }
                   catch (ex) { alert(`Couldn't retire: ${ex.message}`); }
                 } }, "Retire")

@@ -10803,36 +10803,38 @@
         ) ?? null;
       }
 
-      // Primary face inputs
-      const faceCodeInp = el("input", { class: "up-text", type: "text", maxlength: "40",
-        placeholder: "Auto-filled when you pick a rule" });
-      const labelInp = el("input", { class: "up-text", type: "text", maxlength: "200",
-        placeholder: "Auto-filled when you pick a rule" });
+      function autoFaceCode(r) {
+        const suffix = r.face === "left" ? "-L" : r.face === "right" ? "-R" : "";
+        return `${t.code}${suffix}`;
+      }
 
-      // Mirror face inputs (shown/hidden dynamically)
-      const mirrorCodeInp  = el("input", { class: "up-text", type: "text", maxlength: "40" });
+      // Generated face code badges (read-only).
+      const faceCodeBadge  = el("span", { style: "font-family:monospace;font-size:0.875rem;padding:3px 8px;background:var(--surface-subtle,#f1f5f9);border:1px solid var(--border,#e2e8f0);border-radius:4px;color:var(--text,#1a1a1a)" }, "—");
+      const mirrorCodeBadge = el("span", { style: "font-family:monospace;font-size:0.875rem;padding:3px 8px;background:var(--surface-subtle,#f1f5f9);border:1px solid var(--border,#e2e8f0);border-radius:4px;color:var(--text,#1a1a1a)" }, "—");
+
+      // Editable labels.
+      const labelInp      = el("input", { class: "up-text", type: "text", maxlength: "200",
+        placeholder: "Auto-filled when you pick a rule" });
       const mirrorLabelInp = el("input", { class: "up-text", type: "text", maxlength: "200" });
-      const mirrorChk      = el("input", { type: "checkbox" });
-      const mirrorSection  = el("div", { style: "display:none;margin-top:0.5rem;padding:0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--surface-subtle,#f8fafc)" }, [
-        el("div", { style: "margin-bottom:0.4rem" }, [
-          el("label", { style: "display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.875rem;font-weight:500" }, [
-            mirrorChk, "Also add mirrored face (same drawing, other side)",
-          ]),
+
+      // Mirror section.
+      const mirrorChk     = el("input", { type: "checkbox" });
+      const mirrorFields  = el("div", { style: "display:none;margin-top:0.5rem" }, [
+        el("div", { style: "margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem" }, [
+          el("div", { class: "form-label", style: "margin:0;white-space:nowrap" }, "Face code"),
+          mirrorCodeBadge,
         ]),
-        el("div", { class: "mirror-fields", style: "display:none;margin-top:0.5rem" }, [
-          el("div", { style: "margin-bottom:0.4rem" }, [
-            el("div", { class: "form-label" }, [
-              "Face code",
-              el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(immutable)"),
-            ]),
-            mirrorCodeInp,
-          ]),
-          el("div", {}, [el("div", { class: "form-label" }, "Label"), mirrorLabelInp]),
+        el("div", {}, [el("div", { class: "form-label" }, "Label"), mirrorLabelInp]),
+      ]);
+      const mirrorSection = el("div", { style: "display:none;margin-top:0.6rem;padding:0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--surface-subtle,#f8fafc)" }, [
+        el("label", { style: "display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.875rem;font-weight:500" }, [
+          mirrorChk, "Also add mirrored face (same drawing, other side)",
         ]),
+        mirrorFields,
       ]);
 
       mirrorChk.addEventListener("change", () => {
-        mirrorSection.querySelector(".mirror-fields").style.display = mirrorChk.checked ? "" : "none";
+        mirrorFields.style.display = mirrorChk.checked ? "" : "none";
       });
 
       const ruleOpts = [
@@ -10840,9 +10842,9 @@
         ...(tplAllRules.length
           ? tplAllRules.map((r) => {
               const rId = r.id || r.rule_id;
-              const onThis = coveredByThis.has(rId);
+              const onThis    = coveredByThis.has(rId);
               const elsewhere = !onThis && coveredAnywhere.has(rId);
-              const suffix = onThis ? " (already on this template)" : elsewhere ? " (covered elsewhere)" : "";
+              const suffix    = onThis ? " (already on this template)" : elsewhere ? " (covered elsewhere)" : "";
               return el("option", { value: rId, disabled: onThis ? "disabled" : null },
                 ruleLabel(r) + suffix);
             })
@@ -10853,73 +10855,71 @@
       ruleSel.addEventListener("change", () => {
         const rId = ruleSel.value;
         const r   = tplAllRules.find((r) => (r.id || r.rule_id) === rId);
-        if (!r) { mirrorSection.style.display = "none"; return; }
+        if (!r) { faceCodeBadge.textContent = "—"; mirrorSection.style.display = "none"; return; }
 
-        // Primary face auto-fill.
-        const suffix = r.face === "left" ? "-L" : r.face === "right" ? "-R" : "";
-        faceCodeInp.value = `${t.code}${suffix}`;
-        labelInp.value    = ruleLabel(r);
+        faceCodeBadge.textContent = autoFaceCode(r);
+        if (!labelInp.value.trim() || labelInp.dataset.auto === "1") {
+          labelInp.value = ruleLabel(r);
+          labelInp.dataset.auto = "1";
+        }
 
-        // Mirror face.
         const mirror = findMirror(r);
         if (mirror) {
-          const mirrorId        = mirror.id || mirror.rule_id;
-          const alreadyHere     = coveredByThis.has(mirrorId);
+          const mirrorId         = mirror.id || mirror.rule_id;
+          const alreadyHere      = coveredByThis.has(mirrorId);
           const alreadyElsewhere = !alreadyHere && coveredAnywhere.has(mirrorId);
-          const alreadyCovered  = alreadyHere || alreadyElsewhere;
-          const mirrorSuffix    = mirror.face === "left" ? "-L" : mirror.face === "right" ? "-R" : "";
-          mirrorCodeInp.value  = `${t.code}${mirrorSuffix}`;
-          mirrorLabelInp.value = ruleLabel(mirror);
+          const alreadyCovered   = alreadyHere || alreadyElsewhere;
+          mirrorCodeBadge.textContent = autoFaceCode(mirror);
+          if (!mirrorLabelInp.value.trim()) mirrorLabelInp.value = ruleLabel(mirror);
           mirrorSection.style.display = "";
           mirrorChk.checked  = !alreadyCovered;
           mirrorChk.disabled = alreadyCovered;
-          const noteText = alreadyHere
+          const noteEl = mirrorSection.querySelector("label");
+          noteEl.lastChild.textContent = alreadyHere
             ? " Mirrored face already on this template"
             : alreadyElsewhere
               ? " Mirrored face already covered on another template"
               : " Also add mirrored face (same drawing, other side)";
-          mirrorSection.querySelector("label").lastChild.textContent = noteText;
-          mirrorSection.querySelector(".mirror-fields").style.display = mirrorChk.checked ? "" : "none";
+          mirrorFields.style.display = mirrorChk.checked ? "" : "none";
         } else {
           mirrorSection.style.display = "none";
         }
       });
 
-      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+      // Clear auto flag if user edits the label manually.
+      labelInp.addEventListener("input", () => { delete labelInp.dataset.auto; });
+
+      const status  = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+
+      function friendlyErr(msg) {
+        return msg.replace(/Rule "([^"]+)" already has an active face/, (_, rId) => {
+          const found = tplAllRules.find((r) => (r.id || r.rule_id) === rId);
+          return `"${found ? ruleLabel(found) : rId}" already has an active face`;
+        });
+      }
 
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
-        const face_code = faceCodeInp.value.trim();
-        const label     = labelInp.value.trim();
         const rule_id   = ruleSel.value;
-        if (!rule_id)   { status.textContent = "Pick a rule."; return; }
-        if (!face_code) { status.textContent = "Primary face code is required."; return; }
-        if (!label)     { status.textContent = "Primary label is required."; return; }
+        const face_code = faceCodeBadge.textContent.trim();
+        const label     = labelInp.value.trim();
+        if (!rule_id)          { status.textContent = "Pick a rule."; return; }
+        if (!label)            { status.textContent = "Label is required."; return; }
 
         const addMirror = mirrorChk.checked && !mirrorChk.disabled;
-        if (addMirror) {
-          if (!mirrorCodeInp.value.trim())  { status.textContent = "Mirror face code is required."; return; }
-          if (!mirrorLabelInp.value.trim()) { status.textContent = "Mirror label is required."; return; }
-        }
+        if (addMirror && !mirrorLabelInp.value.trim()) { status.textContent = "Mirror label is required."; return; }
 
         const r      = tplAllRules.find((r) => (r.id || r.rule_id) === rule_id);
         const mirror = r ? findMirror(r) : null;
 
         ev.target.disabled = true; status.textContent = "Saving…";
-        // Humanise raw rule-ID errors the backend may return.
-        function friendlyErr(msg) {
-          return msg.replace(/Rule "([^"]+)" already has an active face/, (_, rId) => {
-            const found = tplAllRules.find((r) => (r.id || r.rule_id) === rId);
-            return `"${found ? ruleLabel(found) : rId}" already has an active face`;
-          });
-        }
         try {
           await API.post(token, "addSurgeryTemplateFace", { template_id: t.id, face_code, label, rule_id });
           if (addMirror && mirror) {
             await API.post(token, "addSurgeryTemplateFace", {
               template_id: t.id,
-              face_code: mirrorCodeInp.value.trim(),
-              label:     mirrorLabelInp.value.trim(),
-              rule_id:   mirror.id || mirror.rule_id,
+              face_code:   mirrorCodeBadge.textContent.trim(),
+              label:       mirrorLabelInp.value.trim(),
+              rule_id:     mirror.id || mirror.rule_id,
             });
           }
           close(); await reloadTemplates();
@@ -10928,16 +10928,16 @@
 
       const close = openModal(`Add face — ${t.name}`, el("div", {}, [
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          "Pick the Order Surgery rule — face code and label fill automatically. The face code goes on the QR sticker and can never change."),
+          "Pick the Order Surgery rule — the face code is generated automatically. The label is what is printed next to the QR sticker."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Order Surgery rule"), ruleSel]),
-        el("div", { style: "margin-bottom:0.4rem" }, [
-          el("div", { class: "form-label" }, [
+        el("div", { style: "margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem" }, [
+          el("div", { class: "form-label", style: "margin:0;white-space:nowrap" }, [
             "Face code",
-            el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(immutable QR payload)"),
+            el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(generated, on QR sticker)"),
           ]),
-          faceCodeInp,
+          faceCodeBadge,
         ]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Label (printed next to QR)"), labelInp]),
+        el("div", { style: "margin-bottom:0.55rem;margin-top:0.4rem" }, [el("div", { class: "form-label" }, "Label (printed next to QR)"), labelInp]),
         mirrorSection,
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.6rem" }, [

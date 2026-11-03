@@ -10666,7 +10666,6 @@
       const uploaded = { path: null, fileName: null };
 
       const titleInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
-      const nameInp  = el("input", { class: "up-text", type: "text", placeholder: "Display name (can be changed later)", maxlength: "200" });
       const status   = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
 
       const zone = uploadZone(role, "documents", {
@@ -10682,7 +10681,6 @@
 
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = titleInp.value.trim();
-        const name  = nameInp.value.trim() || title;
         if (!title)         { status.textContent = "Drawing title is required."; return; }
         if (!uploaded.path) { status.textContent = "Upload the CAD drawing file first."; return; }
         ev.target.disabled = true; status.textContent = "Creating drawing…";
@@ -10692,8 +10690,7 @@
             drawing_type: "surgery_template",
           });
           status.textContent = "Creating template…";
-          // code omitted — backend auto-assigns from drawing number
-          await API.post(token, "createSurgeryTemplate", { name, drawing_id: dwgRes.id });
+          await API.post(token, "createSurgeryTemplate", { name: title, drawing_id: dwgRes.id });
           close(); await reloadTemplates();
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Create");
@@ -10703,7 +10700,6 @@
           "A surgery template is a controlled CAD drawing. It gets a drawing number and revision letter assigned automatically — that number also becomes its template code on the QR label."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing title"), titleInp]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), zone.el]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template name (can be changed later)"), nameInp]),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
           el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),

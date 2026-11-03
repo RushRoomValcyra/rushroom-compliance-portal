@@ -669,7 +669,7 @@ Extend `getSidePanelSurgery` to batch-fetch matching `surgery_template_faces` (+
 **Ownership note:**
 EC owns templates; templates point at OO rules — not the other way around. `surgery_template_faces.rule_id` (EC) → OO surgery rule id. Assignment is done in EC's Surgery Templates tab. The OO Edit rule page shows rule mechanics only; the template is not set there. Once the end-to-end link is structural, OO's embedded instruction strings (e.g. `"Drill according to the template 'Smala hyllor mall'."`) can drop the template name — it will be surfaced here in the Template column instead.
 
-**Status:** Raw idea — Part card (optional) from PROP-0059 spec, promoted to full idea after architecture review
+**Status:** Backlog — Part card template column not yet built; PROP-0059 core (surgery template register + OO Gateway integration) shipped 2026-11-03
 
 ---
 ### Surgery Template as Drawing Type — Unify Manufacturing Templates with the Drawings Domain — 2026-11-03
@@ -738,7 +738,7 @@ A single side panel part can be used in multiple interior configurations (e.g. I
 - IDEAS: "Surgery Templates per Part — Part Card Template Column" (builds the Manufacturing tab column; this idea is a prerequisite for showing proper drawing data there)
 - OO PROP-0061 (Surgery rules in UI — once rules are in DB, the instruction strings can drop embedded template names)
 
-**Status:** Raw idea — architectural consolidation; prerequisite for the Part Card Template Column idea
+**Status:** Shipped 2026-11-03 (PROP-074) — surgery templates live as a drawing_type on the Drawings domain
 
 ---
 ### Manufacturing Routing — Postponement Model with Variant-Conditional Operations — 2026-09-01
@@ -1862,4 +1862,4 @@ Nobody can say what an L module, a COMPLETE Drawer Set or a Prepared door costs.
 - **PROP-059** — the original surgery template register (two-table structure).
 - **PROP-012** — `surgery_template_face_events` must be in `TENANT_TABLES` in `_shared/tenant.ts`; tests/tenant-tables.test.mjs will catch it if missed.
 
-**Status:** Raw idea
+**Status:** Shipped 2026-11-03 (PROP-075) — face event ledger, supersedes chain, lineage UI, and listSurgeryTemplates OO Gateway contract all deployed

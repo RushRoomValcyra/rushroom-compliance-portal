@@ -10665,9 +10665,16 @@
       // Captured once uploadZone fires onReady.
       const uploaded = { path: null, fileName: null };
 
+      // Generate a short, unambiguous template code — immutable once created.
+      function genCode() {
+        const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I
+        let s = "TPL-";
+        for (let i = 0; i < 4; i++) s += chars[Math.floor(Math.random() * chars.length)];
+        return s;
+      }
+      const autoCode = genCode();
+
       const titleInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
-      const codeInp  = el("input", { class: "up-text", type: "text", placeholder: "e.g. DH-5050 or TPL-001", maxlength: "20",
-        style: "text-transform:uppercase" });
       const status   = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
 
       const zone = uploadZone(role, "documents", {
@@ -10683,9 +10690,7 @@
 
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = titleInp.value.trim();
-        const code  = codeInp.value.trim().toUpperCase();
         if (!title)         { status.textContent = "Drawing title is required."; return; }
-        if (!code)          { status.textContent = "Template code is required — this is the short identifier on the QR sticker."; return; }
         if (!uploaded.path) { status.textContent = "Upload the CAD drawing file first."; return; }
         ev.target.disabled = true; status.textContent = "Creating drawing…";
         try {
@@ -10694,22 +10699,15 @@
             drawing_type: "surgery_template",
           });
           status.textContent = "Creating template…";
-          await API.post(token, "createSurgeryTemplate", { code, name: title, drawing_id: dwgRes.id });
+          await API.post(token, "createSurgeryTemplate", { code: autoCode, name: title, drawing_id: dwgRes.id });
           close(); await reloadTemplates();
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Create");
 
       const close = openModal("New surgery template", el("div", {}, [
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          "A surgery template is a controlled CAD drawing. It gets a drawing number and revision letter assigned automatically — that number also becomes its template code on the QR label."),
+          "A surgery template is a controlled CAD drawing. Provide a title and upload the file — the template code and drawing number are assigned automatically."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing title"), titleInp]),
-        el("div", { style: "margin-bottom:0.55rem" }, [
-          el("div", { class: "form-label" }, [
-            "Template code",
-            el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(short — printed on QR sticker, can never change)"),
-          ]),
-          codeInp,
-        ]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), zone.el]),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [

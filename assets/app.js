@@ -10772,9 +10772,7 @@
 
     // --- Add face ---
     function tplOpenAddFace(t) {
-      // Rules already covered by an active face on THIS template.
       const coveredByThis = new Set(t.faces.filter((f) => f.status === "active").map((f) => f.rule_id));
-      // Rules covered by ANY active face across all templates.
       const coveredAnywhere = new Set(
         tplAllTemplates.flatMap((tmpl) => tmpl.faces.filter((f) => f.status === "active").map((f) => f.rule_id))
       );
@@ -10786,10 +10784,49 @@
         return `${interior} · ${face} · ${stage}`;
       }
 
+      function findMirror(r) {
+        if (!r || !r.face) return null;
+        const mirrorFace = r.face === "left" ? "right" : r.face === "right" ? "left" : null;
+        if (!mirrorFace) return null;
+        return tplAllRules.find((m) =>
+          m.interior_code === r.interior_code &&
+          m.stage === r.stage &&
+          m.face === mirrorFace &&
+          (m.id || m.rule_id) !== (r.id || r.rule_id)
+        ) ?? null;
+      }
+
+      // Primary face inputs
       const faceCodeInp = el("input", { class: "up-text", type: "text", maxlength: "40",
         placeholder: "Auto-filled when you pick a rule" });
       const labelInp = el("input", { class: "up-text", type: "text", maxlength: "200",
         placeholder: "Auto-filled when you pick a rule" });
+
+      // Mirror face inputs (shown/hidden dynamically)
+      const mirrorCodeInp  = el("input", { class: "up-text", type: "text", maxlength: "40" });
+      const mirrorLabelInp = el("input", { class: "up-text", type: "text", maxlength: "200" });
+      const mirrorChk      = el("input", { type: "checkbox" });
+      const mirrorSection  = el("div", { style: "display:none;margin-top:0.5rem;padding:0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--surface-subtle,#f8fafc)" }, [
+        el("div", { style: "margin-bottom:0.4rem" }, [
+          el("label", { style: "display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.875rem;font-weight:500" }, [
+            mirrorChk, "Also add mirrored face (same drawing, other side)",
+          ]),
+        ]),
+        el("div", { class: "mirror-fields", style: "display:none;margin-top:0.5rem" }, [
+          el("div", { style: "margin-bottom:0.4rem" }, [
+            el("div", { class: "form-label" }, [
+              "Face code",
+              el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(immutable)"),
+            ]),
+            mirrorCodeInp,
+          ]),
+          el("div", {}, [el("div", { class: "form-label" }, "Label"), mirrorLabelInp]),
+        ]),
+      ]);
+
+      mirrorChk.addEventListener("change", () => {
+        mirrorSection.querySelector(".mirror-fields").style.display = mirrorChk.checked ? "" : "none";
+      });
 
       const ruleOpts = [
         el("option", { value: "" }, "— pick a rule —"),
@@ -10804,39 +10841,82 @@
             })
           : [el("option", { value: "", disabled: "disabled" }, tplRulesWarning || "Order Operations not connected")]),
       ];
-
       const ruleSel = el("select", { class: "up-text" }, ruleOpts);
 
-      // Auto-fill face code and label when a rule is selected.
       ruleSel.addEventListener("change", () => {
         const rId = ruleSel.value;
-        const r = tplAllRules.find((r) => (r.id || r.rule_id) === rId);
-        if (!r) return;
+        const r   = tplAllRules.find((r) => (r.id || r.rule_id) === rId);
+        if (!r) { mirrorSection.style.display = "none"; return; }
+
+        // Primary face auto-fill.
         const suffix = r.face === "left" ? "-L" : r.face === "right" ? "-R" : "";
-        if (!faceCodeInp.value.trim()) faceCodeInp.value = `${t.code}${suffix}`;
-        if (!labelInp.value.trim()) labelInp.value = ruleLabel(r);
+        faceCodeInp.value = `${t.code}${suffix}`;
+        labelInp.value    = ruleLabel(r);
+
+        // Mirror face.
+        const mirror = findMirror(r);
+        if (mirror) {
+          const mirrorId     = mirror.id || mirror.rule_id;
+          const alreadyHere  = coveredByThis.has(mirrorId);
+          const mirrorSuffix = mirror.face === "left" ? "-L" : mirror.face === "right" ? "-R" : "";
+          mirrorCodeInp.value  = `${t.code}${mirrorSuffix}`;
+          mirrorLabelInp.value = ruleLabel(mirror);
+          mirrorSection.style.display = "";
+          mirrorSection.querySelector(".mirror-fields").style.display = "";
+          mirrorChk.checked  = !alreadyHere;
+          mirrorChk.disabled = alreadyHere;
+          if (alreadyHere) {
+            mirrorSection.querySelector("label").lastChild.textContent =
+              " Mirrored face (already on this template)";
+          } else {
+            mirrorSection.querySelector("label").lastChild.textContent =
+              " Also add mirrored face (same drawing, other side)";
+          }
+          mirrorSection.querySelector(".mirror-fields").style.display = mirrorChk.checked ? "" : "none";
+        } else {
+          mirrorSection.style.display = "none";
+        }
       });
 
       const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const face_code = faceCodeInp.value.trim();
         const label     = labelInp.value.trim();
         const rule_id   = ruleSel.value;
         if (!rule_id)   { status.textContent = "Pick a rule."; return; }
-        if (!face_code) { status.textContent = "Face code is required."; return; }
-        if (!label)     { status.textContent = "Label is required."; return; }
+        if (!face_code) { status.textContent = "Primary face code is required."; return; }
+        if (!label)     { status.textContent = "Primary label is required."; return; }
+
+        const addMirror = mirrorChk.checked && !mirrorChk.disabled;
+        if (addMirror) {
+          if (!mirrorCodeInp.value.trim())  { status.textContent = "Mirror face code is required."; return; }
+          if (!mirrorLabelInp.value.trim()) { status.textContent = "Mirror label is required."; return; }
+        }
+
+        const r      = tplAllRules.find((r) => (r.id || r.rule_id) === rule_id);
+        const mirror = r ? findMirror(r) : null;
+
         ev.target.disabled = true; status.textContent = "Saving…";
         try {
           await API.post(token, "addSurgeryTemplateFace", { template_id: t.id, face_code, label, rule_id });
+          if (addMirror && mirror) {
+            await API.post(token, "addSurgeryTemplateFace", {
+              template_id: t.id,
+              face_code: mirrorCodeInp.value.trim(),
+              label:     mirrorLabelInp.value.trim(),
+              rule_id:   mirror.id || mirror.rule_id,
+            });
+          }
           close(); await reloadTemplates();
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Add face");
 
       const close = openModal(`Add face — ${t.name}`, el("div", {}, [
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          "Pick the Order Surgery rule — face code and label are filled for you. The face code goes on the QR sticker and can never change."),
+          "Pick the Order Surgery rule — face code and label fill automatically. The face code goes on the QR sticker and can never change."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Order Surgery rule"), ruleSel]),
-        el("div", { style: "margin-bottom:0.55rem" }, [
+        el("div", { style: "margin-bottom:0.4rem" }, [
           el("div", { class: "form-label" }, [
             "Face code",
             el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(immutable QR payload)"),
@@ -10844,8 +10924,9 @@
           faceCodeInp,
         ]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Label (printed next to QR)"), labelInp]),
+        mirrorSection,
         status,
-        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.6rem" }, [
           el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
           saveBtn,
         ]),

@@ -10572,6 +10572,30 @@
         ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.7rem" }, tplRulesWarning)
         : null;
 
+      function tplBuildLineage(t) {
+        const visited = new Set();
+        const predecessors = [];
+        let cur = t;
+        while (cur.supersedes_id && !visited.has(cur.supersedes_id)) {
+          visited.add(cur.supersedes_id);
+          const pred = tplAllTemplates.find((x) => x.id === cur.supersedes_id);
+          if (!pred) break;
+          predecessors.unshift(pred);
+          cur = pred;
+        }
+        const successors = [];
+        cur = t;
+        const fwdVisited = new Set([t.id]);
+        while (true) {
+          const succ = tplAllTemplates.find((x) => x.supersedes_id === cur.id && !fwdVisited.has(x.id));
+          if (!succ) break;
+          fwdVisited.add(succ.id);
+          successors.push(succ);
+          cur = succ;
+        }
+        return [...predecessors, t, ...successors];
+      }
+
       const tplCard = (t) => {
         const activeFaces = t.faces.filter((f) => f.status === "active");
         const retiredFaces = t.faces.filter((f) => f.status === "retired");
@@ -10632,6 +10656,22 @@
                 } }, "Reactivate"),
         ]);
 
+        const lineageChain = tplBuildLineage(t);
+        const lineageStrip = lineageChain.length > 1
+          ? el("div", { style: "margin-top:0.75rem;padding-top:0.5rem;border-top:1px solid var(--border,#e2e8f0);display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:0.75rem" }, [
+              el("span", { style: "color:#999;margin-right:2px;white-space:nowrap;font-weight:500" }, "Lineage:"),
+              ...lineageChain.flatMap((c, i) => {
+                const isThis = c.id === t.id;
+                const label = isThis ? `${c.code} (this)` : c.status === "retired" ? `${c.code} (retired)` : `${c.code} (active)`;
+                const node = el("span", {
+                  style: `font-family:monospace;font-size:0.75rem;padding:2px 7px;border-radius:4px;border:1px solid ${isThis ? "var(--brand,#2fa564)" : "var(--border,#e2e8f0)"};background:${isThis ? "rgba(47,165,100,0.08)" : "var(--surface-subtle,#f8fafc)"};color:${isThis ? "var(--brand,#2fa564)" : c.status === "retired" ? "#aaa" : "#555"};font-weight:${isThis ? "600" : "400"};white-space:nowrap`,
+                  title: c.name,
+                }, label);
+                return i < lineageChain.length - 1 ? [node, el("span", { style: "color:#ccc;font-size:0.8rem" }, "→")] : [node];
+              }),
+            ])
+          : null;
+
         return el("div", { class: "card", style: "margin-bottom:0.6rem" }, [
           el("div", { style: "display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap" }, [
             el("strong", {}, t.name),
@@ -10642,6 +10682,7 @@
               : null,
           ].filter(Boolean)),
           facesTable,
+          lineageStrip,
           actions,
         ]);
       };

@@ -10633,15 +10633,19 @@
               ])),
               el("tbody", {}, faceRows),
             ])
-          : el("div", { style: "font-size:0.8125rem;color:#999;margin-top:0.3rem" }, "No active faces.");
+          : el("div", { style: "margin-top:0.6rem;padding:0.75rem 1rem;border:1.5px dashed var(--brand,#2fa564);border-radius:6px;background:rgba(47,165,100,0.04);display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap" }, [
+              el("span", { style: "font-size:0.875rem;color:#555;flex:1;min-width:160px" }, "No faces yet — click “+ Add face” to assign an Order Surgery rule and generate a QR sticker code."),
+              el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => tplOpenAddFace(t) }, "+ Add face"),
+            ]);
 
         const actions = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin-top:0.6rem" }, [
           el("button", { class: "btn btn-xs", type: "button",
             onclick: () => tplOpenRename(t) }, "Rename"),
           el("button", { class: "btn btn-xs", type: "button",
             onclick: () => tplOpenLinkDrawing(t) }, t.drawing ? "Change drawing" : "Link drawing"),
-          el("button", { class: "btn btn-xs", type: "button",
-            onclick: () => tplOpenAddFace(t) }, "+ Add face"),
+          activeFaces.length
+            ? el("button", { class: "btn btn-xs", type: "button", onclick: () => tplOpenAddFace(t) }, "+ Add face")
+            : null,
           t.status === "active"
             ? el("button", { class: "btn btn-xs", type: "button",
                 onclick: async () => {

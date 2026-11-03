@@ -10666,7 +10666,6 @@
       const uploaded = { path: null, fileName: null };
 
       const titleInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall", maxlength: "200" });
-      const codeInp  = el("input", { class: "up-text", type: "text", placeholder: "e.g. TPL-001", maxlength: "40" });
       const nameInp  = el("input", { class: "up-text", type: "text", placeholder: "Display name (can be changed later)", maxlength: "200" });
       const status   = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
 
@@ -10683,11 +10682,9 @@
 
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = titleInp.value.trim();
-        const code  = codeInp.value.trim();
         const name  = nameInp.value.trim() || title;
-        if (!title)            { status.textContent = "Drawing title is required."; return; }
-        if (!code)             { status.textContent = "Template code is required."; return; }
-        if (!uploaded.path)    { status.textContent = "Upload the CAD drawing file first."; return; }
+        if (!title)         { status.textContent = "Drawing title is required."; return; }
+        if (!uploaded.path) { status.textContent = "Upload the CAD drawing file first."; return; }
         ev.target.disabled = true; status.textContent = "Creating drawing…";
         try {
           const dwgRes = await API.post(token, "createDrawingWithRevision", {
@@ -10695,20 +10692,18 @@
             drawing_type: "surgery_template",
           });
           status.textContent = "Creating template…";
-          await API.post(token, "createSurgeryTemplate", {
-            code, name, drawing_id: dwgRes.id,
-          });
+          // code omitted — backend auto-assigns from drawing number
+          await API.post(token, "createSurgeryTemplate", { name, drawing_id: dwgRes.id });
           close(); await reloadTemplates();
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Create");
 
       const close = openModal("New surgery template", el("div", {}, [
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          "A surgery template is a controlled CAD drawing — it gets a drawing number and a revision letter. The template code is printed on the QR label and can never change."),
+          "A surgery template is a controlled CAD drawing. It gets a drawing number and revision letter assigned automatically — that number also becomes its template code on the QR label."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Drawing title"), titleInp]),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "CAD file (PDF or image)"), zone.el]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template code (immutable QR payload)"), codeInp]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template name"), nameInp]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Template name (can be changed later)"), nameInp]),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
           el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
@@ -10777,55 +10772,85 @@
 
     // --- Add face ---
     function tplOpenAddFace(t) {
-      const uncovered = tplRulesWithoutActiveFace().filter((r) => {
-        const rId = r.id || r.rule_id;
-        return !t.faces.some((f) => f.status === "active" && f.rule_id === rId);
-      });
-      const faceCodeInp = el("input", { class: "up-text", type: "text", placeholder: "e.g. F-001-L", maxlength: "40" });
-      const labelInp    = el("input", { class: "up-text", type: "text", placeholder: "e.g. Dubbelhäng 50/50 mall, left face", maxlength: "200" });
+      // Rules already covered by an active face on THIS template.
+      const coveredByThis = new Set(t.faces.filter((f) => f.status === "active").map((f) => f.rule_id));
+      // Rules covered by ANY active face across all templates.
+      const coveredAnywhere = new Set(
+        tplAllTemplates.flatMap((tmpl) => tmpl.faces.filter((f) => f.status === "active").map((f) => f.rule_id))
+      );
+
+      function ruleLabel(r) {
+        const face = r.face === "left" ? "Left face" : r.face === "right" ? "Right face" : r.face || "";
+        const stage = r.stage === "hub" ? "Hub" : r.stage === "site" ? "Site" : (r.stage || "");
+        const interior = r.interior_name || r.label || r.name || r.id || r.rule_id;
+        return `${interior} · ${face} · ${stage}`;
+      }
+
+      const faceCodeInp = el("input", { class: "up-text", type: "text", maxlength: "40",
+        placeholder: "Auto-filled when you pick a rule" });
+      const labelInp = el("input", { class: "up-text", type: "text", maxlength: "200",
+        placeholder: "Auto-filled when you pick a rule" });
+
       const ruleOpts = [
         el("option", { value: "" }, "— pick a rule —"),
         ...(tplAllRules.length
           ? tplAllRules.map((r) => {
               const rId = r.id || r.rule_id;
-              const alreadyCovered = tplAllTemplates.some((tmpl) => tmpl.faces.some((f) => f.status === "active" && f.rule_id === rId));
-              return el("option", { value: rId, disabled: alreadyCovered ? "disabled" : null },
-                `${r.label || r.name || rId}${alreadyCovered ? " (covered)" : ""}`);
+              const onThis = coveredByThis.has(rId);
+              const elsewhere = !onThis && coveredAnywhere.has(rId);
+              const suffix = onThis ? " (already on this template)" : elsewhere ? " (covered elsewhere)" : "";
+              return el("option", { value: rId, disabled: onThis ? "disabled" : null },
+                ruleLabel(r) + suffix);
             })
           : [el("option", { value: "", disabled: "disabled" }, tplRulesWarning || "Order Operations not connected")]),
       ];
+
       const ruleSel = el("select", { class: "up-text" }, ruleOpts);
-      const status  = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
+
+      // Auto-fill face code and label when a rule is selected.
+      ruleSel.addEventListener("change", () => {
+        const rId = ruleSel.value;
+        const r = tplAllRules.find((r) => (r.id || r.rule_id) === rId);
+        if (!r) return;
+        const suffix = r.face === "left" ? "-L" : r.face === "right" ? "-R" : "";
+        if (!faceCodeInp.value.trim()) faceCodeInp.value = `${t.code}${suffix}`;
+        if (!labelInp.value.trim()) labelInp.value = ruleLabel(r);
+      });
+
+      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const face_code = faceCodeInp.value.trim();
         const label     = labelInp.value.trim();
         const rule_id   = ruleSel.value;
+        if (!rule_id)   { status.textContent = "Pick a rule."; return; }
         if (!face_code) { status.textContent = "Face code is required."; return; }
         if (!label)     { status.textContent = "Label is required."; return; }
-        if (!rule_id)   { status.textContent = "Pick a rule."; return; }
         ev.target.disabled = true; status.textContent = "Saving…";
         try {
           await API.post(token, "addSurgeryTemplateFace", { template_id: t.id, face_code, label, rule_id });
           close(); await reloadTemplates();
         } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
       } }, "Add face");
+
       const close = openModal(`Add face — ${t.name}`, el("div", {}, [
         el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          "The face code is printed on the QR label and can never change. One active face per rule is allowed."),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Face code"), faceCodeInp]),
-        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Label (printed next to the QR)"), labelInp]),
+          "Pick the Order Surgery rule — face code and label are filled for you. The face code goes on the QR sticker and can never change."),
         el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Order Surgery rule"), ruleSel]),
-        uncovered.length
-          ? el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.4rem" },
-              `${uncovered.length} rule${uncovered.length > 1 ? "s" : ""} without a face yet`)
-          : null,
+        el("div", { style: "margin-bottom:0.55rem" }, [
+          el("div", { class: "form-label" }, [
+            "Face code",
+            el("span", { class: "muted", style: "font-size:0.75rem;margin-left:0.4rem" }, "(immutable QR payload)"),
+          ]),
+          faceCodeInp,
+        ]),
+        el("div", { style: "margin-bottom:0.55rem" }, [el("div", { class: "form-label" }, "Label (printed next to QR)"), labelInp]),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
           el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
           saveBtn,
         ]),
-      ].filter(Boolean)));
-      faceCodeInp.focus();
+      ]));
+      ruleSel.focus();
     }
 
     await load();

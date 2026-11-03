@@ -5865,15 +5865,17 @@ Deno.serve(async (req) => {
     }
 
     if (action === "createSurgeryTemplate") {
-      const code = String(body.code || "").trim();
+      let code = String(body.code || "").trim();
       const name = String(body.name || "").trim();
       const drawing_id = String(body.drawing_id || "").trim();
-      if (!code || code.length > 40) return json({ error: "code must be 1–40 characters" }, 400);
       if (!name || name.length > 200) return json({ error: "name must be 1–200 characters" }, 400);
       if (!drawing_id) return json({ error: "drawing_id is required — every template must have a controlled drawing" }, 400);
-      const { data: dwg } = await tdb("drawings").select("id, drawing_type").eq("id", drawing_id).maybeSingle();
+      const { data: dwg } = await tdb("drawings").select("id, drawing_type, drawing_number").eq("id", drawing_id).maybeSingle();
       if (!dwg) return json({ error: "Drawing not found" }, 404);
       if (dwg.drawing_type !== "surgery_template") return json({ error: "The drawing must be of type surgery_template" }, 400);
+      // Auto-assign code from the drawing number if not provided.
+      if (!code) code = String((dwg as any).drawing_number || "").trim();
+      if (!code || code.length > 40) return json({ error: "could not auto-assign a template code — provide one explicitly" }, 400);
       const { data, error } = await tdb("surgery_templates").insert({ code, name, drawing_id, created_by: session?.uid ?? null }).select("id, code, name, drawing_id, status").single();
       if (error) return json({ error: error.code === "23505" ? `A template with code "${code}" already exists` : error.message }, 409);
       return json(data);
@@ -5932,10 +5934,31 @@ Deno.serve(async (req) => {
       const key = Deno.env.get("ORDER_OPERATIONS_SURGERY_KEY") ?? "";
       if (!base || !key) return json({ rules: [], warning: "Order Operations is not connected" });
       try {
-        const res = await fetch(`${base}/api/v1/surgery-rules`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`Order Operations answered ${res.status}`);
-        const data = await res.json();
-        return json({ rules: Array.isArray(data) ? data : (data.rules ?? []) });
+        // The OO endpoint is per-panel — query all three and merge unique rules.
+        const panels = ["left_end", "mid", "right_end"];
+        const responses = await Promise.all(
+          panels.map((p) =>
+            fetch(`${base}/api/v1/surgery-rules?panel=${p}`, {
+              headers: { Authorization: `Bearer ${key}` },
+              signal: AbortSignal.timeout(6000),
+            }).then((r) => { if (!r.ok) throw new Error(`OO answered ${r.status} for panel=${p}`); return r.json(); })
+          )
+        );
+        const seen = new Set<string>();
+        const rules: object[] = [];
+        for (const pd of responses) {
+          for (const interior of (pd.interiors ?? [])) {
+            for (const [face, faceRules] of Object.entries(interior.faces ?? {})) {
+              for (const rule of (faceRules as any[])) {
+                if (!seen.has(rule.id)) {
+                  seen.add(rule.id);
+                  rules.push({ ...rule, interior_code: interior.code, interior_name: interior.name, face });
+                }
+              }
+            }
+          }
+        }
+        return json({ rules });
       } catch (e: any) {
         console.error("listAllSurgeryRules", e);
         return json({ rules: [], warning: "Order Operations could not be reached" });

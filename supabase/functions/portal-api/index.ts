@@ -1253,6 +1253,71 @@ Deno.serve(async (req) => {
     return json({ contract_version: 1, status: "resolved", assembly: articleOf(root), inputs: expanded.inputs });
   }
 
+  // --- Surgery template register (PROP-0059, service authentication only) ---
+  // Order Operations reads templates + faces to know which physical template is
+  // required for each surgery step. The Gateway owns the register; OO never
+  // edits it. Retired templates / faces are excluded so callers only see what
+  // is currently in use on the shop floor.
+  if (action === "listSurgeryTemplates") {
+    const refusal = operationsServiceRefusal(req, "Surgery template register is not configured");
+    if (refusal) return refusal;
+    const allowedKeys = new Set(["action", "contract_version"]);
+    if (Object.keys(body).some((k) => !allowedKeys.has(k))) return json({ error: "listSurgeryTemplates accepts only contract_version" }, 400);
+    if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
+
+    const regTdb = makeTdb(RUSHROOM_ORG_ID);
+    const [tplRes, faceRes] = await Promise.all([
+      regTdb("surgery_templates")
+        .select("id, code, name, drawing_id, status")
+        .eq("status", "active"),
+      regTdb("surgery_template_faces")
+        .select("id, template_id, face_code, label, rule_id, status")
+        .eq("status", "active"),
+    ]);
+    if (tplRes.error || faceRes.error) return json({ error: "Surgery template register is unavailable" }, 502);
+
+    // Attach drawing number + revision from the denormalised pointer.
+    const drawingIds = [...new Set((tplRes.data || []).map((t: any) => t.drawing_id).filter(Boolean))];
+    const drawingMap = new Map<string, { number: string; revision: string | null }>();
+    if (drawingIds.length) {
+      const { data: dwgs, error: dwgErr } = await regTdb("drawings")
+        .select("id, drawing_number, current_revision_id")
+        .in("id", drawingIds);
+      if (dwgErr) return json({ error: "Surgery drawing data is unavailable" }, 502);
+      const revIds = (dwgs || []).map((d: any) => d.current_revision_id).filter(Boolean);
+      const revMap = new Map<string, string>();
+      if (revIds.length) {
+        const { data: revs, error: revErr } = await regTdb("drawing_revisions")
+          .select("id, revision")
+          .in("id", revIds);
+        if (revErr) return json({ error: "Surgery drawing revisions are unavailable" }, 502);
+        for (const r of revs || []) revMap.set(r.id, r.revision);
+      }
+      for (const d of dwgs || []) {
+        drawingMap.set(d.id, {
+          number: d.drawing_number,
+          revision: d.current_revision_id ? revMap.get(d.current_revision_id) ?? null : null,
+        });
+      }
+    }
+
+    const facesByTemplate = new Map<string, any[]>();
+    for (const f of faceRes.data || []) {
+      const list = facesByTemplate.get(f.template_id) || [];
+      list.push({ face_code: f.face_code, label: f.label, rule_id: f.rule_id });
+      facesByTemplate.set(f.template_id, list);
+    }
+
+    const templates = (tplRes.data || []).map((t: any) => ({
+      code: t.code,
+      name: t.name,
+      drawing: t.drawing_id ? drawingMap.get(t.drawing_id) ?? null : null,
+      faces: facesByTemplate.get(t.id) || [],
+    }));
+
+    return json({ contract_version: 1, templates });
+  }
+
   // --- everything else requires a valid token -----------------------------
   // The browser sends the token in the body (unchanged). External callers —
   // Postman, integrations — can use `Authorization: Bearer <token>` instead,
@@ -6044,70 +6109,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  // --- Surgery template register (PROP-0059, service authentication only) ---
-  // Order Operations reads templates + faces to know which physical template is
-  // required for each surgery step. The Gateway owns the register; OO never
-  // edits it. Retired templates / faces are excluded so callers only see what
-  // is currently in use on the shop floor.
-  if (action === "listSurgeryTemplates") {
-    const refusal = operationsServiceRefusal(req, "Surgery template register is not configured");
-    if (refusal) return refusal;
-    const allowedKeys = new Set(["action", "contract_version"]);
-    if (Object.keys(body).some((k) => !allowedKeys.has(k))) return json({ error: "listSurgeryTemplates accepts only contract_version" }, 400);
-    if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
-
-    const regTdb = makeTdb(RUSHROOM_ORG_ID);
-    const [tplRes, faceRes] = await Promise.all([
-      regTdb("surgery_templates")
-        .select("id, code, name, drawing_id, status")
-        .eq("status", "active"),
-      regTdb("surgery_template_faces")
-        .select("id, template_id, face_code, label, rule_id, status")
-        .eq("status", "active"),
-    ]);
-    if (tplRes.error || faceRes.error) return json({ error: "Surgery template register is unavailable" }, 502);
-
-    // Attach drawing number + revision from the denormalised pointer.
-    const drawingIds = [...new Set((tplRes.data || []).map((t: any) => t.drawing_id).filter(Boolean))];
-    const drawingMap = new Map<string, { number: string; revision: string | null }>();
-    if (drawingIds.length) {
-      const { data: dwgs, error: dwgErr } = await regTdb("drawings")
-        .select("id, drawing_number, current_revision_id")
-        .in("id", drawingIds);
-      if (dwgErr) return json({ error: "Surgery drawing data is unavailable" }, 502);
-      const revIds = (dwgs || []).map((d: any) => d.current_revision_id).filter(Boolean);
-      const revMap = new Map<string, string>();
-      if (revIds.length) {
-        const { data: revs, error: revErr } = await regTdb("drawing_revisions")
-          .select("id, revision")
-          .in("id", revIds);
-        if (revErr) return json({ error: "Surgery drawing revisions are unavailable" }, 502);
-        for (const r of revs || []) revMap.set(r.id, r.revision);
-      }
-      for (const d of dwgs || []) {
-        drawingMap.set(d.id, {
-          number: d.drawing_number,
-          revision: d.current_revision_id ? revMap.get(d.current_revision_id) ?? null : null,
-        });
-      }
-    }
-
-    const facesByTemplate = new Map<string, any[]>();
-    for (const f of faceRes.data || []) {
-      const list = facesByTemplate.get(f.template_id) || [];
-      list.push({ face_code: f.face_code, label: f.label, rule_id: f.rule_id });
-      facesByTemplate.set(f.template_id, list);
-    }
-
-    const templates = (tplRes.data || []).map((t: any) => ({
-      code: t.code,
-      name: t.name,
-      drawing: t.drawing_id ? drawingMap.get(t.drawing_id) ?? null : null,
-      faces: facesByTemplate.get(t.id) || [],
-    }));
-
-    return json({ contract_version: 1, templates });
-  }
 
   const RETIRED_ACTIONS: Record<string, string> = {
     listFamilyRoutingSteps: "Operations are now set on each part's Manufacturing tab.",

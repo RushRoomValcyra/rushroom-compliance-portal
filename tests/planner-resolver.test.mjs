@@ -208,6 +208,6 @@ test("every service action checks the key through one helper that accepts the se
     "localKey.length >= MIN_LOCAL_KEY_LENGTH", 'req.headers.get("authorization")', "for (const key of keys) accepted = constantTimeSecretEqual(suppliedKey, key) || accepted"]) {
     assert.ok(helper.includes(fragment), `the key check lacks ${fragment}`);
   }
-  assert.equal((api.match(/operationsServiceRefusal\(req, /g) || []).length, 3, "resolvePlannerBom, lookupArticle and the pre-assembly actions use it");
+  assert.equal((api.match(/operationsServiceRefusal\(req, /g) || []).length, 4, "resolvePlannerBom, lookupArticle, the pre-assembly actions and listSurgeryTemplates use it");
   assert.equal((api.match(/Deno\.env\.get\("OPERATIONS_PIM_RESOLVER_KEY"\)/g) || []).length, 1, "no action reads the key on its own");
 });

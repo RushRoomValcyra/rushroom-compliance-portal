@@ -11016,7 +11016,10 @@
           const alreadyElsewhere = !alreadyHere && coveredAnywhere.has(mirrorId);
           const alreadyCovered   = alreadyHere || alreadyElsewhere;
           mirrorCodeBadge.textContent = autoFaceCode(mirror);
-          if (!mirrorLabelInp.value.trim()) mirrorLabelInp.value = ruleLabel(mirror);
+          if (!mirrorLabelInp.value.trim() || mirrorLabelInp.dataset.auto === "1") {
+            mirrorLabelInp.value = ruleLabel(mirror);
+            mirrorLabelInp.dataset.auto = "1";
+          }
           mirrorSection.style.display = "";
           mirrorChk.checked  = !alreadyCovered;
           mirrorChk.disabled = alreadyCovered;

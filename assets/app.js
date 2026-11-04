@@ -9372,8 +9372,6 @@
     } catch (ex) {
       body.replaceChildren(
         el("p", { class: "error" }, ex.message || "The AI request failed."),
-        el("div", { style: "display:flex;justify-content:flex-end" },
-          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "✕ Close")),
       );
       return;
     }
@@ -9382,8 +9380,6 @@
     if (!suggestions.length) {
       body.replaceChildren(
         el("p", { class: "muted", style: "margin:0" }, result.message || "All catalog keys are already mapped — nothing to suggest."),
-        el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.5rem" },
-          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "✕ Close")),
       );
       return;
     }

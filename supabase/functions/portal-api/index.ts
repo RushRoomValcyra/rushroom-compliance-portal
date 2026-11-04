@@ -5991,6 +5991,7 @@ Deno.serve(async (req) => {
             .eq("status", "active");
           await tdb("surgery_template_face_events").insert(
             activeFaces.map((f: any) => ({
+              organization_id: f.organization_id,
               face_id: f.id,
               event_type: "retired",
               actor_id: session?.uid ?? null,

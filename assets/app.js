@@ -9787,6 +9787,67 @@
         pasted, el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [inspect, save]), status, preview,
       ]));
     }
+    async function bomGapCheckModal(tok) {
+      const body = el("div", { class: "loading" }, "Checking BOM gaps…");
+      openModal("BOM gap check", body);
+      let result;
+      try { result = await API.post(tok, "checkPlannerBomGaps", {}); }
+      catch (ex) { body.replaceChildren(el("p", { class: "error" }, ex.message)); return; }
+
+      const { gaps = [], ok_count = 0, total = 0 } = result;
+      if (!total) { body.replaceChildren(el("p", { class: "muted", style: "margin:0" }, "No planner keys imported yet. Use Import/update planner keys first.")); return; }
+
+      const GAP_META = {
+        missing_target:  { label: "BOM component deleted",         color: "#fee2e2", border: "#fca5a5", text: "#991b1b", hint: "The mapping target no longer exists in the BOM. Recreate the component, then update the mapping." },
+        obsolete_target: { label: "BOM component replaced/obsolete", color: "#fef3c7", border: "#fcd34d", text: "#92400e", hint: "The mapped component is marked Replaced. Update the mapping to point to the current replacement." },
+        flagged_target:  { label: "BOM component flagged",          color: "#fef3c7", border: "#fcd34d", text: "#92400e", hint: "The mapped component is flagged. Review the component and update the mapping if needed." },
+        no_mapping:      { label: "No mapping",                    color: "#f1f5f9", border: "#cbd5e1", text: "#334155", hint: "No active mapping exists for this planner key. Create the BOM component if it doesn't exist, then map it. Use AI Suggest for recommendations." },
+      };
+
+      const grouped = { missing_target: [], obsolete_target: [], flagged_target: [], no_mapping: [] };
+      for (const g of gaps) (grouped[g.status] || grouped.no_mapping).push(g);
+
+      const summaryColor = gaps.length === 0 ? "#dcfce7" : "#fee2e2";
+      const summaryText = gaps.length === 0
+        ? `✓ All ${total} planner keys have valid active BOM mappings.`
+        : `${gaps.length} gap${gaps.length === 1 ? "" : "s"} found across ${total} catalog key${total === 1 ? "" : "s"} — ${ok_count} OK.`;
+
+      const sections = Object.entries(grouped)
+        .filter(([, rows]) => rows.length > 0)
+        .map(([status, rows]) => {
+          const meta = GAP_META[status];
+          return el("section", { style: "margin-bottom:1rem" }, [
+            el("div", { style: `background:${meta.color};border:1px solid ${meta.border};border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.4rem` }, [
+              el("strong", { style: `color:${meta.text}` }, `${meta.label} (${rows.length})`),
+              el("p", { style: `font-size:0.8125rem;color:${meta.text};margin:0.2rem 0 0` }, meta.hint),
+            ]),
+            el("div", { class: "table-wrap" },
+              el("table", { class: "data-table", style: "font-size:0.8125rem" }, [
+                el("thead", {}, el("tr", {}, [
+                  el("th", {}, "Type"), el("th", {}, "Planner key"),
+                  ...(status === "missing_target" ? [el("th", {}, "Was mapped to (ID)")] : []),
+                  ...(status === "obsolete_target" || status === "flagged_target" ? [el("th", {}, "Current target"), el("th", {}, "Status")] : []),
+                ])),
+                el("tbody", {}, rows.map((g) => el("tr", {}, [
+                  el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
+                  el("td", {}, el("code", { style: "font-size:0.75rem;word-break:break-all" }, g.source_key)),
+                  ...(status === "missing_target" ? [el("td", { style: "font-family:monospace;font-size:0.75rem;color:#9ca3af" }, g.target_component_id)] : []),
+                  ...(status === "obsolete_target" || status === "flagged_target" ? [
+                    el("td", {}, g.target ? `${g.target.name}${g.target.part_number ? ` · ${g.target.part_number}` : ""}` : "—"),
+                    el("td", {}, el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fef3c7;color:#92400e" }, g.target?.lifecycle_status || "—")),
+                  ] : []),
+                ]))),
+              ])),
+          ]);
+        });
+
+      body.replaceChildren(
+        el("div", { style: `background:${summaryColor};border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.875rem` }, summaryText),
+        ...sections,
+        gaps.length === 0 ? el("p", { class: "muted", style: "font-size:0.8125rem;margin:0" }, `${ok_count} of ${total} keys have active, valid mappings.`) : null,
+      );
+    }
+
     wrap.replaceChildren(
       el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
         el("h3", { style: "margin-top:0" }, "Saved planner keys"),
@@ -9796,6 +9857,7 @@
       el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
         actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }), actionBtn("Refresh mappings", "refresh", { onClick: reload }), actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
         actionBtn("AI Suggest unmapped", "sparkle", { onClick: () => suggestMappingsModal(token, { onApplied: () => Promise.all([reload(), loadCatalog()]) }) }),
+        actionBtn("BOM gap check", "alert-triangle", { onClick: () => bomGapCheckModal(token) }),
         actionBtn("Migrate legacy cutout doors", "refresh", { onClick: migrateLegacyCutoutDoorMappings }),
         el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
       ]), list,

@@ -3315,6 +3315,49 @@ Deno.serve(async (req) => {
     return json({ ok: true });
   }
 
+  if (action === "checkPlannerBomGaps") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const [{ data: catalogRows, error: catalogErr }, { data: mappingRows, error: mappingErr }] = await Promise.all([
+      tdb("planner_catalog_entries").select("source_type, source_key, label").order("source_type").order("source_key"),
+      tdb("planner_mappings").select("source_type, source_key, target_component_id, mapping_revision, release_label").eq("is_active", true),
+    ]);
+    if (catalogErr) return json({ error: catalogErr.message }, 400);
+    if (mappingErr) return json({ error: mappingErr.message }, 400);
+    const catalog: any[] = catalogRows || [];
+    const mappings: any[] = mappingRows || [];
+    const mappingIdx: Record<string, any> = {};
+    for (const m of mappings) mappingIdx[`${m.source_type}:${m.source_key}`] = m;
+    const targetIds = [...new Set(mappings.map((m: any) => m.target_component_id).filter(Boolean))];
+    const compMap: Record<string, any> = {};
+    if (targetIds.length) {
+      const { data: comps } = await tdb("bom_components").select("id, name, part_number, type, lifecycle_status").in("id", targetIds);
+      for (const c of comps || []) compMap[c.id] = c;
+    }
+    const gaps: any[] = [];
+    let okCount = 0;
+    for (const entry of catalog) {
+      const key = `${entry.source_type}:${entry.source_key}`;
+      const mapping = mappingIdx[key];
+      if (!mapping) {
+        gaps.push({ source_type: entry.source_type, source_key: entry.source_key, label: entry.label, status: "no_mapping" });
+        continue;
+      }
+      const comp = compMap[mapping.target_component_id];
+      if (!comp) {
+        gaps.push({ source_type: entry.source_type, source_key: entry.source_key, label: entry.label, status: "missing_target", target_component_id: mapping.target_component_id });
+        continue;
+      }
+      if (comp.lifecycle_status === "replaced" || comp.lifecycle_status === "flagged") {
+        gaps.push({ source_type: entry.source_type, source_key: entry.source_key, label: entry.label, status: comp.lifecycle_status === "replaced" ? "obsolete_target" : "flagged_target", target: { id: comp.id, name: comp.name, part_number: comp.part_number, lifecycle_status: comp.lifecycle_status } });
+        continue;
+      }
+      okCount++;
+    }
+    const order: Record<string, number> = { missing_target: 0, obsolete_target: 1, flagged_target: 2, no_mapping: 3 };
+    gaps.sort((a: any, b: any) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+    return json({ gaps, ok_count: okCount, total: catalog.length });
+  }
+
   if (action === "activatePlannerMapping") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const mappingId = String(body.mapping_id ?? "");

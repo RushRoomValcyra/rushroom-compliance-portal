@@ -21,6 +21,7 @@ import { db, enc, ANTHROPIC_API_KEY, SCAN_MODEL, META_MODEL, BUCKET, DOC_BUCKET,
 import { extractCostsFromDocument } from "./handlers/cost-extract.ts";
 import { importPartCosts } from "./handlers/cost-import.ts";
 import { suggestPlannerMappings } from "./handlers/planner-mapping-suggest.ts";
+import { suggestPlannerComponent } from "./handlers/planner-component-suggest.ts";
 import { normaliseExtractedLines } from "../_shared/cost-math.mjs";
 import { eq } from "../_shared/auth.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
@@ -1322,6 +1323,12 @@ You must never invent an internal drawing number or revision letter for the reci
   if (action === "suggestPlannerMappings") {
     return await suggestPlannerMappings(body, {
       role, tdb, apiKey: ANTHROPIC_API_KEY, model: META_MODEL, meterAi, organizationId,
+    });
+  }
+
+  if (action === "suggestPlannerComponent") {
+    return await suggestPlannerComponent(body, {
+      role, tdb, apiKey: ANTHROPIC_API_KEY, model: META_MODEL, meterAi,
     });
   }
 

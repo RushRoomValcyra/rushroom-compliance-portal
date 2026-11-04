@@ -9787,6 +9787,134 @@
         pasted, el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [inspect, save]), status, preview,
       ]));
     }
+    // --- Create BOM component from a gap entry ---------------------------------
+    async function createPlannerComponentModal(tok, gap, onCreated) {
+      const COMPONENT_TYPES = [
+        ["part", "Part"], ["raw_material", "Raw Material"], ["sub_assembly", "Sub-Assembly"],
+        ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"],
+        ["spare_part", "Spare Part"],
+      ];
+      const MAKE_OR_BUY_OPTS = [["purchased", "Purchased"], ["manufactured", "Manufactured"], ["assembled", "Assembled"], ["subcontracted", "Subcontracted"]];
+
+      const statusEl = el("p", { style: "font-size:0.8125rem;min-height:1.2em;margin:0 0 0.5rem" }, "");
+      const keyHdr   = el("div", { style: "background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.8125rem" }, [
+        el("strong", {}, `${gap.source_type} · `), el("code", { style: "font-size:0.75rem" }, gap.source_key),
+      ]);
+
+      const nm   = el("input",    { class: "up-text", type: "text", placeholder: "Name", required: true });
+      const typ  = el("select",   { class: "up-text" }, COMPONENT_TYPES.map(([v, l]) => el("option", { value: v }, l)));
+      const mob  = el("select",   { class: "up-text" }, [el("option", { value: "" }, "— choose —"), ...MAKE_OR_BUY_OPTS.map(([v, l]) => el("option", { value: v }, l))]);
+      const cat  = categorySelect(null);
+      const desc = el("textarea", { class: "up-text", rows: "2", placeholder: "Purpose — what does this component do?" });
+
+      const catRow = el("div", {}, [frow("Category", cat, "Required for parts")]);
+      const mobRow = el("div", {}, [frow("Sourcing", mob, "How does this component come to exist?")]);
+
+      function refreshRows() {
+        const needsCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
+        const needsMob = !["finished_good", "phantom_assembly", "product_family"].includes(typ.value);
+        catRow.style.display = needsCat ? "" : "none";
+        mobRow.style.display = needsMob ? "" : "none";
+      }
+      typ.addEventListener("change", refreshRows);
+
+      const aiBtn    = el("button", { class: "btn btn-sm", type: "button", style: "margin-bottom:0.75rem" }, "✨ Suggest with AI");
+      const createMapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Create & map (inactive)");
+      const createOnlyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Create only (no mapping)");
+
+      const form = el("form", { style: "display:flex;flex-direction:column;gap:0.5rem" }, [
+        keyHdr,
+        statusEl,
+        aiBtn,
+        frow("Name", nm),
+        frow("Type", typ),
+        mobRow, catRow,
+        frow("Description", desc, "Optional but helpful"),
+        el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [createMapBtn, createOnlyBtn]),
+      ]);
+
+      openModal(`Create BOM component`, form);
+      refreshRows();
+
+      // AI suggestion
+      aiBtn.onclick = async () => {
+        aiBtn.disabled = true;
+        statusEl.textContent = "✨ AI is suggesting…";
+        statusEl.style.color = "var(--muted,#8b93a1)";
+        try {
+          const r = await API.post(tok, "suggestPlannerComponent", { source_type: gap.source_type, source_key: gap.source_key });
+          if (r.name)        nm.value   = r.name;
+          if (r.type)        typ.value  = r.type;
+          if (r.make_or_buy) mob.value  = r.make_or_buy;
+          if (r.description) desc.value = r.description;
+          refreshRows();
+          statusEl.textContent = r.reasoning ? `AI: ${r.reasoning} — review and adjust as needed.` : "AI filled the fields — review and adjust.";
+          statusEl.style.color = "var(--muted,#8b93a1)";
+          nm.focus();
+        } catch (ex) {
+          statusEl.textContent = `AI error: ${ex.message}. Fill the fields manually.`;
+          statusEl.style.color = "var(--danger,#e05454)";
+        } finally { aiBtn.disabled = false; }
+      };
+
+      async function doCreate(withMapping) {
+        if (!nm.value.trim()) { statusEl.textContent = "Name is required."; statusEl.style.color = "var(--danger,#e05454)"; nm.focus(); return; }
+        const needsMob = !["finished_good", "phantom_assembly", "product_family"].includes(typ.value);
+        if (needsMob && !mob.value) { statusEl.textContent = "Choose Sourcing."; statusEl.style.color = "var(--danger,#e05454)"; mob.focus(); return; }
+        const needsCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
+        if (needsCat && !cat.value) { statusEl.textContent = "Pick a Category."; statusEl.style.color = "var(--danger,#e05454)"; cat.focus(); return; }
+
+        createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = true;
+        statusEl.textContent = "Creating component…";
+        statusEl.style.color = "var(--muted,#8b93a1)";
+
+        let componentId;
+        try {
+          const r = await API.post(tok, "addComponent", {
+            name: nm.value.trim(),
+            type: typ.value,
+            make_or_buy: mob.value || null,
+            category_id: cat.value || null,
+            description: desc.value.trim() || null,
+          });
+          componentId = r.id;
+        } catch (ex) {
+          statusEl.textContent = `Create failed: ${ex.message}`;
+          statusEl.style.color = "var(--danger,#e05454)";
+          createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+          return;
+        }
+
+        if (withMapping) {
+          statusEl.textContent = "Saving mapping (inactive)…";
+          try {
+            await API.post(tok, "savePlannerMapping", {
+              source_type: gap.source_type,
+              source_key: gap.source_key,
+              target_component_id: componentId,
+              quantity_rule: "one",
+              start_inactive: true,
+            });
+            statusEl.textContent = "Done — component created and mapped as INACTIVE. Go to the mappings table and Activate when satisfied.";
+          } catch (ex) {
+            statusEl.textContent = `Component created (ID: ${componentId}) but mapping failed: ${ex.message}. Map it manually.`;
+            statusEl.style.color = "var(--danger,#e05454)";
+            createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+            return;
+          }
+        } else {
+          statusEl.textContent = "Done — component created. Map it manually in the mappings table.";
+        }
+
+        statusEl.style.color = "var(--success,#2fa564)";
+        createMapBtn.disabled = createOnlyBtn.disabled = true;
+        if (onCreated) onCreated(gap, componentId, withMapping);
+      }
+
+      createMapBtn.onclick  = () => doCreate(true);
+      createOnlyBtn.onclick = () => doCreate(false);
+    }
+
     async function bomGapCheckModal(tok) {
       const body = el("div", { class: "loading" }, "Checking BOM gaps…");
       openModal("BOM gap check", body);
@@ -9812,10 +9940,38 @@
         ? `✓ All ${total} planner keys have valid active BOM mappings.`
         : `${gaps.length} gap${gaps.length === 1 ? "" : "s"} found across ${total} catalog key${total === 1 ? "" : "s"} — ${ok_count} OK.`;
 
+      const resolvedKeys = new Set();
+
       const sections = Object.entries(grouped)
         .filter(([, rows]) => rows.length > 0)
         .map(([status, rows]) => {
           const meta = GAP_META[status];
+          const tbody = el("tbody", {});
+
+          function renderRows() {
+            tbody.replaceChildren(...rows
+              .filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`))
+              .map((g) => {
+                const createBtn = status === "no_mapping"
+                  ? el("td", {}, actionBtn("Create component", "plus", { onClick: () => createPlannerComponentModal(tok, g, (gap) => {
+                      resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                      renderRows();
+                    }) }))
+                  : null;
+                return el("tr", {}, [
+                  el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
+                  el("td", {}, el("code", { style: "font-size:0.75rem;word-break:break-all" }, g.source_key)),
+                  ...(status === "missing_target" ? [el("td", { style: "font-family:monospace;font-size:0.75rem;color:#9ca3af" }, g.target_component_id)] : []),
+                  ...(status === "obsolete_target" || status === "flagged_target" ? [
+                    el("td", {}, g.target ? `${g.target.name}${g.target.part_number ? ` · ${g.target.part_number}` : ""}` : "—"),
+                    el("td", {}, el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fef3c7;color:#92400e" }, g.target?.lifecycle_status || "—")),
+                  ] : []),
+                  ...(createBtn ? [createBtn] : []),
+                ]);
+              }));
+          }
+          renderRows();
+
           return el("section", { style: "margin-bottom:1rem" }, [
             el("div", { style: `background:${meta.color};border:1px solid ${meta.border};border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.4rem` }, [
               el("strong", { style: `color:${meta.text}` }, `${meta.label} (${rows.length})`),
@@ -9827,16 +9983,9 @@
                   el("th", {}, "Type"), el("th", {}, "Planner key"),
                   ...(status === "missing_target" ? [el("th", {}, "Was mapped to (ID)")] : []),
                   ...(status === "obsolete_target" || status === "flagged_target" ? [el("th", {}, "Current target"), el("th", {}, "Status")] : []),
+                  ...(status === "no_mapping" ? [el("th", {})] : []),
                 ])),
-                el("tbody", {}, rows.map((g) => el("tr", {}, [
-                  el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
-                  el("td", {}, el("code", { style: "font-size:0.75rem;word-break:break-all" }, g.source_key)),
-                  ...(status === "missing_target" ? [el("td", { style: "font-family:monospace;font-size:0.75rem;color:#9ca3af" }, g.target_component_id)] : []),
-                  ...(status === "obsolete_target" || status === "flagged_target" ? [
-                    el("td", {}, g.target ? `${g.target.name}${g.target.part_number ? ` · ${g.target.part_number}` : ""}` : "—"),
-                    el("td", {}, el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fef3c7;color:#92400e" }, g.target?.lifecycle_status || "—")),
-                  ] : []),
-                ]))),
+                tbody,
               ])),
           ]);
         });

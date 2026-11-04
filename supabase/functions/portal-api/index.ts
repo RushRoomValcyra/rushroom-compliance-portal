@@ -5723,6 +5723,11 @@ Deno.serve(async (req) => {
     return json({ error: "Action 'extractComponentSpecs' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
   }
 
+  if (action === "suggestPlannerMappings") {
+    // PROP-075: served by portal-ai. A client still posting it here is stale.
+    return json({ error: "Action 'suggestPlannerMappings' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
+  }
+
   if (action === "upsertComponentMetadata") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { component_id, ...fields } = body;

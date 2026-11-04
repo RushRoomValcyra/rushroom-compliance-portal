@@ -10698,7 +10698,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             ])
           : el("div", { style: "margin-top:0.6rem;padding:0.75rem 1rem;border:1.5px dashed var(--brand,#2fa564);border-radius:6px;background:rgba(47,165,100,0.04);display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap" }, [
               el("span", { style: "font-size:0.875rem;color:#555;flex:1;min-width:160px" }, "No faces yet — click “+ Add face” to assign an Order Surgery rule and generate a QR sticker code."),
-              el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => tplOpenAddFace(t) }, "+ Add face"),
+              el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: async () => { await reloadTemplates(); tplOpenAddFace(tplAllTemplates.find((x) => x.id === t.id) || t); } }, "+ Add face"),
             ]);
 
         const actions = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin-top:0.6rem" }, [
@@ -10707,7 +10707,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           el("button", { class: "btn btn-xs", type: "button",
             onclick: () => tplOpenLinkDrawing(t) }, t.drawing ? "Change drawing" : "Link drawing"),
           activeFaces.length
-            ? el("button", { class: "btn btn-xs", type: "button", onclick: () => tplOpenAddFace(t) }, "+ Add face")
+            ? el("button", { class: "btn btn-xs", type: "button", onclick: async () => { await reloadTemplates(); tplOpenAddFace(tplAllTemplates.find((x) => x.id === t.id) || t); } }, "+ Add face")
             : null,
           activeFaces.length
             ? el("button", { class: "btn btn-xs", type: "button", onclick: () => tplOpenPrintLabels(t) }, "⎙ Print labels")

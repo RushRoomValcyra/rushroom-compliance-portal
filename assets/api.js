@@ -43,6 +43,7 @@
       "suggestClassifications", "extractComponentSpecs", "extractDrawingMeta",
       "extractCostsFromDocument",   // PROP-073
       "importPartCosts",            // PROP-074
+      "suggestPlannerMappings",     // PROP-075
     ]),
     "portal-cellar": new Set([
       "addDirective", "syncDirectiveRelations", "inferDirectiveRelations",

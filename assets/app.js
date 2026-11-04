@@ -9360,6 +9360,123 @@
     return [...found.values()];
   }
 
+  // PROP-075: AI-assisted mapping suggestions — human reviews, then approves.
+  async function suggestMappingsModal(token, { onApplied }) {
+    const body = el("div", { style: "display:flex;flex-direction:column;gap:0.6rem" });
+    body.append(el("div", { class: "loading" }, "Analyzing unmapped keys…"));
+    const close = openModal("AI mapping suggestions", body);
+
+    let result;
+    try {
+      result = await API.post(token, "suggestPlannerMappings", {});
+    } catch (ex) {
+      body.replaceChildren(
+        el("p", { class: "error" }, ex.message || "The AI request failed."),
+        el("div", { style: "display:flex;justify-content:flex-end" },
+          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Close")),
+      );
+      return;
+    }
+
+    const suggestions = result.suggestions || [];
+    if (!suggestions.length) {
+      body.replaceChildren(
+        el("p", { class: "muted", style: "margin:0" }, result.message || "All catalog keys are already mapped — nothing to suggest."),
+        el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.5rem" },
+          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Close")),
+      );
+      return;
+    }
+
+    // Confidence badge colours.
+    const confStyle = { high: "background:#dcfce7;color:#15803d", medium: "background:#fef9c3;color:#92400e", low: "background:#f1f5f9;color:#64748b" };
+    const sourceTypeStyle = "font-size:0.6875rem;font-weight:700;background:#e0e7ff;color:#4338ca;border-radius:4px;padding:1px 5px;white-space:nowrap;flex-shrink:0";
+
+    // Build a checkbox per suggestion; pre-check high & medium.
+    const checkboxes = suggestions.map((s) => {
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = s.confidence !== "low";
+      return cb;
+    });
+
+    const countLabel = el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "");
+    const applyBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Apply approved");
+    const statusMsg = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0;font-size:0.8125rem" }, "");
+
+    function updateCount() {
+      const n = checkboxes.filter((cb) => cb.checked).length;
+      countLabel.textContent = `${n} of ${suggestions.length} selected`;
+      applyBtn.textContent = n ? `Apply ${n} approved` : "Apply approved";
+      applyBtn.disabled = n === 0;
+    }
+    checkboxes.forEach((cb) => cb.addEventListener("change", updateCount));
+    updateCount();
+
+    const selectAll = el("button", { class: "btn btn-sm", type: "button", style: "padding:0;border:0;background:transparent;text-decoration:underline;cursor:pointer;color:var(--link,#2563eb);font-size:0.8125rem", onclick: () => { checkboxes.forEach((cb) => { cb.checked = true; }); updateCount(); } }, "Select all");
+    const selectNone = el("button", { class: "btn btn-sm", type: "button", style: "padding:0;border:0;background:transparent;text-decoration:underline;cursor:pointer;color:var(--link,#2563eb);font-size:0.8125rem", onclick: () => { checkboxes.forEach((cb) => { cb.checked = false; }); updateCount(); } }, "Select none");
+
+    const rows = suggestions.map((s, i) => {
+      const targetText = s.target
+        ? `${s.target.name}${s.target.part_number ? " · " + s.target.part_number : ""}`
+        : "(target not found)";
+      return el("tr", {}, [
+        el("td", { style: "padding:0.4rem 0.5rem;vertical-align:top" }, [
+          el("div", { style: "display:flex;gap:0.4rem;align-items:flex-start;flex-wrap:wrap" }, [
+            el("span", { style: sourceTypeStyle }, s.source_type),
+            el("code", { style: "font-size:0.8125rem;word-break:break-all" }, s.source_key),
+          ]),
+        ]),
+        el("td", { style: "padding:0.4rem 0.5rem;vertical-align:top;font-size:0.875rem" }, targetText),
+        el("td", { style: "padding:0.4rem 0.5rem;vertical-align:top;white-space:nowrap" },
+          el("span", { style: `font-size:0.6875rem;font-weight:700;border-radius:4px;padding:1px 5px;${confStyle[s.confidence] || confStyle.low}` }, s.confidence)),
+        el("td", { style: "padding:0.4rem 0.5rem;vertical-align:top;font-size:0.75rem;color:var(--muted,#8b93a1);max-width:220px" }, s.reasoning || ""),
+        el("td", { style: "padding:0.4rem 0.5rem;vertical-align:middle;text-align:center" }, checkboxes[i]),
+      ]);
+    });
+
+    applyBtn.onclick = async () => {
+      const approved = suggestions.filter((_, i) => checkboxes[i].checked);
+      applyBtn.disabled = true;
+      statusMsg.textContent = `Saving ${approved.length} mapping${approved.length === 1 ? "" : "s"}…`;
+      const failed = [];
+      for (const s of approved) {
+        try {
+          await API.post(token, "savePlannerMapping", {
+            source_type: s.source_type, source_key: s.source_key,
+            target_component_id: s.target_component_id,
+            quantity_rule: "cart_quantity", fixed_quantity: null, release_label: "AI suggested",
+          });
+        } catch (ex) {
+          failed.push(`${s.source_type}:${s.source_key} — ${ex.message}`);
+        }
+      }
+      const saved = approved.length - failed.length;
+      if (failed.length) {
+        statusMsg.textContent = `Saved ${saved}, failed ${failed.length}: ${failed.slice(0, 2).join("; ")}`;
+        applyBtn.disabled = false;
+      } else {
+        close();
+        await onApplied();
+      }
+    };
+
+    body.replaceChildren(
+      el("div", { class: "table-wrap", style: "max-height:60vh;overflow-y:auto" },
+        el("table", { class: "data-table" }, [
+          el("thead", {}, el("tr", {}, ["Source key", "Suggested BOM target", "Confidence", "Reasoning", "Approve"].map((h) => el("th", {}, h)))),
+          el("tbody", {}, rows),
+        ])),
+      el("div", { style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.35rem" }, [
+        selectAll, selectNone, countLabel,
+      ]),
+      statusMsg,
+      el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.25rem" }, [
+        el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"),
+        applyBtn,
+      ]),
+    );
+  }
+
   // PIM-owned source catalog and dictionary from planner keys to PIM BOM IDs.
   // A pasted cart is used only to derive keys locally during an explicit import.
   async function plannerMappingsView(token) {
@@ -9633,6 +9750,7 @@
       ]),
       el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
         actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }), actionBtn("Refresh mappings", "refresh", { onClick: reload }), actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
+        actionBtn("AI Suggest unmapped", "sparkle", { onClick: () => suggestMappingsModal(token, { onApplied: () => Promise.all([reload(), loadCatalog()]) }) }),
         actionBtn("Migrate legacy cutout doors", "refresh", { onClick: migrateLegacyCutoutDoorMappings }),
         el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
       ]), list,

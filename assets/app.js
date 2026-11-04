@@ -9373,7 +9373,7 @@
       body.replaceChildren(
         el("p", { class: "error" }, ex.message || "The AI request failed."),
         el("div", { style: "display:flex;justify-content:flex-end" },
-          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Close")),
+          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "✕ Close")),
       );
       return;
     }
@@ -9383,7 +9383,7 @@
       body.replaceChildren(
         el("p", { class: "muted", style: "margin:0" }, result.message || "All catalog keys are already mapped — nothing to suggest."),
         el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.5rem" },
-          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Close")),
+          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "✕ Close")),
       );
       return;
     }
@@ -10719,7 +10719,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
 </body></html>`;
 
         const overlay = document.createElement("div");
-        overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center";
+        overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:var(--z-modal);display:flex;align-items:center;justify-content:center";
 
         const box = document.createElement("div");
         box.style.cssText = "background:#fff;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;width:min(860px,96vw);height:min(680px,90vh)";
@@ -10729,7 +10729,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
 
         const title = document.createElement("span");
         title.style.cssText = "flex:1;font-weight:600";
-        title.innerHTML = `${esc(t.name)} <span style="font-family:monospace;font-weight:400;color:#888;font-size:.8125rem">${esc(t.code)}</span> <span style="font-size:.8125rem;color:#666;font-weight:400">— ${faces.length} label${faces.length>1?"s":""}</span>`;
+        title.innerHTML = `${esc(t.name)} <span style="font-family:monospace;font-weight:400;color:#888;font-size:0.8125rem">${esc(t.code)}</span> <span style="font-size:0.8125rem;color:#666;font-weight:400">— ${faces.length} label${faces.length>1?"s":""}</span>`;
 
         const iframe = document.createElement("iframe");
         iframe.style.cssText = "flex:1;border:none;width:100%";
@@ -10906,7 +10906,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
                   style: `font-family:monospace;font-size:0.75rem;padding:2px 7px;border-radius:4px;border:1px solid ${isThis ? "var(--brand,#2fa564)" : "var(--border,#e2e8f0)"};background:${isThis ? "rgba(47,165,100,0.08)" : "var(--surface-subtle,#f8fafc)"};color:${isThis ? "var(--brand,#2fa564)" : c.status === "retired" ? "#aaa" : "#555"};font-weight:${isThis ? "600" : "400"};white-space:nowrap`,
                   title: c.name,
                 }, label);
-                return i < lineageChain.length - 1 ? [node, el("span", { style: "color:#ccc;font-size:0.8rem" }, "→")] : [node];
+                return i < lineageChain.length - 1 ? [node, el("span", { style: "color:#ccc;font-size:0.75rem" }, "→")] : [node];
               }),
             ])
           : null;
@@ -10963,7 +10963,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             retired:     { bg: "#fee2e2", color: "#991b1b", label: "Retired" },
             reactivated: { bg: "#dbeafe", color: "#1e40af", label: "Reactivated" },
           }[type] || { bg: "#f1f5f9", color: "#475569", label: type };
-          return el("span", { style: `display:inline-block;font-size:0.7rem;font-weight:600;padding:1px 7px;border-radius:9px;background:${cfg.bg};color:${cfg.color}` }, cfg.label);
+          return el("span", { style: `display:inline-block;font-size:0.6875rem;font-weight:600;padding:1px 7px;border-radius:9px;background:${cfg.bg};color:${cfg.color}` }, cfg.label);
         }
 
         function fmtDate(iso) {
@@ -11019,7 +11019,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           ...(backfillNote ? [backfillNote] : []),
           ...sections,
           el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.5rem" }, [
-            el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Close"),
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "✕ Close"),
           ])
         );
       } catch (ex) {
@@ -11135,7 +11135,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         if (!dwgs || !dwgs.length) {
           container.replaceChildren(el("p", { class: "notice" }, "No surgery template drawings yet. Create one with + New template."),
             el("div", { style: "display:flex;justify-content:flex-end" },
-              el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Close")));
+              el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "✕ Close")));
           return;
         }
         const opts = [el("option", { value: "" }, "— no drawing —"),

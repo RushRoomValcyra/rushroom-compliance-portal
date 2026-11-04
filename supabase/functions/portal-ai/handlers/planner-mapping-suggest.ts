@@ -18,11 +18,13 @@ type Ctx = {
 
 const SUGGESTION_SCHEMA = {
   type: "object",
+  additionalProperties: false,
   properties: {
     suggestions: {
       type: "array",
       items: {
         type: "object",
+        additionalProperties: false,
         properties: {
           source_type:         { type: "string" },
           source_key:          { type: "string" },

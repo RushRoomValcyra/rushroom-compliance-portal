@@ -9431,30 +9431,51 @@
       ]);
     });
 
-    applyBtn.onclick = async () => {
+    applyBtn.onclick = () => {
       const approved = suggestions.filter((_, i) => checkboxes[i].checked);
-      applyBtn.disabled = true;
-      statusMsg.textContent = `Saving ${approved.length} mapping${approved.length === 1 ? "" : "s"}…`;
-      const failed = [];
-      for (const s of approved) {
-        try {
-          await API.post(token, "savePlannerMapping", {
-            source_type: s.source_type, source_key: s.source_key,
-            target_component_id: s.target_component_id,
-            quantity_rule: "cart_quantity", fixed_quantity: null, release_label: "AI suggested",
-          });
-        } catch (ex) {
-          failed.push(`${s.source_type}:${s.source_key} — ${ex.message}`);
-        }
-      }
-      const saved = approved.length - failed.length;
-      if (failed.length) {
-        statusMsg.textContent = `Saved ${saved}, failed ${failed.length}: ${failed.slice(0, 2).join("; ")}`;
-        applyBtn.disabled = false;
-      } else {
-        close();
-        await onApplied();
-      }
+      if (!approved.length) return;
+      const confirmClose = openModal("Save AI suggestions as inactive?", el("div", {}, [
+        el("p", { style: "margin-top:0" }, [
+          `You are about to save ${approved.length} AI-suggested mapping${approved.length === 1 ? "" : "s"} as `,
+          el("strong", {}, "INACTIVE"),
+          `. They will `,
+          el("strong", {}, "not"),
+          ` affect any customer order until you manually activate each one from the mappings table.`,
+        ]),
+        el("p", { class: "muted", style: "font-size:0.875rem" }, "Review each mapping carefully before activating. AI suggestions may be wrong."),
+        el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => confirmClose() }, "Cancel"),
+          el("button", {
+            class: "btn btn-primary btn-sm", type: "button", onclick: async () => {
+              confirmClose();
+              applyBtn.disabled = true;
+              statusMsg.textContent = `Saving ${approved.length} mapping${approved.length === 1 ? "" : "s"} as inactive…`;
+              const failed = [];
+              for (const s of approved) {
+                try {
+                  await API.post(token, "savePlannerMapping", {
+                    source_type: s.source_type, source_key: s.source_key,
+                    target_component_id: s.target_component_id,
+                    quantity_rule: "cart_quantity", fixed_quantity: null,
+                    start_inactive: true,
+                  });
+                } catch (ex) {
+                  failed.push(`${s.source_type}:${s.source_key} — ${ex.message}`);
+                }
+              }
+              const saved = approved.length - failed.length;
+              await onApplied();
+              if (failed.length) {
+                statusMsg.textContent = `Saved ${saved} as inactive, failed ${failed.length}: ${failed.slice(0, 2).join("; ")}`;
+                applyBtn.disabled = false;
+              } else {
+                body.replaceChildren(el("p", { class: "muted", style: "margin:0" },
+                  `${saved} mapping${saved === 1 ? "" : "s"} saved as INACTIVE. Go to the mappings table, review each one, and click Activate when you are satisfied it is correct.`));
+              }
+            },
+          }, `Save ${approved.length} as inactive`),
+        ]),
+      ]));
     };
 
     body.replaceChildren(
@@ -9566,6 +9587,31 @@
       catch (ex) { alert(ex.message); }
     }
 
+    function activateModal(mapping) {
+      const closeM = openModal("Activate mapping?", el("div", {}, [
+        el("p", { style: "margin-top:0" }, [
+          "You are about to activate the mapping ",
+          el("strong", {}, `${mapping.source_type}:`),
+          el("code", {}, mapping.source_key),
+          " → ",
+          el("strong", {}, mapping.target ? mapping.target.name : mapping.target_component_id),
+          ".",
+        ]),
+        el("p", { style: "font-size:0.875rem;color:#b45309;background:#fef3c7;border-radius:6px;padding:0.5rem 0.75rem;margin:0" },
+          "Once active, this mapping will immediately be used when resolving customer orders. Make sure the target BOM component is correct before proceeding."),
+        el("div", { style: "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => closeM() }, "✕ Close"),
+          el("button", {
+            class: "btn btn-primary btn-sm", type: "button", onclick: async () => {
+              closeM();
+              try { await API.post(token, "activatePlannerMapping", { mapping_id: mapping.id }); await reload(); }
+              catch (ex) { alert(ex.message); }
+            },
+          }, "Yes, activate"),
+        ]),
+      ]));
+    }
+
     async function removeCatalogKey(item) {
       if (!confirm(`Remove saved planner key ${item.source_type}:${item.source_key}? This does not delete PIM components or mapping history.`)) return;
       try {
@@ -9621,9 +9667,11 @@
             el("td", {}, "Cart-derived"),
             el("td", {}, `r${m.mapping_revision}${m.release_label ? ` · ${m.release_label}` : ""}`),
             el("td", {}, m.is_active ? "Active" : "Inactive"),
-            el("td", {}, m.is_active ? el("div", { style: "display:flex;gap:0.35rem" }, [
-              actionBtn("Edit", "edit", { onClick: () => editModal(m) }), actionBtn("Deactivate", "x", { onClick: () => deactivate(m) }),
-            ]) : ""),
+            el("td", {}, m.is_active
+              ? el("div", { style: "display:flex;gap:0.35rem" }, [
+                  actionBtn("Edit", "edit", { onClick: () => editModal(m) }), actionBtn("Deactivate", "x", { onClick: () => deactivate(m) }),
+                ])
+              : actionBtn("Activate", "check", { onClick: () => activateModal(m) })),
           ]))),
         ])));
       } catch (ex) { list.replaceChildren(el("div", { class: "error" }, ex.message)); }

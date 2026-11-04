@@ -3210,11 +3210,16 @@ Deno.serve(async (req) => {
       if (closeError) return json({ error: closeError.message }, 400);
     }
 
+    const startInactive = body.start_inactive === true && !prior;
+    const fullLabel = startInactive
+      ? [`AI suggested`, new Date().toISOString().slice(0, 10), session.email ?? null].filter(Boolean).join(" · ").slice(0, 160)
+      : releaseLabel;
     const { data: created, error } = await tdb("planner_mappings").insert({
       source_type: sourceType, source_key: sourceKey, target_component_id: targetId,
       quantity_rule: quantityRule, fixed_quantity: fixedQuantity,
       mapping_revision: prior ? Number(prior.mapping_revision) + 1 : 1,
-      release_label: releaseLabel, supersedes_id: prior?.id ?? null, created_by: session.uid ?? null,
+      is_active: !startInactive,
+      release_label: fullLabel, supersedes_id: prior?.id ?? null, created_by: session.uid ?? null,
     }).select("id, mapping_revision").maybeSingle();
     if (error) {
       // An edit is append-only. If the new revision cannot be written, restore
@@ -3306,6 +3311,23 @@ Deno.serve(async (req) => {
     const { error } = await tdb("planner_mappings")
       .update({ is_active: false, deactivated_at: new Date().toISOString(), deactivated_by: session.uid ?? null })
       .eq("id", mappingId).eq("is_active", true);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
+  if (action === "activatePlannerMapping") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const mappingId = String(body.mapping_id ?? "");
+    if (!mappingId) return json({ error: "mapping_id required" }, 400);
+    const { data: mapping, error: fetchErr } = await tdb("planner_mappings")
+      .select("id, source_type, source_key, is_active").eq("id", mappingId).maybeSingle();
+    if (fetchErr || !mapping) return json({ error: "Mapping not found" }, 404);
+    if (mapping.is_active) return json({ error: "Already active" }, 400);
+    const { data: conflict } = await tdb("planner_mappings")
+      .select("id").eq("source_type", mapping.source_type).eq("source_key", mapping.source_key).eq("is_active", true).maybeSingle();
+    if (conflict) return json({ error: "An active mapping already exists for this key. Deactivate it first." }, 409);
+    const { error } = await tdb("planner_mappings")
+      .update({ is_active: true, deactivated_at: null, deactivated_by: null }).eq("id", mappingId);
     if (error) return json({ error: error.message }, 400);
     return json({ ok: true });
   }

@@ -9381,6 +9381,7 @@
       body.replaceChildren(
         el("p", { class: "muted", style: "margin:0" }, result.message || "All catalog keys are already mapped — nothing to suggest."),
       );
+      onApplied();
       return;
     }
 

@@ -10575,8 +10575,6 @@
       function tplOpenPrintLabels(t) {
         const faces = t.faces.filter((f) => f.status === "active");
         if (!faces.length) { alert("No active faces to print."); return; }
-        const win = window.open("", "_blank");
-        if (!win) { alert("Pop-up blocked — allow pop-ups for this site to print labels."); return; }
         const esc = (s) => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
         const cards = faces.map((f, i) =>
           `<div class="lc"><div id="q${i}"></div><div class="fc">${esc(f.face_code)}</div><div class="lb">${esc(f.label||"")}</div><div class="tn">${esc(t.name)}</div></div>`
@@ -10584,33 +10582,62 @@
         const inits = faces.map((f, i) =>
           `new QRCode(document.getElementById("q${i}"),{text:${JSON.stringify(f.face_code)},width:148,height:148,correctLevel:QRCode.CorrectLevel.M});`
         ).join("");
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>Labels — ${esc(t.name)}</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#fff;color:#111}
-.top{padding:.75rem 1.25rem;display:flex;align-items:center;gap:1rem;border-bottom:1px solid #ddd}
-.top h1{font-size:.9375rem;font-weight:600}
-.top p{font-size:.75rem;color:#666;flex:1}
-.top button{padding:.35rem 1rem;background:#2fa564;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.875rem;white-space:nowrap}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;padding:1rem 1.25rem}
 .lc{border:1px solid #ccc;border-radius:6px;padding:.6rem;display:flex;flex-direction:column;align-items:center;gap:.3rem;page-break-inside:avoid}
 .lc canvas,.lc img{width:148px!important;height:148px!important}
 .fc{font-family:monospace;font-size:1rem;font-weight:700;letter-spacing:.04em;text-align:center}
 .lb{font-size:.75rem;color:#333;text-align:center}
 .tn{font-size:.625rem;color:#aaa;text-align:center}
-@media print{.top{display:none}.grid{padding:.5rem;gap:.5rem}}
+@media print{.grid{padding:.5rem;gap:.5rem}}
 </style></head><body>
-<div class="top">
-  <div><h1>${esc(t.name)} <span style="font-family:monospace;font-weight:400;color:#888;font-size:.8125rem">${esc(t.code)}</span></h1>
-  <p>${faces.length} label${faces.length>1?"s":""} · ${new Date().toLocaleDateString("sv-SE")}</p></div>
-  <button onclick="window.print()">⎙ Print</button>
-</div>
 <div class="grid">${cards}</div>
 <script>window.onload=function(){${inits}};<\/script>
-</body></html>`);
-        win.document.close();
+</body></html>`;
+
+        const overlay = document.createElement("div");
+        overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center";
+
+        const box = document.createElement("div");
+        box.style.cssText = "background:#fff;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;width:min(860px,96vw);height:min(680px,90vh)";
+
+        const header = document.createElement("div");
+        header.style.cssText = "padding:.7rem 1rem;display:flex;align-items:center;gap:.75rem;border-bottom:1px solid #ddd;flex-shrink:0";
+
+        const title = document.createElement("span");
+        title.style.cssText = "flex:1;font-weight:600";
+        title.innerHTML = `${esc(t.name)} <span style="font-family:monospace;font-weight:400;color:#888;font-size:.8125rem">${esc(t.code)}</span> <span style="font-size:.8125rem;color:#666;font-weight:400">— ${faces.length} label${faces.length>1?"s":""}</span>`;
+
+        const iframe = document.createElement("iframe");
+        iframe.style.cssText = "flex:1;border:none;width:100%";
+        iframe.srcdoc = html;
+
+        const printBtn = document.createElement("button");
+        printBtn.className = "btn btn-sm btn-primary";
+        printBtn.textContent = "⎙ Print";
+        printBtn.onclick = () => iframe.contentWindow.print();
+
+        const closeBtn = document.createElement("button");
+        closeBtn.className = "btn btn-sm";
+        closeBtn.textContent = "✕ Close";
+        const dismiss = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+        closeBtn.onclick = dismiss;
+        overlay.onclick = (e) => { if (e.target === overlay) dismiss(); };
+        const onKey = (e) => { if (e.key === "Escape") dismiss(); };
+        document.addEventListener("keydown", onKey);
+
+        header.appendChild(title);
+        header.appendChild(printBtn);
+        header.appendChild(closeBtn);
+        box.appendChild(header);
+        box.appendChild(iframe);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
       }
 
       function tplBuildLineage(t) {

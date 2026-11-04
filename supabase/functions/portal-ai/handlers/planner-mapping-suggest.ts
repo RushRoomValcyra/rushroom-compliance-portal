@@ -113,13 +113,15 @@ You will receive:
 
 Your task: for each unmapped key, suggest the most appropriate BOM component from the catalog.
 
-Matching rules:
-- Use naming patterns from existing mappings to infer the correct target. For example, if "module:module_M_color_white" maps to component "Wardrobe Module M White", then "module:module_L_color_black" likely maps to "Wardrobe Module L Black".
-- Source key structure: [source_type]_[size]_[variant]_[color_COLOR] or similar patterns. Colour and size in the key should match the component name.
-- Confidence "high": clear naming match (same pattern, obvious variant); "medium": likely match with minor ambiguity; "low": best guess, significant uncertainty.
-- If you cannot find a reasonable match for a key, omit it from the suggestions array.
+STRICT MATCHING RULES — read carefully:
+- Every explicit attribute encoded in the source key MUST match the component exactly. This includes: door/module colour, handle colour, handle type (cutout vs standard), size (S/M/L/XL, mm), and any other variant. If even one attribute differs, do NOT suggest that component.
+- Example: a key containing "handle_color_silver" must map to a component that explicitly has a silver handle. Mapping it to a white-handle component is WRONG. If no silver-handle component exists in the catalog, omit the key entirely — do not fall back to a similar component.
+- Example: a key containing "color_black" must map to a black component. Never suggest a white variant as a substitute.
+- When no component in the catalog matches ALL attributes in the key, omit that key from the suggestions array. The user will create the missing component in the BOM. A missing suggestion is far better than a wrong one — a wrong mapping ships the wrong product to the customer.
+- Use naming patterns from existing mappings only as a structural guide (e.g. key format → component name format). Never copy the target of an existing mapping to a key with different attributes.
+- Confidence "high": every attribute matches clearly; "medium": structural match is clear but one attribute is implicit rather than explicit in the component name; "low": significant uncertainty — only use for keys where the key has very few attributes and the match is otherwise strong.
 - Use the exact component id from the catalog (the first column, a UUID).
-- reasoning: one concise sentence explaining why this component matches this key.`;
+- reasoning: one concise sentence explaining why ALL attributes in the key match this component, or what makes you uncertain.`;
 
   const userMessage = `EXISTING MAPPINGS:\n${existingLines}\n\nBOM COMPONENT CATALOG:\n${catalogLines}\n\nUNMAPPED KEYS TO SUGGEST FOR:\n${unmappedLines}`;
 

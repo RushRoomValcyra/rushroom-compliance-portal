@@ -1,5 +1,12 @@
 {
   "model": "claude-sonnet-4-6",
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Run supabase db push to apply database migrations",
+      "Run supabase functions deploy to deploy edge functions"
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(git add:*)",

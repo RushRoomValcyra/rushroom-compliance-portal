@@ -44,6 +44,7 @@
       "extractCostsFromDocument",   // PROP-073
       "importPartCosts",            // PROP-074
       "suggestPlannerMappings",     // PROP-075
+      "suggestPlannerComponent",    // PROP-075
     ]),
     "portal-cellar": new Set([
       "addDirective", "syncDirectiveRelations", "inferDirectiveRelations",

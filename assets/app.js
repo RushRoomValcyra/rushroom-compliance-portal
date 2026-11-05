@@ -9830,9 +9830,10 @@
       const copyStructureBtn = el("button", {
         class: "btn btn-sm", type: "button", style: "margin-bottom:0.5rem;display:none",
         onclick: async () => {
+          const hintName = prefill?.name ? `"${prefill.name}"` : null;
           pickComponentModal(tok, {
             title: "Copy structure from assembly",
-            hint: `Creating: ${gap.label || gap.source_key} — pick an existing assembly to copy its children from.`,
+            hint: `Creating: ${[hintName, gap.source_key].filter(Boolean).join(" · ")} — pick an assembly whose children match best.`,
             initialTab: "assemblies",
             onPick: async (picked) => {
               try {

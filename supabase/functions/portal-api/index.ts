@@ -3566,6 +3566,7 @@ Deno.serve(async (req) => {
       oem_number: oem_number ? String(oem_number).trim() : null,
       description: description || null, notes: notes || null,
       category_id: category_id || null,
+      lifecycle_status: "active",
       ...(sourcing ? { make_or_buy: sourcing } : {}),
       created_by: session.uid || null,
     }).select("id").maybeSingle();
@@ -4044,6 +4045,37 @@ Deno.serve(async (req) => {
     }
     if (errors.length && inserted === 0) return json({ error: errors[0] }, 400);
     return json({ inserted, errors });
+  }
+
+  // --- PROP-075: Fetch direct children of an assembly for structure preview ---
+  if (action === "getDirectChildren") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { component_id } = body;
+    if (!component_id) return json({ error: "component_id is required" }, 400);
+
+    const { data: edges, error: edgesErr } = await tdb("bom_edges")
+      .select("child_id, quantity, sort_order")
+      .eq("parent_id", component_id)
+      .is("effective_to", null)
+      .eq("is_reference", false)
+      .order("sort_order");
+    if (edgesErr) return json({ error: edgesErr.message }, 400);
+    if (!edges || !edges.length) return json({ children: [] });
+
+    const childIds = edges.map((e: any) => e.child_id);
+    const { data: comps, error: compsErr } = await tdb("bom_components")
+      .select("id, name, part_number, type")
+      .in("id", childIds);
+    if (compsErr) return json({ error: compsErr.message }, 400);
+
+    const compMap: Record<string, any> = {};
+    (comps || []).forEach((c: any) => { compMap[c.id] = c; });
+
+    const children = edges.map((e: any) => {
+      const comp = compMap[e.child_id] || {};
+      return { id: e.child_id, name: comp.name || "Unknown", part_number: comp.part_number || null, type: comp.type || null, quantity: e.quantity, sort_order: e.sort_order };
+    });
+    return json({ children });
   }
 
   // --- BOM cost simulation (PROP-072) — role-checked inside the handler ------

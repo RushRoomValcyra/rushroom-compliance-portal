@@ -5634,12 +5634,12 @@
   // Separate from openAddChildModal, which is a multi-select that also writes
   // edges — this one only answers "which component?" and hands it back.
   function pickComponentModal(token, opts = {}) {
-    const { title = "Choose a component", excludeIds = [], hint = "", filter = null, onPick } = opts;
+    const { title = "Choose a component", excludeIds = [], hint = "", filter = null, initialTab = "components", onPick } = opts;
     const exclude = new Set(excludeIds);
     const box = el("div", {});
     const close = openModal(title, box);
 
-    const state = { tab: "components", category: "all", sortKey: "name", sortDir: "asc" };
+    const state = { tab: initialTab, category: "all", sortKey: "name", sortDir: "asc" };
     const search = el("input", { class: "up-text", type: "text", placeholder: "Search by part # or name…", style: "width:100%;margin-bottom:0.4rem;flex-shrink:0" });
     const tabBar  = el("div", { style: "display:flex;gap:0;border-bottom:2px solid var(--border,#e2e8f0);flex-shrink:0;margin-bottom:0.4rem" });
     const catBar  = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;flex-shrink:0;margin-bottom:0.4rem" });
@@ -9821,21 +9821,58 @@
       const catRow = el("div", {}, [frow("Category", cat, "Required for parts")]);
       const mobRow = el("div", {}, [frow("Sourcing", mob, "How does this component come to exist?")]);
 
+      // Template state: filled from AI suggestion or explicit "Copy structure from…".
+      let template = null;    // { id, name, part_number, similarity, children: [...] }
+      const subs = {};        // { [from_id]: { id, name, part_number } }
+
+      const ASSEMBLY_CLONABLE = new Set(["sub_assembly", "phantom_assembly", "finished_good"]);
+
+      const copyStructureBtn = el("button", {
+        class: "btn btn-sm", type: "button", style: "margin-bottom:0.5rem;display:none",
+        onclick: async () => {
+          pickComponentModal(tok, {
+            title: "Copy structure from assembly",
+            hint: "Pick an existing assembly — its direct children will be linked to the new component.",
+            initialTab: "assemblies",
+            onPick: async (picked) => {
+              try {
+                const r = await API.post(tok, "getDirectChildren", { component_id: picked.id });
+                if (!r.children || !r.children.length) {
+                  statusEl.textContent = `"${picked.name}" has no active children — choose a different assembly.`;
+                  statusEl.style.color = "var(--muted,#8b93a1)";
+                  return;
+                }
+                template = { id: picked.id, name: picked.name, part_number: picked.part_number || null, similarity: 100, children: r.children };
+                for (const k of Object.keys(subs)) delete subs[k];
+                renderTemplate();
+                statusEl.textContent = `Structure from "${picked.name}" loaded — ${r.children.length} children will be linked.`;
+                statusEl.style.color = "var(--muted,#8b93a1)";
+              } catch (ex) {
+                statusEl.textContent = `Could not load children: ${ex.message}`;
+                statusEl.style.color = "var(--danger,#e05454)";
+              }
+            },
+          });
+        },
+      }, "🔗 Copy structure from…");
+
       function refreshRows() {
         const needsCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
         const needsMob = !["finished_good", "phantom_assembly", "product_family"].includes(typ.value);
         catRow.style.display = needsCat ? "" : "none";
         mobRow.style.display = needsMob ? "" : "none";
+        copyStructureBtn.style.display = ASSEMBLY_CLONABLE.has(typ.value) ? "" : "none";
+        if (!ASSEMBLY_CLONABLE.has(typ.value) && template) {
+          template = null;
+          for (const k of Object.keys(subs)) delete subs[k];
+          renderTemplate();
+        }
       }
       typ.addEventListener("change", refreshRows);
 
       const aiBtn    = el("button", { class: "btn btn-sm", type: "button", style: "margin-bottom:0.75rem" }, "✨ Suggest with AI");
       const createMapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Create & map");
       const createOnlyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Create only (no mapping)");
-
-      // Template state: filled from AI suggestion response.
-      let template = null;    // { id, name, part_number, similarity, children: [...] }
-      const subs = {};        // { [from_id]: { id, name, part_number } }
 
       const templateSection = el("div", { style: "display:none;margin-top:0.75rem" });
 
@@ -9906,6 +9943,7 @@
         frow("Type", typ),
         mobRow, catRow,
         frow("Description", desc, "Optional but helpful"),
+        copyStructureBtn,
         templateSection,
         el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [createMapBtn, createOnlyBtn]),
       ]);

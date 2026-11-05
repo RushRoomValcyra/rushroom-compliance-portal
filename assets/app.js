@@ -10448,7 +10448,7 @@
     // that reads it. The id stays "planner-mappings" — it is the persisted
     // sub-tab key, and renaming it would drop everyone back to BOM Tree.
     if (role === "rushroom") tabs.splice(1, 0, { id: "planner-mappings", label: "VALCYRA Studio BOM Link", icon: "link", build: () => { const m = el("div", {}); plannerMappingsView(token).then((v) => m.replaceChildren(v)); return m; } });
-    if (role === "rushroom") tabs.push({ id: "ai-bom-scan", label: "AI BOM Scan", icon: "sparkles", build: () => bomAnomalyScanView(token) });
+    if (role === "rushroom") tabs.push({ id: "ai-bom-scan", label: "AI BOM Review", icon: "sparkles", build: () => bomAnomalyScanView(token) });
     mount.replaceChildren(subTabs("product", tabs));
   }
 

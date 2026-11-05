@@ -10026,6 +10026,78 @@
     return wrap;
   }
 
+  // PROP-076 — AI BOM anomaly scan view.
+  function bomAnomalyScanView(token) {
+    const SEV_COLOR = { high: { bg: "#fee2e2", border: "#fca5a5", text: "#991b1b", label: "High" }, medium: { bg: "#fef9c3", border: "#fde047", text: "#854d0e", label: "Medium" }, low: { bg: "#f1f5f9", border: "#cbd5e1", text: "#475569", label: "Low" } };
+    const CAT_LABEL = { copy_component: "Active copy", empty_assembly: "Empty assembly", inactive_child: "Inactive child", orphan: "Orphan", duplicate_child: "Duplicate child", ai_finding: "AI finding" };
+
+    const wrap = el("div", { style: "max-width:900px" });
+    const btn = actionBtn("Run AI BOM scan", "sparkles", { primary: true });
+    const statusEl = el("p", { class: "muted", style: "margin:0.5rem 0 0" }, "Scans all active components and edges for structural problems, naming drift, and variant inconsistencies.");
+    const results = el("div", { style: "margin-top:1rem" });
+
+    btn.onclick = async () => {
+      btn.disabled = true;
+      statusEl.textContent = "Scanning…";
+      statusEl.style.color = "";
+      results.replaceChildren(el("div", { class: "loading" }, "Running scan — this may take a few seconds…"));
+      let data;
+      try { data = await API.post(token, "scanBomAnomalies", {}); }
+      catch (ex) { results.replaceChildren(el("p", { class: "error" }, ex.message)); btn.disabled = false; return; }
+      finally { btn.disabled = false; }
+
+      const { anomalies = [], summary = "", stats = {} } = data;
+      statusEl.textContent = summary;
+      statusEl.style.color = "";
+
+      if (!anomalies.length) {
+        results.replaceChildren(
+          el("p", { style: "color:var(--success,#2fa564);font-weight:600;margin:0" }, "No anomalies found — BOM structure looks clean."),
+          el("p", { class: "muted", style: "margin:0.25rem 0 0;font-size:0.8125rem" }, `Checked ${stats.active_components ?? "?"} active components, ${stats.total_edges ?? "?"} edges.`)
+        );
+        return;
+      }
+
+      const order = ["high", "medium", "low"];
+      const grouped = { high: [], medium: [], low: [] };
+      for (const a of anomalies) (grouped[a.severity] || grouped.low).push(a);
+
+      const sections = [];
+      for (const sev of order) {
+        if (!grouped[sev].length) continue;
+        const col = SEV_COLOR[sev];
+        const cards = grouped[sev].map(a => {
+          const catLabel = CAT_LABEL[a.category] || a.category;
+          return el("div", { style: `background:${col.bg};border:1px solid ${col.border};border-radius:6px;padding:0.65rem 0.8rem;margin-bottom:0.4rem` }, [
+            el("div", { style: "display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;margin-bottom:0.2rem" }, [
+              el("span", { style: `background:${col.text};color:#fff;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.7rem;font-weight:700;white-space:nowrap` }, col.label.toUpperCase()),
+              el("span", { style: `background:rgba(0,0,0,0.08);border-radius:4px;padding:0.1rem 0.4rem;font-size:0.7rem;font-weight:600;white-space:nowrap` }, catLabel),
+              a.component_name ? el("span", { style: "font-weight:600;font-size:0.875rem" }, a.component_name) : null,
+              a.part_number ? el("span", { class: "muted", style: "font-size:0.75rem;font-family:monospace" }, a.part_number) : null,
+            ].filter(Boolean)),
+            el("p", { style: "margin:0 0 0.2rem;font-size:0.875rem" }, a.description),
+            el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [el("strong", {}, "Suggestion: "), a.suggestion]),
+          ]);
+        });
+        sections.push(
+          el("h4", { style: `color:${col.text};margin:0.75rem 0 0.35rem;font-size:0.875rem;text-transform:uppercase;letter-spacing:0.05em` }, `${col.label} (${grouped[sev].length})`),
+          ...cards
+        );
+      }
+      results.replaceChildren(
+        el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, `${anomalies.length} issue(s) found across ${stats.active_components ?? "?"} active components.`),
+        ...sections
+      );
+    };
+
+    wrap.replaceChildren(
+      el("div", { class: "row-tools", style: "margin-bottom:0.4rem" }, [btn]),
+      statusEl,
+      results,
+    );
+    return wrap;
+  }
+
   async function renderProduct(role, mount) {
     const token = API.getToken();
     const tabs = [
@@ -10037,6 +10109,7 @@
     // that reads it. The id stays "planner-mappings" — it is the persisted
     // sub-tab key, and renaming it would drop everyone back to BOM Tree.
     if (role === "rushroom") tabs.splice(1, 0, { id: "planner-mappings", label: "VALCYRA Studio BOM Link", icon: "link", build: () => { const m = el("div", {}); plannerMappingsView(token).then((v) => m.replaceChildren(v)); return m; } });
+    if (role === "rushroom") tabs.push({ id: "ai-bom-scan", label: "AI BOM Scan", icon: "sparkles", build: () => bomAnomalyScanView(token) });
     mount.replaceChildren(subTabs("product", tabs));
   }
 

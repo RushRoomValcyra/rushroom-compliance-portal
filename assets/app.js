@@ -9910,7 +9910,7 @@
         el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [createMapBtn, createOnlyBtn]),
       ]);
 
-      openModal(`Create BOM component`, form);
+      const closeModal = openModal(`Create BOM component`, form);
       refreshRows();
 
       // AI suggestion
@@ -10012,6 +10012,7 @@
         statusEl.style.color = "var(--success,#2fa564)";
         createMapBtn.disabled = createOnlyBtn.disabled = true;
         if (onCreated) onCreated(gap, componentId, withMapping);
+        setTimeout(closeModal, 1800);
       }
 
       createMapBtn.onclick  = () => doCreate(true);
@@ -10038,23 +10039,40 @@
       const grouped = { missing_target: [], obsolete_target: [], flagged_target: [], no_mapping: [] };
       for (const g of gaps) (grouped[g.status] || grouped.no_mapping).push(g);
 
-      const summaryColor = gaps.length === 0 ? "#dcfce7" : "#fee2e2";
-      const summaryText = gaps.length === 0
-        ? `✓ All ${total} planner keys have valid active BOM mappings.`
-        : `${gaps.length} gap${gaps.length === 1 ? "" : "s"} found across ${total} catalog key${total === 1 ? "" : "s"} — ${ok_count} OK.`;
-
       const resolvedKeys = new Set();
+
+      // Live summary banner — updated whenever a row is resolved.
+      const summaryEl = el("div", { style: "border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.875rem" });
+      function updateSummary() {
+        const remaining = gaps.length - resolvedKeys.size;
+        if (remaining === 0) {
+          summaryEl.style.background = "#dcfce7";
+          summaryEl.textContent = `✓ All gaps resolved this session — ${ok_count + resolvedKeys.size} of ${total} keys OK.`;
+        } else if (resolvedKeys.size > 0) {
+          summaryEl.style.background = "#fef3c7";
+          summaryEl.textContent = `${remaining} gap${remaining === 1 ? "" : "s"} remaining — ${resolvedKeys.size} resolved this session, ${ok_count} already OK.`;
+        } else if (gaps.length === 0) {
+          summaryEl.style.background = "#dcfce7";
+          summaryEl.textContent = `✓ All ${total} planner keys have valid active BOM mappings.`;
+        } else {
+          summaryEl.style.background = "#fee2e2";
+          summaryEl.textContent = `${gaps.length} gap${gaps.length === 1 ? "" : "s"} found across ${total} catalog key${total === 1 ? "" : "s"} — ${ok_count} OK.`;
+        }
+      }
+      updateSummary();
 
       const sections = Object.entries(grouped)
         .filter(([, rows]) => rows.length > 0)
         .map(([status, rows]) => {
           const meta = GAP_META[status];
           const tbody = el("tbody", {});
+          const countBadge = el("span", {}, String(rows.length));
 
           function renderRows() {
-            tbody.replaceChildren(...rows
-              .filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`))
-              .map((g) => {
+            const visible = rows.filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`));
+            countBadge.textContent = String(visible.length);
+            updateSummary();
+            tbody.replaceChildren(...visible.map((g) => {
                 const createBtn = status === "no_mapping"
                   ? el("td", {}, actionBtn("Create component", "plus", { onClick: () => createPlannerComponentModal(tok, g, (gap) => {
                       resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
@@ -10077,7 +10095,7 @@
 
           return el("section", { style: "margin-bottom:1rem" }, [
             el("div", { style: `background:${meta.color};border:1px solid ${meta.border};border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.4rem` }, [
-              el("strong", { style: `color:${meta.text}` }, `${meta.label} (${rows.length})`),
+              el("strong", { style: `color:${meta.text}` }, [`${meta.label} (`, countBadge, ")"]),
               el("p", { style: `font-size:0.8125rem;color:${meta.text};margin:0.2rem 0 0` }, meta.hint),
             ]),
             el("div", { class: "table-wrap" },
@@ -10094,7 +10112,7 @@
         });
 
       body.replaceChildren(
-        el("div", { style: `background:${summaryColor};border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.875rem` }, summaryText),
+        summaryEl,
         ...sections,
         gaps.length === 0 ? el("p", { class: "muted", style: "font-size:0.8125rem;margin:0" }, `${ok_count} of ${total} keys have active, valid mappings.`) : null,
       );

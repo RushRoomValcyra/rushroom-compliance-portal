@@ -9901,7 +9901,7 @@
               source_type: gap.source_type,
               source_key: gap.source_key,
               target_component_id: componentId,
-              quantity_rule: "one",
+              quantity_rule: "cart_quantity",
               start_inactive: true,
             });
             statusEl.textContent = "Done — component created and mapped as INACTIVE. Go to the mappings table and Activate when satisfied.";

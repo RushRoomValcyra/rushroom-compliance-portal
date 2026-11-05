@@ -10180,6 +10180,33 @@
       if (noMappingGaps.length) {
         const byType = {};
         for (const g of noMappingGaps) (byType[g.source_type] ||= []).push(g.source_key);
+        const typeKeys = Object.keys(byType);
+        const total = typeKeys.length;
+        let done = 0;
+
+        // Progress bar — sits between the summary banner and the sections.
+        const progressFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.4s ease;border-radius:2px" });
+        const progressLabel = el("span", {}, `✨ AI is suggesting component names…`);
+        const progressBar = el("div", {
+          style: "margin-bottom:0.6rem;display:flex;align-items:center;gap:0.6rem;font-size:0.8125rem;color:var(--muted,#8b93a1)",
+        }, [
+          el("div", { style: "flex:1;height:4px;border-radius:2px;background:var(--border,#e2e8f0);overflow:hidden" }, progressFill),
+          progressLabel,
+        ]);
+        summaryEl.after(progressBar);
+
+        function updateProgress() {
+          const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+          progressFill.style.width = `${pct}%`;
+          if (done >= total) {
+            progressLabel.textContent = "✓ Suggestions loaded";
+            progressFill.style.background = "var(--accent,#2fa564)";
+            setTimeout(() => { progressBar.style.transition = "opacity 0.5s"; progressBar.style.opacity = "0"; setTimeout(() => progressBar.remove(), 500); }, 1200);
+          } else {
+            progressLabel.textContent = total > 1 ? `✨ Suggesting names… (${done}/${total})` : "✨ AI is suggesting component names…";
+          }
+        }
+
         for (const [sourceType, sourceKeys] of Object.entries(byType)) {
           API.post(tok, "batchSuggestComponents", { source_type: sourceType, source_keys: sourceKeys })
             .then((r) => {
@@ -10188,9 +10215,13 @@
                 suggestCache[cacheKey] = { name: s.name, type: s.type };
                 fillProposed(sourceType, s.source_key, s);
               }
+              done++;
+              updateProgress();
             })
             .catch(() => {
-              // Non-fatal — the ✨… placeholders just stay.
+              done++;
+              updateProgress();
+              // Non-fatal — the ✨… placeholders stay.
             });
         }
       }

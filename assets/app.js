@@ -9790,7 +9790,7 @@
       ]));
     }
     // --- Create BOM component from a gap entry ---------------------------------
-    async function createPlannerComponentModal(tok, gap, onCreated) {
+    async function createPlannerComponentModal(tok, gap, onCreated, prefill) {
       const COMPONENT_TYPES = [
         ["part", "Part"], ["raw_material", "Raw Material"], ["sub_assembly", "Sub-Assembly"],
         ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"],
@@ -9912,6 +9912,16 @@
 
       const closeModal = openModal(`Create BOM component`, form);
       refreshRows();
+
+      // Pre-fill from cached batch suggestion (if available), so the user sees
+      // a name immediately without having to click "Suggest with AI".
+      if (prefill) {
+        if (prefill.name) nm.value = prefill.name;
+        if (prefill.type) typ.value = prefill.type;
+        refreshRows();
+        statusEl.textContent = "Pre-filled from AI batch suggestion — click ✨ Suggest with AI for description and structure template.";
+        statusEl.style.color = "var(--muted,#8b93a1)";
+      }
 
       // AI suggestion
       aiBtn.onclick = async () => {
@@ -10040,6 +10050,8 @@
       for (const g of gaps) (grouped[g.status] || grouped.no_mapping).push(g);
 
       const resolvedKeys = new Set();
+      // Cache of batch AI suggestions: "source_type:source_key" → { name, type }
+      const suggestCache = {};
 
       // Live summary banner — updated whenever a row is resolved.
       const summaryEl = el("div", { style: "border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.875rem" });
@@ -10061,6 +10073,34 @@
       }
       updateSummary();
 
+      // Cells keyed by "source_type:source_key" that show batch AI suggestion.
+      const proposedCells = {};
+
+      const TYPE_BADGE_COLOR = {
+        sub_assembly: "#dbeafe", finished_good: "#fce7f3", phantom_assembly: "#ede9fe",
+        part: "#f1f5f9", raw_material: "#fef9c3", spare_part: "#f0fdf4",
+        product_family: "#fdf4ff",
+      };
+      const TYPE_LABEL = {
+        sub_assembly: "Sub-assy", finished_good: "FG", phantom_assembly: "Kit",
+        part: "Part", raw_material: "Raw", spare_part: "Spare", product_family: "Family",
+      };
+
+      function fillProposed(sourceType, sourceKey, suggestion) {
+        const cell = proposedCells[`${sourceType}:${sourceKey}`];
+        if (!cell) return;
+        const bg = TYPE_BADGE_COLOR[suggestion.type] || "#f1f5f9";
+        setChildren(cell,
+          el("span", { style: "font-size:0.8125rem;color:var(--text,#1a1f2e)" }, suggestion.name),
+          el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 5px;border-radius:4px;background:${bg};color:#334155;white-space:nowrap;margin-left:0.35rem;flex-shrink:0` },
+            TYPE_LABEL[suggestion.type] || suggestion.type),
+        );
+        cell.style.display = "flex";
+        cell.style.alignItems = "center";
+        cell.style.gap = "0.25rem";
+        cell.style.flexWrap = "wrap";
+      }
+
       const sections = Object.entries(grouped)
         .filter(([, rows]) => rows.length > 0)
         .map(([status, rows]) => {
@@ -10073,15 +10113,32 @@
             countBadge.textContent = String(visible.length);
             updateSummary();
             tbody.replaceChildren(...visible.map((g) => {
+                const cacheKey = `${g.source_type}:${g.source_key}`;
+                const cachedSuggestion = suggestCache[cacheKey];
+
+                // "Proposed" cell — only for no_mapping rows.
+                let proposedCell = null;
+                if (status === "no_mapping") {
+                  proposedCell = el("td", { style: "max-width:260px" });
+                  proposedCells[cacheKey] = proposedCell;
+                  if (cachedSuggestion) {
+                    fillProposed(g.source_type, g.source_key, cachedSuggestion);
+                  } else {
+                    proposedCell.appendChild(el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "✨…"));
+                  }
+                }
+
                 const createBtn = status === "no_mapping"
-                  ? el("td", {}, actionBtn("Create component", "plus", { onClick: () => createPlannerComponentModal(tok, g, (gap) => {
+                  ? el("td", { style: "white-space:nowrap" }, actionBtn("Create component", "plus", { onClick: () => createPlannerComponentModal(tok, g, (gap) => {
                       resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
                       renderRows();
-                    }) }))
+                    }, cachedSuggestion || null) }))
                   : null;
+
                 return el("tr", {}, [
                   el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
                   el("td", {}, el("code", { style: "font-size:0.75rem;word-break:break-all" }, g.source_key)),
+                  ...(proposedCell ? [proposedCell] : []),
                   ...(status === "missing_target" ? [el("td", { style: "font-family:monospace;font-size:0.75rem;color:#9ca3af" }, g.target_component_id)] : []),
                   ...(status === "obsolete_target" || status === "flagged_target" ? [
                     el("td", {}, g.target ? `${g.target.name}${g.target.part_number ? ` · ${g.target.part_number}` : ""}` : "—"),
@@ -10102,6 +10159,7 @@
               el("table", { class: "data-table", style: "font-size:0.8125rem" }, [
                 el("thead", {}, el("tr", {}, [
                   el("th", {}, "Type"), el("th", {}, "Planner key"),
+                  ...(status === "no_mapping" ? [el("th", {}, "Proposed BOM component")] : []),
                   ...(status === "missing_target" ? [el("th", {}, "Was mapped to (ID)")] : []),
                   ...(status === "obsolete_target" || status === "flagged_target" ? [el("th", {}, "Current target"), el("th", {}, "Status")] : []),
                   ...(status === "no_mapping" ? [el("th", {})] : []),
@@ -10116,6 +10174,26 @@
         ...sections,
         gaps.length === 0 ? el("p", { class: "muted", style: "font-size:0.8125rem;margin:0" }, `${ok_count} of ${total} keys have active, valid mappings.`) : null,
       );
+
+      // Kick off batch AI suggestions in the background, grouped by source_type.
+      const noMappingGaps = grouped.no_mapping || [];
+      if (noMappingGaps.length) {
+        const byType = {};
+        for (const g of noMappingGaps) (byType[g.source_type] ||= []).push(g.source_key);
+        for (const [sourceType, sourceKeys] of Object.entries(byType)) {
+          API.post(tok, "batchSuggestComponents", { source_type: sourceType, source_keys: sourceKeys })
+            .then((r) => {
+              for (const s of (r.suggestions || [])) {
+                const cacheKey = `${sourceType}:${s.source_key}`;
+                suggestCache[cacheKey] = { name: s.name, type: s.type };
+                fillProposed(sourceType, s.source_key, s);
+              }
+            })
+            .catch(() => {
+              // Non-fatal — the ✨… placeholders just stay.
+            });
+        }
+      }
     }
 
     wrap.replaceChildren(

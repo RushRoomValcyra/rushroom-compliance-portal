@@ -10027,7 +10027,7 @@
             name: nm.value.trim(),
             type: typ.value,
             make_or_buy: mob.value || null,
-            category_id: cat.value || null,
+            category_id: needsCat ? (cat.value || null) : null,
             description: desc.value.trim() || null,
           });
           componentId = r.id;

@@ -10696,7 +10696,7 @@
         { id: "add", label: role === "supplier" ? "Upload a document" : "Add document", icon: "plus", build: addTab },
       ];
       if (role === "rushroom") docTabs.push({ id: "labels", label: "Labels and Instructions", icon: "tag", build: labelsTab });
-      if (role === "rushroom") docTabs.push({ id: "bom", label: "Product BOM", icon: "grid", build: () => { const m = el("div", {}); renderProduct(role, m); return m; } });
+      if (role === "rushroom") docTabs.push({ id: "bom", label: "Product BOM", icon: "bom-tree", build: () => { const m = el("div", {}); renderProduct(role, m); return m; } });
       if (role === "rushroom") docTabs.push({ id: "uploads", label: "Supplier uploads", icon: "external", build: uploadsTab });
       docsPanel.replaceChildren(subTabs("documents", docTabs));
     };

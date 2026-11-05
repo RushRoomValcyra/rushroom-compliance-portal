@@ -35,15 +35,18 @@ const plan = (rootId, kids, subs = {}) => {
   return { clones: [...r.clones].sort(), shared: [...r.shared].sort(), replaced: [...r.replaced].sort(), edges: r.edgeCount };
 };
 
-test("a node holding structure is cloned; a leaf is reused", () => {
-  // Shelf → (LED shelf → inserts, profile), screw
+test("only the root is cloned; sub-assemblies and leaves are all shared", () => {
+  // Shelf → (LED shelf → inserts, profile), screw.
+  // The copy creates a new shelf and re-links to the SAME led sub-assembly.
+  // Editing led inside the copy edits the original too — that is intentional:
+  // the two variants share the common structure. Use substitutions to swap it.
   const r = plan("shelf", {
     shelf: [{ child_id: "led" }, { child_id: "screw" }],
     led: [{ child_id: "inserts" }, { child_id: "profile" }],
   });
-  assert.deepEqual(r.clones, ["led", "shelf"], "the inner assembly was not cloned");
-  assert.deepEqual(r.shared, ["inserts", "profile", "screw"], "a leaf was cloned, duplicating the registry");
-  assert.equal(r.edges, 4, "every link under a cloned node must be recreated");
+  assert.deepEqual(r.clones, ["shelf"], "more than the root was cloned");
+  assert.deepEqual(r.shared, ["inserts", "led", "profile", "screw"], "a shared node was not listed");
+  assert.equal(r.edges, 2, "only the root's direct edges are recreated");
 });
 
 test("an assembly with only leaves clones exactly one component", () => {
@@ -61,24 +64,27 @@ test("a leaf root still produces a usable copy", () => {
   assert.equal(r.edges, 0);
 });
 
-test("structure decides, not type — a `part` with children is cloned", () => {
-  // "S Plinth - White" is typed part and holds two children. Deciding on type
-  // would have shared it, and editing the copy would change the original.
+test("sub-assemblies are shared regardless of type", () => {
+  // "S Plinth - White" is typed part and holds two children. Only the root is
+  // cloned; plinth is shared, so both the original and the copy point to it.
+  // To get an independent plinth in the copy, substitute it at copy time.
   const r = plan("asm", { asm: [{ child_id: "plinth" }], plinth: [{ child_id: "switch" }, { child_id: "pin" }] });
-  assert.ok(r.clones.includes("plinth"), "a part holding structure was shared, so editing the copy hits the original");
-  assert.deepEqual(r.shared, ["pin", "switch"]);
+  assert.deepEqual(r.clones, ["asm"]);
+  assert.ok(r.shared.includes("plinth"), "plinth should be shared — substitute it if you need an independent copy");
+  assert.deepEqual(r.shared.sort(), ["pin", "plinth", "switch"]);
 });
 
-test("a component used twice is cloned once and linked twice", () => {
+test("sub-assemblies shared by multiple parents are linked to, not cloned", () => {
   // asm → subA, subB; both → the same screw.
+  // Only asm is cloned; subA and subB are shared (re-linked from the new root).
   const r = plan("asm", {
     asm: [{ child_id: "subA" }, { child_id: "subB" }],
     subA: [{ child_id: "screw" }],
     subB: [{ child_id: "screw" }],
   });
-  assert.deepEqual(r.clones, ["asm", "subA", "subB"]);
-  assert.deepEqual(r.shared, ["screw"], "the shared screw was duplicated");
-  assert.equal(r.edges, 4, "both links to the shared part must be recreated");
+  assert.deepEqual(r.clones, ["asm"]);
+  assert.deepEqual(r.shared, ["screw", "subA", "subB"]);
+  assert.equal(r.edges, 2, "only the root's two direct edges are recreated");
 });
 
 test("edges under a reused node are not recreated", () => {
@@ -160,7 +166,8 @@ test("a replaced branch is never cloned", () => {
   // asm → plinth(→ switch, pin), screw.  Replace the plinth.
   const kids = { asm: [{ child_id: "plinth" }, { child_id: "screw" }], plinth: [{ child_id: "switch" }, { child_id: "pin" }] };
   const before = plan("asm", kids);
-  assert.deepEqual(before.clones, ["asm", "plinth"]);
+  // Without substitutions: only the root is cloned; plinth is shared.
+  assert.deepEqual(before.clones, ["asm"]);
   const after = plan("asm", kids, { plinth: "mPlinth" });
   assert.deepEqual(after.clones, ["asm"], "the replaced plinth was still cloned");
   assert.deepEqual(after.replaced, ["plinth"]);
@@ -178,13 +185,18 @@ test("replacing a leaf swaps it without cloning anything extra", () => {
   assert.equal(r.edges, 2);
 });
 
-test("a part used twice is replaced in both places", () => {
-  // Substitution is by component, so one choice fixes every occurrence.
+test("substituting a direct child of the root replaces it in the new root's edges", () => {
+  // asm → a(→ screw), b(→ screw); substitute screw→bolt.
+  // Only asm is cloned; a and b are shared. The substitution appears in the
+  // plan as "replaced", but it only takes effect in edges whose PARENT is
+  // cloned. Since a and b are shared their internal edges are not recreated,
+  // so the swap only applies to direct children of the copied root.
+  // To replace screw inside a and b, substitute a and b themselves.
   const kids = { asm: [{ child_id: "a" }, { child_id: "b" }], a: [{ child_id: "screw" }], b: [{ child_id: "screw" }] };
   const r = plan("asm", kids, { screw: "bolt" });
   assert.deepEqual(r.replaced, ["screw"]);
-  assert.deepEqual(r.shared, [], "the replaced screw is still listed as reused");
-  assert.equal(r.edges, 4, "both links must still be written, pointing at the substitute");
+  assert.deepEqual(r.shared, ["a", "b"], "a and b are shared (only the root is cloned)");
+  assert.equal(r.edges, 2, "only asm's direct edges are recreated");
 });
 
 test("the root cannot be replaced", () => {

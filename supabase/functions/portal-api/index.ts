@@ -832,16 +832,21 @@ async function recordDrawingEvent(
 }
 
 /**
- * Decide what a deep assembly copy clones and what it reuses (PROP-059).
+ * Decide what a copy clones and what it reuses (PROP-059).
  *
- * Cloned: the root, and every descendant that HAS CHILDREN.
- * Reused:  the leaves.
+ * Cloned: the root only.
+ * Shared: every other descendant, including sub-assemblies.
+ * Replaced: nodes explicitly listed in subs (substitution map).
  *
- * Structural rather than type-based on purpose. A node typed `part` that holds
- * children is still structure someone will want to edit in the copy, and
- * cloning leaves would put a second Confirmat Screw in a registry people scan
- * by part number. Sharing a node that HAS children would be worse than either:
- * editing inside it changes the original too.
+ * Only the root is cloned because a copy is typically a variant: same
+ * structure, one or two parts swapped. Sub-assemblies that the user did not
+ * touch should be re-linked, not duplicated — a copy of "Complete Drawer Set -
+ * Grey Handle" and the original "- White Handle" should both point to the same
+ * "Prepared Drawer Set Excluding Front". Use substitutions (subs) to swap
+ * specific children; everything else is shared.
+ *
+ * The execution code maps shared nodes to themselves (idMap[id] = id), so
+ * recreated edges from the new root automatically point at the originals.
  *
  * Deliberately annotation-free plain JavaScript so tests/copy-assembly.test.mjs
  * can lift and run it against real tree shapes rather than pattern-match it.
@@ -849,23 +854,15 @@ async function recordDrawingEvent(
 function planAssemblyCopy(rootId, childrenOf, visited, subs) {
   subs = subs || {};
   const clones = new Set([rootId]);
-  for (const id of visited) {
-    // A replaced node is neither cloned nor reused: the substitute stands in
-    // its place, and its own structure is irrelevant to this copy. Not cloning
-    // it is the point — copying S and then replacing the S parts leaves the
-    // clones behind as registry litter.
-    if (subs[id]) continue;
-    if ((childrenOf[id] || []).length) clones.add(id);
-  }
   const shared = [];
   const replaced = [];
   for (const id of visited) {
-    if (subs[id]) { if (id !== rootId) replaced.push(id); continue; }
-    if (!clones.has(id)) shared.push(id);
+    if (id === rootId) continue;
+    if (subs[id]) { replaced.push(id); continue; }
+    shared.push(id);
   }
-  // Only edges whose PARENT is cloned are recreated. An edge under a reused
-  // node already exists there; recreating it would duplicate the original's
-  // own structure.
+  // Only edges whose PARENT is cloned are recreated. Edges under shared nodes
+  // already exist there; recreating them would duplicate the original's structure.
   let edgeCount = 0;
   for (const id of clones) edgeCount += (childrenOf[id] || []).length;
   return { clones, shared, replaced, edgeCount };
@@ -3591,19 +3588,15 @@ Deno.serve(async (req) => {
     return json({ id: (r as any).id, part_number: (r as any).part_number, name: (r as any).name });
   }
 
-  // --- BOM: copy an assembly AND its structure (PROP-059) -------------------
-  // Building an assembly by hand is the slow part of this system, and the usual
-  // job is "the same thing with two parts swapped".
+  // --- BOM: copy an assembly (PROP-059) -------------------------------------
+  // Building an assembly by hand is slow; the usual job is "the same thing with
+  // one or two parts swapped" — a colour or handle variant.
   //
-  // What gets cloned: the root, and every descendant that HAS CHILDREN. What
-  // gets shared: the leaves. Structural rather than type-based on purpose — a
-  // node typed `part` that holds children is still structure someone will want
-  // to edit in the copy, and cloning screws would put a second Confirmat Screw
-  // in a registry people scan by part number.
-  //
-  // Sharing a node that has children would be worse than either: editing inside
-  // it changes the original too, which is the blast radius the add-child dialog
-  // already warns about.
+  // Only the root is cloned. All other nodes (including sub-assemblies) are
+  // shared: the copy and the original point to the same child assemblies. Use
+  // substitutions (body.substitutions) to swap specific children; shared nodes
+  // that need independent edits later can be forked with the ⧉ button at that
+  // point, without burdening every copy with pre-emptive clones.
   if (action === "copyAssembly") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { component_id, dry_run } = body;

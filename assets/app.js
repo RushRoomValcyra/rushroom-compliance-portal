@@ -9795,17 +9795,26 @@
         ["spare_part", "Spare Part"],
       ];
       const MAKE_OR_BUY_OPTS = [["purchased", "Purchased"], ["manufactured", "Manufactured"], ["assembled", "Assembled"], ["subcontracted", "Subcontracted"]];
+      const LBL = "display:block;font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem";
+      function frow(label, input, hint) {
+        return el("div", { style: "margin-bottom:0.7rem" }, [
+          el("label", { style: LBL }, label),
+          input,
+          hint ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);display:block;margin-top:3px" }, hint) : null,
+        ].filter(Boolean));
+      }
 
       const statusEl = el("p", { style: "font-size:0.8125rem;min-height:1.2em;margin:0 0 0.5rem" }, "");
       const keyHdr   = el("div", { style: "background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.8125rem" }, [
         el("strong", {}, `${gap.source_type} · `), el("code", { style: "font-size:0.75rem" }, gap.source_key),
       ]);
 
-      const nm   = el("input",    { class: "up-text", type: "text", placeholder: "Name", required: true });
-      const typ  = el("select",   { class: "up-text" }, COMPONENT_TYPES.map(([v, l]) => el("option", { value: v }, l)));
-      const mob  = el("select",   { class: "up-text" }, [el("option", { value: "" }, "— choose —"), ...MAKE_OR_BUY_OPTS.map(([v, l]) => el("option", { value: v }, l))]);
+      const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
+      const nm   = el("input",    { type: "text", placeholder: "Name", required: true, style: F });
+      const typ  = el("select",   { style: F }, COMPONENT_TYPES.map(([v, l]) => el("option", { value: v }, l)));
+      const mob  = el("select",   { style: F }, [el("option", { value: "" }, "— choose —"), ...MAKE_OR_BUY_OPTS.map(([v, l]) => el("option", { value: v }, l))]);
       const cat  = categorySelect(null);
-      const desc = el("textarea", { class: "up-text", rows: "2", placeholder: "Purpose — what does this component do?" });
+      const desc = el("textarea", { rows: "2", placeholder: "Purpose — what does this component do?", style: F + ";resize:vertical;min-height:60px" });
 
       const catRow = el("div", {}, [frow("Category", cat, "Required for parts")]);
       const mobRow = el("div", {}, [frow("Sourcing", mob, "How does this component come to exist?")]);

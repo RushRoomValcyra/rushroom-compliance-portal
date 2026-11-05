@@ -10053,7 +10053,7 @@
       if (!anomalies.length) {
         results.replaceChildren(
           el("p", { style: "color:var(--success,#2fa564);font-weight:600;margin:0" }, "No anomalies found — BOM structure looks clean."),
-          el("p", { class: "muted", style: "margin:0.25rem 0 0;font-size:0.8125rem" }, `Checked ${stats.active_components ?? "?"} active components, ${stats.total_edges ?? "?"} edges.`)
+          el("p", { class: "muted", style: "margin:0.25rem 0 0;font-size:0.8125rem" }, `Checked ${stats.total_components ?? "?"} components (${stats.active_components ?? "?"} active), ${stats.total_edges ?? "?"} edges.`)
         );
         return;
       }
@@ -10085,7 +10085,7 @@
         );
       }
       results.replaceChildren(
-        el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, `${anomalies.length} issue(s) found across ${stats.active_components ?? "?"} active components.`),
+        el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, `${anomalies.length} issue(s) found across ${stats.total_components ?? "?"} components (${stats.active_components ?? "?"} active).`),
         ...sections
       );
     };

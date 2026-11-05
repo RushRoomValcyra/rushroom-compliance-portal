@@ -81,40 +81,45 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
 
   // --- Rule-based pass ---
 
-  // R1: Active "- copy" components.
+  // R1: "- copy" components (any lifecycle status).
   for (const c of components) {
-    if (c.lifecycle_status === "active" && c.name && c.name.includes("- copy")) {
+    if (c.name && c.name.includes("- copy")) {
+      const isActive = c.lifecycle_status === "active";
       findings.push({
-        severity: "high",
+        severity: isActive ? "high" : "medium",
         category: "copy_component",
         component_id: c.id,
         component_name: c.name,
         part_number: c.part_number || null,
-        description: `Component "${c.name}" is active but its name contains "- copy", indicating it was auto-generated during an assembly copy operation and was never replaced with the original.`,
-        suggestion: "Replace this component in its parent assembly (use the ≡ menu → Replace), then set this one to Inactive.",
+        description: `Component "${c.name}" (${c.lifecycle_status}) has "- copy" in its name, indicating it was auto-generated during an assembly copy and was never replaced with the original.`,
+        suggestion: isActive
+          ? "Replace this component in its parent assembly (use the ≡ menu → Replace), then set this one to Inactive."
+          : "Safe to delete if it has no linked documents or orders — it was an accidental duplicate.",
       });
     }
   }
 
-  // R2: Assemblies (sub_assembly / finished_good) with no active children in any edge.
+  // R2: Assemblies (any lifecycle) with no children in any edge.
   const assemblyTypes = new Set(["sub_assembly", "finished_good", "phantom_assembly"]);
   for (const c of components) {
     if (!assemblyTypes.has(c.type)) continue;
-    if (c.lifecycle_status !== "active") continue;
     if (!(childrenOf[c.id] || []).length) {
+      const isActive = c.lifecycle_status === "active";
       findings.push({
-        severity: "medium",
+        severity: isActive ? "medium" : "low",
         category: "empty_assembly",
         component_id: c.id,
         component_name: c.name,
         part_number: c.part_number || null,
-        description: `Assembly "${c.name}" (${c.type}) is active but has no children in the BOM.`,
-        suggestion: "Add children, mark it as Inactive if it is a placeholder, or delete it if it is unused.",
+        description: `Assembly "${c.name}" (${c.type}, ${c.lifecycle_status}) has no children in the BOM.`,
+        suggestion: isActive
+          ? "Add children, mark it Inactive if it is a placeholder, or delete it if unused."
+          : "Can be deleted if it has no linked documents, work orders, or cost data.",
       });
     }
   }
 
-  // R3: Active assemblies that contain inactive children (operational risk).
+  // R3: Active assemblies that contain inactive/discontinued children (operational risk).
   for (const c of components) {
     if (!assemblyTypes.has(c.type)) continue;
     if (c.lifecycle_status !== "active") continue;
@@ -135,20 +140,22 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
     }
   }
 
-  // R4: Orphaned components (active, never a child, not a root product_family/finished_good).
+  // R4: Orphaned components (never a child, not a root type) — all lifecycle statuses.
   const topLevelTypes = new Set(["product_family", "finished_good"]);
   for (const c of components) {
-    if (c.lifecycle_status !== "active") continue;
     if (topLevelTypes.has(c.type)) continue;
     if (!(parentsOf[c.id] || []).length) {
+      const isActive = c.lifecycle_status === "active";
       findings.push({
-        severity: "low",
+        severity: isActive ? "low" : "low",
         category: "orphan",
         component_id: c.id,
         component_name: c.name,
         part_number: c.part_number || null,
-        description: `Component "${c.name}" (${c.type}) is active but is not used as a child anywhere in the BOM.`,
-        suggestion: "Link it into the appropriate assembly, mark it Inactive, or delete it if it was created by mistake.",
+        description: `Component "${c.name}" (${c.type}, ${c.lifecycle_status}) is not used as a child anywhere in the BOM.`,
+        suggestion: isActive
+          ? "Link it into the appropriate assembly, mark it Inactive, or delete it if it was created by mistake."
+          : "Safe to delete if it has no linked documents or cost data.",
       });
     }
   }
@@ -178,30 +185,33 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
   }
 
   // --- AI pass: variant consistency, naming drift, suspicious structures ---
-  // Build a compact text representation of all active components and their children.
+  // Build a compact text representation of ALL components (all lifecycle states) and their children.
   const activeComps = components.filter(c => c.lifecycle_status === "active");
 
-  // Group by coarse name prefix to surface variant families to Claude.
   const lines: string[] = [];
-  for (const c of activeComps) {
+  for (const c of components) {
+    const statusTag = c.lifecycle_status !== "active" ? `, ${c.lifecycle_status}` : "";
     const kids = (childrenOf[c.id] || [])
       .map(id => byId[id])
       .filter(Boolean)
-      .map(k => `    - ${k.name} (${k.type}${k.lifecycle_status !== "active" ? ", " + k.lifecycle_status : ""})`)
+      .map(k => {
+        const ks = k.lifecycle_status !== "active" ? `, ${k.lifecycle_status}` : "";
+        return `    - ${k.name} [${k.type}${ks}]`;
+      })
       .join("\n");
-    lines.push(`${c.name} [${c.type}] (PN: ${c.part_number || "—"}, make_or_buy: ${c.make_or_buy || "—"})` +
+    lines.push(`${c.name} [${c.type}${statusTag}] (PN: ${c.part_number || "—"}, make_or_buy: ${c.make_or_buy || "—"})` +
       (kids ? `\n${kids}` : ""));
   }
   const bomText = lines.join("\n\n");
 
-  // Skip AI if BOM is empty.
+  // Skip AI if BOM is completely empty.
   let aiAnomalies: Anomaly[] = [];
   let summary = `Rule-based scan found ${findings.length} issue(s).`;
   let aiUsage = { input_tokens: 0, output_tokens: 0 };
 
-  if (activeComps.length > 0) {
+  if (components.length > 0) {
     const system = `You are a BOM quality analyst for a Swedish LED furniture manufacturer (Rushroom AB / VALCYRA).
-You will receive the full active BOM: every active component, its type, make_or_buy, part number, and its direct children.
+You will receive the full BOM including both active and inactive components (lifecycle status is shown in brackets).
 Your job: identify structural anomalies, naming inconsistencies, and missing patterns that suggest errors.
 
 WHAT TO LOOK FOR:
@@ -209,7 +219,7 @@ WHAT TO LOOK FOR:
 2. Sub-assemblies with suspiciously few children (e.g. only 1 child, which looks like a mistake).
 3. Naming inconsistencies: a component that follows a different naming pattern from its siblings/cousins.
 4. make_or_buy mismatch: sub_assembly not set to "assembled", purchased parts set to "manufactured", etc.
-5. Missing descriptions or stocked flag anomalies you can infer from context.
+5. Active assemblies that share children with inactive assemblies — may indicate a copy was made active while the original was left inactive.
 6. Any other pattern that suggests a configuration error.
 
 Do NOT flag:
@@ -219,7 +229,7 @@ Do NOT flag:
 For each finding: use component_id and part_number from the data provided. If a finding applies to a family (not one component), set component_id and part_number to null and name the family in description.
 Return at most 15 AI findings. Be specific and actionable.`;
 
-    const userMsg = `ACTIVE BOM (${activeComps.length} components):\n\n${bomText}`;
+    const userMsg = `BOM (${components.length} components, ${activeComps.length} active):\n\n${bomText}`;
 
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {

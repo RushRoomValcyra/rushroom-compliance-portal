@@ -831,7 +831,7 @@
     const cls = ["btn", "btn-sm", opts.primary ? "btn-primary" : "", opts.danger ? "doc-del" : "", opts.cls || ""].filter(Boolean).join(" ");
     const kids = [iconKey ? el("span", { class: "btn-ico", html: ICONS[iconKey] || "" }) : null, el("span", {}, label)].filter(Boolean);
     if (opts.href) return el("a", { class: cls, href: opts.href, target: opts.target || "_blank", rel: "noopener", title: opts.title || label }, kids);
-    return el("button", { class: cls, type: "button", title: opts.title || label, onclick: opts.onClick }, kids);
+    return el("button", { class: cls, type: "button", title: opts.title || label, onclick: opts.onClick, disabled: !!opts.disabled }, kids);
   }
   function openInAppLink(url, name, hintPath) {
     if (!url) return null;
@@ -10174,6 +10174,10 @@
         cell.style.flexWrap = "wrap";
       }
 
+      // True while batch AI suggestions are still in flight — create buttons disabled.
+      let batchInFlight = false;
+      const allRenderRows = [];
+
       const sections = Object.entries(grouped)
         .filter(([, rows]) => rows.length > 0)
         .map(([status, rows]) => {
@@ -10201,14 +10205,18 @@
                 }
 
                 const createBtn = status === "no_mapping"
-                  ? el("td", { style: "white-space:nowrap" }, actionBtn("Create component", "plus", { onClick: () => {
-                      // Read from cache at click time, not render time — a suggestion
-                      // that arrived after renderRows() ran must not be missed.
-                      createPlannerComponentModal(tok, g, (gap) => {
-                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                        renderRows();
-                      }, suggestCache[cacheKey] || null);
-                    } }))
+                  ? el("td", { style: "white-space:nowrap" }, actionBtn("Create component", "plus", {
+                      disabled: batchInFlight,
+                      title: batchInFlight ? "Waiting for AI suggestions…" : "Create component",
+                      onClick: () => {
+                        // Read from cache at click time, not render time — a suggestion
+                        // that arrived after renderRows() ran must not be missed.
+                        createPlannerComponentModal(tok, g, (gap) => {
+                          resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                          renderRows();
+                        }, suggestCache[cacheKey] || null);
+                      },
+                    }))
                   : null;
 
                 return el("tr", {}, [
@@ -10224,6 +10232,7 @@
                 ]);
               }));
           }
+          allRenderRows.push(renderRows);
           renderRows();
 
           return el("section", { style: "margin-bottom:1rem" }, [
@@ -10259,6 +10268,8 @@
         const typeKeys = Object.keys(byType);
         const total = typeKeys.length;
         let done = 0;
+        batchInFlight = true;
+        allRenderRows.forEach((fn) => fn());  // disable create buttons immediately
 
         // Progress bar — sits between the summary banner and the sections.
         // Inject keyframes once so the indeterminate sweep animation works.
@@ -10291,6 +10302,8 @@
           const pct = total > 0 ? Math.round((done / total) * 100) : 0;
           progressFill.style.width = `${pct}%`;
           if (done >= total) {
+            batchInFlight = false;
+            allRenderRows.forEach((fn) => fn());  // re-enable create buttons
             progressLabel.textContent = "✓ Suggestions loaded";
             setTimeout(() => { progressBar.style.transition = "opacity 0.5s"; progressBar.style.opacity = "0"; setTimeout(() => progressBar.remove(), 500); }, 1200);
           } else {

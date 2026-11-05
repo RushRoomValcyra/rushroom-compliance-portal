@@ -9833,6 +9833,71 @@
       const createMapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Create & map");
       const createOnlyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Create only (no mapping)");
 
+      // Template state: filled from AI suggestion response.
+      let template = null;    // { id, name, part_number, similarity, children: [...] }
+      const subs = {};        // { [from_id]: { id, name, part_number } }
+
+      const templateSection = el("div", { style: "display:none;margin-top:0.75rem" });
+
+      function renderTemplate() {
+        if (!template || !template.children || !template.children.length) {
+          templateSection.style.display = "none";
+          return;
+        }
+        const header = el("div", {
+          style: "font-size:0.8125rem;font-weight:600;margin-bottom:0.4rem;display:flex;justify-content:space-between;align-items:baseline",
+        }, [
+          el("span", {}, `Structure from "${template.name}"`),
+          el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-weight:400" }, `${template.similarity}% match`),
+        ]);
+        const hint = el("p", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin:0 0 0.4rem" },
+          "These children will be linked to the new component. Use Replace… to swap any child with a different one.");
+
+        const rows = template.children.map((child) => {
+          const sub = subs[child.id];
+          const displayId   = sub ? sub.id   : child.id;
+          const displayName = sub ? sub.name : child.name;
+          const displayPn   = sub ? sub.part_number : child.part_number;
+
+          const replBtn = el("button", {
+            class: "btn btn-xs", type: "button",
+            title: `Use a different component instead of "${child.name}"`,
+            onclick: () => pickComponentModal(tok, {
+              title: `Replace "${child.name}"`,
+              hint: "The new assembly will use this component instead.",
+              excludeIds: [child.id],
+              onPick: (picked) => {
+                subs[child.id] = { id: picked.id, name: picked.name, part_number: picked.part_number };
+                renderTemplate();
+              },
+            }),
+          }, sub ? "↺ Change" : "Replace…");
+
+          const undoBtn = sub ? el("button", {
+            class: "btn btn-xs", type: "button", title: "Undo replacement",
+            onclick: () => { delete subs[child.id]; renderTemplate(); },
+          }, "✕") : null;
+
+          return el("div", {
+            style: "display:flex;gap:0.4rem;align-items:center;padding:0.25rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.8125rem;flex-wrap:wrap",
+          }, [
+            el("span", { style: "font-family:monospace;font-size:0.75rem;color:var(--muted,#8b93a1);flex-shrink:0" }, displayPn || "—"),
+            el("span", { style: "flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", title: displayName },
+              sub ? el("span", {}, [el("span", { style: "text-decoration:line-through;color:var(--muted,#8b93a1);margin-right:0.3em" }, child.name), displayName])
+                  : displayName),
+            el("span", { style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1)" }, (sub || child).type || ""),
+            replBtn,
+            undoBtn,
+          ].filter(Boolean));
+        });
+
+        setChildren(templateSection,
+          header, hint,
+          el("div", { style: "border:1px solid var(--border,#e2e8f0);border-radius:6px;overflow:hidden" }, rows),
+        );
+        templateSection.style.display = "";
+      }
+
       const form = el("form", { style: "display:flex;flex-direction:column;gap:0.5rem" }, [
         keyHdr,
         statusEl,
@@ -9841,6 +9906,7 @@
         frow("Type", typ),
         mobRow, catRow,
         frow("Description", desc, "Optional but helpful"),
+        templateSection,
         el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [createMapBtn, createOnlyBtn]),
       ]);
 
@@ -9859,6 +9925,13 @@
           if (r.make_or_buy) mob.value  = r.make_or_buy;
           if (r.description) desc.value = r.description;
           refreshRows();
+          // Template from AI.
+          if (r.template && r.template.children && r.template.children.length) {
+            template = r.template;
+            // Clear any prior substitutions when a fresh template loads.
+            for (const k of Object.keys(subs)) delete subs[k];
+            renderTemplate();
+          }
           statusEl.textContent = r.reasoning ? `AI: ${r.reasoning} — review and adjust as needed.` : "AI filled the fields — review and adjust.";
           statusEl.style.color = "var(--muted,#8b93a1)";
           nm.focus();
@@ -9896,6 +9969,24 @@
           return;
         }
 
+        // If a structure template was suggested, wire its children into the new component.
+        if (template && template.id) {
+          statusEl.textContent = "Linking structure…";
+          try {
+            const subsFlat = Object.fromEntries(Object.entries(subs).map(([from, to]) => [from, to.id]));
+            await API.post(tok, "copyChildrenInto", {
+              source_id: template.id,
+              target_id: componentId,
+              substitutions: subsFlat,
+            });
+          } catch (ex) {
+            statusEl.textContent = `Component created (ID: ${componentId}) but structure copy failed: ${ex.message}. Add children manually in the BOM Tree.`;
+            statusEl.style.color = "var(--danger,#e05454)";
+            createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+            return;
+          }
+        }
+
         if (withMapping) {
           statusEl.textContent = "Saving mapping…";
           try {
@@ -9905,7 +9996,8 @@
               target_component_id: componentId,
               quantity_rule: "cart_quantity",
             });
-            statusEl.textContent = "Done — component created and mapping is active. The component is now in the system; add it to an assembly in the BOM Tree when ready.";
+            const structureNote = template ? " Children have been linked — check the BOM Tree." : " Add it to an assembly in the BOM Tree when ready.";
+            statusEl.textContent = `Done — component created and mapping is active.${structureNote}`;
           } catch (ex) {
             statusEl.textContent = `Component created (ID: ${componentId}) but mapping failed: ${ex.message}. Map it manually.`;
             statusEl.style.color = "var(--danger,#e05454)";
@@ -9913,7 +10005,8 @@
             return;
           }
         } else {
-          statusEl.textContent = "Done — component created. Find it in the BOM Tree or map it manually in the VALCYRA Studio BOM Link tab.";
+          const structureNote = template ? " Children have been linked — find it in the BOM Tree." : " Find it in the BOM Tree or map it manually in the VALCYRA Studio BOM Link tab.";
+          statusEl.textContent = `Done — component created.${structureNote}`;
         }
 
         statusEl.style.color = "var(--success,#2fa564)";

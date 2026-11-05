@@ -125,12 +125,87 @@ RULES:
   const makOrBuyOptions = ["purchased", "manufactured", "assembled", "subcontracted"];
   const makeOrBuy = makOrBuyOptions.includes(parsed.make_or_buy) ? parsed.make_or_buy : (needsMakeOrBuy ? "assembled" : "");
 
+  const suggestedName = String(parsed.name || "").slice(0, 200);
+
+  // 7. Find the closest existing assembly with children to use as a structure template.
+  //    Only makes sense for assembly types. Failure here is non-fatal.
+  const ASSEMBLY_TYPES = new Set(["sub_assembly", "phantom_assembly", "finished_good"]);
+  let template: any = null;
+  if (ASSEMBLY_TYPES.has(validType)) {
+    try {
+      // Fetch all active assemblies that have at least one child edge.
+      const { data: candidates } = await tdb("bom_components")
+        .select("id, name, part_number, type")
+        .in("type", [...ASSEMBLY_TYPES])
+        .eq("lifecycle_status", "active");
+
+      if (candidates && candidates.length) {
+        // Score each candidate by word-overlap with the suggested name.
+        const words = (s: string) => new Set(
+          s.toLowerCase().split(/[\s\-\/\(\)]+/).filter((w: string) => w.length > 2)
+        );
+        const sugWords = words(suggestedName);
+        let best: any = null, bestScore = 0;
+        for (const c of candidates) {
+          if (c.id === undefined) continue;
+          const cWords = words(c.name);
+          let overlap = 0;
+          for (const w of sugWords) if (cWords.has(w)) overlap++;
+          const score = overlap / Math.max(sugWords.size, cWords.size, 1);
+          if (score > bestScore) { bestScore = score; best = c; }
+        }
+
+        // Only use as template if there's a meaningful overlap (>40%) and it has children.
+        if (best && bestScore > 0.4) {
+          const { data: edges } = await tdb("bom_edges")
+            .select("child_id, quantity, sort_order, fitting_stage")
+            .eq("parent_id", best.id)
+            .is("effective_to", null)
+            .eq("is_reference", false)
+            .order("sort_order");
+
+          if (edges && edges.length) {
+            const childIds = edges.map((e: any) => e.child_id);
+            const { data: childComps } = await tdb("bom_components")
+              .select("id, name, part_number, type, lifecycle_status")
+              .in("id", childIds);
+            const byId: Record<string, any> = {};
+            for (const c of (childComps || [])) byId[c.id] = c;
+
+            template = {
+              id: best.id,
+              name: best.name,
+              part_number: best.part_number || null,
+              similarity: Math.round(bestScore * 100),
+              children: edges.map((e: any) => {
+                const child = byId[e.child_id] || {};
+                return {
+                  id: e.child_id,
+                  name: child.name || "Unknown",
+                  part_number: child.part_number || null,
+                  type: child.type || "part",
+                  lifecycle_status: child.lifecycle_status || "active",
+                  quantity: e.quantity,
+                  sort_order: e.sort_order,
+                  fitting_stage: e.fitting_stage || null,
+                };
+              }),
+            };
+          }
+        }
+      }
+    } catch {
+      // Template lookup failure is non-fatal — the user can proceed without it.
+    }
+  }
+
   return json({
-    name:        String(parsed.name        || "").slice(0, 200),
+    name:        suggestedName,
     type:        validType,
     make_or_buy: makeOrBuy,
     description: String(parsed.description || "").slice(0, 500),
     reasoning:   String(parsed.reasoning   || "").slice(0, 300),
+    template,
     usage: { input_tokens: apiJson?.usage?.input_tokens ?? 0, output_tokens: apiJson?.usage?.output_tokens ?? 0 },
   });
 }

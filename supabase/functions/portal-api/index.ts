@@ -3975,6 +3975,55 @@ Deno.serve(async (req) => {
     }
   }
 
+  // --- PROP-075: Copy direct children from a template assembly into a new one --
+  // Used by the create-from-gap flow after the user reviews the structure preview.
+  if (action === "copyChildrenInto") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { source_id, target_id, substitutions } = body;
+    if (!source_id || !target_id) return json({ error: "source_id and target_id are required" }, 400);
+
+    const subsIn = substitutions && typeof substitutions === "object" ? substitutions : {};
+    const subs: Record<string, string> = {};
+    for (const [from, to] of Object.entries(subsIn)) {
+      if (from && to && typeof to === "string" && from !== to) subs[from] = to;
+    }
+
+    // Fetch current active direct children of the source.
+    const { data: edges, error: edgesErr } = await tdb("bom_edges")
+      .select("child_id, quantity, sort_order, fitting_stage, variant_condition, reference_designator, is_reference")
+      .eq("parent_id", source_id)
+      .is("effective_to", null)
+      .eq("is_reference", false)
+      .order("sort_order");
+    if (edgesErr) return json({ error: edgesErr.message }, 400);
+    if (!edges || !edges.length) return json({ inserted: 0 });
+
+    const today = new Date().toISOString().slice(0, 10);
+    let inserted = 0;
+    const errors: string[] = [];
+    for (const e of edges) {
+      const childId = subs[e.child_id] ?? e.child_id;
+      const { error: insErr } = await tdb("bom_edges").insert({
+        parent_id: target_id,
+        child_id: childId,
+        quantity: e.quantity,
+        sort_order: e.sort_order,
+        fitting_stage: e.fitting_stage || null,
+        variant_condition: e.variant_condition ?? null,
+        reference_designator: e.reference_designator || null,
+        is_reference: false,
+        effective_from: today,
+      });
+      if (insErr) {
+        errors.push(`${childId}: ${insErr.message}`);
+      } else {
+        inserted++;
+      }
+    }
+    if (errors.length && inserted === 0) return json({ error: errors[0] }, 400);
+    return json({ inserted, errors });
+  }
+
   // --- BOM cost simulation (PROP-072) — role-checked inside the handler ------
   if (COST_ACTIONS.has(action)) {
     return await handleCostAction(action, body, { role, tdb, uid: (session.uid as string) || null });

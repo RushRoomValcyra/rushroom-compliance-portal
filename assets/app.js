@@ -9830,7 +9830,7 @@
       typ.addEventListener("change", refreshRows);
 
       const aiBtn    = el("button", { class: "btn btn-sm", type: "button", style: "margin-bottom:0.75rem" }, "✨ Suggest with AI");
-      const createMapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Create & map (inactive)");
+      const createMapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Create & map");
       const createOnlyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Create only (no mapping)");
 
       const form = el("form", { style: "display:flex;flex-direction:column;gap:0.5rem" }, [
@@ -9897,16 +9897,15 @@
         }
 
         if (withMapping) {
-          statusEl.textContent = "Saving mapping (inactive)…";
+          statusEl.textContent = "Saving mapping…";
           try {
             await API.post(tok, "savePlannerMapping", {
               source_type: gap.source_type,
               source_key: gap.source_key,
               target_component_id: componentId,
               quantity_rule: "cart_quantity",
-              start_inactive: true,
             });
-            statusEl.textContent = "Done — component created and mapped as INACTIVE. Go to the mappings table and Activate when satisfied.";
+            statusEl.textContent = "Done — component created and mapping is active. The component is now in the system; add it to an assembly in the BOM Tree when ready.";
           } catch (ex) {
             statusEl.textContent = `Component created (ID: ${componentId}) but mapping failed: ${ex.message}. Map it manually.`;
             statusEl.style.color = "var(--danger,#e05454)";
@@ -9914,7 +9913,7 @@
             return;
           }
         } else {
-          statusEl.textContent = "Done — component created. Map it manually in the mappings table.";
+          statusEl.textContent = "Done — component created. Find it in the BOM Tree or map it manually in the VALCYRA Studio BOM Link tab.";
         }
 
         statusEl.style.color = "var(--success,#2fa564)";

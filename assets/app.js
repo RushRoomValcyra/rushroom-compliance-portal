@@ -5725,7 +5725,7 @@
 
     search.oninput = () => paintList();
     setChildren(box,
-      hint ? el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, hint) : null,
+      hint ? (hint instanceof Element ? hint : el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, hint)) : null,
       tabBar, catBar, sortBar, search, listEl,
       el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.6rem" },
         el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel")),
@@ -9830,10 +9830,17 @@
       const copyStructureBtn = el("button", {
         class: "btn btn-sm", type: "button", style: "margin-bottom:0.5rem;display:none",
         onclick: async () => {
-          const hintName = prefill?.name ? `"${prefill.name}"` : null;
+          const proposedName = prefill?.name || null;
+          const hintEl = el("div", {
+            style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
+          }, [
+            el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.2rem" }, "Creating"),
+            proposedName ? el("div", { style: "font-size:0.9375rem;font-weight:700;line-height:1.3" }, proposedName) : null,
+            el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, gap.source_key),
+          ].filter(Boolean));
           pickComponentModal(tok, {
             title: "Copy structure from assembly",
-            hint: `Creating: ${[hintName, gap.source_key].filter(Boolean).join(" · ")} — pick an assembly whose children match best.`,
+            hint: hintEl,
             initialTab: "assemblies",
             onPick: async (picked) => {
               try {
@@ -9871,7 +9878,6 @@
       }
       typ.addEventListener("change", refreshRows);
 
-      const aiBtn    = el("button", { class: "btn btn-sm", type: "button", style: "margin-bottom:0.75rem" }, "✨ Suggest with AI");
       const createMapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Create & map");
       const createOnlyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Create only (no mapping)");
 
@@ -9949,7 +9955,6 @@
       const form = el("form", { style: "display:flex;flex-direction:column;gap:0.5rem" }, [
         keyHdr,
         statusEl,
-        aiBtn,
         frow("Name", nm),
         frow("Type", typ),
         mobRow, catRow,
@@ -9962,43 +9967,14 @@
       const closeModal = openModal(`Create BOM component`, form);
       refreshRows();
 
-      // Pre-fill from cached batch suggestion (if available), so the user sees
-      // a name immediately without having to click "Suggest with AI".
+      // Pre-fill from cached batch suggestion (if available).
       if (prefill) {
         if (prefill.name) nm.value = prefill.name;
         if (prefill.type) typ.value = prefill.type;
         refreshRows();
-        statusEl.textContent = "Pre-filled from AI batch suggestion — click ✨ Suggest with AI for description and structure template.";
+        statusEl.textContent = "Pre-filled from AI suggestion — review and adjust as needed.";
         statusEl.style.color = "var(--muted,#8b93a1)";
       }
-
-      // AI suggestion
-      aiBtn.onclick = async () => {
-        aiBtn.disabled = true;
-        statusEl.textContent = "✨ AI is suggesting…";
-        statusEl.style.color = "var(--muted,#8b93a1)";
-        try {
-          const r = await API.post(tok, "suggestPlannerComponent", { source_type: gap.source_type, source_key: gap.source_key });
-          if (r.name)        nm.value   = r.name;
-          if (r.type)        typ.value  = r.type;
-          if (r.make_or_buy) mob.value  = r.make_or_buy;
-          if (r.description) desc.value = r.description;
-          refreshRows();
-          // Template from AI.
-          if (r.template && r.template.children && r.template.children.length) {
-            template = r.template;
-            // Clear any prior substitutions when a fresh template loads.
-            for (const k of Object.keys(subs)) delete subs[k];
-            renderTemplate();
-          }
-          statusEl.textContent = r.reasoning ? `AI: ${r.reasoning} — review and adjust as needed.` : "AI filled the fields — review and adjust.";
-          statusEl.style.color = "var(--muted,#8b93a1)";
-          nm.focus();
-        } catch (ex) {
-          statusEl.textContent = `AI error: ${ex.message}. Fill the fields manually.`;
-          statusEl.style.color = "var(--danger,#e05454)";
-        } finally { aiBtn.disabled = false; }
-      };
 
       let structureConfirmed = false;
 
@@ -10032,7 +10008,7 @@
         }
         structureConfirmed = false;
 
-        createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = true;
+        createMapBtn.disabled = createOnlyBtn.disabled = true;
         statusEl.textContent = "Creating component…";
         statusEl.style.color = "var(--muted,#8b93a1)";
 
@@ -10049,7 +10025,7 @@
         } catch (ex) {
           statusEl.textContent = `Create failed: ${ex.message}`;
           statusEl.style.color = "var(--danger,#e05454)";
-          createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+          createMapBtn.disabled = createOnlyBtn.disabled = false;
           return;
         }
 
@@ -10066,7 +10042,7 @@
           } catch (ex) {
             statusEl.textContent = `Component created (ID: ${componentId}) but structure copy failed: ${ex.message}. Add children manually in the BOM Tree.`;
             statusEl.style.color = "var(--danger,#e05454)";
-            createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+            createMapBtn.disabled = createOnlyBtn.disabled = false;
             return;
           }
         }
@@ -10085,7 +10061,7 @@
           } catch (ex) {
             statusEl.textContent = `Component created (ID: ${componentId}) but mapping failed: ${ex.message}. Map it manually.`;
             statusEl.style.color = "var(--danger,#e05454)";
-            createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+            createMapBtn.disabled = createOnlyBtn.disabled = false;
             return;
           }
         } else {

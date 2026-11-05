@@ -9918,7 +9918,16 @@
             title: `Use a different component instead of "${child.name}"`,
             onclick: () => pickComponentModal(tok, {
               title: `Replace "${child.name}"`,
-              hint: "The new assembly will use this component instead.",
+              hint: (() => {
+                const proposedName = prefill?.name || nm.value.trim() || null;
+                return el("div", {
+                  style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
+                }, [
+                  el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.2rem" }, "Creating"),
+                  proposedName ? el("div", { style: "font-size:0.9375rem;font-weight:700;line-height:1.3" }, proposedName) : null,
+                  el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, gap.source_key),
+                ].filter(Boolean));
+              })(),
               excludeIds: [child.id],
               onPick: (picked) => {
                 subs[child.id] = { id: picked.id, name: picked.name, part_number: picked.part_number };

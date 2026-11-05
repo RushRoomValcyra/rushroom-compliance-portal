@@ -10092,13 +10092,26 @@
           ]);
         });
 
-        sections.push(
-          el("div", { style: "margin-top:1.1rem;margin-bottom:0.1rem" }, [
-            el("h4", { style: "margin:0 0 0.15rem;font-size:0.9375rem" }, `${label} (${items.length})`),
-            el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8rem" }, hint),
-          ]),
-          ...cards
-        );
+        const body = el("div", {}, cards);
+        let open = true;
+        const chevron = el("span", { style: "font-size:0.75rem;margin-left:0.35rem;transition:transform 0.15s;display:inline-block" }, "▼");
+        const header = el("div", {
+          style: "display:flex;align-items:center;gap:0.4rem;cursor:pointer;user-select:none;padding:0.5rem 0;border-top:1px solid var(--border,#2a2f3a);margin-top:0.75rem",
+          role: "button", tabIndex: 0,
+        }, [
+          chevron,
+          el("h4", { style: "margin:0;font-size:0.9375rem;flex:1" }, `${label} (${items.length})`),
+        ]);
+        const hintEl = el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8rem;padding-left:1.1rem" }, hint);
+        const toggle = () => {
+          open = !open;
+          body.style.display = open ? "" : "none";
+          hintEl.style.display = open ? "" : "none";
+          chevron.style.transform = open ? "" : "rotate(-90deg)";
+        };
+        header.onclick = toggle;
+        header.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+        sections.push(header, hintEl, body);
       }
 
       results.replaceChildren(

@@ -10236,7 +10236,16 @@
         let done = 0;
 
         // Progress bar — sits between the summary banner and the sections.
-        const progressFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.4s ease;border-radius:2px" });
+        // Inject keyframes once so the indeterminate sweep animation works.
+        if (!document.getElementById("rr-ind-style")) {
+          const ks = document.createElement("style");
+          ks.id = "rr-ind-style";
+          ks.textContent = "@keyframes rr-ind{0%{transform:translateX(-100%)}100%{transform:translateX(430%)}}";
+          document.head.appendChild(ks);
+        }
+        // Start in indeterminate mode (bouncing block) so the user sees
+        // immediate activity during the AI warmup/handshake delay.
+        const progressFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:25%;border-radius:2px;animation:rr-ind 1.2s ease-in-out infinite;will-change:transform" });
         const progressLabel = el("span", {}, `✨ AI is suggesting component names…`);
         const progressBar = el("div", {
           style: "margin-bottom:0.6rem;display:flex;align-items:center;gap:0.6rem;font-size:0.8125rem;color:var(--muted,#8b93a1)",
@@ -10245,16 +10254,22 @@
           progressLabel,
         ]);
         summaryEl.after(progressBar);
+        let indeterminate = true;
 
         function updateProgress() {
+          if (indeterminate) {
+            // First result arrived — switch from bouncing to actual fill.
+            indeterminate = false;
+            progressFill.style.animation = "none";
+            progressFill.style.transition = "width 0.4s ease";
+          }
           const pct = total > 0 ? Math.round((done / total) * 100) : 0;
           progressFill.style.width = `${pct}%`;
           if (done >= total) {
             progressLabel.textContent = "✓ Suggestions loaded";
-            progressFill.style.background = "var(--accent,#2fa564)";
             setTimeout(() => { progressBar.style.transition = "opacity 0.5s"; progressBar.style.opacity = "0"; setTimeout(() => progressBar.remove(), 500); }, 1200);
           } else {
-            progressLabel.textContent = total > 1 ? `✨ Suggesting names… (${done}/${total})` : "✨ AI is suggesting component names…";
+            progressLabel.textContent = `✨ Suggesting names… (${done}/${total})`;
           }
         }
 

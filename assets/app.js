@@ -9818,7 +9818,7 @@
       const cat  = categorySelect(null);
       const desc = el("textarea", { rows: "2", placeholder: "Purpose — what does this component do?", style: F + ";resize:vertical;min-height:60px" });
 
-      const catRow = el("div", {}, [frow("Category", cat, "Required for parts")]);
+      const catRow = el("div", {}, [frow("Category", cat, "Groups this component in the BOM category filter")]);
       const mobRow = el("div", {}, [frow("Sourcing", mob, "How does this component come to exist?")]);
 
       // Template state: filled from AI suggestion or explicit "Copy structure from…".
@@ -9865,7 +9865,7 @@
       }, "🔗 Copy structure from…");
 
       function refreshRows() {
-        const needsCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
+        const needsCat = !["product_family"].includes(typ.value);
         const needsMob = !["finished_good", "phantom_assembly", "product_family"].includes(typ.value);
         catRow.style.display = needsCat ? "" : "none";
         mobRow.style.display = needsMob ? "" : "none";
@@ -9991,8 +9991,8 @@
         if (!nm.value.trim()) { statusEl.textContent = "Name is required."; statusEl.style.color = "var(--danger,#e05454)"; nm.focus(); return; }
         const needsMob = !["finished_good", "phantom_assembly", "product_family"].includes(typ.value);
         if (needsMob && !mob.value) { statusEl.textContent = "Choose Sourcing."; statusEl.style.color = "var(--danger,#e05454)"; mob.focus(); return; }
-        const needsCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
-        if (needsCat && !cat.value) { statusEl.textContent = "Pick a Category."; statusEl.style.color = "var(--danger,#e05454)"; cat.focus(); return; }
+        const requireCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
+        if (requireCat && !cat.value) { statusEl.textContent = "Pick a Category."; statusEl.style.color = "var(--danger,#e05454)"; cat.focus(); return; }
 
         // Guardrail: assembly with no structure chosen — warn before creating bare.
         if (!template && ASSEMBLY_CLONABLE.has(typ.value) && !structureConfirmed) {
@@ -10027,7 +10027,7 @@
             name: nm.value.trim(),
             type: typ.value,
             make_or_buy: mob.value || null,
-            category_id: needsCat ? (cat.value || null) : null,
+            category_id: cat.value || null,
             description: desc.value.trim() || null,
           });
           componentId = r.id;

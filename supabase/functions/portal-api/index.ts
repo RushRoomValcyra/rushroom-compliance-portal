@@ -3205,7 +3205,28 @@ Deno.serve(async (req) => {
       const { error: closeError } = await tdb("planner_mappings")
         .update({ is_active: false, superseded_at: new Date().toISOString() }).eq("id", prior.id);
       if (closeError) return json({ error: closeError.message }, 400);
+    } else {
+      // No mapping_id: this is a new mapping. Guard against a silent duplicate:
+      // if an active mapping already exists for this source key, refuse clearly
+      // rather than letting a constraint violation surface a cryptic DB error.
+      const { data: existingActive } = await tdb("planner_mappings")
+        .select("id, target_component_id")
+        .eq("source_type", sourceType).eq("source_key", sourceKey).eq("is_active", true)
+        .maybeSingle();
+      if (existingActive) {
+        return json({ error: "An active mapping already exists for this planner key. Close this dialog, re-run the BOM gap check, and edit the existing mapping instead of creating a new one." }, 409);
+      }
     }
+
+    // Use max existing revision + 1 so a re-attempt after a partial failure
+    // never collides with the unique index on (source_type, source_key, revision).
+    const { data: maxRevRow } = await tdb("planner_mappings")
+      .select("mapping_revision")
+      .eq("source_type", sourceType).eq("source_key", sourceKey)
+      .order("mapping_revision", { ascending: false }).limit(1).maybeSingle();
+    const nextRevision = prior
+      ? Number(prior.mapping_revision) + 1
+      : maxRevRow ? Number(maxRevRow.mapping_revision) + 1 : 1;
 
     const startInactive = body.start_inactive === true && !prior;
     const fullLabel = startInactive
@@ -3214,7 +3235,7 @@ Deno.serve(async (req) => {
     const { data: created, error } = await tdb("planner_mappings").insert({
       source_type: sourceType, source_key: sourceKey, target_component_id: targetId,
       quantity_rule: quantityRule, fixed_quantity: fixedQuantity,
-      mapping_revision: prior ? Number(prior.mapping_revision) + 1 : 1,
+      mapping_revision: nextRevision,
       is_active: !startInactive,
       release_label: fullLabel, supersedes_id: prior?.id ?? null, created_by: session.uid ?? null,
     }).select("id, mapping_revision").maybeSingle();
@@ -3223,6 +3244,7 @@ Deno.serve(async (req) => {
       // the prior resolver entry so a transient DB failure never creates a gap.
       if (prior) await tdb("planner_mappings").update({ is_active: true, superseded_at: null }).eq("id", prior.id);
       if (/planner_mappings_one_active_source/i.test(error.message)) return json({ error: "An active mapping already exists for this source key. Edit or deactivate it first." }, 409);
+      if (/planner_mappings_revision_unique/i.test(error.message)) return json({ error: "A mapping at this revision already exists for this source key. Re-run the BOM gap check to see the current state." }, 409);
       return json({ error: error.message }, 400);
     }
     return json({ ok: true, id: created?.id, mapping_revision: created?.mapping_revision });

@@ -9832,7 +9832,7 @@
         onclick: async () => {
           pickComponentModal(tok, {
             title: "Copy structure from assembly",
-            hint: "Pick an existing assembly — its direct children will be linked to the new component.",
+            hint: `Creating: ${gap.label || gap.source_key} — pick an existing assembly to copy its children from.`,
             initialTab: "assemblies",
             onPick: async (picked) => {
               try {

@@ -10028,18 +10028,25 @@
 
   // PROP-076 — AI BOM anomaly scan view.
   function bomAnomalyScanView(token) {
-    const SEV_COLOR = { high: { bg: "#fee2e2", border: "#fca5a5", text: "#991b1b", label: "High" }, medium: { bg: "#fef9c3", border: "#fde047", text: "#854d0e", label: "Medium" }, low: { bg: "#f1f5f9", border: "#cbd5e1", text: "#475569", label: "Low" } };
-    const CAT_LABEL = { copy_component: "Active copy", empty_assembly: "Empty assembly", inactive_child: "Inactive child", orphan: "Orphan", duplicate_child: "Duplicate child", ai_finding: "AI finding" };
+    const SEV_COLOR = { high: { text: "#991b1b", label: "High" }, medium: { text: "#854d0e", label: "Medium" }, low: { text: "#475569", label: "Low" } };
+    // Category groups: display order, label, and one-liner explaining what this group means.
+    const CAT_GROUPS = [
+      { key: "inactive_child",  label: "Active assemblies with inactive children",   hint: "An active assembly references a part that is inactive or discontinued — operational risk." },
+      { key: "copy_component",  label: "Copy components",                            hint: "Component names contain \"- copy\", indicating an accidental duplicate from an assembly copy operation." },
+      { key: "empty_assembly",  label: "Empty assemblies",                           hint: "These assembly types have no children in the BOM — either incomplete or unused." },
+      { key: "orphan",          label: "Components never used in any assembly",      hint: "These components are not referenced as a child anywhere in the BOM." },
+      { key: "duplicate_child", label: "Duplicate children",                        hint: "The same component appears more than once under a single parent assembly." },
+      { key: "ai_finding",      label: "AI-detected patterns",                      hint: "Structural or naming anomalies found by Claude — variant inconsistencies, make/buy mismatches, etc." },
+    ];
 
     const wrap = el("div", { style: "max-width:900px" });
     const btn = actionBtn("Run AI BOM scan", "sparkles", { primary: true });
-    const statusEl = el("p", { class: "muted", style: "margin:0.5rem 0 0" }, "Scans all active components and edges for structural problems, naming drift, and variant inconsistencies.");
+    const statusEl = el("p", { class: "muted", style: "margin:0.5rem 0 0" }, "Scans all components and edges for structural problems, naming drift, and variant inconsistencies.");
     const results = el("div", { style: "margin-top:1rem" });
 
     btn.onclick = async () => {
       btn.disabled = true;
       statusEl.textContent = "Scanning…";
-      statusEl.style.color = "";
       results.replaceChildren(el("div", { class: "loading" }, "Running scan — this may take a few seconds…"));
       let data;
       try { data = await API.post(token, "scanBomAnomalies", {}); }
@@ -10048,7 +10055,6 @@
 
       const { anomalies = [], summary = "", stats = {} } = data;
       statusEl.textContent = summary;
-      statusEl.style.color = "";
 
       if (!anomalies.length) {
         results.replaceChildren(
@@ -10058,34 +10064,45 @@
         return;
       }
 
-      const order = ["high", "medium", "low"];
-      const grouped = { high: [], medium: [], low: [] };
-      for (const a of anomalies) (grouped[a.severity] || grouped.low).push(a);
+      // Group by category, preserving display order.
+      const byCategory = {};
+      for (const a of anomalies) (byCategory[a.category] ||= []).push(a);
+
+      // Any category not in CAT_GROUPS goes into ai_finding bucket.
+      const knownKeys = new Set(CAT_GROUPS.map(g => g.key));
+      for (const [k, items] of Object.entries(byCategory)) {
+        if (!knownKeys.has(k)) (byCategory["ai_finding"] ||= []).push(...items);
+      }
 
       const sections = [];
-      for (const sev of order) {
-        if (!grouped[sev].length) continue;
-        const col = SEV_COLOR[sev];
-        const cards = grouped[sev].map(a => {
-          const catLabel = CAT_LABEL[a.category] || a.category;
-          return el("div", { style: `background:${col.bg};border:1px solid ${col.border};border-radius:6px;padding:0.65rem 0.8rem;margin-bottom:0.4rem` }, [
-            el("div", { style: "display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;margin-bottom:0.2rem" }, [
+      for (const { key, label, hint } of CAT_GROUPS) {
+        const items = byCategory[key];
+        if (!items || !items.length) continue;
+
+        const cards = items.map(a => {
+          const col = SEV_COLOR[a.severity] || SEV_COLOR.low;
+          return el("div", { style: "border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:0.65rem 0.8rem;margin-bottom:0.4rem" }, [
+            el("div", { style: "display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;margin-bottom:0.25rem" }, [
               el("span", { style: `background:${col.text};color:#fff;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.7rem;font-weight:700;white-space:nowrap` }, col.label.toUpperCase()),
-              el("span", { style: `background:rgba(0,0,0,0.08);border-radius:4px;padding:0.1rem 0.4rem;font-size:0.7rem;font-weight:600;white-space:nowrap` }, catLabel),
               a.component_name ? el("span", { style: "font-weight:600;font-size:0.875rem" }, a.component_name) : null,
               a.part_number ? el("span", { class: "muted", style: "font-size:0.75rem;font-family:monospace" }, a.part_number) : null,
             ].filter(Boolean)),
             el("p", { style: "margin:0 0 0.2rem;font-size:0.875rem" }, a.description),
-            el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [el("strong", {}, "Suggestion: "), a.suggestion]),
+            el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [el("strong", {}, "Fix: "), a.suggestion]),
           ]);
         });
+
         sections.push(
-          el("h4", { style: `color:${col.text};margin:0.75rem 0 0.35rem;font-size:0.875rem;text-transform:uppercase;letter-spacing:0.05em` }, `${col.label} (${grouped[sev].length})`),
+          el("div", { style: "margin-top:1.1rem;margin-bottom:0.1rem" }, [
+            el("h4", { style: "margin:0 0 0.15rem;font-size:0.9375rem" }, `${label} (${items.length})`),
+            el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8rem" }, hint),
+          ]),
           ...cards
         );
       }
+
       results.replaceChildren(
-        el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem" }, `${anomalies.length} issue(s) found across ${stats.total_components ?? "?"} components (${stats.active_components ?? "?"} active).`),
+        el("p", { class: "muted", style: "margin:0 0 0.25rem;font-size:0.8125rem" }, `${anomalies.length} issue(s) across ${stats.total_components ?? "?"} components (${stats.active_components ?? "?"} active).`),
         ...sections
       );
     };

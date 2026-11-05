@@ -10114,25 +10114,28 @@
             updateSummary();
             tbody.replaceChildren(...visible.map((g) => {
                 const cacheKey = `${g.source_type}:${g.source_key}`;
-                const cachedSuggestion = suggestCache[cacheKey];
 
                 // "Proposed" cell — only for no_mapping rows.
                 let proposedCell = null;
                 if (status === "no_mapping") {
                   proposedCell = el("td", { style: "max-width:260px" });
                   proposedCells[cacheKey] = proposedCell;
-                  if (cachedSuggestion) {
-                    fillProposed(g.source_type, g.source_key, cachedSuggestion);
+                  if (suggestCache[cacheKey]) {
+                    fillProposed(g.source_type, g.source_key, suggestCache[cacheKey]);
                   } else {
                     proposedCell.appendChild(el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "✨…"));
                   }
                 }
 
                 const createBtn = status === "no_mapping"
-                  ? el("td", { style: "white-space:nowrap" }, actionBtn("Create component", "plus", { onClick: () => createPlannerComponentModal(tok, g, (gap) => {
-                      resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                      renderRows();
-                    }, cachedSuggestion || null) }))
+                  ? el("td", { style: "white-space:nowrap" }, actionBtn("Create component", "plus", { onClick: () => {
+                      // Read from cache at click time, not render time — a suggestion
+                      // that arrived after renderRows() ran must not be missed.
+                      createPlannerComponentModal(tok, g, (gap) => {
+                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                        renderRows();
+                      }, suggestCache[cacheKey] || null);
+                    } }))
                   : null;
 
                 return el("tr", {}, [

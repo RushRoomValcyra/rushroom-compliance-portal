@@ -9999,12 +9999,37 @@
         } finally { aiBtn.disabled = false; }
       };
 
+      let structureConfirmed = false;
+
       async function doCreate(withMapping) {
         if (!nm.value.trim()) { statusEl.textContent = "Name is required."; statusEl.style.color = "var(--danger,#e05454)"; nm.focus(); return; }
         const needsMob = !["finished_good", "phantom_assembly", "product_family"].includes(typ.value);
         if (needsMob && !mob.value) { statusEl.textContent = "Choose Sourcing."; statusEl.style.color = "var(--danger,#e05454)"; mob.focus(); return; }
         const needsCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
         if (needsCat && !cat.value) { statusEl.textContent = "Pick a Category."; statusEl.style.color = "var(--danger,#e05454)"; cat.focus(); return; }
+
+        // Guardrail: assembly with no structure chosen — warn before creating bare.
+        if (!template && ASSEMBLY_CLONABLE.has(typ.value) && !structureConfirmed) {
+          const confirmBtn = el("button", {
+            class: "btn btn-sm", type: "button", style: "margin-left:0.5rem",
+            onclick: () => { structureConfirmed = true; doCreate(withMapping); },
+          }, "Create anyway");
+          const cancelBtn = el("button", {
+            class: "btn btn-sm", type: "button", style: "margin-left:0.3rem",
+            onclick: () => {
+              structureConfirmed = false;
+              setChildren(statusEl, "No structure selected — use 🔗 Copy structure from… to pick one.");
+              statusEl.style.color = "var(--muted,#8b93a1)";
+            },
+          }, "Go back");
+          setChildren(statusEl,
+            el("span", {}, "No structure selected — this will create a bare assembly with no children."),
+            confirmBtn, cancelBtn,
+          );
+          statusEl.style.color = "var(--warn,#b45309)";
+          return;
+        }
+        structureConfirmed = false;
 
         createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = true;
         statusEl.textContent = "Creating component…";

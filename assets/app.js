@@ -9881,11 +9881,21 @@
           templateSection.style.display = "none";
           return;
         }
+        // Remind the user what they're creating a mapping for, so they don't
+        // have to scroll up to the keyHdr while reviewing the structure.
+        const targetLabel = gap.label || gap.source_key;
+        const targetRef = el("div", {
+          style: "background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.4rem 0.75rem;margin-bottom:0.5rem;font-size:0.75rem",
+        }, [
+          el("span", { style: "font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;margin-right:0.4em" }, "Mapping for"),
+          el("span", { style: "font-weight:600" }, targetLabel),
+          gap.source_type ? el("span", { style: "color:var(--muted,#8b93a1);margin-left:0.4em;font-size:0.6875rem" }, `(${gap.source_type})`) : null,
+        ].filter(Boolean));
         const header = el("div", {
           style: "font-size:0.8125rem;font-weight:600;margin-bottom:0.4rem;display:flex;justify-content:space-between;align-items:baseline",
         }, [
           el("span", {}, `Structure from "${template.name}"`),
-          el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-weight:400" }, `${template.similarity}% match`),
+          el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-weight:400" }, `${template.similarity === 100 ? "explicitly chosen" : template.similarity + "% match"}`),
         ]);
         const hint = el("p", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin:0 0 0.4rem" },
           "These children will be linked to the new component. Use Replace… to swap any child with a different one.");
@@ -9929,7 +9939,7 @@
         });
 
         setChildren(templateSection,
-          header, hint,
+          targetRef, header, hint,
           el("div", { style: "border:1px solid var(--border,#e2e8f0);border-radius:6px;overflow:hidden" }, rows),
         );
         templateSection.style.display = "";

@@ -9839,7 +9839,7 @@
             el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, gap.source_key),
           ].filter(Boolean));
           pickComponentModal(tok, {
-            title: "Copy structure from assembly",
+            title: "Copy structure from existing BOM assembly",
             hint: hintEl,
             initialTab: "assemblies",
             onPick: async (picked) => {

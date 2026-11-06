@@ -10445,16 +10445,18 @@
 
     wrap.replaceChildren(
       el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
-        el("h3", { style: "margin-top:0" }, "Saved planner keys"),
-        el("p", { class: "muted", style: "margin-top:0" }, "Source keys are grouped by type and saved per PIM tenant."),
+        el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem" }, [
+          el("h3", { style: "margin:0" }, "Saved planner keys"),
+          el("div", { class: "row-tools", style: "margin:0" }, [
+            actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }),
+            actionBtn("Refresh mappings", "refresh", { onClick: reload }),
+            actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
+            el("label", { style: "margin-left:0.25rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
+          ]),
+        ]),
         catalogStatus, catalogSummary, gapBanner, catalogRows,
       ]),
-      el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
-        actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }),
-        actionBtn("Refresh mappings", "refresh", { onClick: reload }),
-        actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
-el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
-      ]), list,
+      list,
     );
     await Promise.all([reload(), loadCatalog()]);
     return wrap;

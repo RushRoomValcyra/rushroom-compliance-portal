@@ -9807,7 +9807,7 @@
       }
 
       const statusEl = el("p", { style: "font-size:0.8125rem;min-height:1.2em;margin:0 0 0.5rem" }, "");
-      const keyHdr   = el("div", { style: "background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.8125rem" }, [
+      const keyHdr   = el("div", { style: "position:sticky;top:0;z-index:1;background:var(--surface2,#f8fafc);border-bottom:1px solid var(--border,#e2e8f0);margin:-1.25rem -1.5rem 0.75rem;padding:0.6rem 1.5rem;font-size:0.8125rem" }, [
         el("strong", {}, `${gap.source_type} · `), el("code", { style: "font-size:0.75rem" }, gap.source_key),
       ]);
 

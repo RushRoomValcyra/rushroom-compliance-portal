@@ -9862,7 +9862,7 @@
       const copyStructureBtn = el("button", {
         class: "btn btn-sm", type: "button", style: "margin-bottom:0.5rem;display:none",
         onclick: async () => {
-          const proposedName = prefill?.name || null;
+          const proposedName = nm.value.trim() || null;
           const hintEl = el("div", {
             style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
           }, [
@@ -9952,7 +9952,7 @@
             onclick: () => pickComponentModal(tok, {
               title: `Replace "${child.name}"`,
               hint: (() => {
-                const proposedName = prefill?.name || nm.value.trim() || null;
+                const proposedName = nm.value.trim() || null;
                 return el("div", {
                   style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
                 }, [
@@ -10010,10 +10010,10 @@
       const closeModal = openModal(`Create BOM component`, form);
       refreshRows();
 
-      aiBtn.onclick = async () => {
+      async function runAiSuggest() {
         aiBtn.disabled = true;
-        statusEl.textContent = "✨ AI is suggesting…";
-        statusEl.style.color = "var(--muted,#8b93a1)";
+        aiBtn.textContent = "✨ Suggesting…";
+        statusEl.textContent = "";
         try {
           const r = await API.post(tok, "suggestPlannerComponent", { source_type: gap.source_type, source_key: gap.source_key });
           if (r.name)        nm.value   = r.name;
@@ -10032,8 +10032,14 @@
         } catch (ex) {
           statusEl.textContent = `AI error: ${ex.message}. Fill the fields manually.`;
           statusEl.style.color = "var(--danger,#e05454)";
-        } finally { aiBtn.disabled = false; }
-      };
+        } finally {
+          aiBtn.disabled = false;
+          aiBtn.textContent = "✨ Re-suggest with AI";
+        }
+      }
+
+      aiBtn.onclick = runAiSuggest;
+      runAiSuggest();
 
       let structureConfirmed = false;
 

@@ -10327,8 +10327,35 @@
           ]);
         });
 
+      // Progress bar for async AI match check.
+      const progressFill  = el("div", { style: "height:100%;width:15%;background:var(--accent,#2fa564);border-radius:3px" });
+      const progressLabel = el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:0.3rem" }, "✨ Checking for existing BOM matches…");
+      const progressBar   = el("div", { style: "margin-bottom:0.75rem" }, [
+        el("div", { style: "height:4px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden" }, progressFill),
+        progressLabel,
+      ]);
+      let _pDir = 1, _pPos = 15;
+      const _pTimer = setInterval(() => {
+        _pPos += _pDir * 1.5;
+        if (_pPos >= 85) _pDir = -1;
+        if (_pPos <= 15) _pDir = 1;
+        progressFill.style.width = `${_pPos}%`;
+      }, 30);
+      function stopProgress(success) {
+        clearInterval(_pTimer);
+        progressFill.style.transition = "width 0.25s";
+        progressFill.style.width = "100%";
+        progressLabel.textContent = success ? "✓ Matches checked" : "Could not check for matches";
+        setTimeout(() => {
+          progressBar.style.transition = "opacity 0.4s";
+          progressBar.style.opacity = "0";
+          setTimeout(() => progressBar.remove(), 400);
+        }, 300);
+      }
+
       body.replaceChildren(
         summaryEl,
+        ...(grouped.no_mapping && grouped.no_mapping.length > 0 ? [progressBar] : []),
         ...sections,
         ...(gaps.length === 0 ? [el("p", { class: "muted", style: "font-size:0.8125rem;margin:0" }, `${ok_count} of ${total} keys have active, valid mappings.`)] : []),
       );
@@ -10345,11 +10372,13 @@
               const k = `${g.source_type}:${g.source_key}`;
               if (!(k in aiMatchResults)) aiMatchResults[k] = null;
             }
+            stopProgress(true);
             rerenderNoMapping && rerenderNoMapping();
           })
           .catch(() => {
             aiMatchResults = {};
             for (const g of grouped.no_mapping) aiMatchResults[`${g.source_type}:${g.source_key}`] = null;
+            stopProgress(false);
             rerenderNoMapping && rerenderNoMapping();
           });
       }

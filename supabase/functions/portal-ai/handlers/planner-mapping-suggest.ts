@@ -148,6 +148,7 @@ SOFT attributes — may be resolved using the size lookup table above:
 
 GENERAL:
 - Use the exact component id from the catalog (the first column, a UUID).
+- **Inactive components are valid match targets.** The catalog includes components with lifecycle_status "inactive" — suggest them exactly as you would active ones. The user will decide whether to reactivate them. Never skip an inactive component that is otherwise the correct match.
 - Confidence "high": all attributes including size confirmed from the lookup table and naming convention; "medium": one attribute inferred rather than explicit; "low": genuine uncertainty remains after applying all rules.
 - reasoning: one concise sentence explaining the match.`;
 

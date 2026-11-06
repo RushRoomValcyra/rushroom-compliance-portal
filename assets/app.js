@@ -10246,7 +10246,7 @@
           const aiMatch      = (aiSuggestions || []).find((s) => `${s.source_type}:${s.source_key}` === cacheKey && s.target);
           const proposedName = suggestCache[cacheKey]?.name;
           const proposedType = suggestCache[cacheKey]?.type;
-          const collision    = proposedName ? nameMap[proposedName.toLowerCase()] : null;
+          const collision    = proposedName ? nameMap[proposedName.toLowerCase().replace(/\s+/g, " ").trim()] : null;
           const rowStatus    = aiMatch ? "ai_match" : collision ? "name_collision" : "new";
 
           let compCol;
@@ -10426,7 +10426,7 @@
         .then((r) => {
           aiSuggestions = r.suggestions || [];
           nameMap = {};
-          for (const c of (r.components || [])) nameMap[c.name.toLowerCase()] = c;
+          for (const c of (r.components || [])) nameMap[c.name.toLowerCase().replace(/\s+/g, " ").trim()] = c;
           matchesLoaded = true;
           updateProgressLabel();
           tryRender();

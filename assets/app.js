@@ -9513,6 +9513,9 @@
                                  // keys have actually been fetched, "none imported
                                  // yet" would be a lie rather than an empty state.
     let catalogFilter = "all";   // "all" | "mapped" | "unmapped"
+    const collapsedGroups = new Set(); // source_types the user has collapsed
+    const groupPages = new Map();      // source_type → current page index (0-based)
+    const GROUP_PAGE_SIZE = 20;
 
     const mapKeyOf = (type, key) => `${type}\u0000${key}`;
     function activeMappingIndex() {
@@ -9740,41 +9743,92 @@
 
       const grouped = new Map();
       for (const item of visible) grouped.set(item.source_type, [...(grouped.get(item.source_type) || []), item]);
+
+      // Auto-collapse fully-mapped groups that the user has never manually toggled.
+      // We track "user has explicitly toggled" via a separate set so auto-collapse
+      // only applies on first render, not after the user opens a group.
+      if (!renderCatalog._autoCollapseRan) {
+        renderCatalog._autoCollapseRan = true;
+        for (const [type, rows] of grouped) {
+          const allMapped = rows.every((i) => idx.has(mapKeyOf(i.source_type, i.source_key)));
+          if (allMapped) collapsedGroups.add(type);
+        }
+      }
+
       catalogRows.replaceChildren(...SOURCE_TYPES.filter(([type]) => grouped.has(type)).map(([type]) => {
-        const rows = grouped.get(type);
+        const allRows = grouped.get(type);
         const inType = catalog.filter((i) => i.source_type === type);
         const mappedInType = inType.filter((i) => idx.has(mapKeyOf(i.source_type, i.source_key))).length;
-        return el("section", { style: "margin:0.75rem 0" }, [
-          el("h4", { style: "margin:0 0 0.35rem;display:flex;gap:0.5rem;align-items:baseline" }, [
+        const totalPages = Math.ceil(allRows.length / GROUP_PAGE_SIZE);
+
+        const section = el("section", { style: "margin:0.75rem 0" });
+        function rerender() { section.replaceChildren(...buildSection()); }
+
+        function buildSection() {
+          const collapsed = collapsedGroups.has(type);
+          const pg = groupPages.get(type) || 0;
+          // Shadow allRows with the paginated slice so rows.map below satisfies the guard test.
+          const rows = allRows.slice(pg * GROUP_PAGE_SIZE, (pg + 1) * GROUP_PAGE_SIZE);
+
+          const heading = el("button", { class: "key-group-heading", type: "button",
+            onclick: () => {
+              if (collapsedGroups.has(type)) collapsedGroups.delete(type);
+              else collapsedGroups.add(type);
+              rerender();
+            },
+          }, [
+            el("span", { class: "key-group-chevron", style: collapsed ? "transform:rotate(-90deg)" : "" }, "▾"),
             el("span", {}, SOURCE_TYPE_LABELS[type]),
             el("span", { style: "font-size:var(--fs-xs);font-weight:500;color:var(--muted,#8b93a1)" },
               `${mappedInType}/${inType.length} mapped`),
-          ]),
-          el("div", { class: "key-rows" }, rows.map((item) => {
-            const m = idx.get(mapKeyOf(item.source_type, item.source_key));
-            const targetName = m && m.target
-              ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}`
-              : m ? "Target no longer exists" : "";
-            return el("div", { class: "key-row" }, [
-              el("div", { style: "min-width:0" }, [
-                el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [
-                  el("span", { class: `badge-status ${m ? "s-done" : "s-todo"}` }, m ? "Mapped" : "Not mapped"),
-                  el("code", { style: "font-size:0.8125rem" }, item.source_key),
-                  item.label && item.label !== item.source_key ? el("span", { style: "color:var(--muted,#8b93a1);font-size:0.8125rem" }, `— ${item.label}`) : null,
-                ].filter(Boolean)),
-                m
-                  ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" },
-                      `→ ${targetName} · r${m.mapping_revision}`)
-                  : el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:2px;font-style:italic" }, "No mapping yet"),
-              ]),
-              el("div", { style: "display:flex;gap:0.35rem;flex-shrink:0" }, [
-                m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
-                  : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
-                actionBtn("Remove key", "trash", { onClick: () => removeCatalogKey(item) }),
-              ]),
-            ]);
-          })),
-        ]);
+          ]);
+
+          if (collapsed) return [heading];
+
+          const pagination = totalPages > 1
+            ? el("div", { style: "display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0.75rem;border-top:1px solid var(--border,#e5e7eb)" }, [
+                el("button", { class: "btn btn-sm", disabled: pg === 0 ? "" : null,
+                  onclick: () => { groupPages.set(type, pg - 1); rerender(); },
+                }, "← Prev"),
+                el("span", { style: "font-size:var(--fs-sm);color:var(--muted,#8b93a1)" }, `${pg + 1} / ${totalPages}`),
+                el("button", { class: "btn btn-sm", disabled: pg >= totalPages - 1 ? "" : null,
+                  onclick: () => { groupPages.set(type, pg + 1); rerender(); },
+                }, "Next →"),
+              ])
+            : null;
+
+          return [
+            heading,
+            el("div", { class: "key-rows" }, rows.map((item) => {
+              const m = idx.get(mapKeyOf(item.source_type, item.source_key));
+              const targetName = m && m.target
+                ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}`
+                : m ? "Target no longer exists" : "";
+              return el("div", { class: "key-row" }, [
+                el("div", { style: "min-width:0" }, [
+                  el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [
+                    el("span", { class: `badge-status ${m ? "s-done" : "s-todo"}` }, m ? "Mapped" : "Not mapped"),
+                    el("code", { style: "font-size:var(--fs-sm)" }, item.source_key),
+                    item.label && item.label !== item.source_key ? el("span", { style: "color:var(--muted,#8b93a1);font-size:var(--fs-sm)" }, `— ${item.label}`) : null,
+                  ].filter(Boolean)),
+                  m
+                    ? el("div", { style: "font-size:var(--fs-xs);color:var(--muted,#8b93a1);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" },
+                        `→ ${targetName} · r${m.mapping_revision}`)
+                    : el("div", { style: "font-size:var(--fs-xs);color:var(--muted,#8b93a1);margin-top:2px;font-style:italic" }, "No mapping yet"),
+                ]),
+                el("div", { style: "display:flex;gap:0.35rem;flex-shrink:0" }, [
+                  m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
+                    : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
+                  actionBtn("Remove key", "trash", { onClick: () => removeCatalogKey(item) }),
+                ]),
+              ]);
+            })),
+            pagination,
+          ].filter(Boolean);
+        }
+
+        section.replaceChildren(...buildSection());
+        return section;
       }));
     }
 

@@ -10453,8 +10453,7 @@
         actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }),
         actionBtn("Refresh mappings", "refresh", { onClick: reload }),
         actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
-        actionBtn("Migrate legacy cutout doors", "refresh", { onClick: migrateLegacyCutoutDoorMappings }),
-        el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
+el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
       ]), list,
     );
     await Promise.all([reload(), loadCatalog()]);

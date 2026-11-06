@@ -10385,15 +10385,8 @@
 
               const actionsTd = status === "no_mapping"
                 ? el("td", { style: "white-space:nowrap;display:flex;gap:0.3rem;padding:0.4rem 0.5rem" }, [
-                    actionBtn("Create", "plus", {
-                      disabled: batchInFlight,
-                      title: batchInFlight ? "Waiting for AI suggestions…" : "Create component",
-                      onClick: () => createPlannerComponentModal(tok, g, (gap) => {
-                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                        renderManualRows();
-                      }, suggestCache[cacheKey] || null),
-                    }),
                     actionBtn("Map to existing", "link", {
+                      primary: true,
                       onClick: () => pickComponentModal(tok, {
                         hint: gapHintCard(g, { suggestedName: suggestCache[cacheKey]?.name }),
                         onPick: async (picked) => {
@@ -10408,6 +10401,14 @@
                           } catch (ex) { alert(ex.message); }
                         },
                       }),
+                    }),
+                    actionBtn("Create new", "plus", {
+                      disabled: batchInFlight,
+                      title: batchInFlight ? "Waiting for AI suggestions…" : "Create a new BOM component for this key",
+                      onClick: () => createPlannerComponentModal(tok, g, (gap) => {
+                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                        renderManualRows();
+                      }, suggestCache[cacheKey] || null),
                     }),
                   ])
                 : null;

@@ -9707,7 +9707,7 @@
         const fixBtn = el("button", {
           class: "btn btn-sm btn-primary", type: "button",
           style: "white-space:nowrap;flex-shrink:0",
-          onclick: () => bomGapCheckModal(token),
+          onclick: () => bomGapCheckModal(token, reload),
         }, `Run BOM Mapping Check (${counts.unmapped})`);
         gapBanner.replaceChildren(el("div", {
           style: "display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;padding:0.6rem 0.75rem;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;margin-top:0.4rem",
@@ -10150,7 +10150,7 @@
       createOnlyBtn.onclick = () => doCreate(false);
     }
 
-    async function bomGapCheckModal(tok) {
+    async function bomGapCheckModal(tok, onMappingAdded) {
       const body = el("div", { class: "loading" }, "Checking BOM gaps…");
       openModal("BOM Mapping Check", body);
 
@@ -10259,6 +10259,7 @@
                     try {
                       await API.post(tok, "savePlannerMapping", { source_type: g.source_type, source_key: g.source_key, target_component_id: picked.id, quantity_rule: "cart_quantity" });
                       resolvedKeys.add(gapKey);
+                      onMappingAdded && onMappingAdded();
                       renderRows();
                     } catch (ex) { alert(ex.message); }
                   },
@@ -10276,6 +10277,7 @@
                               try {
                                 await API.post(tok, "savePlannerMapping", { source_type: g.source_type, source_key: g.source_key, target_component_id: aiMatch.target_component_id, quantity_rule: "cart_quantity" });
                                 resolvedKeys.add(gapKey);
+                                onMappingAdded && onMappingAdded();
                                 renderRows();
                               } catch (ex) { btn.disabled = false; btn.textContent = "Map →"; alert(ex.message); }
                             },
@@ -10287,6 +10289,7 @@
                           el("button", { class: "btn btn-sm btn-primary", type: "button",
                             onclick: () => createPlannerComponentModal(tok, g, (gap) => {
                               resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                              onMappingAdded && onMappingAdded();
                               renderRows();
                             }),
                           }, "+ Create"),

@@ -10284,7 +10284,7 @@
       body.replaceChildren(
         summaryEl,
         ...sections,
-        gaps.length === 0 ? el("p", { class: "muted", style: "font-size:0.8125rem;margin:0" }, `${ok_count} of ${total} keys have active, valid mappings.`) : null,
+        ...(gaps.length === 0 ? [el("p", { class: "muted", style: "font-size:0.8125rem;margin:0" }, `${ok_count} of ${total} keys have active, valid mappings.`)] : []),
       );
     }
 

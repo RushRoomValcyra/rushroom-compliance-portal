@@ -10222,7 +10222,7 @@
               }}, "Apply");
             const swapBtn = el("button", { class: "btn btn-sm", type: "button", title: "Pick a different component",
               onclick: () => pickComponentModal(tok, {
-                hint: `Mapping: ${g.source_key}`,
+                hint: g.label ? `${g.label} · ${g.source_key}` : g.source_key,
                 onPick: async (picked) => {
                   try {
                     await API.post(tok, "savePlannerMapping", {
@@ -10246,9 +10246,10 @@
           }
 
           return el("div", { style: "display:flex;align-items:flex-start;gap:0.75rem;padding:0.6rem 0;border-bottom:0.5px solid var(--border,#e2e8f0)" }, [
-            el("div", { style: "flex-shrink:0;width:190px;min-width:0" }, [
+            el("div", { style: "flex-shrink:0;width:220px;min-width:0" }, [
               el("div", { style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em" }, g.source_type),
-              el("code", { style: "font-size:0.75rem;word-break:break-all;display:block" }, g.source_key),
+              el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e);margin-bottom:0.1rem" }, g.label || g.source_key),
+              el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block" }, g.source_key),
             ]),
             matchEl, actionsEl,
           ]);
@@ -10379,7 +10380,7 @@
                     }),
                     actionBtn("Map to existing", "link", {
                       onClick: () => pickComponentModal(tok, {
-                        hint: `Mapping: ${g.source_key}`,
+                        hint: g.label ? `${g.label} · ${g.source_key}` : g.source_key,
                         onPick: async (picked) => {
                           try {
                             await API.post(tok, "savePlannerMapping", {
@@ -10398,7 +10399,10 @@
 
               return el("tr", {}, [
                 el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
-                el("td", {}, el("code", { style: "font-size:0.75rem;word-break:break-all" }, g.source_key)),
+                el("td", {}, [
+                  g.label ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e)" }, g.label) : null,
+                  el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block" }, g.source_key),
+                ].filter(Boolean)),
                 ...(proposedCell ? [proposedCell] : []),
                 ...(status === "missing_target" ? [el("td", { style: "font-family:monospace;font-size:0.75rem;color:#9ca3af" }, g.target_component_id)] : []),
                 ...(status === "obsolete_target" || status === "flagged_target" ? [

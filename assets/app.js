@@ -10321,7 +10321,7 @@
           setTimeout(() => {
             batchProgressBar.style.transition = "opacity 0.5s";
             batchProgressBar.style.opacity = "0";
-            setTimeout(() => { batchProgressBar.remove(); renderBatchPanel(); }, 500);
+            setTimeout(() => { batchProgressBar.remove(); renderBatchPanel(); allManualRenders.forEach((fn) => fn()); }, 500);
           }, 600);
         })
         .catch((ex) => { batchPanel.replaceChildren(el("p", { class: "error" }, ex.message)); });
@@ -10383,35 +10383,84 @@
                 else proposedCell.appendChild(el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "✨…"));
               }
 
-              const actionsTd = status === "no_mapping"
-                ? el("td", { style: "white-space:nowrap;display:flex;gap:0.3rem;padding:0.4rem 0.5rem" }, [
+              // Check if the AI batch found an EXISTING BOM component for this key.
+              const aiMatch = aiSuggestions
+                ? aiSuggestions.find((s) => `${s.source_type}:${s.source_key}` === cacheKey && s.target)
+                : null;
+
+              async function saveMapping(targetId) {
+                await API.post(tok, "savePlannerMapping", {
+                  source_type: g.source_type, source_key: g.source_key,
+                  target_component_id: targetId,
+                  quantity_rule: "cart_quantity", fixed_quantity: null,
+                });
+                resolvedKeys.add(cacheKey);
+                renderManualRows();
+              }
+
+              let actionsTd = null;
+              if (status === "no_mapping") {
+                if (aiSuggestions === null) {
+                  // AI batch still loading — neutral layout, create disabled.
+                  actionsTd = el("td", { style: "white-space:nowrap;display:flex;gap:0.3rem;padding:0.4rem 0.5rem;align-items:center" }, [
                     actionBtn("Map to existing", "link", {
                       primary: true,
                       onClick: () => pickComponentModal(tok, {
-                        hint: gapHintCard(g, { suggestedName: suggestCache[cacheKey]?.name }),
-                        onPick: async (picked) => {
-                          try {
-                            await API.post(tok, "savePlannerMapping", {
-                              source_type: g.source_type, source_key: g.source_key,
-                              target_component_id: picked.id,
-                              quantity_rule: "cart_quantity", fixed_quantity: null,
-                            });
-                            resolvedKeys.add(cacheKey);
-                            renderManualRows();
-                          } catch (ex) { alert(ex.message); }
-                        },
+                        hint: gapHintCard(g),
+                        onPick: async (picked) => { try { await saveMapping(picked.id); } catch (ex) { alert(ex.message); } },
+                      }),
+                    }),
+                    actionBtn("Create new", "plus", { disabled: true, title: "Waiting for AI…" }),
+                  ]);
+                } else if (aiMatch) {
+                  // AI found an existing BOM component — one-click map, no picker needed.
+                  const mapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button",
+                    title: `Map to: ${aiMatch.target.name}${aiMatch.target.part_number ? ` · ${aiMatch.target.part_number}` : ""}`,
+                    onclick: async () => {
+                      mapBtn.disabled = true; mapBtn.textContent = "Saving…";
+                      try { await saveMapping(aiMatch.target_component_id); }
+                      catch (ex) { mapBtn.disabled = false; mapBtn.textContent = `Map → ${aiMatch.target.name}`; alert(ex.message); }
+                    },
+                  }, `Map → ${aiMatch.target.name}`);
+                  actionsTd = el("td", { style: "padding:0.4rem 0.5rem;display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap" }, [
+                    mapBtn,
+                    actionBtn("Pick other", "link", {
+                      title: "Search for a different component",
+                      onClick: () => pickComponentModal(tok, {
+                        hint: gapHintCard(g, { suggestedName: aiMatch.target.name }),
+                        onPick: async (picked) => { try { await saveMapping(picked.id); } catch (ex) { alert(ex.message); } },
                       }),
                     }),
                     actionBtn("Create new", "plus", {
-                      disabled: batchInFlight,
-                      title: batchInFlight ? "Waiting for AI suggestions…" : "Create a new BOM component for this key",
+                      title: "Create a new BOM component (AI found an existing match — use this only if that match is wrong)",
                       onClick: () => createPlannerComponentModal(tok, g, (gap) => {
                         resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
                         renderManualRows();
                       }, suggestCache[cacheKey] || null),
                     }),
-                  ])
-                : null;
+                  ]);
+                } else {
+                  // AI found no existing match — Create new is primary.
+                  actionsTd = el("td", { style: "white-space:nowrap;display:flex;gap:0.3rem;padding:0.4rem 0.5rem;align-items:center" }, [
+                    actionBtn("Create new", "plus", {
+                      primary: true,
+                      disabled: batchInFlight,
+                      title: batchInFlight ? "Waiting for AI suggestions…" : "No existing match found — create a new BOM component",
+                      onClick: () => createPlannerComponentModal(tok, g, (gap) => {
+                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                        renderManualRows();
+                      }, suggestCache[cacheKey] || null),
+                    }),
+                    actionBtn("Map to existing", "link", {
+                      title: "Manually search for an existing component",
+                      onClick: () => pickComponentModal(tok, {
+                        hint: gapHintCard(g, { suggestedName: suggestCache[cacheKey]?.name }),
+                        onPick: async (picked) => { try { await saveMapping(picked.id); } catch (ex) { alert(ex.message); } },
+                      }),
+                    }),
+                  ]);
+                }
+              }
 
               return el("tr", {}, [
                 el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),

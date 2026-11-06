@@ -10090,7 +10090,7 @@
 
     async function bomGapCheckModal(tok) {
       const body = el("div", {});
-      openModal("BOM gap check", body);
+      openModal("BOM Mapping Check", body);
       body.replaceChildren(el("div", { class: "loading" }, "Checking BOM gaps…"));
 
       let gapResult;
@@ -10259,12 +10259,12 @@
           }
 
           return el("div", { style: "display:flex;align-items:flex-start;gap:0.75rem;padding:0.6rem 0;border-bottom:0.5px solid var(--border,#e2e8f0)" }, [
-            el("div", { style: "flex-shrink:0;width:220px;min-width:0" }, [
+            el("div", { style: "flex-shrink:0;width:360px;min-width:0" }, [
               el("div", { style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em" }, g.source_type),
               g.label && g.label !== g.source_key
                 ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e);margin-bottom:0.1rem" }, g.label)
                 : null,
-              el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block" }, g.source_key),
+              el("code", { style: "font-size:0.625rem;color:var(--muted,#8b93a1);white-space:nowrap;display:block" }, g.source_key),
             ].filter(Boolean)),
             matchEl, actionsEl,
           ]);
@@ -10272,7 +10272,7 @@
 
         const colHeader = rows.length > 0
           ? el("div", { style: "display:flex;align-items:center;gap:0.75rem;padding:0 0 0.35rem;border-bottom:1.5px solid var(--border,#e2e8f0);margin-bottom:0.1rem" }, [
-              el("div", { style: "flex-shrink:0;width:220px;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "Planner key"),
+              el("div", { style: "flex-shrink:0;width:360px;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "Planner key"),
               el("div", { style: "flex:1;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "AI match in BOM"),
               el("div", { style: "flex-shrink:0;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "Action"),
             ])
@@ -10572,7 +10572,7 @@
       ]),
       el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
         actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }), actionBtn("Refresh mappings", "refresh", { onClick: reload }), actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
-        actionBtn("BOM gap check", "alert-triangle", { onClick: () => bomGapCheckModal(token) }),
+        actionBtn("BOM Mapping Check", "alert-triangle", { onClick: () => bomGapCheckModal(token) }),
         actionBtn("Migrate legacy cutout doors", "refresh", { onClick: migrateLegacyCutoutDoorMappings }),
         el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
       ]), list,

@@ -113,15 +113,43 @@ You will receive:
 
 Your task: for each unmapped key, suggest the most appropriate BOM component from the catalog.
 
-STRICT MATCHING RULES — read carefully:
-- Every explicit attribute encoded in the source key MUST match the component exactly. This includes: door/module colour, handle colour, handle type (cutout vs standard), size (S/M/L/XL, mm), and any other variant. If even one attribute differs, do NOT suggest that component.
-- Example: a key containing "handle_color_silver" must map to a component that explicitly has a silver handle. Mapping it to a white-handle component is WRONG. If no silver-handle component exists in the catalog, omit the key entirely — do not fall back to a similar component.
-- Example: a key containing "color_black" must map to a black component. Never suggest a white variant as a substitute.
-- When no component in the catalog matches ALL attributes in the key, omit that key from the suggestions array. The user will create the missing component in the BOM. A missing suggestion is far better than a wrong one — a wrong mapping ships the wrong product to the customer.
-- Use naming patterns from existing mappings only as a structural guide (e.g. key format → component name format). Never copy the target of an existing mapping to a key with different attributes.
-- Confidence "high": every attribute matches clearly; "medium": structural match is clear but one attribute is implicit rather than explicit in the component name; "low": significant uncertainty — only use for keys where the key has very few attributes and the match is otherwise strong.
+══════════════════════════════════════════════
+RUSHROOM SIZE LOOKUP TABLE (confirmed from live mappings — treat as ground truth)
+══════════════════════════════════════════════
+
+DOOR dimensions → size label:
+  Left/Right doors (388 / 397 / 588 mm):  388 mm = S  |  397 mm = L  |  588 mm = M
+  Middle doors     (380 / 389 / 580 mm):  380 mm = S  |  389 mm = L  |  580 mm = M
+  NOTE: 580 mm and 588 mm both map to M size (one for Middle, one for Left/Right).
+
+Handle/cutout colour translation:
+  handle_cutout_color_silver  →  "Grey Cut out Handle"  (grey/silver cutout, not a standard handle)
+  handle_cutout_color_white   →  "White Cut out Handle"
+  handle_bar_color_black      →  "Black Bar Handle"
+  handle_bar_color_gold       →  "Gold Bar Handle"
+  handle_knob_color_black     →  "Black Knob Handle"
+  handle_knob_color_gold      →  "Gold Knob Handle"
+
+Component type name translation (dimension ALWAYS determines door type — not handle type):
+  door_left_<mm>  or  door_right_<mm>  where mm is 388 / 397 / 588  →  "Prepared <S/M/L> Left/Right Door"
+  door_left_<mm>  or  door_right_<mm>  where mm is 380 / 389 / 580  →  "Prepared <S/M/L> Middle Door"
+
+══════════════════════════════════════════════
+MATCHING RULES
+══════════════════════════════════════════════
+
+HARD attributes — MUST match exactly. If any hard attribute differs, omit the key (never substitute):
+- Main component colour (color_white → white body; color_black → black body)
+- Handle/cutout colour (use the translation table above)
+- Handle type (handle_cutout vs handle_bar vs handle_knob)
+
+SOFT attributes — may be resolved using the size lookup table above:
+- Numeric dimension (mm) vs size label (S/M/L) — use the table to translate directly. If a key's mm value appears in the table, the size label is KNOWN, so confidence should be "high" when everything else also matches.
+
+GENERAL:
 - Use the exact component id from the catalog (the first column, a UUID).
-- reasoning: one concise sentence explaining why ALL attributes in the key match this component, or what makes you uncertain.`;
+- Confidence "high": all attributes including size confirmed from the lookup table and naming convention; "medium": one attribute inferred rather than explicit; "low": genuine uncertainty remains after applying all rules.
+- reasoning: one concise sentence explaining the match.`;
 
   const userMessage = `EXISTING MAPPINGS:\n${existingLines}\n\nBOM COMPONENT CATALOG:\n${catalogLines}\n\nUNMAPPED KEYS TO SUGGEST FOR:\n${unmappedLines}`;
 

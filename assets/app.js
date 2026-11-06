@@ -10250,28 +10250,49 @@
             countBadge.textContent = String(visible.length);
             updateSummary();
             tbody.replaceChildren(...visible.map((g) => {
+              const gapKey = `${g.source_type}:${g.source_key}`;
+              const aiMatch = aiMatchResults && aiMatchResults[gapKey] ? aiMatchResults[gapKey] : null;
+              const mapExistingBtn = el("button", { class: "btn btn-sm", type: "button",
+                onclick: () => pickComponentModal(tok, {
+                  hint: mapHintWithAI(g),
+                  onPick: async (picked) => {
+                    try {
+                      await API.post(tok, "savePlannerMapping", { source_type: g.source_type, source_key: g.source_key, target_component_id: picked.id, quantity_rule: "cart_quantity" });
+                      resolvedKeys.add(gapKey);
+                      renderRows();
+                    } catch (ex) { alert(ex.message); }
+                  },
+                }),
+              }, "Map to existing");
+
               const actionCell = status === "no_mapping"
-                ? el("td", { style: "white-space:nowrap" }, [
-                    el("button", { class: "btn btn-sm btn-primary", type: "button",
-                      onclick: () => createPlannerComponentModal(tok, g, (gap) => {
-                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                        renderRows();
-                      }),
-                    }, "+ Create"),
-                    " ",
-                    el("button", { class: "btn btn-sm", type: "button",
-                      onclick: () => pickComponentModal(tok, {
-                        hint: mapHintWithAI(g),
-                        onPick: async (picked) => {
-                          try {
-                            await API.post(tok, "savePlannerMapping", { source_type: g.source_type, source_key: g.source_key, target_component_id: picked.id, quantity_rule: "cart_quantity" });
-                            resolvedKeys.add(`${g.source_type}:${g.source_key}`);
-                            renderRows();
-                          } catch (ex) { alert(ex.message); }
-                        },
-                      }),
-                    }, "Map to existing"),
-                  ])
+                ? el("td", { style: "white-space:nowrap;display:flex;flex-direction:column;gap:0.3rem;align-items:flex-start" },
+                    aiMatch
+                      ? [
+                          // AI found existing match — map directly or pick a different one; no create
+                          el("button", { class: "btn btn-sm btn-primary", type: "button",
+                            onclick: async (ev) => {
+                              const btn = ev.currentTarget; btn.disabled = true; btn.textContent = "Saving…";
+                              try {
+                                await API.post(tok, "savePlannerMapping", { source_type: g.source_type, source_key: g.source_key, target_component_id: aiMatch.target_component_id, quantity_rule: "cart_quantity" });
+                                resolvedKeys.add(gapKey);
+                                renderRows();
+                              } catch (ex) { btn.disabled = false; btn.textContent = "Map →"; alert(ex.message); }
+                            },
+                          }, "Map →"),
+                          mapExistingBtn,
+                        ]
+                      : [
+                          // No existing match — create new; Map to existing still available as fallback
+                          el("button", { class: "btn btn-sm btn-primary", type: "button",
+                            onclick: () => createPlannerComponentModal(tok, g, (gap) => {
+                              resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                              renderRows();
+                            }),
+                          }, "+ Create"),
+                          mapExistingBtn,
+                        ]
+                  )
                 : null;
               return el("tr", {}, [
                 el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),

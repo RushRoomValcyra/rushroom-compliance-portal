@@ -10101,190 +10101,253 @@
       if (!total) { body.replaceChildren(el("p", { class: "muted", style: "margin:0" }, "No planner keys imported yet. Use Import/update planner keys first.")); return; }
       if (gaps.length === 0) { body.replaceChildren(el("p", { class: "muted", style: "margin:0" }, `✓ All ${total} planner keys have valid active BOM mappings.`)); return; }
 
-      // --- Shared state ---
-      const resolvedKeys = new Set();
-      const suggestCache   = {};  // source_type:source_key → { name, type } from batchSuggestComponents
-      const proposedCells  = {};  // source_type:source_key → TD element (manual tab)
-
+      const resolvedKeys  = new Set();
+      const suggestCache  = {};  // source_type:source_key → { name, type }
       const noMappingGaps = gaps.filter((g) => g.status === "no_mapping");
 
-      // --- Summary banner ---
       const summaryEl = el("div", { style: "border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.875rem" });
       function updateSummary() {
         const rem = gaps.length - resolvedKeys.size;
-        if (rem === 0) {
-          summaryEl.style.background = "#dcfce7";
-          summaryEl.textContent = `✓ All gaps resolved this session — ${ok_count + resolvedKeys.size} of ${total} keys OK.`;
-        } else if (resolvedKeys.size > 0) {
-          summaryEl.style.background = "#fef3c7";
-          summaryEl.textContent = `${rem} gap${rem === 1 ? "" : "s"} remaining — ${resolvedKeys.size} resolved this session.`;
-        } else {
-          summaryEl.style.background = "#fee2e2";
-          summaryEl.textContent = `${gaps.length} gap${gaps.length === 1 ? "" : "s"} found — ${total} total keys, ${ok_count} already OK.`;
-        }
+        if (rem === 0) { summaryEl.style.background = "#dcfce7"; summaryEl.textContent = `✓ All gaps resolved this session — ${ok_count + resolvedKeys.size} of ${total} keys OK.`; }
+        else if (resolvedKeys.size > 0) { summaryEl.style.background = "#fef3c7"; summaryEl.textContent = `${rem} gap${rem === 1 ? "" : "s"} remaining — ${resolvedKeys.size} resolved this session.`; }
+        else { summaryEl.style.background = "#fee2e2"; summaryEl.textContent = `${gaps.length} gap${gaps.length === 1 ? "" : "s"} found — ${total} total keys, ${ok_count} already OK.`; }
       }
       updateSummary();
 
-      // Styled card shown as the hint at the top of the component picker.
       function gapHintCard(g, { suggestedName } = {}) {
         const showLabel = g.label && g.label !== g.source_key;
-        return el("div", {
-          style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
-        }, [
+        return el("div", { style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
           el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.2rem" }, "Mapping"),
           showLabel ? el("div", { style: "font-size:0.875rem;font-weight:700;line-height:1.3" }, g.label) : null,
-          suggestedName ? el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-top:0.1rem" }, `AI suggested: ${suggestedName}`) : null,
+          suggestedName ? el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-top:0.1rem" }, `Proposed: ${suggestedName}`) : null,
           el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, g.source_key),
         ].filter(Boolean));
       }
 
-      // --- Tab bar ---
-      const TS  = "padding:0.4rem 0.9rem;border-radius:6px;border:0.5px solid var(--border,#e2e8f0);background:transparent;font-size:0.875rem;cursor:pointer;white-space:nowrap";
-      const TSA = "padding:0.4rem 0.9rem;border-radius:6px;border:0.5px solid var(--accent,#2fa564);background:var(--accent-bg,#f0fdf4);color:var(--accent,#2fa564);font-weight:600;font-size:0.875rem;cursor:pointer;white-space:nowrap";
-      const batchTabBtn  = el("button", { type: "button", style: TSA }, "");
-      const manualTabBtn = el("button", { type: "button", style: TS  }, "");
-      const batchPanel   = el("div", {});
-      const manualPanel  = el("div", { hidden: true });
-
-      function setTab(t) {
-        batchPanel.hidden  = t !== "batch";
-        manualPanel.hidden = t !== "manual";
-        batchTabBtn.style.cssText  = t === "batch"  ? TSA : TS;
-        manualTabBtn.style.cssText = t === "manual" ? TSA : TS;
-      }
-      function updateTabLabels() {
-        const rem = noMappingGaps.filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`)).length;
-        batchTabBtn.textContent  = `✨ AI batch${rem ? ` (${rem})` : ""}`;
-        manualTabBtn.textContent = `Manual review (${gaps.length - resolvedKeys.size})`;
-      }
-      updateTabLabels();
-      batchTabBtn.onclick  = () => setTab("batch");
-      manualTabBtn.onclick = () => setTab("manual");
-
-      body.replaceChildren(
-        summaryEl,
-        el("div", { style: "display:flex;gap:0.4rem;margin-bottom:0.75rem" }, [batchTabBtn, manualTabBtn]),
-        batchPanel, manualPanel,
-      );
-
-      // ===================== AI BATCH TAB =====================
-      const CONF_STYLE = { high: "background:#dcfce7;color:#15803d", medium: "background:#fef9c3;color:#92400e", low: "background:#f1f5f9;color:#64748b" };
-      const batchStatusEl = el("p", { role: "status", "aria-live": "polite", style: "margin:0.5rem 0 0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "");
-      let aiSuggestions = null;
-
-      // Progress bar for the AI batch tab — indeterminate until suggestPlannerMappings resolves.
       if (!document.getElementById("rr-ind-style")) {
         const ks = document.createElement("style");
         ks.id = "rr-ind-style";
         ks.textContent = "@keyframes rr-ind{0%{transform:translateX(-100%)}100%{transform:translateX(430%)}}";
         document.head.appendChild(ks);
       }
-      const batchProgressFill  = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:25%;border-radius:2px;animation:rr-ind 1.2s ease-in-out infinite;will-change:transform" });
-      const batchProgressLabel = el("span", {}, "✨ AI is finding existing BOM matches…");
-      const batchProgressBar   = el("div", { style: "margin-bottom:0.6rem;display:flex;align-items:center;gap:0.6rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [
-        el("div", { style: "flex:1;height:4px;border-radius:2px;background:var(--border,#e2e8f0);overflow:hidden" }, batchProgressFill),
-        batchProgressLabel,
+      const progressFill  = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:25%;border-radius:2px;animation:rr-ind 1.2s ease-in-out infinite;will-change:transform" });
+      const progressLabel = el("span", {}, "✨ AI is loading matches and names…");
+      const progressBar   = el("div", { style: "margin-bottom:0.6rem;display:flex;align-items:center;gap:0.6rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [
+        el("div", { style: "flex:1;height:4px;border-radius:2px;background:var(--border,#e2e8f0);overflow:hidden" }, progressFill),
+        progressLabel,
       ]);
-      batchPanel.replaceChildren(batchProgressBar);
+      const tableContainer = el("div", {});
+      body.replaceChildren(summaryEl, progressBar, tableContainer);
 
-      function renderBatchPanel() {
-        if (aiSuggestions === null) return;
-        const byKey = {};
-        for (const s of aiSuggestions) byKey[`${s.source_type}:${s.source_key}`] = s;
+      const CONF_STYLE        = { high: "background:#dcfce7;color:#15803d", medium: "background:#fef9c3;color:#92400e", low: "background:#f1f5f9;color:#64748b" };
+      const TYPE_BADGE_COLOR  = { sub_assembly: "#dbeafe", finished_good: "#fce7f3", phantom_assembly: "#ede9fe", part: "#f1f5f9", raw_material: "#fef9c3", spare_part: "#f0fdf4", product_family: "#fdf4ff" };
+      const TYPE_LABEL        = { sub_assembly: "Sub-assy", finished_good: "FG", phantom_assembly: "Kit", part: "Part", raw_material: "Raw", spare_part: "Spare", product_family: "Family" };
+      const GAP_META          = {
+        missing_target:  { label: "BOM component deleted",           color: "#fee2e2", border: "#fca5a5", text: "#991b1b", hint: "The mapping target no longer exists. Recreate the component and update the mapping." },
+        obsolete_target: { label: "BOM component replaced/obsolete", color: "#fef3c7", border: "#fcd34d", text: "#92400e", hint: "The mapped component is marked Replaced. Update the mapping to point to the current replacement." },
+        flagged_target:  { label: "BOM component flagged",           color: "#fef3c7", border: "#fcd34d", text: "#92400e", hint: "The mapped component is flagged. Review and update the mapping if needed." },
+      };
 
-        const visible   = noMappingGaps.filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`));
-        const approvable = aiSuggestions.filter((s) => s.confidence !== "low" && !resolvedKeys.has(`${s.source_type}:${s.source_key}`));
+      let aiSuggestions  = null;
+      let nameMap        = {};  // lc-name → { id, name, lifecycle_status }
+      let matchesLoaded  = false;
+      let namesLoaded    = false;
+      let totalBatches   = 0;
+      let doneBatches    = 0;
+
+      function updateProgressLabel() {
+        if (matchesLoaded && namesLoaded) return;
+        if (!matchesLoaded && !namesLoaded) { progressLabel.textContent = "✨ AI is loading matches and names…"; }
+        else if (!matchesLoaded)            { progressLabel.textContent = "✨ Finding existing BOM matches…"; }
+        else                                { progressLabel.textContent = `✨ Suggesting names… (${doneBatches}/${totalBatches})`; }
+      }
+
+      function tryRender() {
+        if (!matchesLoaded || !namesLoaded) return;
+        progressFill.style.animation = "none";
+        progressFill.style.width = "100%";
+        progressLabel.textContent = "✓ Done";
+        setTimeout(() => {
+          progressBar.style.transition = "opacity 0.5s";
+          progressBar.style.opacity = "0";
+          setTimeout(() => progressBar.remove(), 500);
+        }, 400);
+        renderTable();
+      }
+
+      function renderTable() {
+        const statusEl = el("p", { role: "status", "aria-live": "polite", style: "margin:0.5rem 0 0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "");
+
+        async function saveMapping(g, targetId) {
+          await API.post(tok, "savePlannerMapping", {
+            source_type: g.source_type, source_key: g.source_key,
+            target_component_id: targetId,
+            quantity_rule: "cart_quantity", fixed_quantity: null,
+          });
+          resolvedKeys.add(`${g.source_type}:${g.source_key}`);
+          updateSummary();
+          renderTable();
+        }
+
+        const visible    = noMappingGaps.filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`));
+        const approvable = (aiSuggestions || []).filter((s) =>
+          s.target && s.confidence !== "low" && !resolvedKeys.has(`${s.source_type}:${s.source_key}`)
+        );
 
         const bulkBar = approvable.length ? el("div", {
           style: "display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0.75rem;background:#dcfce7;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:0.75rem",
         }, [
-          el("span", { style: "font-size:0.875rem;color:#15803d" }, `${approvable.length} high/medium confidence match${approvable.length === 1 ? "" : "es"} ready`),
+          el("span", { style: "font-size:0.875rem;color:#15803d" }, `${approvable.length} high/medium-confidence AI match${approvable.length === 1 ? "" : "es"} ready`),
           el("button", { class: "btn btn-sm", type: "button", style: "color:#15803d;border-color:#86efac",
             onclick: () => applyBatch(approvable),
           }, `Approve all (${approvable.length})`),
         ]) : null;
 
         const rows = visible.map((g) => {
-          const key = `${g.source_type}:${g.source_key}`;
-          const sug = byKey[key];
+          const cacheKey     = `${g.source_type}:${g.source_key}`;
+          const aiMatch      = (aiSuggestions || []).find((s) => `${s.source_type}:${s.source_key}` === cacheKey && s.target);
+          const proposedName = suggestCache[cacheKey]?.name;
+          const proposedType = suggestCache[cacheKey]?.type;
+          const collision    = proposedName ? nameMap[proposedName.toLowerCase()] : null;
+          const rowStatus    = aiMatch ? "ai_match" : collision ? "name_collision" : "new";
 
-          const matchEl = (sug && sug.target)
-            ? el("div", { style: "flex:1;min-width:0" }, [
-                el("div", { style: "display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [
-                  el("span", { style: "font-size:0.875rem;font-weight:500" }, sug.target.name),
-                  sug.target.part_number ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `· ${sug.target.part_number}`) : null,
-                  el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 5px;border-radius:4px;${CONF_STYLE[sug.confidence] || CONF_STYLE.low}` }, sug.confidence),
-                ].filter(Boolean)),
-                sug.reasoning ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:0.15rem" }, sug.reasoning) : null,
-              ].filter(Boolean))
-            : el("div", { style: "flex:1;font-size:0.8125rem;color:var(--muted,#8b93a1);font-style:italic;display:flex;align-items:center" }, "No existing match — component needs to be created");
+          let compCol;
+          if (rowStatus === "ai_match") {
+            compCol = el("div", { style: "flex:1;min-width:0" }, [
+              el("div", { style: "display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [
+                el("span", { style: "font-size:0.875rem;font-weight:500" }, aiMatch.target.name),
+                aiMatch.target.part_number ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, `· ${aiMatch.target.part_number}`) : null,
+                el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 5px;border-radius:4px;${CONF_STYLE[aiMatch.confidence] || CONF_STYLE.low}` }, `AI · ${aiMatch.confidence}`),
+              ].filter(Boolean)),
+              aiMatch.reasoning ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:0.15rem" }, aiMatch.reasoning) : null,
+            ].filter(Boolean));
+          } else if (rowStatus === "name_collision") {
+            const isActive = collision.lifecycle_status === "active";
+            compCol = el("div", { style: "flex:1;min-width:0" }, [
+              el("div", { style: "display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [
+                el("span", { style: "font-size:0.875rem;font-weight:500" }, collision.name),
+                el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 5px;border-radius:4px;background:${isActive ? "#dcfce7" : "#fef9c3"};color:${isActive ? "#15803d" : "#92400e"}` },
+                  `Exists · ${collision.lifecycle_status}`),
+              ]),
+              el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:0.15rem" }, "Component with this name already exists in BOM"),
+            ]);
+          } else {
+            const bg = TYPE_BADGE_COLOR[proposedType] || "#f1f5f9";
+            compCol = proposedName
+              ? el("div", { style: "flex:1;min-width:0" }, [
+                  el("div", { style: "display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [
+                    el("span", { style: "font-size:0.875rem;font-weight:500" }, proposedName),
+                    el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 5px;border-radius:4px;background:${bg};color:#334155` }, TYPE_LABEL[proposedType] || proposedType || "Part"),
+                    el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 5px;border-radius:4px;background:#f1f5f9;color:#64748b" }, "New"),
+                  ].filter(Boolean)),
+                ])
+              : el("div", { style: "flex:1;font-size:0.8125rem;color:var(--muted,#8b93a1);font-style:italic;display:flex;align-items:center" }, "Component needs to be created");
+          }
 
           const actionsEl = el("div", { style: "display:flex;gap:0.3rem;align-items:center;flex-shrink:0" });
-          if (sug && sug.target) {
+          if (rowStatus === "ai_match") {
+            const label = `Map → ${aiMatch.target.name.length > 26 ? aiMatch.target.name.slice(0, 24) + "…" : aiMatch.target.name}`;
             const applyBtn = el("button", { class: "btn btn-sm btn-primary", type: "button",
               onclick: async () => {
                 applyBtn.disabled = true; applyBtn.textContent = "Saving…";
-                try {
-                  await API.post(tok, "savePlannerMapping", {
-                    source_type: g.source_type, source_key: g.source_key,
-                    target_component_id: sug.target_component_id,
-                    quantity_rule: "cart_quantity", fixed_quantity: null, start_inactive: true,
-                  });
-                  resolvedKeys.add(key); updateSummary(); updateTabLabels(); renderBatchPanel();
-                } catch (ex) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; batchStatusEl.textContent = ex.message; }
-              }}, "Apply");
-            const swapBtn = el("button", { class: "btn btn-sm", type: "button", title: "Pick a different component",
+                try { await saveMapping(g, aiMatch.target_component_id); }
+                catch (ex) { applyBtn.disabled = false; applyBtn.textContent = label; statusEl.textContent = ex.message; }
+              }}, label);
+            const pickBtn = el("button", { class: "btn btn-sm", type: "button",
               onclick: () => pickComponentModal(tok, {
-                hint: gapHintCard(g, { suggestedName: sug?.target?.name }),
-                onPick: async (picked) => {
-                  try {
-                    await API.post(tok, "savePlannerMapping", {
-                      source_type: g.source_type, source_key: g.source_key,
-                      target_component_id: picked.id,
-                      quantity_rule: "cart_quantity", fixed_quantity: null, start_inactive: true,
-                    });
-                    resolvedKeys.add(key); updateSummary(); updateTabLabels(); renderBatchPanel();
-                  } catch (ex) { batchStatusEl.textContent = ex.message; }
-                },
-              })}, "↔ Pick");
-            actionsEl.append(applyBtn, swapBtn);
+                hint: gapHintCard(g, { suggestedName: aiMatch.target.name }),
+                onPick: async (picked) => { try { await saveMapping(g, picked.id); } catch (ex) { statusEl.textContent = ex.message; } },
+              })}, "Pick other");
+            actionsEl.append(applyBtn, pickBtn);
+          } else if (rowStatus === "name_collision") {
+            const mapBtn = el("button", { class: "btn btn-sm btn-primary", type: "button",
+              onclick: async () => {
+                mapBtn.disabled = true; mapBtn.textContent = "Saving…";
+                try { await saveMapping(g, collision.id); }
+                catch (ex) { mapBtn.disabled = false; mapBtn.textContent = "Map → existing"; statusEl.textContent = ex.message; }
+              }}, "Map → existing");
+            const pickBtn = el("button", { class: "btn btn-sm", type: "button",
+              onclick: () => pickComponentModal(tok, {
+                hint: gapHintCard(g, { suggestedName: proposedName }),
+                onPick: async (picked) => { try { await saveMapping(g, picked.id); } catch (ex) { statusEl.textContent = ex.message; } },
+              })}, "Pick other");
+            actionsEl.append(mapBtn, pickBtn);
           } else {
-            const createBtn = el("button", { class: "btn btn-sm", type: "button",
+            const createBtn = el("button", { class: "btn btn-sm btn-primary", type: "button",
               onclick: () => createPlannerComponentModal(tok, g, (gap) => {
                 resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                updateSummary(); updateTabLabels(); renderBatchPanel();
-              }, suggestCache[key] || null),
+                updateSummary(); renderTable();
+              }, suggestCache[cacheKey] || null),
             }, "+ Create");
-            actionsEl.append(createBtn);
+            const mapBtn = el("button", { class: "btn btn-sm", type: "button",
+              onclick: () => pickComponentModal(tok, {
+                hint: gapHintCard(g, { suggestedName: proposedName }),
+                onPick: async (picked) => { try { await saveMapping(g, picked.id); } catch (ex) { statusEl.textContent = ex.message; } },
+              })}, "Map to existing");
+            actionsEl.append(createBtn, mapBtn);
           }
 
           return el("div", { style: "display:flex;align-items:flex-start;gap:0.75rem;padding:0.6rem 0;border-bottom:0.5px solid var(--border,#e2e8f0)" }, [
             el("div", { style: "flex-shrink:0;width:360px;min-width:0" }, [
               el("div", { style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em" }, g.source_type),
-              g.label && g.label !== g.source_key
-                ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e);margin-bottom:0.1rem" }, g.label)
-                : null,
+              g.label && g.label !== g.source_key ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e);margin-bottom:0.1rem" }, g.label) : null,
               el("code", { style: "font-size:0.625rem;color:var(--muted,#8b93a1);white-space:nowrap;display:block" }, g.source_key),
             ].filter(Boolean)),
-            matchEl, actionsEl,
+            compCol,
+            actionsEl,
           ]);
         });
 
         const colHeader = rows.length > 0
           ? el("div", { style: "display:flex;align-items:center;gap:0.75rem;padding:0 0 0.35rem;border-bottom:1.5px solid var(--border,#e2e8f0);margin-bottom:0.1rem" }, [
               el("div", { style: "flex-shrink:0;width:360px;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "Planner key"),
-              el("div", { style: "flex:1;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "AI match in BOM"),
+              el("div", { style: "flex:1;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "BOM component"),
               el("div", { style: "flex-shrink:0;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "Action"),
             ])
           : null;
 
-        batchPanel.replaceChildren(
+        // Other gap types (missing/obsolete/flagged) as sections below
+        const otherGaps = gaps.filter((g) => g.status !== "no_mapping" && !resolvedKeys.has(`${g.source_type}:${g.source_key}`));
+        const otherByStatus = {};
+        for (const g of otherGaps) (otherByStatus[g.status] ||= []).push(g);
+        const otherSections = Object.entries(otherByStatus).map(([status, sRows]) => {
+          const meta = GAP_META[status] || { label: status, color: "#f1f5f9", border: "#cbd5e1", text: "#334155", hint: "" };
+          return el("section", { style: "margin-top:1.25rem" }, [
+            el("div", { style: `background:${meta.color};border:1px solid ${meta.border};border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.4rem` }, [
+              el("strong", { style: `color:${meta.text}` }, `${meta.label} (${sRows.length})`),
+              meta.hint ? el("p", { style: `font-size:0.8125rem;color:${meta.text};margin:0.2rem 0 0` }, meta.hint) : null,
+            ].filter(Boolean)),
+            el("div", { class: "table-wrap" },
+              el("table", { class: "data-table", style: "font-size:0.8125rem" }, [
+                el("thead", {}, el("tr", {}, [
+                  el("th", {}, "Type"), el("th", {}, "Planner key"),
+                  ...(status === "missing_target" ? [el("th", {}, "Was mapped to (ID)")] : []),
+                  ...(status !== "missing_target" ? [el("th", {}, "Component"), el("th", {}, "Status")] : []),
+                ])),
+                el("tbody", {}, sRows.map((g) => el("tr", {}, [
+                  el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
+                  el("td", {}, [
+                    g.label && g.label !== g.source_key ? el("div", { style: "font-size:0.8125rem;font-weight:600" }, g.label) : null,
+                    el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block" }, g.source_key),
+                  ].filter(Boolean)),
+                  ...(status === "missing_target" ? [el("td", { style: "font-family:monospace;font-size:0.75rem;color:#9ca3af" }, g.target_component_id)] : []),
+                  ...(status !== "missing_target" ? [
+                    el("td", {}, g.target ? `${g.target.name}${g.target.part_number ? ` · ${g.target.part_number}` : ""}` : "—"),
+                    el("td", {}, el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fef3c7;color:#92400e" }, g.target?.lifecycle_status || "—")),
+                  ] : []),
+                ]))),
+              ])),
+          ]);
+        });
+
+        tableContainer.replaceChildren(
           ...[
             bulkBar,
             colHeader,
             ...rows,
-            visible.length === 0 ? el("p", { class: "muted", style: "margin:0;font-size:0.875rem" }, "No unmapped gaps remaining.") : null,
-            batchStatusEl,
+            rows.length === 0 && noMappingGaps.length > 0 ? el("p", { class: "muted", style: "margin:0;font-size:0.875rem" }, "✓ All unmapped keys resolved this session.") : null,
+            ...otherSections,
+            statusEl,
           ].filter(Boolean),
         );
       }
@@ -10312,7 +10375,7 @@
                       resolvedKeys.add(`${s.source_type}:${s.source_key}`);
                     } catch (_) {}
                   }
-                  updateSummary(); updateTabLabels(); renderBatchPanel();
+                  updateSummary(); renderTable();
                   resolve(true);
                 }}, `Save ${toApply.length} as inactive`),
             ]),
@@ -10320,246 +10383,41 @@
         });
       }
 
-      // Fire immediately — progress bar shows until this resolves.
+      // Fire both AI calls in parallel — render once both complete.
       API.post(tok, "suggestPlannerMappings", {})
         .then((r) => {
           aiSuggestions = r.suggestions || [];
-          batchProgressFill.style.animation = "none";
-          batchProgressFill.style.width = "100%";
-          batchProgressLabel.textContent = "✓ Matches loaded";
-          setTimeout(() => {
-            batchProgressBar.style.transition = "opacity 0.5s";
-            batchProgressBar.style.opacity = "0";
-            setTimeout(() => { batchProgressBar.remove(); renderBatchPanel(); allManualRenders.forEach((fn) => fn()); }, 500);
-          }, 600);
+          nameMap = {};
+          for (const c of (r.components || [])) nameMap[c.name.toLowerCase()] = c;
+          matchesLoaded = true;
+          updateProgressLabel();
+          tryRender();
         })
-        .catch((ex) => { batchPanel.replaceChildren(el("p", { class: "error" }, ex.message)); });
+        .catch(() => { aiSuggestions = []; matchesLoaded = true; updateProgressLabel(); tryRender(); });
 
-      // ===================== MANUAL REVIEW TAB =====================
-      const GAP_META = {
-        missing_target:  { label: "BOM component deleted",           color: "#fee2e2", border: "#fca5a5", text: "#991b1b", hint: "The mapping target no longer exists. Recreate the component and update the mapping." },
-        obsolete_target: { label: "BOM component replaced/obsolete", color: "#fef3c7", border: "#fcd34d", text: "#92400e", hint: "The mapped component is marked Replaced. Update the mapping to point to the current replacement." },
-        flagged_target:  { label: "BOM component flagged",           color: "#fef3c7", border: "#fcd34d", text: "#92400e", hint: "The mapped component is flagged. Review and update the mapping if needed." },
-        no_mapping:      { label: "No mapping",                      color: "#f1f5f9", border: "#cbd5e1", text: "#334155", hint: "No active mapping exists. Create a new BOM component or map to an existing one." },
-      };
-      const grouped = { missing_target: [], obsolete_target: [], flagged_target: [], no_mapping: [] };
-      for (const g of gaps) (grouped[g.status] || grouped.no_mapping).push(g);
-
-      const TYPE_BADGE_COLOR = {
-        sub_assembly: "#dbeafe", finished_good: "#fce7f3", phantom_assembly: "#ede9fe",
-        part: "#f1f5f9", raw_material: "#fef9c3", spare_part: "#f0fdf4", product_family: "#fdf4ff",
-      };
-      const TYPE_LABEL = {
-        sub_assembly: "Sub-assy", finished_good: "FG", phantom_assembly: "Kit",
-        part: "Part", raw_material: "Raw", spare_part: "Spare", product_family: "Family",
-      };
-
-      function fillProposed(sourceType, sourceKey, suggestion) {
-        const cell = proposedCells[`${sourceType}:${sourceKey}`];
-        if (!cell) return;
-        const bg = TYPE_BADGE_COLOR[suggestion.type] || "#f1f5f9";
-        setChildren(cell,
-          el("span", { style: "font-size:0.8125rem;color:var(--text,#1a1f2e)" }, suggestion.name),
-          el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 5px;border-radius:4px;background:${bg};color:#334155;white-space:nowrap;margin-left:0.35rem;flex-shrink:0` },
-            TYPE_LABEL[suggestion.type] || suggestion.type),
-        );
-        cell.style.cssText += ";display:flex;align-items:center;gap:0.25rem;flex-wrap:wrap";
-      }
-
-      let batchInFlight = false;
-      const allManualRenders = [];
-
-      const manualSections = Object.entries(grouped)
-        .filter(([, rows]) => rows.length > 0)
-        .map(([status, rows]) => {
-          const meta = GAP_META[status];
-          const tbody = el("tbody", {});
-          const countBadge = el("span", {}, String(rows.length));
-
-          function renderManualRows() {
-            const visible = rows.filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`));
-            countBadge.textContent = String(visible.length);
-            updateSummary();
-            updateTabLabels();
-            tbody.replaceChildren(...visible.map((g) => {
-              const cacheKey = `${g.source_type}:${g.source_key}`;
-
-              let proposedCell = null;
-              if (status === "no_mapping") {
-                proposedCell = el("td", { style: "max-width:260px" });
-                proposedCells[cacheKey] = proposedCell;
-                if (suggestCache[cacheKey]) fillProposed(g.source_type, g.source_key, suggestCache[cacheKey]);
-                else proposedCell.appendChild(el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, "✨…"));
-              }
-
-              // Check if the AI batch found an EXISTING BOM component for this key.
-              const aiMatch = aiSuggestions
-                ? aiSuggestions.find((s) => `${s.source_type}:${s.source_key}` === cacheKey && s.target)
-                : null;
-
-              async function saveMapping(targetId) {
-                await API.post(tok, "savePlannerMapping", {
-                  source_type: g.source_type, source_key: g.source_key,
-                  target_component_id: targetId,
-                  quantity_rule: "cart_quantity", fixed_quantity: null,
-                });
-                resolvedKeys.add(cacheKey);
-                renderManualRows();
-              }
-
-              let actionsTd = null;
-              if (status === "no_mapping") {
-                if (aiSuggestions === null) {
-                  // AI batch still loading — neutral layout, create disabled.
-                  actionsTd = el("td", { style: "white-space:nowrap;display:flex;gap:0.3rem;padding:0.4rem 0.5rem;align-items:center" }, [
-                    actionBtn("Map to existing", "link", {
-                      primary: true,
-                      onClick: () => pickComponentModal(tok, {
-                        hint: gapHintCard(g),
-                        onPick: async (picked) => { try { await saveMapping(picked.id); } catch (ex) { alert(ex.message); } },
-                      }),
-                    }),
-                    actionBtn("Create new", "plus", { disabled: true, title: "Waiting for AI…" }),
-                  ]);
-                } else if (aiMatch) {
-                  // AI found an existing BOM component — one-click map, no picker needed.
-                  const mapBtn = el("button", { class: "btn btn-primary btn-sm", type: "button",
-                    title: `Map to: ${aiMatch.target.name}${aiMatch.target.part_number ? ` · ${aiMatch.target.part_number}` : ""}`,
-                    onclick: async () => {
-                      mapBtn.disabled = true; mapBtn.textContent = "Saving…";
-                      try { await saveMapping(aiMatch.target_component_id); }
-                      catch (ex) { mapBtn.disabled = false; mapBtn.textContent = `Map → ${aiMatch.target.name}`; alert(ex.message); }
-                    },
-                  }, `Map → ${aiMatch.target.name}`);
-                  actionsTd = el("td", { style: "padding:0.4rem 0.5rem;display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap" }, [
-                    mapBtn,
-                    actionBtn("Pick other", "link", {
-                      title: "Search for a different component",
-                      onClick: () => pickComponentModal(tok, {
-                        hint: gapHintCard(g, { suggestedName: aiMatch.target.name }),
-                        onPick: async (picked) => { try { await saveMapping(picked.id); } catch (ex) { alert(ex.message); } },
-                      }),
-                    }),
-                    actionBtn("Create new", "plus", {
-                      title: "Create a new BOM component (AI found an existing match — use this only if that match is wrong)",
-                      onClick: () => createPlannerComponentModal(tok, g, (gap) => {
-                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                        renderManualRows();
-                      }, suggestCache[cacheKey] || null),
-                    }),
-                  ]);
-                } else {
-                  // AI found no existing match — Create new is primary.
-                  actionsTd = el("td", { style: "white-space:nowrap;display:flex;gap:0.3rem;padding:0.4rem 0.5rem;align-items:center" }, [
-                    actionBtn("Create new", "plus", {
-                      primary: true,
-                      disabled: batchInFlight,
-                      title: batchInFlight ? "Waiting for AI suggestions…" : "No existing match found — create a new BOM component",
-                      onClick: () => createPlannerComponentModal(tok, g, (gap) => {
-                        resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                        renderManualRows();
-                      }, suggestCache[cacheKey] || null),
-                    }),
-                    actionBtn("Map to existing", "link", {
-                      title: "Manually search for an existing component",
-                      onClick: () => pickComponentModal(tok, {
-                        hint: gapHintCard(g, { suggestedName: suggestCache[cacheKey]?.name }),
-                        onPick: async (picked) => { try { await saveMapping(picked.id); } catch (ex) { alert(ex.message); } },
-                      }),
-                    }),
-                  ]);
-                }
-              }
-
-              return el("tr", {}, [
-                el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
-                el("td", {}, [
-                  g.label && g.label !== g.source_key ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e)" }, g.label) : null,
-                  el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block" }, g.source_key),
-                ].filter(Boolean)),
-                ...(proposedCell ? [proposedCell] : []),
-                ...(status === "missing_target" ? [el("td", { style: "font-family:monospace;font-size:0.75rem;color:#9ca3af" }, g.target_component_id)] : []),
-                ...(status === "obsolete_target" || status === "flagged_target" ? [
-                  el("td", {}, g.target ? `${g.target.name}${g.target.part_number ? ` · ${g.target.part_number}` : ""}` : "—"),
-                  el("td", {}, el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fef3c7;color:#92400e" }, g.target?.lifecycle_status || "—")),
-                ] : []),
-                ...(actionsTd ? [actionsTd] : []),
-              ]);
-            }));
-          }
-          allManualRenders.push(renderManualRows);
-          renderManualRows();
-
-          return el("section", { style: "margin-bottom:1rem" }, [
-            el("div", { style: `background:${meta.color};border:1px solid ${meta.border};border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.4rem` }, [
-              el("strong", { style: `color:${meta.text}` }, [`${meta.label} (`, countBadge, ")"]),
-              el("p", { style: `font-size:0.8125rem;color:${meta.text};margin:0.2rem 0 0` }, meta.hint),
-            ]),
-            el("div", { class: "table-wrap" },
-              el("table", { class: "data-table", style: "font-size:0.8125rem" }, [
-                el("thead", {}, el("tr", {}, [
-                  el("th", {}, "Type"), el("th", {}, "Planner key"),
-                  ...(status === "no_mapping" ? [el("th", {}, "Proposed BOM component"), el("th", {})] : []),
-                  ...(status === "missing_target" ? [el("th", {}, "Was mapped to (ID)")] : []),
-                  ...(status === "obsolete_target" || status === "flagged_target" ? [el("th", {}, "Current target"), el("th", {}, "Status")] : []),
-                ])),
-                tbody,
-              ])),
-          ]);
-        });
-
-      manualPanel.replaceChildren(...manualSections);
-
-      // AI name suggestions for manual tab (batchSuggestComponents).
-      if (noMappingGaps.length) {
-        const byType = {};
-        for (const g of noMappingGaps) (byType[g.source_type] ||= []).push(g.source_key);
-        const typeKeys = Object.keys(byType);
-        let done = 0;
-        batchInFlight = true;
-        allManualRenders.forEach((fn) => fn());
-
-        if (!document.getElementById("rr-ind-style")) {
-          const ks = document.createElement("style");
-          ks.id = "rr-ind-style";
-          ks.textContent = "@keyframes rr-ind{0%{transform:translateX(-100%)}100%{transform:translateX(430%)}}";
-          document.head.appendChild(ks);
-        }
-        const progressFill  = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:25%;border-radius:2px;animation:rr-ind 1.2s ease-in-out infinite;will-change:transform" });
-        const progressLabel = el("span", {}, "✨ AI is suggesting component names…");
-        const progressBar   = el("div", { style: "margin-bottom:0.6rem;display:flex;align-items:center;gap:0.6rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [
-          el("div", { style: "flex:1;height:4px;border-radius:2px;background:var(--border,#e2e8f0);overflow:hidden" }, progressFill),
-          progressLabel,
-        ]);
-        manualPanel.prepend(progressBar);
-        let indeterminate = true;
-
-        function updateProgress() {
-          if (indeterminate) { indeterminate = false; progressFill.style.animation = "none"; progressFill.style.transition = "width 0.4s ease"; }
-          const pct = typeKeys.length > 0 ? Math.round((done / typeKeys.length) * 100) : 0;
-          progressFill.style.width = `${pct}%`;
-          if (done >= typeKeys.length) {
-            batchInFlight = false;
-            allManualRenders.forEach((fn) => fn());
-            progressLabel.textContent = "✓ Suggestions loaded";
-            setTimeout(() => { progressBar.style.transition = "opacity 0.5s"; progressBar.style.opacity = "0"; setTimeout(() => progressBar.remove(), 500); }, 1200);
-          } else {
-            progressLabel.textContent = `✨ Suggesting names… (${done}/${typeKeys.length})`;
-          }
-        }
-
+      const byType = {};
+      for (const g of noMappingGaps) (byType[g.source_type] ||= []).push(g.source_key);
+      totalBatches = Object.keys(byType).length;
+      if (totalBatches === 0) {
+        namesLoaded = true;
+        updateProgressLabel();
+        tryRender();
+      } else {
         for (const [sourceType, sourceKeys] of Object.entries(byType)) {
           API.post(tok, "batchSuggestComponents", { source_type: sourceType, source_keys: sourceKeys })
             .then((r) => {
-              for (const s of (r.suggestions || [])) {
-                const cacheKey = `${sourceType}:${s.source_key}`;
-                suggestCache[cacheKey] = { name: s.name, type: s.type };
-                fillProposed(sourceType, s.source_key, s);
-              }
-              done++;
-              updateProgress();
+              for (const s of (r.suggestions || [])) suggestCache[`${sourceType}:${s.source_key}`] = { name: s.name, type: s.type };
+              doneBatches++;
+              if (doneBatches >= totalBatches) namesLoaded = true;
+              updateProgressLabel();
+              tryRender();
             })
-            .catch(() => { done++; updateProgress(); });
+            .catch(() => {
+              doneBatches++;
+              if (doneBatches >= totalBatches) namesLoaded = true;
+              updateProgressLabel();
+              tryRender();
+            });
         }
       }
     }

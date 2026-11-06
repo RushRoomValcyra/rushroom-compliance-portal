@@ -205,5 +205,6 @@ GENERAL:
     });
 
   const usage = { input_tokens: apiJson?.usage?.input_tokens ?? 0, output_tokens: apiJson?.usage?.output_tokens ?? 0 };
-  return json({ suggestions: enriched, usage });
+  const compsCatalog = components.map((c: any) => ({ id: c.id, name: c.name, lifecycle_status: c.lifecycle_status }));
+  return json({ suggestions: enriched, usage, components: compsCatalog });
 }

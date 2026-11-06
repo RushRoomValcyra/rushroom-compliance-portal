@@ -9684,6 +9684,7 @@
     const catalogStatus = el("p", { class: "up-status", role: "status", "aria-live": "polite", style: "margin:0.5rem 0" }, "Loading saved planner keys…");
     const catalogRows = el("div", { class: "muted" }, "");
     const catalogSummary = el("div", { style: "display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;margin:0.5rem 0" });
+    const gapBanner = el("div", {});
 
     function renderCatalog() {
       const idx = activeMappingIndex();
@@ -9700,6 +9701,28 @@
             onClick: () => { catalogFilter = id; renderCatalog(); },
           })),
       ] : []));
+
+      // Gap status banner — shown inside the card so the action is impossible to miss.
+      if (catalogLoaded && counts.unmapped > 0) {
+        const fixBtn = el("button", {
+          class: "btn btn-sm btn-primary", type: "button",
+          style: "white-space:nowrap;flex-shrink:0",
+          onclick: () => bomGapCheckModal(token),
+        }, `Run BOM Mapping Check (${counts.unmapped})`);
+        gapBanner.replaceChildren(el("div", {
+          style: "display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;padding:0.6rem 0.75rem;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;margin-top:0.4rem",
+        }, [
+          el("span", { style: "font-size:0.875rem;color:#92400e" },
+            `⚠ ${counts.unmapped} key${counts.unmapped === 1 ? "" : "s"} have no BOM mapping — components need to be created or linked.`),
+          fixBtn,
+        ]));
+      } else if (catalogLoaded && catalog.length > 0 && counts.unmapped === 0) {
+        gapBanner.replaceChildren(el("div", {
+          style: "display:flex;align-items:center;gap:0.4rem;padding:0.4rem 0.75rem;background:#dcfce7;border:1px solid #bbf7d0;border-radius:6px;margin-top:0.4rem;font-size:0.875rem;color:#15803d",
+        }, "✓ All keys are mapped"));
+      } else {
+        gapBanner.replaceChildren();
+      }
 
       if (!catalogLoaded) return;
       if (!catalog.length) { catalogRows.replaceChildren(el("div", { class: "empty" }, "No planner keys have been imported yet.")); return; }
@@ -10441,11 +10464,12 @@
       el("section", { class: "card", style: "padding:1rem;margin-bottom:0.75rem" }, [
         el("h3", { style: "margin-top:0" }, "Saved planner keys"),
         el("p", { class: "muted", style: "margin-top:0" }, "Source keys are grouped by type and saved per PIM tenant."),
-        catalogStatus, catalogSummary, catalogRows,
+        catalogStatus, catalogSummary, gapBanner, catalogRows,
       ]),
       el("div", { class: "row-tools", style: "margin-bottom:0.75rem" }, [
-        actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }), actionBtn("Refresh mappings", "refresh", { onClick: reload }), actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
-        actionBtn("BOM Mapping Check", "alert-triangle", { onClick: () => bomGapCheckModal(token) }),
+        actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }),
+        actionBtn("Refresh mappings", "refresh", { onClick: reload }),
+        actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
         actionBtn("Migrate legacy cutout doors", "refresh", { onClick: migrateLegacyCutoutDoorMappings }),
         el("label", { style: "margin-left:0.5rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),
       ]), list,

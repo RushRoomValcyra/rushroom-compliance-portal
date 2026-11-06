@@ -10263,7 +10263,7 @@
                     } catch (ex) { alert(ex.message); }
                   },
                 }),
-              }, "Map to existing");
+              }, "Choose different");
 
               const actionCell = status === "no_mapping"
                 ? el("td", { style: "white-space:nowrap;display:flex;flex-direction:column;gap:0.3rem;align-items:flex-start" },
@@ -10278,9 +10278,9 @@
                                 resolvedKeys.add(gapKey);
                                 onMappingAdded && onMappingAdded();
                                 renderRows();
-                              } catch (ex) { btn.disabled = false; btn.textContent = "Map →"; alert(ex.message); }
+                              } catch (ex) { btn.disabled = false; btn.textContent = "Map to match"; alert(ex.message); }
                             },
-                          }, "Map →"),
+                          }, "Map to match"),
                           mapExistingBtn,
                         ]
                       : [

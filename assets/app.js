@@ -9818,8 +9818,17 @@
       const cat  = categorySelect(null);
       const desc = el("textarea", { rows: "2", placeholder: "Purpose — what does this component do?", style: F + ";resize:vertical;min-height:60px" });
 
-      const catRow = el("div", {}, [frow("Category", cat, "Groups this component in the BOM category filter")]);
-      const mobRow = el("div", {}, [frow("Sourcing", mob, "How does this component come to exist?")]);
+      // Auto-pre-select category from source_type (e.g. "door" → "Door Assembly" category).
+      const _autocat = partCategories.find((c) => c.name.toLowerCase().includes(gap.source_type.toLowerCase()));
+      if (_autocat) cat.value = _autocat.id;
+
+      // Reset red border when user picks a value.
+      mob.addEventListener("change", () => { mob.style.borderColor = ""; });
+      cat.addEventListener("change", () => { cat.style.borderColor = ""; });
+
+      const REQ = () => el("span", { style: "color:var(--danger,#e05454);margin-left:2px;font-weight:700;line-height:1" }, "*");
+      const catRow = el("div", {}, [frow(["Category", REQ()], cat, "Groups this component in the BOM category filter")]);
+      const mobRow = el("div", {}, [frow(["Sourcing", REQ()], mob, "How does this component come to exist?")]);
 
       // Template state: filled from AI suggestion or explicit "Copy structure from…".
       let template = null;    // { id, name, part_number, similarity, children: [...] }
@@ -9990,9 +9999,15 @@
       async function doCreate(withMapping) {
         if (!nm.value.trim()) { statusEl.textContent = "Name is required."; statusEl.style.color = "var(--danger,#e05454)"; nm.focus(); return; }
         const needsMob = !["finished_good", "phantom_assembly", "product_family"].includes(typ.value);
-        if (needsMob && !mob.value) { statusEl.textContent = "Choose Sourcing."; statusEl.style.color = "var(--danger,#e05454)"; mob.focus(); return; }
+        if (needsMob && !mob.value) {
+          statusEl.textContent = "Sourcing is required."; statusEl.style.color = "var(--danger,#e05454)";
+          mob.style.borderColor = "#e05454"; mob.focus(); return;
+        }
         const requireCat = !["sub_assembly", "phantom_assembly", "product_family"].includes(typ.value);
-        if (requireCat && !cat.value) { statusEl.textContent = "Pick a Category."; statusEl.style.color = "var(--danger,#e05454)"; cat.focus(); return; }
+        if (requireCat && !cat.value) {
+          statusEl.textContent = "Category is required."; statusEl.style.color = "var(--danger,#e05454)";
+          cat.style.borderColor = "#e05454"; cat.focus(); return;
+        }
 
         // Guardrail: assembly with no structure chosen — warn before creating bare.
         if (!template && ASSEMBLY_CLONABLE.has(typ.value) && !structureConfirmed) {

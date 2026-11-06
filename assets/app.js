@@ -10125,6 +10125,19 @@
       }
       updateSummary();
 
+      // Styled card shown as the hint at the top of the component picker.
+      function gapHintCard(g, { suggestedName } = {}) {
+        const showLabel = g.label && g.label !== g.source_key;
+        return el("div", {
+          style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
+        }, [
+          el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.2rem" }, "Mapping"),
+          showLabel ? el("div", { style: "font-size:0.9375rem;font-weight:700;line-height:1.3" }, g.label) : null,
+          suggestedName ? el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-top:0.1rem" }, `AI suggested: ${suggestedName}`) : null,
+          el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, g.source_key),
+        ].filter(Boolean));
+      }
+
       // --- Tab bar ---
       const TS  = "padding:0.4rem 0.9rem;border-radius:6px;border:0.5px solid var(--border,#e2e8f0);background:transparent;font-size:0.875rem;cursor:pointer;white-space:nowrap";
       const TSA = "padding:0.4rem 0.9rem;border-radius:6px;border:0.5px solid var(--accent,#2fa564);background:var(--accent-bg,#f0fdf4);color:var(--accent,#2fa564);font-weight:600;font-size:0.875rem;cursor:pointer;white-space:nowrap";
@@ -10222,7 +10235,7 @@
               }}, "Apply");
             const swapBtn = el("button", { class: "btn btn-sm", type: "button", title: "Pick a different component",
               onclick: () => pickComponentModal(tok, {
-                hint: g.label ? `${g.label} · ${g.source_key}` : g.source_key,
+                hint: gapHintCard(g, { suggestedName: sug?.target?.name }),
                 onPick: async (picked) => {
                   try {
                     await API.post(tok, "savePlannerMapping", {
@@ -10248,9 +10261,11 @@
           return el("div", { style: "display:flex;align-items:flex-start;gap:0.75rem;padding:0.6rem 0;border-bottom:0.5px solid var(--border,#e2e8f0)" }, [
             el("div", { style: "flex-shrink:0;width:220px;min-width:0" }, [
               el("div", { style: "font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em" }, g.source_type),
-              el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e);margin-bottom:0.1rem" }, g.label || g.source_key),
+              g.label && g.label !== g.source_key
+                ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e);margin-bottom:0.1rem" }, g.label)
+                : null,
               el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block" }, g.source_key),
-            ]),
+            ].filter(Boolean)),
             matchEl, actionsEl,
           ]);
         });
@@ -10380,7 +10395,7 @@
                     }),
                     actionBtn("Map to existing", "link", {
                       onClick: () => pickComponentModal(tok, {
-                        hint: g.label ? `${g.label} · ${g.source_key}` : g.source_key,
+                        hint: gapHintCard(g, { suggestedName: suggestCache[cacheKey]?.name }),
                         onPick: async (picked) => {
                           try {
                             await API.post(tok, "savePlannerMapping", {
@@ -10400,7 +10415,7 @@
               return el("tr", {}, [
                 el("td", { style: "white-space:nowrap;font-weight:600" }, g.source_type),
                 el("td", {}, [
-                  g.label ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e)" }, g.label) : null,
+                  g.label && g.label !== g.source_key ? el("div", { style: "font-size:0.8125rem;font-weight:600;color:var(--text,#1a1f2e)" }, g.label) : null,
                   el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block" }, g.source_key),
                 ].filter(Boolean)),
                 ...(proposedCell ? [proposedCell] : []),

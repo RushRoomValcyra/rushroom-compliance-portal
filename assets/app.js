@@ -10192,10 +10192,26 @@
       }
       updateSummary();
 
-      function mapHint(g) {
-        return el("div", { style: "padding:0.4rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-bottom:0.5rem;font-size:0.8125rem" }, [
-          el("strong", {}, `${g.source_type}: `), el("code", { style: "font-size:0.75rem" }, g.source_key),
+      function mapHintWithAI(g) {
+        const aiRow = el("div", { style: "margin-top:0.35rem;font-size:0.8125rem;color:var(--muted,#8b93a1);font-style:italic" }, "✨ Loading AI interpretation…");
+        const hint = el("div", { style: "padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-bottom:0.5rem" }, [
+          el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.15rem" }, g.source_type),
+          el("code", { style: "font-size:0.75rem;word-break:break-all;display:block" }, g.source_key),
+          aiRow,
         ]);
+        API.post(tok, "suggestPlannerComponent", { source_type: g.source_type, source_key: g.source_key })
+          .then((r) => {
+            if (r.name) {
+              setChildren(aiRow,
+                el("span", { style: "font-weight:700;color:var(--text,#1a1f2e);font-style:normal" }, r.name),
+                r.reasoning ? el("span", { style: "display:block;font-size:0.75rem;color:var(--muted,#8b93a1);font-style:normal;margin-top:0.1rem" }, r.reasoning) : null,
+              );
+            } else {
+              aiRow.textContent = "";
+            }
+          })
+          .catch(() => { aiRow.textContent = ""; });
+        return hint;
       }
 
       const sections = Object.entries(grouped)
@@ -10221,7 +10237,7 @@
                     " ",
                     el("button", { class: "btn btn-sm", type: "button",
                       onclick: () => pickComponentModal(tok, {
-                        hint: mapHint(g),
+                        hint: mapHintWithAI(g),
                         onPick: async (picked) => {
                           try {
                             await API.post(tok, "savePlannerMapping", { source_type: g.source_type, source_key: g.source_key, target_component_id: picked.id, quantity_rule: "cart_quantity" });

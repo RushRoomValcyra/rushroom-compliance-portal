@@ -633,8 +633,8 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
    the row you are actually about to click. */
 .key-rows { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .key-row {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 0.5rem; padding: 0.35rem 0.6rem; flex-wrap: wrap;
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 0.5rem; padding: 0.4rem 0.75rem;
 }
 .key-row + .key-row { border-top: 1px solid var(--border); }
 .key-row:nth-child(even) { background: var(--panel-2); }

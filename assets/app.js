@@ -9756,19 +9756,18 @@
               ? `${m.target.name}${m.target.part_number ? ` · ${m.target.part_number}` : ""}`
               : m ? "Target no longer exists" : "";
             return el("div", { class: "key-row" }, [
-              el("span", { style: "display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;min-width:0" }, [
-                el("span", { class: `badge-status ${m ? "s-done" : "s-todo"}` }, m ? "Mapped" : "Not mapped"),
-                el("code", {}, item.source_key),
-                item.label && item.label !== item.source_key ? el("span", {}, `— ${item.label}`) : null,
-                // The target is the point: "mapped" without saying to what
-                // still sends you to the table below to find out.
-                m ? el("span", { style: "color:var(--muted,#8b93a1)" }, `→ ${targetName} · r${m.mapping_revision}`) : null,
-              ].filter(Boolean)),
-              // Routed to the existing mapping when there is one. "Map this
-              // item" on a mapped key used to open a blank form and fail with
-              // a 409 from the one-active-source index only after it was
-              // filled in.
-              el("span", { style: "display:flex;gap:0.35rem;flex-wrap:wrap" }, [
+              el("div", { style: "min-width:0" }, [
+                el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [
+                  el("span", { class: `badge-status ${m ? "s-done" : "s-todo"}` }, m ? "Mapped" : "Not mapped"),
+                  el("code", { style: "font-size:0.8125rem" }, item.source_key),
+                  item.label && item.label !== item.source_key ? el("span", { style: "color:var(--muted,#8b93a1);font-size:0.8125rem" }, `— ${item.label}`) : null,
+                ].filter(Boolean)),
+                m
+                  ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" },
+                      `→ ${targetName} · r${m.mapping_revision}`)
+                  : el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:2px;font-style:italic" }, "No mapping yet"),
+              ]),
+              el("div", { style: "display:flex;gap:0.35rem;flex-shrink:0" }, [
                 m ? actionBtn("Edit mapping", "edit", { onClick: () => editModal(m) })
                   : actionBtn("Map this item", "link", { onClick: () => editModal(null, item) }),
                 actionBtn("Remove key", "trash", { onClick: () => removeCatalogKey(item) }),

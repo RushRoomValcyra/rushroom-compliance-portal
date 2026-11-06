@@ -10192,6 +10192,28 @@
       }
       updateSummary();
 
+      // BOM match state: null = still loading, {} = loaded (key → suggestion|null)
+      let aiMatchResults = null;
+      let rerenderNoMapping = null;
+
+      function createMatchCell(g) {
+        const key = `${g.source_type}:${g.source_key}`;
+        if (aiMatchResults === null) {
+          return el("td", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;min-width:160px" }, "✨ Checking…");
+        }
+        const s = aiMatchResults[key];
+        if (s && s.target) {
+          const confStyle = s.confidence === "high" ? "background:#dcfce7;color:#15803d" : "background:#fef9c3;color:#92400e";
+          return el("td", { style: "min-width:160px" }, [
+            el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:1px" }, "Existing match"),
+            el("div", { style: "font-size:0.8125rem;font-weight:500;line-height:1.3" }, s.target.name),
+            s.target.part_number ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, s.target.part_number) : null,
+            el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 4px;border-radius:3px;display:inline-block;margin-top:2px;${confStyle}` }, s.confidence),
+          ].filter(Boolean));
+        }
+        return el("td", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;min-width:160px" }, "No existing component found");
+      }
+
       function mapHintWithAI(g) {
         const aiRow = el("div", { style: "margin-top:0.35rem;font-size:0.8125rem;color:var(--muted,#8b93a1);font-style:italic" }, "✨ Loading AI interpretation…");
         const hint = el("div", { style: "padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-bottom:0.5rem" }, [
@@ -10220,6 +10242,8 @@
           const meta = GAP_META[status];
           const tbody = el("tbody", {});
           const countBadge = el("span", {}, String(rows.length));
+
+          if (status === "no_mapping") rerenderNoMapping = renderRows;
 
           function renderRows() {
             const visible = rows.filter((g) => !resolvedKeys.has(`${g.source_type}:${g.source_key}`));
@@ -10257,6 +10281,7 @@
                   el("td", {}, g.target ? `${g.target.name}${g.target.part_number ? ` · ${g.target.part_number}` : ""}` : "—"),
                   el("td", {}, el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fef3c7;color:#92400e" }, g.target?.lifecycle_status || "—")),
                 ] : []),
+                ...(status === "no_mapping" ? [createMatchCell(g)] : []),
                 ...(actionCell ? [actionCell] : []),
               ]);
             }));
@@ -10274,7 +10299,7 @@
                   el("th", {}, "Type"), el("th", {}, "Planner key"),
                   ...(status === "missing_target" ? [el("th", {}, "Was mapped to (ID)")] : []),
                   ...(status === "obsolete_target" || status === "flagged_target" ? [el("th", {}, "Current target"), el("th", {}, "Status")] : []),
-                  ...(status === "no_mapping" ? [el("th", {})] : []),
+                  ...(status === "no_mapping" ? [el("th", {}, "BOM match"), el("th", {})] : []),
                 ])),
                 tbody,
               ])),
@@ -10286,6 +10311,27 @@
         ...sections,
         ...(gaps.length === 0 ? [el("p", { class: "muted", style: "font-size:0.8125rem;margin:0" }, `${ok_count} of ${total} keys have active, valid mappings.`)] : []),
       );
+
+      // Async: check whether existing BOM components can be mapped to no_mapping gaps.
+      if (grouped.no_mapping && grouped.no_mapping.length > 0) {
+        API.post(tok, "suggestPlannerMappings", {})
+          .then((r) => {
+            aiMatchResults = {};
+            for (const s of r.suggestions || []) {
+              if (s.target && s.confidence !== "low") aiMatchResults[`${s.source_type}:${s.source_key}`] = s;
+            }
+            for (const g of grouped.no_mapping) {
+              const k = `${g.source_type}:${g.source_key}`;
+              if (!(k in aiMatchResults)) aiMatchResults[k] = null;
+            }
+            rerenderNoMapping && rerenderNoMapping();
+          })
+          .catch(() => {
+            aiMatchResults = {};
+            for (const g of grouped.no_mapping) aiMatchResults[`${g.source_type}:${g.source_key}`] = null;
+            rerenderNoMapping && rerenderNoMapping();
+          });
+      }
     }
 
 

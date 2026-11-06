@@ -10159,7 +10159,20 @@
       const batchStatusEl = el("p", { role: "status", "aria-live": "polite", style: "margin:0.5rem 0 0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "");
       let aiSuggestions = null;
 
-      batchPanel.replaceChildren(el("div", { class: "loading" }, "AI is finding existing matches…"));
+      // Progress bar for the AI batch tab — indeterminate until suggestPlannerMappings resolves.
+      if (!document.getElementById("rr-ind-style")) {
+        const ks = document.createElement("style");
+        ks.id = "rr-ind-style";
+        ks.textContent = "@keyframes rr-ind{0%{transform:translateX(-100%)}100%{transform:translateX(430%)}}";
+        document.head.appendChild(ks);
+      }
+      const batchProgressFill  = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:25%;border-radius:2px;animation:rr-ind 1.2s ease-in-out infinite;will-change:transform" });
+      const batchProgressLabel = el("span", {}, "✨ AI is finding existing BOM matches…");
+      const batchProgressBar   = el("div", { style: "margin-bottom:0.6rem;display:flex;align-items:center;gap:0.6rem;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [
+        el("div", { style: "flex:1;height:4px;border-radius:2px;background:var(--border,#e2e8f0);overflow:hidden" }, batchProgressFill),
+        batchProgressLabel,
+      ]);
+      batchPanel.replaceChildren(batchProgressBar);
 
       function renderBatchPanel() {
         if (aiSuggestions === null) return;
@@ -10282,9 +10295,19 @@
         });
       }
 
-      // Fire immediately — batch panel shows "loading" until this resolves.
+      // Fire immediately — progress bar shows until this resolves.
       API.post(tok, "suggestPlannerMappings", {})
-        .then((r) => { aiSuggestions = r.suggestions || []; renderBatchPanel(); })
+        .then((r) => {
+          aiSuggestions = r.suggestions || [];
+          batchProgressFill.style.animation = "none";
+          batchProgressFill.style.width = "100%";
+          batchProgressLabel.textContent = "✓ Matches loaded";
+          setTimeout(() => {
+            batchProgressBar.style.transition = "opacity 0.5s";
+            batchProgressBar.style.opacity = "0";
+            setTimeout(() => { batchProgressBar.remove(); renderBatchPanel(); }, 500);
+          }, 600);
+        })
         .catch((ex) => { batchPanel.replaceChildren(el("p", { class: "error" }, ex.message)); });
 
       // ===================== MANUAL REVIEW TAB =====================

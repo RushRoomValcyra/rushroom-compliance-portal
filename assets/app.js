@@ -10270,9 +10270,18 @@
           ]);
         });
 
+        const colHeader = rows.length > 0
+          ? el("div", { style: "display:flex;align-items:center;gap:0.75rem;padding:0 0 0.35rem;border-bottom:1.5px solid var(--border,#e2e8f0);margin-bottom:0.1rem" }, [
+              el("div", { style: "flex-shrink:0;width:220px;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "Planner key"),
+              el("div", { style: "flex:1;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "AI match in BOM"),
+              el("div", { style: "flex-shrink:0;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#8b93a1)" }, "Action"),
+            ])
+          : null;
+
         batchPanel.replaceChildren(
           ...[
             bulkBar,
+            colHeader,
             ...rows,
             visible.length === 0 ? el("p", { class: "muted", style: "margin:0;font-size:0.875rem" }, "No unmapped gaps remaining.") : null,
             batchStatusEl,

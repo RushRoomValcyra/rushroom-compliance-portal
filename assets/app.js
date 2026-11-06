@@ -9777,7 +9777,7 @@
               rerender();
             },
           }, [
-            el("span", { class: "key-group-chevron", style: collapsed ? "transform:rotate(-90deg)" : "" }, "▾"),
+            el("span", { class: "key-group-chevron" }, collapsed ? "+" : "−"),
             el("span", {}, SOURCE_TYPE_LABELS[type]),
             el("span", { style: "font-size:var(--fs-xs);font-weight:500;color:var(--muted,#8b93a1)" },
               `${mappedInType}/${inType.length} mapped`),

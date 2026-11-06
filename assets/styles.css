@@ -638,8 +638,8 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 }
 .key-group-heading:hover { color: var(--accent, #2fa564); }
 .key-group-chevron {
-  font-size: var(--fs-xs); display: inline-block; transition: transform 0.15s;
-  color: var(--muted, #8b93a1);
+  font-size: var(--fs-xl); line-height: 1; display: inline-block;
+  color: var(--muted, #8b93a1); font-weight: 400; width: 1em; text-align: center;
 }
 .key-group-heading span:nth-child(2) { font-weight: 600; font-size: var(--fs-md); }
 .key-rows { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }

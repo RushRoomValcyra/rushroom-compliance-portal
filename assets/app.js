@@ -9835,7 +9835,7 @@
             style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
           }, [
             el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.2rem" }, "Creating"),
-            proposedName ? el("div", { style: "font-size:0.9375rem;font-weight:700;line-height:1.3" }, proposedName) : null,
+            proposedName ? el("div", { style: "font-size:0.875rem;font-weight:700;line-height:1.3" }, proposedName) : null,
             el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, gap.source_key),
           ].filter(Boolean));
           pickComponentModal(tok, {
@@ -9924,7 +9924,7 @@
                   style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
                 }, [
                   el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.2rem" }, "Creating"),
-                  proposedName ? el("div", { style: "font-size:0.9375rem;font-weight:700;line-height:1.3" }, proposedName) : null,
+                  proposedName ? el("div", { style: "font-size:0.875rem;font-weight:700;line-height:1.3" }, proposedName) : null,
                   el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, gap.source_key),
                 ].filter(Boolean));
               })(),
@@ -10132,7 +10132,7 @@
           style: "margin-bottom:0.6rem;padding:0.5rem 0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:6px",
         }, [
           el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:0.2rem" }, "Mapping"),
-          showLabel ? el("div", { style: "font-size:0.9375rem;font-weight:700;line-height:1.3" }, g.label) : null,
+          showLabel ? el("div", { style: "font-size:0.875rem;font-weight:700;line-height:1.3" }, g.label) : null,
           suggestedName ? el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-top:0.1rem" }, `AI suggested: ${suggestedName}`) : null,
           el("code", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);word-break:break-all;display:block;margin-top:0.15rem" }, g.source_key),
         ].filter(Boolean));
@@ -10638,7 +10638,7 @@
           const col = SEV_COLOR[a.severity] || SEV_COLOR.low;
           return el("div", { style: "border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:0.65rem 0.8rem;margin-bottom:0.4rem" }, [
             el("div", { style: "display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;margin-bottom:0.25rem" }, [
-              el("span", { style: `background:${col.text};color:#fff;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.7rem;font-weight:700;white-space:nowrap` }, col.label.toUpperCase()),
+              el("span", { style: `background:${col.text};color:#fff;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.6875rem;font-weight:700;white-space:nowrap` }, col.label.toUpperCase()),
               a.component_name ? el("span", { style: "font-weight:600;font-size:0.875rem" }, a.component_name) : null,
               a.part_number ? el("span", { class: "muted", style: "font-size:0.75rem;font-family:monospace" }, a.part_number) : null,
             ].filter(Boolean)),
@@ -10655,9 +10655,9 @@
           role: "button", tabIndex: 0,
         }, [
           chevron,
-          el("h4", { style: "margin:0;font-size:0.9375rem;flex:1" }, `${label} (${items.length})`),
+          el("h4", { style: "margin:0;font-size:0.875rem;flex:1" }, `${label} (${items.length})`),
         ]);
-        const hintEl = el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8rem;padding-left:1.1rem" }, hint);
+        const hintEl = el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem;padding-left:1.1rem" }, hint);
         const toggle = () => {
           open = !open;
           body.style.display = open ? "" : "none";

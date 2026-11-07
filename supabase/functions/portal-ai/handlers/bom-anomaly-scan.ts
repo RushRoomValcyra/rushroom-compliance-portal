@@ -184,6 +184,28 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
     }
   }
 
+  // R6: Multiple distinct components sharing the same name (different IDs).
+  const byName: Record<string, any[]> = {};
+  for (const c of components) {
+    const key = (c.name || "").trim().toLowerCase();
+    if (!key) continue;
+    (byName[key] ||= []).push(c);
+  }
+  for (const group of Object.values(byName)) {
+    if (group.length < 2) continue;
+    const allActive = group.every(c => c.lifecycle_status === "active");
+    const anyActive = group.some(c => c.lifecycle_status === "active");
+    findings.push({
+      severity: allActive ? "high" : anyActive ? "medium" : "low",
+      category: "duplicate_name",
+      component_id: null,
+      component_name: group[0].name,
+      part_number: null,
+      description: `${group.length} components share the name "${group[0].name}": ${group.map(c => c.part_number || c.id).join(", ")}.`,
+      suggestion: "Rename or merge so each component has a unique name. If one is a superseded version, set it to Inactive/Discontinued.",
+    });
+  }
+
   // --- AI pass: variant consistency, naming drift, suspicious structures ---
   // Build a compact text representation of ALL components (all lifecycle states) and their children.
   const activeComps = components.filter(c => c.lifecycle_status === "active");

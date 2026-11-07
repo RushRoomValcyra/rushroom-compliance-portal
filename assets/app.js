@@ -10502,6 +10502,7 @@
       { key: "empty_assembly",  label: "Empty assemblies",                           hint: "These assembly types have no children in the BOM — either incomplete or unused." },
       { key: "orphan",          label: "Components never used in any assembly",      hint: "These components are not referenced as a child anywhere in the BOM." },
       { key: "duplicate_child", label: "Duplicate children",                        hint: "The same component appears more than once under a single parent assembly." },
+      { key: "duplicate_name",  label: "Duplicate component names",                 hint: "Multiple distinct components share the same name — only one should be active." },
       { key: "ai_finding",      label: "AI-detected patterns",                      hint: "Structural or naming anomalies found by Claude — variant inconsistencies, make/buy mismatches, etc." },
     ];
 

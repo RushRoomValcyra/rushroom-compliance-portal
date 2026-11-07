@@ -10449,6 +10449,7 @@
           el("h3", { style: "margin:0" }, "Saved planner keys"),
           el("div", { class: "row-tools", style: "margin:0" }, [
             actionBtn("Import/update planner keys", "plus", { primary: true, onClick: importCatalogModal }),
+            actionBtn("BOM Mapping Check", "search", { onClick: () => bomGapCheckModal(token, reload) }),
             actionBtn("Refresh mappings", "refresh", { onClick: reload }),
             actionBtn("Refresh keys", "refresh", { onClick: loadCatalog }),
             el("label", { style: "margin-left:0.25rem;display:flex;gap:0.35rem;align-items:center" }, [inactive, "Show inactive"]),

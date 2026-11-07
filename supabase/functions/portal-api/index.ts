@@ -3247,6 +3247,13 @@ Deno.serve(async (req) => {
       if (/planner_mappings_revision_unique/i.test(error.message)) return json({ error: "A mapping at this revision already exists for this source key. Re-run the BOM gap check to see the current state." }, 409);
       return json({ error: error.message }, 400);
     }
+    // Keep catalog in sync: a mapped key must always appear in the catalog so
+    // the OO resolver's "Saved in the Gateway's list" check stays accurate.
+    // ignoreDuplicates preserves any richer label the user set via the import modal.
+    await tdb("planner_catalog_entries").upsert(
+      { source_type: sourceType, source_key: sourceKey, label: sourceKey, updated_at: new Date().toISOString(), updated_by: session.uid ?? null },
+      { onConflict: "organization_id,source_type,source_key", ignoreDuplicates: true },
+    );
     return json({ ok: true, id: created?.id, mapping_revision: created?.mapping_revision });
   }
 

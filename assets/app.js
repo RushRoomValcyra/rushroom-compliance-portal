@@ -9866,7 +9866,7 @@
       ]));
     }
     // --- Create BOM component from a gap entry ---------------------------------
-    async function createPlannerComponentModal(tok, gap, onCreated) {
+    async function createPlannerComponentModal(tok, gap, onCreated, prefill = null) {
       const COMPONENT_TYPES = [
         ["part", "Part"], ["raw_material", "Raw Material"], ["sub_assembly", "Sub-Assembly"],
         ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"],
@@ -10092,7 +10092,20 @@
       }
 
       aiBtn.onclick = runAiSuggest;
-      runAiSuggest();
+      if (prefill) {
+        if (prefill.name)        nm.value   = prefill.name;
+        if (prefill.type)        typ.value  = prefill.type;
+        if (prefill.make_or_buy) mob.value  = prefill.make_or_buy;
+        if (prefill.description) desc.value = prefill.description;
+        refreshRows();
+        if (prefill.template?.children?.length) { template = prefill.template; for (const k of Object.keys(subs)) delete subs[k]; renderTemplate(); }
+        statusEl.textContent = "Pre-filled from AI — review and adjust.";
+        statusEl.style.color = "var(--muted,#8b93a1)";
+        aiBtn.textContent = "✨ Re-suggest with AI";
+        nm.focus();
+      } else {
+        runAiSuggest();
+      }
 
       let structureConfirmed = false;
 
@@ -10247,6 +10260,7 @@
 
       // BOM match state: null = still loading, {} = loaded (key → suggestion|null)
       let aiMatchResults = null;
+      let newComponentCache = {}; // key → suggestPlannerComponent result | null
       let rerenderNoMapping = null;
 
       function createMatchCell(g) {
@@ -10264,7 +10278,13 @@
             el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 4px;border-radius:3px;display:inline-block;margin-top:2px;${confStyle}` }, s.confidence),
           ].filter(Boolean));
         }
-        return el("td", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;min-width:160px" }, "No existing component found");
+        const c = newComponentCache[key];
+        if (c === undefined) return el("td", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;min-width:160px" }, "✨ Suggesting name…");
+        if (c?.name) return el("td", { style: "min-width:160px" }, [
+          el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:1px" }, "New component"),
+          el("div", { style: "font-size:0.8125rem;font-weight:500;line-height:1.3" }, c.name),
+        ]);
+        return el("td", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;min-width:160px" }, "No suggestion");
       }
 
       function mapHintWithAI(g) {
@@ -10344,7 +10364,7 @@
                               resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
                               onMappingAdded && onMappingAdded();
                               renderRows();
-                            }),
+                            }, newComponentCache[gapKey] || null),
                           }, "+ Create"),
                           mapExistingBtn,
                         ]
@@ -10430,6 +10450,15 @@
             }
             stopProgress(true);
             rerenderNoMapping && rerenderNoMapping();
+            // For gaps with no existing match, suggest a new component name in the background.
+            for (const g of grouped.no_mapping) {
+              const k = `${g.source_type}:${g.source_key}`;
+              if (!aiMatchResults[k]) {
+                API.post(tok, "suggestPlannerComponent", { source_type: g.source_type, source_key: g.source_key })
+                  .then((r) => { newComponentCache[k] = r.name ? r : null; rerenderNoMapping && rerenderNoMapping(); })
+                  .catch(() => { newComponentCache[k] = null; rerenderNoMapping && rerenderNoMapping(); });
+              }
+            }
           })
           .catch(() => {
             aiMatchResults = {};

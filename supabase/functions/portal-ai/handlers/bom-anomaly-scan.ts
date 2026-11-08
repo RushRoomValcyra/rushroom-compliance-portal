@@ -153,26 +153,6 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
     }
   }
 
-  // R4: Orphaned active sub-assemblies (never a child anywhere in the BOM).
-  // Parts, raw materials, spare parts are catalog items — they don't need a parent. Only
-  // sub_assembly and phantom_assembly types are structural and should always be used somewhere.
-  const orphanTypes = new Set(["sub_assembly", "phantom_assembly"]);
-  for (const c of components) {
-    if (!orphanTypes.has(c.type)) continue;
-    if (c.lifecycle_status !== "active") continue;
-    if (!(parentsOf[c.id] || []).length) {
-      findings.push({
-        severity: "medium",
-        category: "orphan",
-        component_id: c.id,
-        component_name: c.name,
-        part_number: c.part_number || null,
-        description: `Active ${c.type} "${c.name}" is not used as a child anywhere in the BOM.`,
-        suggestion: "Link it into the appropriate parent assembly, mark it Inactive if it is a placeholder, or delete it if it was created by mistake.",
-      });
-    }
-  }
-
   // R5: Duplicate children in an assembly (same child linked twice).
   for (const [parentId, children] of Object.entries(childrenOf)) {
     const seen = new Set<string>();

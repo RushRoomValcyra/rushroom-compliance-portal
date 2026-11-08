@@ -13,6 +13,8 @@ type Ctx = {
   apiKey: string;
   model: string;
   meterAi: (aj: any) => Promise<void>;
+  db: any;
+  organizationId: string;
 };
 
 const COMPONENT_TYPES = ["part", "raw_material", "sub_assembly", "phantom_assembly", "finished_good", "spare_part", "product_family"];
@@ -32,7 +34,7 @@ const SUGGESTION_SCHEMA = {
 };
 
 export async function suggestPlannerComponent(body: any, ctx: Ctx): Promise<Response> {
-  const { role, tdb, apiKey, model, meterAi } = ctx;
+  const { role, tdb, apiKey, model, meterAi, db, organizationId } = ctx;
 
   if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
   if (!apiKey) return json({ error: "AI is not configured — set ANTHROPIC_API_KEY in the function secrets." }, 400);
@@ -199,6 +201,29 @@ RULES:
     }
   }
 
+  // Deterministic name-similarity check: find existing BOM components that
+  // closely match the AI-suggested name so the user is never shown "create new"
+  // when a near-identical component already exists.
+  let nameMatches: any[] = [];
+  if (suggestedName && db && organizationId) {
+    try {
+      const { data: sim } = await db.rpc("find_similar_bom_components", {
+        p_org_id: organizationId,
+        p_name: suggestedName,
+        p_threshold: 0.4,
+        p_max_results: 6,
+      });
+      nameMatches = (sim || []).map((r: any) => ({
+        id:               r.id,
+        name:             r.name,
+        part_number:      r.part_number,
+        type:             r.type,
+        lifecycle_status: r.lifecycle_status,
+        score:            Math.round(r.score * 100) / 100,
+      }));
+    } catch { /* non-fatal — user still gets the AI suggestion */ }
+  }
+
   return json({
     name:        suggestedName,
     type:        validType,
@@ -206,6 +231,7 @@ RULES:
     description: String(parsed.description || "").slice(0, 500),
     reasoning:   String(parsed.reasoning   || "").slice(0, 300),
     template,
+    name_matches: nameMatches,
     usage: { input_tokens: apiJson?.usage?.input_tokens ?? 0, output_tokens: apiJson?.usage?.output_tokens ?? 0 },
   });
 }

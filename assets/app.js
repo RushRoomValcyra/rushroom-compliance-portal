@@ -10160,6 +10160,56 @@
           });
           componentId = r.id;
         } catch (ex) {
+          // 409 name-collision guard: show matches and let the user decide.
+          if (ex.status === 409 && ex.body?.code === "name_collision") {
+            const matches = ex.body.matches || [];
+            const matchLines = matches.map(m =>
+              `${m.score >= 0.99 ? "Exact" : Math.round(m.score * 100) + "% similar"}: ${m.name} (${m.part_number || "no PN"}, ${m.lifecycle_status})`
+            ).join("\n");
+            setChildren(statusEl,
+              el("div", { style: "color:var(--warn,#b45309);font-weight:600;margin-bottom:0.3rem" }, "⚠ Similar components already exist"),
+              el("pre", { style: "font-size:0.72rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:4px;padding:0.4rem 0.6rem;white-space:pre-wrap;margin:0 0 0.4rem" }, matchLines),
+              el("div", { style: "display:flex;gap:0.4rem;flex-wrap:wrap" }, [
+                el("button", { class: "btn btn-sm btn-primary", type: "button",
+                  onclick: () => {
+                    setChildren(statusEl);
+                    pickComponentModal(tok, {
+                      hint: el("div", { style: "font-size:0.8125rem;color:var(--muted)" }, "Choose the existing component to map to instead of creating a new one."),
+                      onPick: async (picked) => {
+                        if (!withMapping) { onCreated && onCreated(gap); closeModal(); return; }
+                        try {
+                          await API.post(tok, "savePlannerMapping", { source_type: gap.source_type, source_key: gap.source_key, target_component_id: picked.id, quantity_rule: "cart_quantity" });
+                          onCreated && onCreated(gap); closeModal();
+                        } catch (e2) { alert(e2.message); }
+                      },
+                    });
+                  },
+                }, "Pick existing"),
+                el("button", { class: "btn btn-sm", type: "button",
+                  onclick: async () => {
+                    createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = true;
+                    statusEl.textContent = "Creating component…";
+                    statusEl.style.color = "var(--muted,#8b93a1)";
+                    try {
+                      const r2 = await API.post(tok, "addComponent", {
+                        name: nm.value.trim(), type: typ.value,
+                        make_or_buy: mob.value || null, category_id: cat.value || null,
+                        description: desc.value.trim() || null, force_create: true,
+                      });
+                      componentId = r2.id;
+                    } catch (e2) {
+                      statusEl.textContent = `Create failed: ${e2.message}`;
+                      statusEl.style.color = "var(--danger,#e05454)";
+                      createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+                    }
+                  },
+                }, "Create anyway"),
+              ]),
+            );
+            statusEl.style.color = "";
+            createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
+            return;
+          }
           statusEl.textContent = `Create failed: ${ex.message}`;
           statusEl.style.color = "var(--danger,#e05454)";
           createMapBtn.disabled = createOnlyBtn.disabled = aiBtn.disabled = false;
@@ -10280,10 +10330,30 @@
         }
         const c = newComponentCache[key];
         if (c === undefined) return el("td", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;min-width:160px" }, "✨ Suggesting name…");
-        if (c?.name) return el("td", { style: "min-width:160px" }, [
-          el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:1px" }, "New component"),
-          el("div", { style: "font-size:0.8125rem;font-weight:500;line-height:1.3" }, c.name),
-        ]);
+        if (c?.name) {
+          // Show name_matches (trigram similarity hits) if any came back alongside the AI name.
+          const matches = c.name_matches || [];
+          const topMatch = matches[0];
+          if (topMatch && topMatch.score >= 0.85) {
+            // Near-identical component exists — surface it prominently.
+            const scoreLabel = topMatch.score >= 0.99 ? "exact (name match)" : `${Math.round(topMatch.score * 100)}% similar`;
+            const scoreStyle = topMatch.score >= 0.99 ? "background:#dcfce7;color:#15803d" : "background:#fef9c3;color:#92400e";
+            return el("td", { style: "min-width:200px" }, [
+              el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#b45309;margin-bottom:1px" }, "⚠ Existing match found"),
+              el("div", { style: "font-size:0.8125rem;font-weight:500;line-height:1.3" }, topMatch.name),
+              topMatch.part_number ? el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, topMatch.part_number) : null,
+              el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 4px;border-radius:3px;display:inline-block;margin-top:2px;${scoreStyle}` }, scoreLabel),
+              matches.length > 1
+                ? el("div", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);margin-top:2px" }, `+${matches.length - 1} more similar`)
+                : null,
+            ].filter(Boolean));
+          }
+          // No close existing match — safe to create new.
+          return el("td", { style: "min-width:160px" }, [
+            el("div", { style: "font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8b93a1);margin-bottom:1px" }, "New component"),
+            el("div", { style: "font-size:0.8125rem;font-weight:500;line-height:1.3" }, c.name),
+          ]);
+        }
         return el("td", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-style:italic;min-width:160px" }, "No suggestion");
       }
 
@@ -10357,17 +10427,44 @@
                           }, "Map to match"),
                           mapExistingBtn,
                         ]
-                      : [
-                          // No existing match — create new; Map to existing still available as fallback
-                          el("button", { class: "btn btn-sm btn-primary", type: "button",
-                            onclick: () => createPlannerComponentModal(tok, g, (gap) => {
-                              resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
-                              onMappingAdded && onMappingAdded();
-                              renderRows();
-                            }, newComponentCache[gapKey] || null),
-                          }, "+ Create"),
-                          mapExistingBtn,
-                        ]
+                      : (() => {
+                          // Check if the similarity lookup found a close existing match.
+                          const cached = newComponentCache[gapKey];
+                          const topSim = cached?.name_matches?.[0];
+                          const hasCloseMatch = topSim && topSim.score >= 0.85;
+                          const onCreated = (gap) => {
+                            resolvedKeys.add(`${gap.source_type}:${gap.source_key}`);
+                            onMappingAdded && onMappingAdded();
+                            renderRows();
+                          };
+                          if (hasCloseMatch) {
+                            // Surface the existing component as the primary action.
+                            return [
+                              el("button", { class: "btn btn-sm btn-primary", type: "button",
+                                onclick: async (ev) => {
+                                  const btn = ev.currentTarget; btn.disabled = true; btn.textContent = "Saving…";
+                                  try {
+                                    await API.post(tok, "savePlannerMapping", { source_type: g.source_type, source_key: g.source_key, target_component_id: topSim.id, quantity_rule: "cart_quantity" });
+                                    resolvedKeys.add(gapKey);
+                                    onMappingAdded && onMappingAdded();
+                                    renderRows();
+                                  } catch (ex) { btn.disabled = false; btn.textContent = "Map to match"; alert(ex.message); }
+                                },
+                              }, "Map to match"),
+                              mapExistingBtn,
+                              el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.7rem;opacity:0.7",
+                                onclick: () => createPlannerComponentModal(tok, g, onCreated, cached || null),
+                              }, "+ Create anyway"),
+                            ];
+                          }
+                          // No close existing match — standard create flow.
+                          return [
+                            el("button", { class: "btn btn-sm btn-primary", type: "button",
+                              onclick: () => createPlannerComponentModal(tok, g, onCreated, cached || null),
+                            }, "+ Create"),
+                            mapExistingBtn,
+                          ];
+                        })()
                   )
                 : null;
               return el("tr", {}, [

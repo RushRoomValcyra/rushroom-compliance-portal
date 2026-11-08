@@ -68,7 +68,7 @@
     });
     let data = {};
     try { data = await res.json(); } catch { /* ignore */ }
-    if (!res.ok) { const e = new Error(data.error || `Request failed (HTTP ${res.status})`); e.code = data.code; e.status = res.status; throw e; }
+    if (!res.ok) { const e = new Error(data.error || `Request failed (HTTP ${res.status})`); e.code = data.code; e.status = res.status; e.body = data; throw e; }
     return data;
   }
 

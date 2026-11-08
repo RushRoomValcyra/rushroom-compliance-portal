@@ -3531,6 +3531,28 @@ Deno.serve(async (req) => {
     const { name, type, oem_number, description, notes, category_id, make_or_buy } = body;
     let { part_number } = body;
     if (!name || !type) return json({ error: "name and type are required" }, 400);
+
+    // Name-collision guard: block accidental duplicates before they are created.
+    // If any existing component scores >= 0.85 trigram similarity and the caller
+    // has not explicitly confirmed, return 409 so the UI can surface the matches.
+    if (!body.force_create) {
+      try {
+        const { data: sim } = await db.rpc("find_similar_bom_components", {
+          p_org_id: organizationId, p_name: String(name).trim(), p_threshold: 0.85, p_max_results: 5,
+        });
+        if (sim && sim.length > 0) {
+          return json({
+            error: "Similar components already exist",
+            code: "name_collision",
+            matches: sim.map((r: any) => ({
+              id: r.id, name: r.name, part_number: r.part_number,
+              type: r.type, lifecycle_status: r.lifecycle_status,
+              score: Math.round(r.score * 100) / 100,
+            })),
+          }, 409);
+        }
+      } catch { /* non-fatal — if the check fails, let the create proceed */ }
+    }
     const validTypes = COMPONENT_TYPES;
     if (!validTypes.includes(type)) return json({ error: "Invalid type" }, 400);
     // PROP-067 (question 8): Sourcing is chosen, never defaulted. The silent

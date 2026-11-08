@@ -1,7 +1,10 @@
 // PROP-076 — AI BOM anomaly scan: finds structural problems and naming inconsistencies
 // across the entire BOM (all organizations). Runs two passes:
-//   1. Rule-based: definite findings (- copy active, empty assemblies, inactive children, orphans).
-//   2. AI pass: variant inconsistency, naming drift, suspicious structures.
+//   1. Rule-based: definite findings (copy active, empty assemblies, inactive children, orphans,
+//      duplicate children, duplicate names, make_or_buy violations).
+//   2. AI pass: variant family gaps, naming drift, suspicious structures.
+//      Sends structured JSON (pre-grouped into variant families) to SCAN_MODEL (opus).
+//      All AI-returned component_ids are validated against the loaded BOM before returning.
 // All suggestions are read-only — nothing is written here.
 import { json } from "../../_shared/http.ts";
 
@@ -48,6 +51,16 @@ const ANOMALY_SCHEMA = {
   },
   required: ["anomalies", "summary"],
 };
+
+// Strip size (S/M/L) and colour tokens to produce a "family key" for grouping variant components.
+function variantFamilyKey(name: string): string {
+  return name
+    .replace(/\b(S|M|L)\b/g, "?")
+    .replace(/\b(White|Black|Grey|Gray|Oak|Birch|Walnut)\b/gi, "?")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 
 export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
   const { role, tdb, apiKey, model, meterAi } = ctx;
@@ -206,52 +219,140 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
     });
   }
 
-  // --- AI pass: variant consistency, naming drift, suspicious structures ---
-  // Build a compact text representation of ALL components (all lifecycle states) and their children.
+  // R7: make_or_buy violations.
+  // sub_assembly / phantom_assembly must be "assembled" (never "purchased").
+  // part / raw_material / spare_part must NOT be "assembled".
+  const assembledExpected = new Set(["sub_assembly", "phantom_assembly"]);
+  const purchasedOrMfgExpected = new Set(["part", "raw_material", "spare_part"]);
+  for (const c of components) {
+    if (c.lifecycle_status !== "active") continue;
+    if (!c.make_or_buy) continue; // null = not yet set, skip
+    if (assembledExpected.has(c.type) && c.make_or_buy === "purchased") {
+      findings.push({
+        severity: "high",
+        category: "mob_violation",
+        component_id: c.id,
+        component_name: c.name,
+        part_number: c.part_number || null,
+        description: `"${c.name}" is a ${c.type} but has make_or_buy = "purchased". Structural assemblies must be set to "assembled".`,
+        suggestion: `Change make_or_buy to "assembled" on "${c.name}".`,
+      });
+    }
+    if (purchasedOrMfgExpected.has(c.type) && c.make_or_buy === "assembled") {
+      findings.push({
+        severity: "high",
+        category: "mob_violation",
+        component_id: c.id,
+        component_name: c.name,
+        part_number: c.part_number || null,
+        description: `"${c.name}" is a ${c.type} but has make_or_buy = "assembled". Purchased/manufactured parts cannot be assembled.`,
+        suggestion: `Change make_or_buy to "purchased" or "manufactured" on "${c.name}".`,
+      });
+    }
+  }
+
+  // --- AI pass: variant family gaps, naming drift, suspicious structures ---
+  // Pre-group active components into variant families using name-token stripping.
   const activeComps = components.filter(c => c.lifecycle_status === "active");
 
-  const lines: string[] = [];
-  for (const c of components) {
-    const statusTag = c.lifecycle_status !== "active" ? `, ${c.lifecycle_status}` : "";
-    const kids = (childrenOf[c.id] || [])
-      .map(id => byId[id])
-      .filter(Boolean)
-      .map(k => {
-        const ks = k.lifecycle_status !== "active" ? `, ${k.lifecycle_status}` : "";
-        return `    - ${k.name} [${k.type}${ks}]`;
-      })
-      .join("\n");
-    lines.push(`${c.name} [${c.type}${statusTag}] (PN: ${c.part_number || "—"}, make_or_buy: ${c.make_or_buy || "—"})` +
-      (kids ? `\n${kids}` : ""));
+  const familyMap: Record<string, any[]> = {};
+  for (const c of activeComps) {
+    const key = variantFamilyKey(c.name || "");
+    (familyMap[key] ||= []).push(c);
   }
-  const bomText = lines.join("\n\n");
 
-  // Skip AI if BOM is completely empty.
+  // Families: 2+ active members sharing the same stripped name pattern.
+  const families = Object.entries(familyMap)
+    .filter(([, members]) => members.length >= 2)
+    .map(([pattern, members]) => ({
+      pattern,
+      variants: members.map(c => ({
+        id: c.id,
+        name: c.name,
+        pn: c.part_number || null,
+        type: c.type,
+        mob: c.make_or_buy || null,
+        child_count: (childrenOf[c.id] || []).length,
+        children: (childrenOf[c.id] || []).slice(0, 15).map(cid => byId[cid]?.name).filter(Boolean),
+      })),
+    }));
+
+  // Singletons: active assemblies/parts not part of any family (potential variants missing siblings).
+  const singletons = Object.entries(familyMap)
+    .filter(([, members]) => members.length === 1)
+    .map(([, members]) => members[0])
+    .filter(c => assemblyTypes.has(c.type)) // only flag singleton assemblies
+    .map(c => ({
+      id: c.id,
+      name: c.name,
+      pn: c.part_number || null,
+      type: c.type,
+      mob: c.make_or_buy || null,
+      child_count: (childrenOf[c.id] || []).length,
+      children: (childrenOf[c.id] || []).slice(0, 10).map(cid => byId[cid]?.name).filter(Boolean),
+    }));
+
+  const structuredInput = { families, singletons };
+
   let aiAnomalies: Anomaly[] = [];
   let summary = `Rule-based scan found ${findings.length} issue(s).`;
   let aiUsage = { input_tokens: 0, output_tokens: 0 };
 
   if (components.length > 0) {
     const system = `You are a BOM quality analyst for a Swedish LED furniture manufacturer (Rushroom AB / VALCYRA).
-You will receive the full BOM including both active and inactive components (lifecycle status is shown in brackets).
-Your job: identify structural anomalies, naming inconsistencies, and missing patterns that suggest errors.
+You will receive BOM data grouped into VARIANT FAMILIES (components sharing the same name pattern except for size or colour tokens) and SINGLETON ASSEMBLIES (assemblies that appear to have no siblings in their product family).
 
-WHAT TO LOOK FOR:
-1. Variant families (e.g. "Drawer Set - White" vs "Drawer Set - Grey") where one variant is missing a child the others have.
-2. Sub-assemblies with suspiciously few children (e.g. only 1 child, which looks like a mistake).
-3. Naming inconsistencies: a component that follows a different naming pattern from its siblings/cousins.
-4. make_or_buy mismatch: sub_assembly not set to "assembled", purchased parts set to "manufactured", etc.
-5. Active assemblies that share children with inactive assemblies — may indicate a copy was made active while the original was left inactive.
-6. Any other pattern that suggests a configuration error.
+Your job: identify gaps and inconsistencies that the rule-based scan cannot catch.
 
-Do NOT flag:
-- Orphans, copy-components, inactive children, or empty assemblies (already checked by rule-based scan).
-- Things that are obviously intentional (e.g. a product_family with no children is a container).
+══════════════════════════════════════════════
+RUSHROOM PRODUCT KNOWLEDGE
+══════════════════════════════════════════════
 
-For each finding: use component_id and part_number from the data provided. If a finding applies to a family (not one component), set component_id and part_number to null and name the family in description.
-Return at most 15 AI findings. Be specific and actionable.`;
+DOOR dimensions → size label (ground truth from live data):
+  Left/Right doors (388 / 397 / 588 mm):  388 mm = S  |  397 mm = L  |  588 mm = M
+  Middle doors     (380 / 389 / 580 mm):  380 mm = S  |  389 mm = L  |  580 mm = M
+  NOTE: 580 mm and 588 mm both map to M (one for Middle, one for Left/Right door families).
 
-    const userMsg = `BOM (${components.length} components, ${activeComps.length} active):\n\n${bomText}`;
+Handle/cutout colour naming:
+  "Grey Cut out Handle"   = silver/grey cutout recess (no physical handle)
+  "White Cut out Handle"  = white cutout recess
+  "Black Bar Handle"  |  "Gold Bar Handle"
+  "Black Knob Handle" |  "Gold Knob Handle"
+
+Component type rules:
+  sub_assembly / phantom_assembly → make_or_buy MUST be "assembled"
+  part / raw_material / spare_part → make_or_buy MUST be "purchased" or "manufactured"
+  finished_good                    → make_or_buy is typically "purchased"
+
+Product line structure:
+  A complete door variant family has members for EACH active size (S, M, L) and EACH active colour.
+  An assembly's child list typically mirrors its sibling variants' child lists — count and type.
+  Any variant with a child_count significantly different from its siblings is suspicious.
+
+══════════════════════════════════════════════
+WHAT TO FIND
+══════════════════════════════════════════════
+
+1. VARIANT FAMILY GAPS — a family is missing expected size or colour variants (e.g. S and M exist but L is absent).
+2. CHILD COUNT MISMATCH — siblings in a family have different child counts without an obvious reason.
+3. CHILD TYPE MISMATCH — one variant has a child of a different type or name pattern than its siblings.
+4. SINGLETON ASSEMBLIES — an active assembly appears to be a variant with no siblings; flag only if the name strongly implies it should have siblings (e.g. contains a colour or size token).
+5. NAMING DRIFT — a component name does not follow the established pattern for its family (e.g. capitalisation, extra word, missing token).
+6. SUSPICIOUS STRUCTURE — any other anomaly the rules above could not catch.
+
+DO NOT flag:
+- Orphans, copy-components, inactive children, empty assemblies, duplicate names, duplicate children, or make_or_buy violations (all handled by the rule-based pass).
+- Product-family or finished_good components with no siblings (by design).
+- Singleton assemblies where the name contains no size or colour token.
+
+For each finding: use the exact id from the data provided as component_id.
+If a finding applies to a whole family (not one member), set component_id to null and describe the family in component_name.
+Return at most 20 findings, ranked by severity. Be specific — name the missing variant or the differing child.`;
+
+    const userMsg = `BOM SUMMARY: ${components.length} total components, ${activeComps.length} active.
+Variant families: ${families.length}. Singleton active assemblies: ${singletons.length}.
+
+${JSON.stringify(structuredInput, null, 0)}`;
 
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -259,7 +360,7 @@ Return at most 15 AI findings. Be specific and actionable.`;
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
         body: JSON.stringify({
           model,
-          max_tokens: 2000,
+          max_tokens: 4000,
           output_config: { format: { type: "json_schema", schema: ANOMALY_SCHEMA } },
           system,
           messages: [{ role: "user", content: [{ type: "text", text: userMsg }] }],
@@ -271,15 +372,19 @@ Return at most 15 AI findings. Be specific and actionable.`;
         aiUsage = { input_tokens: apiJson?.usage?.input_tokens ?? 0, output_tokens: apiJson?.usage?.output_tokens ?? 0 };
         const txt = (apiJson.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
         const parsed = JSON.parse(txt);
-        aiAnomalies = (parsed.anomalies || []).slice(0, 15).map((a: any) => ({
-          severity: ["high", "medium", "low"].includes(a.severity) ? a.severity : "low",
-          category: String(a.category || "ai_finding"),
-          component_id: a.component_id || null,
-          component_name: a.component_name || null,
-          part_number: a.part_number || null,
-          description: String(a.description || "").slice(0, 600),
-          suggestion: String(a.suggestion || "").slice(0, 300),
-        }));
+        aiAnomalies = (parsed.anomalies || [])
+          .slice(0, 20)
+          .map((a: any) => ({
+            severity: (["high", "medium", "low"] as const).includes(a.severity) ? a.severity : "low" as const,
+            category: String(a.category || "ai_finding"),
+            component_id: a.component_id || null,
+            component_name: a.component_name || null,
+            part_number: a.part_number || null,
+            description: String(a.description || "").slice(0, 600),
+            suggestion: String(a.suggestion || "").slice(0, 300),
+          }))
+          // Discard any finding where the AI returned a component_id that does not exist in the BOM.
+          .filter((a: Anomaly) => !a.component_id || !!byId[a.component_id]);
         summary = parsed.summary || `Rule-based: ${findings.length} issue(s). AI: ${aiAnomalies.length} pattern(s).`;
       }
     } catch {

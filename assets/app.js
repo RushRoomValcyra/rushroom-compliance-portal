@@ -10600,7 +10600,8 @@
       { key: "orphan",          label: "Components never used in any assembly",      hint: "These components are not referenced as a child anywhere in the BOM." },
       { key: "duplicate_child", label: "Duplicate children",                        hint: "The same component appears more than once under a single parent assembly." },
       { key: "duplicate_name",  label: "Duplicate component names",                 hint: "Multiple distinct components share the same name — only one should be active." },
-      { key: "ai_finding",      label: "AI-detected patterns",                      hint: "Structural or naming anomalies found by Claude — variant inconsistencies, make/buy mismatches, etc." },
+      { key: "mob_violation",   label: "Make-or-buy violations",                    hint: "A component's make_or_buy field contradicts its type — e.g. a sub_assembly set to \"purchased\" or a part set to \"assembled\"." },
+      { key: "ai_finding",      label: "AI-detected patterns",                      hint: "Structural or naming anomalies found by Claude — variant family gaps, child mismatches, naming drift." },
     ];
 
     const wrap = el("div", { style: "max-width:900px" });

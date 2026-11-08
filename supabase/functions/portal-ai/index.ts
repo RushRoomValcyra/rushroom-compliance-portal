@@ -1342,7 +1342,7 @@ You must never invent an internal drawing number or revision letter for the reci
 
   if (action === "scanBomAnomalies") {
     return await scanBomAnomalies(body, {
-      role, tdb, apiKey: ANTHROPIC_API_KEY, model: META_MODEL, meterAi,
+      role, tdb, apiKey: ANTHROPIC_API_KEY, model: SCAN_MODEL, meterAi,
     });
   }
 

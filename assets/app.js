@@ -10597,7 +10597,7 @@
       { key: "inactive_child",  label: "Active assemblies with inactive children",   hint: "An active assembly references a part that is inactive or discontinued — operational risk." },
       { key: "copy_component",  label: "Copy components",                            hint: "Component names contain \"- copy\", indicating an accidental duplicate from an assembly copy operation." },
       { key: "empty_assembly",  label: "Empty assemblies",                           hint: "These assembly types have no children in the BOM — either incomplete or unused." },
-      { key: "orphan",          label: "Components never used in any assembly",      hint: "These components are not referenced as a child anywhere in the BOM." },
+      { key: "orphan",          label: "Orphaned active assemblies",                hint: "Active sub-assemblies or phantom assemblies that are not referenced as a child anywhere in the BOM — likely a structural error." },
       { key: "duplicate_child", label: "Duplicate children",                        hint: "The same component appears more than once under a single parent assembly." },
       { key: "duplicate_name",  label: "Duplicate component names",                 hint: "Multiple distinct components share the same name — only one should be active." },
       { key: "mob_violation",   label: "Make-or-buy violations",                    hint: "A component's make_or_buy field contradicts its type — e.g. a sub_assembly set to \"purchased\" or a part set to \"assembled\"." },

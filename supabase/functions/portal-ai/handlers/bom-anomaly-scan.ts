@@ -153,22 +153,22 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
     }
   }
 
-  // R4: Orphaned components (never a child, not a root type) — all lifecycle statuses.
-  const topLevelTypes = new Set(["product_family", "finished_good"]);
+  // R4: Orphaned active sub-assemblies (never a child anywhere in the BOM).
+  // Parts, raw materials, spare parts are catalog items — they don't need a parent. Only
+  // sub_assembly and phantom_assembly types are structural and should always be used somewhere.
+  const orphanTypes = new Set(["sub_assembly", "phantom_assembly"]);
   for (const c of components) {
-    if (topLevelTypes.has(c.type)) continue;
+    if (!orphanTypes.has(c.type)) continue;
+    if (c.lifecycle_status !== "active") continue;
     if (!(parentsOf[c.id] || []).length) {
-      const isActive = c.lifecycle_status === "active";
       findings.push({
-        severity: isActive ? "low" : "low",
+        severity: "medium",
         category: "orphan",
         component_id: c.id,
         component_name: c.name,
         part_number: c.part_number || null,
-        description: `Component "${c.name}" (${c.type}, ${c.lifecycle_status}) is not used as a child anywhere in the BOM.`,
-        suggestion: isActive
-          ? "Link it into the appropriate assembly, mark it Inactive, or delete it if it was created by mistake."
-          : "Safe to delete if it has no linked documents or cost data.",
+        description: `Active ${c.type} "${c.name}" is not used as a child anywhere in the BOM.`,
+        suggestion: "Link it into the appropriate parent assembly, mark it Inactive if it is a placeholder, or delete it if it was created by mistake.",
       });
     }
   }

@@ -10168,7 +10168,7 @@
             ).join("\n");
             setChildren(statusEl,
               el("div", { style: "color:var(--warn,#b45309);font-weight:600;margin-bottom:0.3rem" }, "⚠ Similar components already exist"),
-              el("pre", { style: "font-size:0.72rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:4px;padding:0.4rem 0.6rem;white-space:pre-wrap;margin:0 0 0.4rem" }, matchLines),
+              el("pre", { style: "font-size:0.75rem;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:4px;padding:0.4rem 0.6rem;white-space:pre-wrap;margin:0 0 0.4rem" }, matchLines),
               el("div", { style: "display:flex;gap:0.4rem;flex-wrap:wrap" }, [
                 el("button", { class: "btn btn-sm btn-primary", type: "button",
                   onclick: () => {
@@ -10452,7 +10452,7 @@
                                 },
                               }, "Map to match"),
                               mapExistingBtn,
-                              el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.7rem;opacity:0.7",
+                              el("button", { class: "btn btn-sm", type: "button", style: "font-size:0.6875rem;opacity:0.7",
                                 onclick: () => createPlannerComponentModal(tok, g, onCreated, cached || null),
                               }, "+ Create anyway"),
                             ];

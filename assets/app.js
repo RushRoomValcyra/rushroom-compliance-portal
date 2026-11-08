@@ -10600,7 +10600,11 @@
       { key: "duplicate_child", label: "Duplicate children",                        hint: "The same component appears more than once under a single parent assembly." },
       { key: "duplicate_name",  label: "Duplicate component names",                 hint: "Multiple distinct components share the same name — only one should be active." },
       { key: "mob_violation",   label: "Make-or-buy violations",                    hint: "A component's make_or_buy field contradicts its type — e.g. a sub_assembly set to \"purchased\" or a part set to \"assembled\"." },
-      { key: "ai_finding",      label: "AI-detected patterns",                      hint: "Structural or naming anomalies found by Claude — variant family gaps, child mismatches, naming drift." },
+      { key: "duplicate_pn",   label: "Duplicate part numbers",                    hint: "Distinct components share the same part number — breaks procurement and ERP lookups." },
+      { key: "circular_ref",   label: "Circular BOM references",                   hint: "A cycle exists in the parent→child graph. Cost rollup and manufacturing orders will loop indefinitely." },
+      { key: "missing_pn",     label: "Active assemblies missing part number",     hint: "Active sub-assemblies or finished goods with no part number cannot be reliably referenced in orders or cost rollups." },
+      { key: "variant_gap",    label: "Variant family size gaps",                  hint: "A size-variant family (S/M/L) exists but one or more sizes are absent from the BOM." },
+      { key: "ai_finding",      label: "AI-detected patterns",                      hint: "Colour gaps, child-count mismatches, and naming drift found by Claude — issues not caught by the rule-based scan." },
     ];
 
     const wrap = el("div", { style: "max-width:900px" });

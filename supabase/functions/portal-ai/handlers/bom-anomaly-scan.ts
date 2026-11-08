@@ -1,10 +1,20 @@
 // PROP-076 — AI BOM anomaly scan: finds structural problems and naming inconsistencies
 // across the entire BOM (all organizations). Runs two passes:
-//   1. Rule-based: definite findings (copy active, empty assemblies, inactive children, orphans,
-//      duplicate children, duplicate names, make_or_buy violations).
-//   2. AI pass: variant family gaps, naming drift, suspicious structures.
-//      Sends structured JSON (pre-grouped into variant families) to SCAN_MODEL (opus).
-//      All AI-returned component_ids are validated against the loaded BOM before returning.
+//   1. Rule-based deterministic findings:
+//      R1  copy_component   — name contains "- copy"
+//      R2  empty_assembly   — assembly/finished_good with no children
+//      R3  inactive_child   — active assembly referencing inactive/discontinued child
+//      R5  duplicate_child  — same child linked twice under one parent
+//      R6  duplicate_name   — distinct components sharing the same name
+//      R7  mob_violation    — make_or_buy contradicts component type
+//      R8  duplicate_pn     — distinct active components sharing the same part number
+//      R9  circular_ref     — cycle in the parent→child graph (Kahn's algorithm)
+//      R10 missing_pn       — active assembly/finished_good with no part number
+//      R11 variant_gap      — size-variant family (S/M/L) missing one or more sizes
+//   2. AI pass (SCAN_MODEL/opus): colour-gap detection, child-count mismatches,
+//      naming drift, and other structural patterns not caught above.
+//      Input: structured JSON of pre-grouped variant families.
+//      All AI-returned component_ids validated against loaded BOM before returning.
 // All suggestions are read-only — nothing is written here.
 import { json } from "../../_shared/http.ts";
 
@@ -90,7 +100,16 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
     (parentsOf[e.child_id]  ||= []).push(e.parent_id);
   }
 
+  // Pre-group active components into variant families (used by R11 and the AI pass).
+  const activeComps = components.filter(c => c.lifecycle_status === "active");
+  const familyMap: Record<string, any[]> = {};
+  for (const c of activeComps) {
+    const key = variantFamilyKey(c.name || "");
+    (familyMap[key] ||= []).push(c);
+  }
+
   const findings: Anomaly[] = [];
+  const assemblyTypes = new Set(["sub_assembly", "finished_good", "phantom_assembly"]);
 
   // --- Rule-based pass ---
 
@@ -113,7 +132,6 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
   }
 
   // R2: Assemblies (any lifecycle) with no children in any edge.
-  const assemblyTypes = new Set(["sub_assembly", "finished_good", "phantom_assembly"]);
   for (const c of components) {
     if (!assemblyTypes.has(c.type)) continue;
     if (!(childrenOf[c.id] || []).length) {
@@ -206,7 +224,7 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
   const purchasedOrMfgExpected = new Set(["part", "raw_material", "spare_part"]);
   for (const c of components) {
     if (c.lifecycle_status !== "active") continue;
-    if (!c.make_or_buy) continue; // null = not yet set, skip
+    if (!c.make_or_buy) continue;
     if (assembledExpected.has(c.type) && c.make_or_buy === "purchased") {
       findings.push({
         severity: "high",
@@ -231,45 +249,137 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
     }
   }
 
-  // --- AI pass: variant family gaps, naming drift, suspicious structures ---
-  // Pre-group active components into variant families using name-token stripping.
-  const activeComps = components.filter(c => c.lifecycle_status === "active");
-
-  const familyMap: Record<string, any[]> = {};
-  for (const c of activeComps) {
-    const key = variantFamilyKey(c.name || "");
-    (familyMap[key] ||= []).push(c);
+  // R8: Distinct active components sharing the same part number.
+  const byPN: Record<string, any[]> = {};
+  for (const c of components) {
+    if (!c.part_number || !c.part_number.trim()) continue;
+    const key = c.part_number.trim().toLowerCase();
+    (byPN[key] ||= []).push(c);
+  }
+  for (const group of Object.values(byPN)) {
+    if (group.length < 2) continue;
+    const anyActive = group.some(c => c.lifecycle_status === "active");
+    if (!anyActive) continue;
+    findings.push({
+      severity: "high",
+      category: "duplicate_pn",
+      component_id: null,
+      component_name: null,
+      part_number: group[0].part_number,
+      description: `${group.length} components share part number "${group[0].part_number}": ${group.map(c => `"${c.name}" (${c.lifecycle_status})`).join(", ")}.`,
+      suggestion: "Part numbers must be unique. Assign a distinct PN to each component or merge duplicate entries.",
+    });
   }
 
-  // Families: 2+ active members sharing the same stripped name pattern.
+  // R9: Circular BOM references — Kahn's topological sort; unvisited nodes are in a cycle.
+  const inDeg: Record<string, number> = {};
+  for (const c of components) inDeg[c.id] = 0;
+  for (const e of edges) {
+    if (byId[e.parent_id] && byId[e.child_id]) {
+      inDeg[e.child_id] = (inDeg[e.child_id] || 0) + 1;
+    }
+  }
+  const topoQueue: string[] = Object.entries(inDeg).filter(([, d]) => d === 0).map(([id]) => id);
+  const topoVisited = new Set<string>(topoQueue);
+  while (topoQueue.length) {
+    const id = topoQueue.shift()!;
+    for (const childId of (childrenOf[id] || [])) {
+      if (!byId[childId]) continue;
+      inDeg[childId]--;
+      if (inDeg[childId] === 0 && !topoVisited.has(childId)) {
+        topoVisited.add(childId);
+        topoQueue.push(childId);
+      }
+    }
+  }
+  for (const c of components) {
+    if (!topoVisited.has(c.id)) {
+      findings.push({
+        severity: "high",
+        category: "circular_ref",
+        component_id: c.id,
+        component_name: c.name,
+        part_number: c.part_number || null,
+        description: `"${c.name}" is part of a circular BOM reference — the component graph contains a cycle.`,
+        suggestion: "Remove the edge that closes the cycle. A component cannot be a direct or indirect ancestor of itself.",
+      });
+    }
+  }
+
+  // R10: Active assembly or finished_good with no part number.
+  const pnRequiredTypes = new Set(["sub_assembly", "phantom_assembly", "finished_good"]);
+  for (const c of components) {
+    if (!pnRequiredTypes.has(c.type)) continue;
+    if (c.lifecycle_status !== "active") continue;
+    if (!c.part_number || !c.part_number.trim()) {
+      findings.push({
+        severity: "medium",
+        category: "missing_pn",
+        component_id: c.id,
+        component_name: c.name,
+        part_number: null,
+        description: `Active ${c.type} "${c.name}" has no part number.`,
+        suggestion: "Assign a part number so this assembly can be referenced in procurement, work orders, and cost rollups.",
+      });
+    }
+  }
+
+  // R11: Variant family size gaps — if a family has 2 of {S, M, L}, the third is expected.
+  const ALL_SIZES = ["S", "M", "L"];
+  for (const [, members] of Object.entries(familyMap)) {
+    if (members.length < 2) continue;
+    const memberSizes = members.map((c: any) => {
+      const m = (c.name || "").match(/\b(S|M|L)\b/);
+      return { c, size: m ? m[1] : null };
+    });
+    const presentSizes = new Set(memberSizes.filter((x: any) => x.size).map((x: any) => x.size as string));
+    if (presentSizes.size < 2) continue; // need at least 2 to infer the full family
+    for (const size of ALL_SIZES) {
+      if (!presentSizes.has(size)) {
+        const example = members[0];
+        const exampleName = (example.name || "").replace(/\b(S|M|L)\b/, size);
+        findings.push({
+          severity: "medium",
+          category: "variant_gap",
+          component_id: null,
+          component_name: null,
+          part_number: null,
+          description: `Variant family "${variantFamilyKey(example.name || "")}" has sizes ${[...presentSizes].sort().join(", ")} but is missing size ${size}. Expected member: "${exampleName}".`,
+          suggestion: `Create the missing size-${size} variant to complete the family, or confirm this product intentionally has no ${size} option.`,
+        });
+      }
+    }
+  }
+
+  // --- AI pass: colour gaps, child-count mismatches, naming drift, suspicious structures ---
+  // Families and singletons are pre-computed above.
   const families = Object.entries(familyMap)
     .filter(([, members]) => members.length >= 2)
     .map(([pattern, members]) => ({
       pattern,
-      variants: members.map(c => ({
+      variants: members.map((c: any) => ({
         id: c.id,
         name: c.name,
         pn: c.part_number || null,
         type: c.type,
         mob: c.make_or_buy || null,
         child_count: (childrenOf[c.id] || []).length,
-        children: (childrenOf[c.id] || []).slice(0, 15).map(cid => byId[cid]?.name).filter(Boolean),
+        children: (childrenOf[c.id] || []).slice(0, 15).map((cid: string) => byId[cid]?.name).filter(Boolean),
       })),
     }));
 
-  // Singletons: active assemblies/parts not part of any family (potential variants missing siblings).
   const singletons = Object.entries(familyMap)
     .filter(([, members]) => members.length === 1)
     .map(([, members]) => members[0])
-    .filter(c => assemblyTypes.has(c.type)) // only flag singleton assemblies
-    .map(c => ({
+    .filter((c: any) => assemblyTypes.has(c.type))
+    .map((c: any) => ({
       id: c.id,
       name: c.name,
       pn: c.part_number || null,
       type: c.type,
       mob: c.make_or_buy || null,
       child_count: (childrenOf[c.id] || []).length,
-      children: (childrenOf[c.id] || []).slice(0, 10).map(cid => byId[cid]?.name).filter(Boolean),
+      children: (childrenOf[c.id] || []).slice(0, 10).map((cid: string) => byId[cid]?.name).filter(Boolean),
     }));
 
   const structuredInput = { families, singletons };
@@ -280,9 +390,9 @@ export async function scanBomAnomalies(body: any, ctx: Ctx): Promise<Response> {
 
   if (components.length > 0) {
     const system = `You are a BOM quality analyst for a Swedish LED furniture manufacturer (Rushroom AB / VALCYRA).
-You will receive BOM data grouped into VARIANT FAMILIES (components sharing the same name pattern except for size or colour tokens) and SINGLETON ASSEMBLIES (assemblies that appear to have no siblings in their product family).
+You will receive BOM data grouped into VARIANT FAMILIES (components sharing the same name pattern except for size or colour tokens) and SINGLETON ASSEMBLIES.
 
-Your job: identify gaps and inconsistencies that the rule-based scan cannot catch.
+Your job: identify gaps and inconsistencies NOT already caught by the rule-based scan.
 
 ══════════════════════════════════════════════
 RUSHROOM PRODUCT KNOWLEDGE
@@ -313,20 +423,21 @@ Product line structure:
 WHAT TO FIND
 ══════════════════════════════════════════════
 
-1. VARIANT FAMILY GAPS — a family is missing expected size or colour variants (e.g. S and M exist but L is absent).
+1. COLOUR GAPS — a family has White and Black but is missing Grey (or vice versa). Do NOT flag S/M/L size gaps — those are handled by the rule-based scan.
 2. CHILD COUNT MISMATCH — siblings in a family have different child counts without an obvious reason.
 3. CHILD TYPE MISMATCH — one variant has a child of a different type or name pattern than its siblings.
-4. SINGLETON ASSEMBLIES — an active assembly appears to be a variant with no siblings; flag only if the name strongly implies it should have siblings (e.g. contains a colour or size token).
-5. NAMING DRIFT — a component name does not follow the established pattern for its family (e.g. capitalisation, extra word, missing token).
+4. SINGLETON ASSEMBLIES — an active assembly appears to be a variant with no siblings; flag only if the name contains a colour token (not a size token — size gaps are covered above).
+5. NAMING DRIFT — a component name does not follow the established pattern for its family (capitalisation, extra word, missing token).
 6. SUSPICIOUS STRUCTURE — any other anomaly the rules above could not catch.
 
 DO NOT flag:
-- Orphans, copy-components, inactive children, empty assemblies, duplicate names, duplicate children, or make_or_buy violations (all handled by the rule-based pass).
-- Product-family or finished_good components with no siblings (by design).
-- Singleton assemblies where the name contains no size or colour token.
+- Size gaps (S/M/L) — handled by rule R11.
+- Orphans, copy-components, inactive children, empty assemblies, duplicate names, duplicate children,
+  make_or_buy violations, duplicate part numbers, circular refs, or missing part numbers — all in the rule-based pass.
+- product_family or finished_good components with no siblings (by design).
 
 For each finding: use the exact id from the data provided as component_id.
-If a finding applies to a whole family (not one member), set component_id to null and describe the family in component_name.
+If a finding applies to a whole family, set component_id to null and describe the family in component_name.
 Return at most 20 findings, ranked by severity. Be specific — name the missing variant or the differing child.`;
 
     const userMsg = `BOM SUMMARY: ${components.length} total components, ${activeComps.length} active.
@@ -368,7 +479,6 @@ ${JSON.stringify(structuredInput, null, 0)}`;
         summary = parsed.summary || `Rule-based: ${findings.length} issue(s). AI: ${aiAnomalies.length} pattern(s).`;
       }
     } catch {
-      // AI failure is non-fatal — return rule-based findings only.
       summary = `Rule-based scan found ${findings.length} issue(s). AI analysis failed — showing rule-based results only.`;
     }
   }

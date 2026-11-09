@@ -10592,7 +10592,6 @@
   // PROP-076 — AI BOM anomaly scan view.
   function bomAnomalyScanView(token) {
     const SEV_COLOR = { high: { text: "#991b1b", label: "High" }, medium: { text: "#854d0e", label: "Medium" }, low: { text: "#475569", label: "Low" } };
-    // Category groups: display order, label, and one-liner explaining what this group means.
     const CAT_GROUPS = [
       { key: "inactive_child",  label: "Active assemblies with inactive children",   hint: "An active assembly references a part that is inactive or discontinued — operational risk." },
       { key: "copy_component",  label: "Copy components",                            hint: "Component names contain \"- copy\", indicating an accidental duplicate from an assembly copy operation." },
@@ -10604,23 +10603,60 @@
       { key: "circular_ref",   label: "Circular BOM references",                   hint: "A cycle exists in the parent→child graph. Cost rollup and manufacturing orders will loop indefinitely." },
       { key: "missing_pn",     label: "Active assemblies missing part number",     hint: "Active sub-assemblies or finished goods with no part number cannot be reliably referenced in orders or cost rollups." },
       { key: "variant_gap",    label: "Variant family size gaps",                  hint: "A size-variant family (S/M/L) exists but one or more sizes are absent from the BOM." },
-      { key: "ai_finding",      label: "AI-detected patterns",                      hint: "Colour gaps, child-count mismatches, and naming drift found by Claude — issues not caught by the rule-based scan." },
+      { key: "ai_finding",     label: "AI-detected patterns",                      hint: "Colour gaps, child-count mismatches, and naming drift found by Claude — issues not caught by the rule-based scan." },
     ];
+
+    // --- Dismissal helpers (localStorage) ---
+    const LS_ACK = "bom_scan_ack_v1";
+    function getAcked() { try { return new Set(JSON.parse(localStorage.getItem(LS_ACK) || "[]")); } catch { return new Set(); } }
+    function saveAcked(s) { try { localStorage.setItem(LS_ACK, JSON.stringify([...s])); } catch {} }
+    function ackKey(a) { return `${a.category}|${a.component_id ?? ""}|${a.component_name ?? ""}|${a.part_number ?? ""}`; }
 
     const wrap = el("div", { style: "max-width:900px" });
     const btn = actionBtn("Run AI BOM scan", "sparkles", { primary: true });
     const statusEl = el("p", { class: "muted", style: "margin:0.5rem 0 0" }, "Scans all components and edges for structural problems, naming drift, and variant inconsistencies.");
     const results = el("div", { style: "margin-top:1rem" });
+    let lastScanData = null;
 
-    btn.onclick = async () => {
-      btn.disabled = true;
-      statusEl.textContent = "Scanning…";
-      results.replaceChildren(el("div", { class: "loading" }, "Running scan — this may take a few seconds…"));
-      let data;
-      try { data = await API.post(token, "scanBomAnomalies", {}); }
-      catch (ex) { results.replaceChildren(el("p", { class: "error" }, ex.message)); btn.disabled = false; return; }
-      finally { btn.disabled = false; }
+    function makeCard(a, { dismissed = false, onDismiss, onRestore } = {}) {
+      const col = SEV_COLOR[a.severity] || SEV_COLOR.low;
+      const actionBtn2 = dismissed
+        ? el("button", { style: "margin-left:auto;font-size:0.6875rem;color:var(--muted,#8b93a1);background:none;border:none;cursor:pointer;padding:0;white-space:nowrap;text-decoration:underline", onclick: onRestore }, "Restore")
+        : el("button", { style: "margin-left:auto;font-size:0.6875rem;color:var(--muted,#8b93a1);background:none;border:none;cursor:pointer;padding:0;white-space:nowrap", title: "Mark as dismissed — won't appear in count", onclick: onDismiss }, "✓ Dismiss");
+      return el("div", { style: `border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:0.65rem 0.8rem;margin-bottom:0.4rem${dismissed ? ";opacity:0.45" : ""}` }, [
+        el("div", { style: "display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;margin-bottom:0.25rem" }, [
+          el("span", { style: `background:${col.text};color:#fff;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.6875rem;font-weight:700;white-space:nowrap` }, col.label.toUpperCase()),
+          a.component_name ? el("span", { style: "font-weight:600;font-size:0.875rem" }, a.component_name) : null,
+          a.part_number ? el("span", { class: "muted", style: "font-size:0.75rem;font-family:monospace" }, a.part_number) : null,
+          actionBtn2,
+        ].filter(Boolean)),
+        el("p", { style: "margin:0 0 0.2rem;font-size:0.875rem" }, a.description),
+        el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [el("strong", {}, "Fix: "), a.suggestion]),
+      ]);
+    }
 
+    function makeToggleSection({ label, count, hint, cards, startOpen = true }) {
+      const body = el("div", {}, cards);
+      let open = startOpen;
+      const chevron = el("span", { style: "font-size:0.75rem;margin-left:0.35rem;transition:transform 0.15s;display:inline-block" }, "▼");
+      const header = el("div", {
+        style: "display:flex;align-items:center;gap:0.4rem;cursor:pointer;user-select:none;padding:0.5rem 0;border-top:1px solid var(--border,#2a2f3a);margin-top:0.75rem",
+        role: "button", tabIndex: 0,
+      }, [chevron, el("h4", { style: "margin:0;font-size:0.875rem;flex:1" }, `${label} (${count})`)]);
+      const hintEl = hint ? el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem;padding-left:1.1rem" }, hint) : null;
+      if (!open) { body.style.display = "none"; if (hintEl) hintEl.style.display = "none"; chevron.style.transform = "rotate(-90deg)"; }
+      const toggle = () => {
+        open = !open;
+        body.style.display = open ? "" : "none";
+        if (hintEl) hintEl.style.display = open ? "" : "none";
+        chevron.style.transform = open ? "" : "rotate(-90deg)";
+      };
+      header.onclick = toggle;
+      header.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+      return [header, ...(hintEl ? [hintEl] : []), body];
+    }
+
+    function renderResults(data) {
       const { anomalies = [], summary = "", stats = {} } = data;
       statusEl.textContent = summary;
 
@@ -10632,60 +10668,67 @@
         return;
       }
 
-      // Group by category, preserving display order.
+      const acked = getAcked();
+
       const byCategory = {};
       for (const a of anomalies) (byCategory[a.category] ||= []).push(a);
-
-      // Any category not in CAT_GROUPS goes into ai_finding bucket.
       const knownKeys = new Set(CAT_GROUPS.map(g => g.key));
       for (const [k, items] of Object.entries(byCategory)) {
         if (!knownKeys.has(k)) (byCategory["ai_finding"] ||= []).push(...items);
       }
+
+      const activeTotal = anomalies.filter(a => !acked.has(ackKey(a))).length;
+      const ackedTotal = anomalies.length - activeTotal;
+
+      const dismiss = (a) => { const s = getAcked(); s.add(ackKey(a)); saveAcked(s); renderResults(data); };
+      const restore = (a) => { const s = getAcked(); s.delete(ackKey(a)); saveAcked(s); renderResults(data); };
 
       const sections = [];
       for (const { key, label, hint } of CAT_GROUPS) {
         const items = byCategory[key];
         if (!items || !items.length) continue;
 
-        const cards = items.map(a => {
-          const col = SEV_COLOR[a.severity] || SEV_COLOR.low;
-          return el("div", { style: "border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:0.65rem 0.8rem;margin-bottom:0.4rem" }, [
-            el("div", { style: "display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;margin-bottom:0.25rem" }, [
-              el("span", { style: `background:${col.text};color:#fff;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.6875rem;font-weight:700;white-space:nowrap` }, col.label.toUpperCase()),
-              a.component_name ? el("span", { style: "font-weight:600;font-size:0.875rem" }, a.component_name) : null,
-              a.part_number ? el("span", { class: "muted", style: "font-size:0.75rem;font-family:monospace" }, a.part_number) : null,
-            ].filter(Boolean)),
-            el("p", { style: "margin:0 0 0.2rem;font-size:0.875rem" }, a.description),
-            el("p", { style: "margin:0;font-size:0.8125rem;color:var(--muted,#8b93a1)" }, [el("strong", {}, "Fix: "), a.suggestion]),
-          ]);
-        });
+        const active = items.filter(a => !acked.has(ackKey(a)));
+        const dismissed = items.filter(a => acked.has(ackKey(a)));
 
-        const body = el("div", {}, cards);
-        let open = true;
-        const chevron = el("span", { style: "font-size:0.75rem;margin-left:0.35rem;transition:transform 0.15s;display:inline-block" }, "▼");
-        const header = el("div", {
-          style: "display:flex;align-items:center;gap:0.4rem;cursor:pointer;user-select:none;padding:0.5rem 0;border-top:1px solid var(--border,#2a2f3a);margin-top:0.75rem",
-          role: "button", tabIndex: 0,
-        }, [
-          chevron,
-          el("h4", { style: "margin:0;font-size:0.875rem;flex:1" }, `${label} (${items.length})`),
-        ]);
-        const hintEl = el("p", { class: "muted", style: "margin:0 0 0.5rem;font-size:0.8125rem;padding-left:1.1rem" }, hint);
-        const toggle = () => {
-          open = !open;
-          body.style.display = open ? "" : "none";
-          hintEl.style.display = open ? "" : "none";
-          chevron.style.transform = open ? "" : "rotate(-90deg)";
-        };
-        header.onclick = toggle;
-        header.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
-        sections.push(header, hintEl, body);
+        if (!active.length && !dismissed.length) continue;
+
+        const activeCards = active.map(a => makeCard(a, { onDismiss: () => dismiss(a) }));
+        const dismissedCards = dismissed.map(a => makeCard(a, { dismissed: true, onRestore: () => restore(a) }));
+
+        // Active section
+        if (active.length) {
+          sections.push(...makeToggleSection({ label, count: active.length, hint, cards: activeCards }));
+        }
+        // Dismissed sub-section (only shown if there are dismissed items in this category)
+        if (dismissed.length) {
+          const dismissedHeader = el("div", { style: "padding-left:1rem" }, makeToggleSection({
+            label: `Dismissed in "${label}"`, count: dismissed.length, hint: null, cards: dismissedCards, startOpen: false,
+          }));
+          sections.push(dismissedHeader);
+        }
       }
 
-      results.replaceChildren(
-        el("p", { class: "muted", style: "margin:0 0 0.25rem;font-size:0.8125rem" }, `${anomalies.length} issue(s) across ${stats.total_components ?? "?"} components (${stats.active_components ?? "?"} active).`),
-        ...sections
-      );
+      const summaryLine = el("div", { style: "display:flex;align-items:center;gap:1rem;margin-bottom:0.25rem;flex-wrap:wrap" }, [
+        el("p", { class: "muted", style: "margin:0;font-size:0.8125rem" }, `${activeTotal} active issue(s)${ackedTotal ? ` · ${ackedTotal} dismissed` : ""} across ${stats.total_components ?? "?"} components (${stats.active_components ?? "?"} active).`),
+        ackedTotal ? el("button", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline;white-space:nowrap", onclick: () => { saveAcked(new Set()); renderResults(data); } }, `Reset ${ackedTotal} dismissal(s)`) : null,
+      ].filter(Boolean));
+
+      results.replaceChildren(summaryLine, ...sections);
+    }
+
+    btn.onclick = async () => {
+      btn.disabled = true;
+      statusEl.textContent = "Scanning…";
+      results.replaceChildren(el("div", { class: "loading" }, "Running scan — this may take a few seconds…"));
+      try {
+        lastScanData = await API.post(token, "scanBomAnomalies", {});
+        renderResults(lastScanData);
+      } catch (ex) {
+        results.replaceChildren(el("p", { class: "error" }, ex.message));
+      } finally {
+        btn.disabled = false;
+      }
     };
 
     wrap.replaceChildren(

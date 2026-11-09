@@ -10722,10 +10722,21 @@
       statusEl.textContent = "Scanning…";
 
       // Progress bar: animates 0 → 85% while the scan runs, then snaps to 100% on finish.
-      const fill = el("div", { style: "height:100%;width:0%;background:var(--accent,#2fa564);border-radius:2px" });
-      const bar  = el("div", { style: "height:3px;background:var(--border,#2a2f3a);border-radius:2px;overflow:hidden;margin-bottom:0.75rem" }, [fill]);
+      const fill     = el("div", { style: "height:100%;width:0%;background:var(--accent,#2fa564);border-radius:2px" });
+      const bar      = el("div", { style: "height:3px;background:var(--border,#2a2f3a);border-radius:2px;overflow:hidden;flex:1" }, [fill]);
+      const pctLabel = el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);font-variant-numeric:tabular-nums;min-width:2.8rem;text-align:right" }, "0%");
       const scanLabel = el("p", { class: "muted", style: "margin:0;font-size:0.8125rem" }, "Analysing BOM structure…");
-      results.replaceChildren(el("div", { style: "padding:0.25rem 0" }, [bar, scanLabel]));
+      results.replaceChildren(el("div", { style: "padding:0.25rem 0" }, [
+        el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem" }, [bar, pctLabel]),
+        scanLabel,
+      ]));
+
+      // Percentage counter: exponential approach toward 85 so it decelerates naturally.
+      let pct = 0;
+      const ticker = setInterval(() => {
+        pct = Math.min(85, pct + (85 - pct) * 0.07);
+        pctLabel.textContent = `${Math.round(pct)}%`;
+      }, 300);
       requestAnimationFrame(() => {
         fill.style.transition = "width 18s cubic-bezier(0.05, 0.6, 0.3, 1)";
         fill.style.width = "85%";
@@ -10733,11 +10744,14 @@
 
       try {
         lastScanData = await API.post(token, "scanBomAnomalies", {});
+        clearInterval(ticker);
         fill.style.transition = "width 0.25s ease";
         fill.style.width = "100%";
+        pctLabel.textContent = "100%";
         await new Promise(r => setTimeout(r, 260));
         renderResults(lastScanData);
       } catch (ex) {
+        clearInterval(ticker);
         results.replaceChildren(el("p", { class: "error" }, ex.message));
       } finally {
         btn.disabled = false;

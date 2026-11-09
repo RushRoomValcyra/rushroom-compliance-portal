@@ -10720,9 +10720,22 @@
     btn.onclick = async () => {
       btn.disabled = true;
       statusEl.textContent = "Scanning…";
-      results.replaceChildren(el("div", { class: "loading" }, "Running scan — this may take a few seconds…"));
+
+      // Progress bar: animates 0 → 85% while the scan runs, then snaps to 100% on finish.
+      const fill = el("div", { style: "height:100%;width:0%;background:var(--accent,#2fa564);border-radius:2px" });
+      const bar  = el("div", { style: "height:3px;background:var(--border,#2a2f3a);border-radius:2px;overflow:hidden;margin-bottom:0.75rem" }, [fill]);
+      const scanLabel = el("p", { class: "muted", style: "margin:0;font-size:0.8125rem" }, "Analysing BOM structure…");
+      results.replaceChildren(el("div", { style: "padding:0.25rem 0" }, [bar, scanLabel]));
+      requestAnimationFrame(() => {
+        fill.style.transition = "width 18s cubic-bezier(0.05, 0.6, 0.3, 1)";
+        fill.style.width = "85%";
+      });
+
       try {
         lastScanData = await API.post(token, "scanBomAnomalies", {});
+        fill.style.transition = "width 0.25s ease";
+        fill.style.width = "100%";
+        await new Promise(r => setTimeout(r, 260));
         renderResults(lastScanData);
       } catch (ex) {
         results.replaceChildren(el("p", { class: "error" }, ex.message));

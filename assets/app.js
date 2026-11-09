@@ -10610,7 +10610,13 @@
     const LS_ACK = "bom_scan_ack_v1";
     function getAcked() { try { return new Set(JSON.parse(localStorage.getItem(LS_ACK) || "[]")); } catch { return new Set(); } }
     function saveAcked(s) { try { localStorage.setItem(LS_ACK, JSON.stringify([...s])); } catch {} }
-    function ackKey(a) { return `${a.category}|${a.component_id ?? ""}|${a.component_name ?? ""}|${a.part_number ?? ""}`; }
+    function ackKey(a) {
+      const base = `${a.category}|${a.component_id ?? ""}|${a.component_name ?? ""}|${a.part_number ?? ""}`;
+      // When no identifying field is set (e.g. variant_gap), use description as tiebreaker.
+      return (!a.component_id && !a.component_name && !a.part_number)
+        ? `${base}|${(a.description || "").slice(0, 120)}`
+        : base;
+    }
 
     const wrap = el("div", { style: "max-width:900px" });
     const btn = actionBtn("Run AI BOM scan", "sparkles", { primary: true });

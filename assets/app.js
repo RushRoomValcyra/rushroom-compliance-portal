@@ -1119,6 +1119,38 @@
     });
   }
 
+  // Every AI action shows a progress bar. This is the one for a single call with
+  // no measurable progress: it bounces while waiting, then done(ok) fills it and
+  // fades it out (red fill on failure). Same look as the BOM Review match check.
+  function aiProgress(label) {
+    const fill = el("div", { style: "height:100%;width:15%;background:var(--accent,#2fa564);border-radius:3px" });
+    const text = el("div", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-top:0.3rem" }, label);
+    const wrap = el("div", { style: "margin:0.4rem 0 0.1rem" }, [
+      el("div", { style: "height:4px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden" }, fill),
+      text,
+    ]);
+    let dir = 1, pos = 15;
+    const timer = setInterval(() => {
+      pos += dir * 1.5;
+      if (pos >= 85) dir = -1;
+      if (pos <= 15) dir = 1;
+      fill.style.width = `${pos}%`;
+    }, 30);
+    const done = (ok, doneLabel) => {
+      clearInterval(timer);
+      fill.style.transition = "width 0.25s";
+      fill.style.width = "100%";
+      if (!ok) fill.style.background = "var(--red,#e05454)";
+      if (doneLabel) text.textContent = doneLabel;
+      setTimeout(() => {
+        wrap.style.transition = "opacity 0.4s";
+        wrap.style.opacity = "0";
+        setTimeout(() => wrap.remove(), 400);
+      }, 300);
+    };
+    return { el: wrap, done };
+  }
+
   /* An upload field: drag-and-drop zone + themed Choose File + progress bar. The
    * file is uploaded to storage as soon as it is chosen or dropped, showing a
    * progress bar; dependent buttons (registered via register()) stay disabled
@@ -8191,15 +8223,18 @@
           cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; setAddFormErr(""); keyInp.value = ""; keyInp.title = ""; };
           suggestKeyBtn.onclick = async () => {
             if (!typeSel.value) { setAddFormErr("Pick a key group."); return; }
-            suggestKeyBtn.disabled = true; suggestKeyBtn.textContent = "✨ …"; setAddFormErr("");
+            suggestKeyBtn.disabled = true; setAddFormErr("");
+            const prog = aiProgress("✨ Suggesting a key…");
+            addForm.insertBefore(prog.el, addFormErr);
             try {
               const r = await API.post(token, "suggestPlannerKey", { component_id: componentId, source_type: typeSel.value });
               keyInp.value = r.key || "";
               keyInp.title = r.reasoning || "";
+              prog.done(true, "✓ Key suggested");
               if (r.existing) setAddFormErr(`Already mapped to "${r.existing.name}" — change the key before assigning.`);
               keyInp.focus();
-            } catch (ex) { setAddFormErr(ex.message); }
-            finally { suggestKeyBtn.disabled = false; suggestKeyBtn.textContent = "✨ Suggest"; }
+            } catch (ex) { prog.done(false, "Could not suggest a key"); setAddFormErr(ex.message); }
+            finally { suggestKeyBtn.disabled = false; }
           };
           saveKeyBtn.onclick = async () => {
             if (!typeSel.value) { setAddFormErr("Pick a key group."); return; }

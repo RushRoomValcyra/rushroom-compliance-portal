@@ -94,7 +94,7 @@ export async function suggestPlannerKey(body: any, ctx: Ctx): Promise<Response> 
   const { data: ownRows } = await tdb("planner_mappings")
     .select("source_type, source_key")
     .eq("target_component_id", comp.id).eq("is_active", true);
-  const ownKeys = new Set((ownRows || []).map((r: any) => r.source_key));
+  const ownKeys = new Set((ownRows || []).filter((r: any) => r.source_type === sourceType).map((r: any) => r.source_key));
   const ownLines = (ownRows || []).map((r: any) => `  - ${r.source_type}:${r.source_key}`).join("\n");
 
   const system = `You name planner keys for a Swedish LED furniture manufacturer (Rushroom AB / VALCYRA). A planner key is the stable identifier the web planner sends for one option; a BOM mapping resolves it to one BOM component.
@@ -106,7 +106,7 @@ RULES:
 - Lowercase; tokens joined by "_"; only a-z, 0-9 and "_".
 - The key identifies the whole target component. When the target is an assembly, encode the attributes its children contribute (handle colour, insert type, size) — the planner picks the assembly by those attributes, never a single part.
 - Encode every attribute that separates this component from similarly named ones. Omit what the source_type already implies.
-- Never return a key that is already in the references or already assigned to the target.
+- Never return a key that is already in the references. If the target already has a key for this source_type, propose a second one only when an unmapped reference key clearly belongs to this component or a planner variant plausibly shares it; otherwise return the existing key unchanged.
 - alternatives: up to 2 other plausible keys (different token order or level of detail); may be empty.
 - reasoning: one sentence on which references and which attributes the key follows.`;
 
@@ -155,10 +155,13 @@ RULES:
   }
 
   const clean = (k: unknown) => String(k ?? "").trim().toLowerCase();
-  const candidates = [...new Set([clean(parsed.key), ...(Array.isArray(parsed.alternatives) ? parsed.alternatives.map(clean) : [])])]
-    .filter((k) => k && KEY_RE.test(k) && !ownKeys.has(k))
-    .slice(0, 3);
-  if (!candidates.length) return json({ error: "The AI did not produce a valid key. Type one manually." }, 502);
+  const proposed = [...new Set([clean(parsed.key), ...(Array.isArray(parsed.alternatives) ? parsed.alternatives.map(clean) : [])])].filter(Boolean);
+  const valid = proposed.filter((k) => KEY_RE.test(k));
+  const candidates = valid.filter((k) => !ownKeys.has(k)).slice(0, 3);
+  if (!candidates.length) {
+    if (valid.length) return json({ error: `This component already has ${sourceType}:${valid[0]} — nothing new to suggest.` }, 409);
+    return json({ error: `The AI produced no valid key${proposed.length ? ` (got "${proposed[0]}")` : ""}. Type one manually.` }, 502);
+  }
 
   // Prefer the first candidate not already held by another component; if every
   // one is taken, return the primary and say who holds it.

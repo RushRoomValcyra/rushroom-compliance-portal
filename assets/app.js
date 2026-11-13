@@ -8158,7 +8158,7 @@
               } catch (ex) { keysStatus.textContent = ex.message; removeBtn.disabled = false; }
             };
             const qtyLabel = k.quantity_rule === "fixed" ? `fixed × ${k.fixed_quantity}` : "cart qty";
-            return el("div", { style: "display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.5rem;border-radius:5px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);margin-bottom:3px" }, [
+            return el("div", { style: "display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);margin-bottom:3px" }, [
               pkLbl(k.source_type),
               el("code", { style: "font-size:0.8125rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, k.source_key),
               el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, qtyLabel),
@@ -8181,12 +8181,12 @@
           const saveKeyBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Assign");
           const cancelKeyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Cancel");
           const addFormErr   = el("p", { style: "font-size:0.75rem;color:#e05454;margin:0.2rem 0 0;min-height:1em" }, "");
-          const addForm = el("div", { style: "display:none;margin-top:0.4rem" }, [
+          const addForm = el("div", { style: "display:none;margin-top:3px;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0)" }, [
             el("div", { style: "display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap" }, [typeSel, keyInp, qtySel, fixedInp]),
             el("div", { style: "display:flex;gap:0.3rem;margin-top:0.3rem" }, [saveKeyBtn, cancelKeyBtn]),
             addFormErr,
           ]);
-          const addBtn = el("button", { class: "btn btn-sm", type: "button", style: "margin-top:0.35rem" }, "+ Assign planner key");
+          const addBtn = el("button", { class: "btn btn-sm", type: "button", style: "margin-top:0.3rem" }, "+ Assign planner key");
           addBtn.onclick    = () => { addForm.style.display = ""; addBtn.style.display = "none"; keyInp.focus(); };
           cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; addFormErr.textContent = ""; keyInp.value = ""; };
           saveKeyBtn.onclick = async () => {
@@ -8217,8 +8217,8 @@
         loadPlannerKeys();
 
         // Embed planner keys directly inside the properties card (no separate bordered card)
-        propertiesSection.appendChild(el("div", { style: "border-top:1px solid var(--border,#e2e8f0);margin:0.5rem 0 0.6rem" }));
-        propertiesSection.appendChild(el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.5rem" }, "Planner keys"));
+        propertiesSection.appendChild(el("div", { style: "margin-top:0.5rem" }));
+        propertiesSection.appendChild(el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.4rem" }, "Planner keys"));
         propertiesSection.appendChild(keysStatus);
         propertiesSection.appendChild(keysEl);
       }

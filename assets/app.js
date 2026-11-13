@@ -7967,6 +7967,7 @@
       let propertiesSection = null;
       let propSaveBtn = null;
       let propSaveErr = null;
+      let wrapInPreparedBtn = null;
       if (role === "rushroom") {
         const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.8125rem" });
         const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.8125rem;font-family:monospace" });
@@ -8093,6 +8094,19 @@
         const statusColWrapper = el("div", {}, [lbl("Lifecycle status"), statusSel, replNoteArea, flagReasonArea]);
         const categoryColWrapper = el("div", {}, [lbl("Category"), catSel]);
 
+        // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
+        // part from where it lives starts here.
+        if (window.PortalBomRules && window.PortalBomRules.takesInTheBox(nodeData)) {
+          wrapInPreparedBtn = el("button", {
+            class: "btn btn-sm", type: "button", style: "white-space:nowrap",
+            onclick: () => window.PortalBomRules.openWrap({
+              node: { id: componentId, name: nodeData.name, type: nodeData.type, make_or_buy: nodeData.make_or_buy },
+              parentNode: null, token, onAddTo: null,
+              onChanged: () => { try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ } },
+            }),
+          }, "Wrap in Prepared…");
+        }
+
         propertiesSection = el("div", { style: "margin-bottom:1rem;padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.6rem 0.75rem;margin-bottom:0.6rem" }, [
             el("div", { style: "grid-column:1/3" }, [lbl("Name"), nameInp]),
@@ -8104,22 +8118,6 @@
             el("div", {}, [lbl("Sourcing"), mobSel]),
             el("div", { style: "grid-column:1/3" }, [lbl("Description"), descInp]),
           ]),
-          // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
-          // part from where it lives starts here.
-          window.PortalBomRules && window.PortalBomRules.takesInTheBox(nodeData) ? el("div", {
-            style: "display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border,#e2e8f0)",
-          }, [
-            el("span", { style: "flex:1;font-size:0.75rem;color:var(--muted,#8b93a1)" },
-              "Real structure for this part lives in a Prepared assembly; the part stays as it is."),
-            el("button", {
-              class: "btn btn-sm", type: "button", style: "white-space:nowrap",
-              onclick: () => window.PortalBomRules.openWrap({
-                node: { id: componentId, name: nodeData.name, type: nodeData.type, make_or_buy: nodeData.make_or_buy },
-                parentNode: null, token, onAddTo: null,
-                onChanged: () => { try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ } },
-              }),
-            }, "Wrap in Prepared…"),
-          ]) : null,
         ]);
       }
 
@@ -8209,18 +8207,18 @@
 
           keysEl.replaceChildren(
             ...rows,
-            ...(!rows.length ? [el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.25rem" }, "No planner keys assigned to this component.")] : []),
             addBtn, addForm,
           );
         }
 
         loadPlannerKeys();
 
-        // Embed planner keys directly inside the properties card (no separate bordered card)
-        propertiesSection.appendChild(el("div", { style: "margin-top:0.5rem" }));
-        propertiesSection.appendChild(el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.4rem" }, "Planner keys"));
-        propertiesSection.appendChild(keysStatus);
-        propertiesSection.appendChild(keysEl);
+        // Embed planner keys as a bordered sub-section inside the properties card
+        propertiesSection.appendChild(el("div", { style: "margin-top:0.6rem;padding:0.75rem 0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
+          el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.4rem" }, "Planner keys"),
+          keysStatus,
+          keysEl,
+        ]));
       }
 
       // ---- Product Families section ----------------------------------------
@@ -8951,6 +8949,7 @@
             headerActions,
             ...(propSaveErr ? [propSaveErr] : []),
             ...(propSaveBtn ? [propSaveBtn] : []),
+            ...(wrapInPreparedBtn ? [wrapInPreparedBtn] : []),
             el("button", {
               class: "btn btn-sm btn-primary", type: "button",
               title: "Read a datasheet, drawing or screenshot and fill these fields",

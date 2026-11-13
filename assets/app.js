@@ -8212,9 +8212,9 @@
 
         loadPlannerKeys();
 
-        // Embed planner keys as a bordered sub-section inside the properties card
-        propertiesSection.appendChild(el("div", { style: "margin-top:0.6rem;padding:0.75rem 0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
-          el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.4rem" }, "Planner keys"),
+        // Label sits outside the bordered box, matching every other field label in the card
+        propertiesSection.appendChild(el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;display:block;margin-top:0.6rem;margin-bottom:3px" }, "Planner keys"));
+        propertiesSection.appendChild(el("div", { style: "padding:0.4rem 0.5rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
           keysStatus,
           keysEl,
         ]));

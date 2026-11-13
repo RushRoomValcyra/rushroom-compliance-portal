@@ -9846,23 +9846,99 @@
       const preview = el("div", { class: "muted" }, "Inspect the pasted configuration before importing its source keys.");
       const status = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");
       let items = [];
+
+      // Build an enriched preview row for each extracted key.
+      // States: mapped (green), in-catalog-unmapped (yellow), new (orange/grey).
+      function buildInspectPreview(extracted) {
+        const idx = activeMappingIndex();
+        const catalogKeys = new Set(catalog.map((c) => mapKeyOf(c.source_type, c.source_key)));
+        const counts = { mapped: 0, unmapped: 0, new: 0 };
+        const rows = extracted.map((item) => {
+          const mk = mapKeyOf(item.source_type, item.source_key);
+          const isMapped   = idx.has(mk);
+          const inCatalog  = catalogKeys.has(mk);
+          let badge, rowStyle;
+          if (isMapped) {
+            badge = el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#dcfce7;color:#15803d;flex-shrink:0" }, "✓ Mapped");
+            rowStyle = "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;border-radius:5px;background:#f0fdf4;border:1px solid #bbf7d0;margin-bottom:3px";
+            counts.mapped++;
+          } else if (inCatalog) {
+            badge = el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fef9c3;color:#92400e;flex-shrink:0" }, "⚠ Unmapped");
+            rowStyle = "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;border-radius:5px;background:#fffbeb;border:1px solid #fde68a;margin-bottom:3px";
+            counts.unmapped++;
+          } else {
+            badge = el("span", { style: "font-size:0.6875rem;font-weight:700;padding:1px 6px;border-radius:4px;background:#fff7ed;color:#c2410c;flex-shrink:0" }, "New");
+            rowStyle = "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;border-radius:5px;background:#fff7ed;border:1px solid #fed7aa;margin-bottom:3px";
+            counts.new++;
+          }
+          return el("div", { style: rowStyle }, [
+            el("span", { style: "font-size:0.6875rem;font-weight:700;background:#e0e7ff;color:#4338ca;border-radius:4px;padding:1px 5px;white-space:nowrap;flex-shrink:0" }, SOURCE_TYPE_LABELS[item.source_type] || item.source_type),
+            el("code", { style: "font-size:0.8125rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, item.source_key),
+            badge,
+          ]);
+        });
+
+        const unmappedTotal = counts.unmapped + counts.new;
+        const summaryParts = [];
+        if (counts.mapped)   summaryParts.push(`${counts.mapped} mapped`);
+        if (counts.unmapped) summaryParts.push(`${counts.unmapped} in catalog, unmapped`);
+        if (counts.new)      summaryParts.push(`${counts.new} new`);
+        const summaryEl = el("div", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin-bottom:0.5rem" }, summaryParts.join(" · "));
+        if (unmappedTotal > 0) summaryEl.append(el("span", { style: "color:#c2410c;font-weight:600;margin-left:0.35rem" }, `— ${unmappedTotal} will need BOM mapping`));
+
+        return el("div", {}, [summaryEl, ...rows]);
+      }
+
       const inspect = actionBtn("Inspect keys", "search", { onClick: () => {
         status.textContent = "";
         try {
           items = inspectPlannerCartConfiguration(JSON.parse(pasted.value)).map((item) => ({ ...item, label: item.source_key }));
-          if (items.length) preview.replaceChildren(...items.map((item) => el("div", {}, `${SOURCE_TYPE_LABELS[item.source_type]} · ${item.source_key}`)));
+          if (items.length) preview.replaceChildren(buildInspectPreview(items));
           else preview.replaceChildren(el("div", { class: "empty" }, "No supported planner keys were found."));
         } catch (ex) { items = []; status.textContent = ex.message || "The pasted JSON could not be inspected."; }
       }});
+
+      const btnRow = el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [inspect]);
       const save = actionBtn("Import/update keys", "save", { primary: true, onClick: async () => {
         if (!items.length) { status.textContent = "Inspect at least one planner key first."; return; }
-        save.disabled = true; status.textContent = "Saving planner keys…";
-        try { await API.importPlannerCatalog(token, items); close(); await loadCatalog(); }
-        catch (ex) { status.textContent = ex.message; save.disabled = false; }
+        save.disabled = true; inspect.disabled = true; status.textContent = "Saving planner keys…";
+        try {
+          await API.importPlannerCatalog(token, items);
+          await loadCatalog();
+
+          // Build post-import summary using the refreshed catalog + mappings.
+          const idx = activeMappingIndex();
+          let mapped = 0, unmapped = 0;
+          for (const item of items) {
+            if (idx.has(mapKeyOf(item.source_type, item.source_key))) mapped++; else unmapped++;
+          }
+          pasted.style.display = "none";
+          btnRow.style.display = "none";
+          status.textContent = "";
+
+          const summaryNodes = [
+            el("p", { style: "margin:0 0 0.5rem;font-weight:600" }, `Imported ${items.length} key${items.length === 1 ? "" : "s"} — ${mapped} mapped, ${unmapped} without BOM mapping.`),
+          ];
+          if (unmapped > 0) {
+            const checkBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" }, "Run BOM Mapping Check →");
+            checkBtn.onclick = () => { close(); bomGapCheckModal(token, loadCatalog); };
+            summaryNodes.push(el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap" }, [
+              el("span", { style: "font-size:0.8125rem;color:#c2410c" }, `${unmapped} key${unmapped === 1 ? "" : "s"} need a BOM mapping before they can resolve in cart orders.`),
+              checkBtn,
+            ]));
+          } else {
+            summaryNodes.push(el("p", { style: "margin:0;font-size:0.8125rem;color:#15803d" }, "✓ All keys are mapped — no gaps."));
+            setTimeout(close, 1800);
+          }
+          preview.replaceChildren(...summaryNodes);
+        }
+        catch (ex) { status.textContent = ex.message; save.disabled = false; inspect.disabled = false; }
       }});
+      btnRow.append(save);
+
       const close = openModal("Import/update planner keys", el("div", {}, [
         el("p", { class: "muted", style: "margin-top:0" }, "PIM stores only the derived source keys and labels. The pasted cart configuration and quantities are never sent to PIM."),
-        pasted, el("div", { style: "display:flex;gap:0.5rem;margin-top:0.5rem" }, [inspect, save]), status, preview,
+        pasted, btnRow, status, preview,
       ]));
     }
     // --- Create BOM component from a gap entry ---------------------------------

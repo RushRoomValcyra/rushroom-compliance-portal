@@ -45,6 +45,7 @@
       "importPartCosts",            // PROP-074
       "suggestPlannerMappings",     // PROP-075
       "suggestPlannerComponent",    // PROP-075
+      "suggestPlannerKey",          // key name for a BOM component
       "batchSuggestComponents",     // PROP-075
       "scanBomAnomalies",           // PROP-076
     ]),

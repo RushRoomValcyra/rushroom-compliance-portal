@@ -22,6 +22,7 @@ import { extractCostsFromDocument } from "./handlers/cost-extract.ts";
 import { importPartCosts } from "./handlers/cost-import.ts";
 import { suggestPlannerMappings } from "./handlers/planner-mapping-suggest.ts";
 import { suggestPlannerComponent } from "./handlers/planner-component-suggest.ts";
+import { suggestPlannerKey } from "./handlers/planner-key-suggest.ts";
 import { batchSuggestComponents } from "./handlers/planner-batch-suggest.ts";
 import { scanBomAnomalies } from "./handlers/bom-anomaly-scan.ts";
 import { normaliseExtractedLines } from "../_shared/cost-math.mjs";
@@ -1331,6 +1332,12 @@ You must never invent an internal drawing number or revision letter for the reci
   if (action === "suggestPlannerComponent") {
     return await suggestPlannerComponent(body, {
       role, tdb, apiKey: ANTHROPIC_API_KEY, model: META_MODEL, meterAi, db, organizationId,
+    });
+  }
+
+  if (action === "suggestPlannerKey") {
+    return await suggestPlannerKey(body, {
+      role, tdb, apiKey: ANTHROPIC_API_KEY, model: META_MODEL, meterAi,
     });
   }
 

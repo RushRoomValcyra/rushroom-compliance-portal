@@ -5942,6 +5942,10 @@ Deno.serve(async (req) => {
     return json({ error: "Action 'suggestPlannerComponent' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
   }
 
+  if (action === "suggestPlannerKey") {
+    return json({ error: "Action 'suggestPlannerKey' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
+  }
+
   if (action === "scanBomAnomalies") {
     // PROP-076: served by portal-ai. A client still posting it here is stale.
     return json({ error: "Action 'scanBomAnomalies' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);

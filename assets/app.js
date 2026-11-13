@@ -8177,17 +8177,30 @@
           ]);
           const fixedInp = el("input",  { class: "up-text", type: "number", min: "1", placeholder: "Qty", style: "width:3.5rem;font-size:0.8125rem;flex-shrink:0;display:none" });
           qtySel.addEventListener("change", () => { fixedInp.style.display = qtySel.value === "fixed" ? "" : "none"; });
+          const suggestKeyBtn = el("button", { class: "btn btn-sm", type: "button", style: "flex-shrink:0", title: "Suggest a key from this component and the keys already in use" }, "✨ Suggest");
           const saveKeyBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "flex-shrink:0" }, "Assign");
           const cancelKeyBtn = el("button", { class: "btn btn-sm", type: "button", style: "flex-shrink:0" }, "Cancel");
           const addFormErr   = el("p", { style: "font-size:0.75rem;color:#e05454;margin:0.3rem 0 0;display:none" }, "");
           const setAddFormErr = (msg) => { addFormErr.textContent = msg; addFormErr.style.display = msg ? "" : "none"; };
           const addForm = el("div", { style: "display:none;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0)" }, [
-            el("div", { style: "display:flex;gap:0.3rem;align-items:center" }, [typeSel, keyInp, qtySel, fixedInp, saveKeyBtn, cancelKeyBtn]),
+            el("div", { style: "display:flex;gap:0.3rem;align-items:center" }, [typeSel, keyInp, suggestKeyBtn, qtySel, fixedInp, saveKeyBtn, cancelKeyBtn]),
             addFormErr,
           ]);
           const addBtn = el("button", { class: "btn btn-sm", type: "button", style: "align-self:flex-start" }, "+ Assign planner key");
           addBtn.onclick    = () => { addForm.style.display = ""; addBtn.style.display = "none"; keyInp.focus(); };
-          cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; setAddFormErr(""); keyInp.value = ""; };
+          cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; setAddFormErr(""); keyInp.value = ""; keyInp.title = ""; };
+          suggestKeyBtn.onclick = async () => {
+            if (!typeSel.value) { setAddFormErr("Pick a key group."); return; }
+            suggestKeyBtn.disabled = true; suggestKeyBtn.textContent = "✨ …"; setAddFormErr("");
+            try {
+              const r = await API.post(token, "suggestPlannerKey", { component_id: componentId, source_type: typeSel.value });
+              keyInp.value = r.key || "";
+              keyInp.title = r.reasoning || "";
+              if (r.existing) setAddFormErr(`Already mapped to "${r.existing.name}" — change the key before assigning.`);
+              keyInp.focus();
+            } catch (ex) { setAddFormErr(ex.message); }
+            finally { suggestKeyBtn.disabled = false; suggestKeyBtn.textContent = "✨ Suggest"; }
+          };
           saveKeyBtn.onclick = async () => {
             if (!typeSel.value) { setAddFormErr("Pick a key group."); return; }
             const sourceKey = keyInp.value.trim();

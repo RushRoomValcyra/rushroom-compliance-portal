@@ -8131,8 +8131,9 @@
         const pkLbl = (t) => el("span", {
           style: "font-size:0.6875rem;font-weight:700;background:#e0e7ff;color:#4338ca;border-radius:4px;padding:1px 5px;white-space:nowrap;flex-shrink:0",
         }, t);
-        const keysEl     = el("div", {});
-        const keysStatus = el("p", { style: "font-size:0.75rem;color:#e05454;min-height:1em;margin:0 0 0.25rem" }, "");
+        const keysEl     = el("div", { style: "display:flex;flex-direction:column;gap:3px" });
+        const keysStatus = el("p", { style: "font-size:0.75rem;color:#e05454;margin:0;display:none" }, "");
+        const setKeysStatus = (msg) => { keysStatus.textContent = msg; keysStatus.style.display = msg ? "" : "none"; };
 
         async function loadPlannerKeys() {
           keysEl.replaceChildren(el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "Loading…"));
@@ -8149,14 +8150,14 @@
             const removeBtn = el("button", { class: "btn btn-sm", type: "button", style: "flex-shrink:0" }, "Remove");
             removeBtn.onclick = async () => {
               if (!confirm(`Remove planner key ${k.source_type}:${k.source_key} from this component?`)) return;
-              removeBtn.disabled = true; keysStatus.textContent = "";
+              removeBtn.disabled = true; setKeysStatus("");
               try {
                 await API.post(token, "deactivatePlannerMapping", { mapping_id: k.id });
                 await loadPlannerKeys();
-              } catch (ex) { keysStatus.textContent = ex.message; removeBtn.disabled = false; }
+              } catch (ex) { setKeysStatus(ex.message); removeBtn.disabled = false; }
             };
             const qtyLabel = k.quantity_rule === "fixed" ? `fixed × ${k.fixed_quantity}` : "cart qty";
-            return el("div", { style: "display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);margin-bottom:3px" }, [
+            return el("div", { style: "display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0)" }, [
               pkLbl(k.source_type),
               el("code", { style: "font-size:0.8125rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, k.source_key),
               el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, qtyLabel),
@@ -8178,22 +8179,23 @@
           qtySel.addEventListener("change", () => { fixedInp.style.display = qtySel.value === "fixed" ? "" : "none"; });
           const saveKeyBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "flex-shrink:0" }, "Assign");
           const cancelKeyBtn = el("button", { class: "btn btn-sm", type: "button", style: "flex-shrink:0" }, "Cancel");
-          const addFormErr   = el("p", { style: "font-size:0.75rem;color:#e05454;margin:0.2rem 0 0;min-height:1em" }, "");
-          const addForm = el("div", { style: "display:none;margin-top:3px;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0)" }, [
+          const addFormErr   = el("p", { style: "font-size:0.75rem;color:#e05454;margin:0.3rem 0 0;display:none" }, "");
+          const setAddFormErr = (msg) => { addFormErr.textContent = msg; addFormErr.style.display = msg ? "" : "none"; };
+          const addForm = el("div", { style: "display:none;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0)" }, [
             el("div", { style: "display:flex;gap:0.3rem;align-items:center" }, [typeSel, keyInp, qtySel, fixedInp, saveKeyBtn, cancelKeyBtn]),
             addFormErr,
           ]);
-          const addBtn = el("button", { class: "btn btn-sm", type: "button", style: "margin-top:0.3rem" }, "+ Assign planner key");
+          const addBtn = el("button", { class: "btn btn-sm", type: "button", style: "align-self:flex-start" }, "+ Assign planner key");
           addBtn.onclick    = () => { addForm.style.display = ""; addBtn.style.display = "none"; keyInp.focus(); };
-          cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; addFormErr.textContent = ""; keyInp.value = ""; };
+          cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; setAddFormErr(""); keyInp.value = ""; };
           saveKeyBtn.onclick = async () => {
-            if (!typeSel.value) { addFormErr.textContent = "Pick a key group."; return; }
+            if (!typeSel.value) { setAddFormErr("Pick a key group."); return; }
             const sourceKey = keyInp.value.trim();
-            if (!sourceKey) { addFormErr.textContent = "Enter a planner key."; return; }
+            if (!sourceKey) { setAddFormErr("Enter a planner key."); return; }
             if (qtySel.value === "fixed" && (!fixedInp.value || Number(fixedInp.value) <= 0)) {
-              addFormErr.textContent = "Enter a fixed quantity > 0."; return;
+              setAddFormErr("Enter a fixed quantity > 0."); return;
             }
-            saveKeyBtn.disabled = true; addFormErr.textContent = "";
+            saveKeyBtn.disabled = true; setAddFormErr("");
             try {
               await API.post(token, "savePlannerMapping", {
                 source_type: typeSel.value, source_key: sourceKey,
@@ -8201,7 +8203,7 @@
                 ...(qtySel.value === "fixed" ? { fixed_quantity: Number(fixedInp.value) } : {}),
               });
               await loadPlannerKeys();
-            } catch (ex) { addFormErr.textContent = ex.message; saveKeyBtn.disabled = false; }
+            } catch (ex) { setAddFormErr(ex.message); saveKeyBtn.disabled = false; }
           };
 
           keysEl.replaceChildren(

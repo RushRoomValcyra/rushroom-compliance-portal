@@ -7965,6 +7965,8 @@
       // --- Name + part number edit block (rushroom only) -----------------------
       // --- Unified Properties card (rushroom only) — replaces separate name/status/type/sourcing cards ---
       let propertiesSection = null;
+      let propSaveBtn = null;
+      let propSaveErr = null;
       if (role === "rushroom") {
         const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.8125rem" });
         const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.8125rem;font-family:monospace" });
@@ -8037,8 +8039,8 @@
         const catSel = categorySelect(nodeData?.category_id || null, { placeholder: "— none —" });
         catSel.style.cssText = "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)";
 
-        const propSaveErr = el("span", { style: "font-size:0.75rem;color:#e05454;flex:1" }, "");
-        const propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save");
+        propSaveErr = el("span", { style: "font-size:0.75rem;color:#e05454;flex:1" }, "");
+        propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save");
         propSaveBtn.onclick = async () => {
           const newName = nameInp.value.trim();
           if (!newName) { propSaveErr.textContent = "Name cannot be empty."; return; }
@@ -8102,7 +8104,6 @@
             el("div", {}, [lbl("Sourcing"), mobSel]),
             el("div", { style: "grid-column:1/3" }, [lbl("Description"), descInp]),
           ]),
-          el("div", { style: "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:0.25rem" }, [propSaveErr, propSaveBtn]),
           // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
           // part from where it lives starts here.
           window.PortalBomRules && window.PortalBomRules.takesInTheBox(nodeData) ? el("div", {
@@ -8166,8 +8167,10 @@
           });
 
           // Inline add-key form (collapsed by default).
-          const typeSel  = el("select", { class: "up-text", style: "font-size:0.8125rem" },
-            PKEY_SOURCE_TYPES.map(([v, l]) => el("option", { value: v }, l)));
+          const typeSel  = el("select", { class: "up-text", style: "font-size:0.8125rem" }, [
+            el("option", { value: "", disabled: "disabled", selected: "selected" }, "Pick key group"),
+            ...PKEY_SOURCE_TYPES.map(([v, l]) => el("option", { value: v }, l)),
+          ]);
           const keyInp   = el("input",  { class: "up-text", type: "text", placeholder: "e.g. module_m_color_white", style: "flex:1;font-size:0.8125rem;font-family:monospace;min-width:0" });
           const qtySel   = el("select", { class: "up-text", style: "font-size:0.8125rem" }, [
             el("option", { value: "cart_quantity" }, "Cart qty"),
@@ -8187,6 +8190,7 @@
           addBtn.onclick    = () => { addForm.style.display = ""; addBtn.style.display = "none"; keyInp.focus(); };
           cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; addFormErr.textContent = ""; keyInp.value = ""; };
           saveKeyBtn.onclick = async () => {
+            if (!typeSel.value) { addFormErr.textContent = "Pick a key group."; return; }
             const sourceKey = keyInp.value.trim();
             if (!sourceKey) { addFormErr.textContent = "Enter a planner key."; return; }
             if (qtySel.value === "fixed" && (!fixedInp.value || Number(fixedInp.value) <= 0)) {
@@ -8212,11 +8216,11 @@
 
         loadPlannerKeys();
 
-        plannerKeysSection = el("div", { style: "margin-bottom:1rem;padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
-          el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.5rem" }, "Planner keys"),
-          keysStatus,
-          keysEl,
-        ]);
+        // Embed planner keys directly inside the properties card (no separate bordered card)
+        propertiesSection.appendChild(el("div", { style: "border-top:1px solid var(--border,#e2e8f0);margin:0.5rem 0 0.6rem" }));
+        propertiesSection.appendChild(el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.5rem" }, "Planner keys"));
+        propertiesSection.appendChild(keysStatus);
+        propertiesSection.appendChild(keysEl);
       }
 
       // ---- Product Families section ----------------------------------------
@@ -8945,6 +8949,8 @@
           ].filter(Boolean)),
           el("div", { style: "display:flex;gap:0.4rem;align-items:center" }, [
             headerActions,
+            ...(propSaveErr ? [propSaveErr] : []),
+            ...(propSaveBtn ? [propSaveBtn] : []),
             el("button", {
               class: "btn btn-sm btn-primary", type: "button",
               title: "Read a datasheet, drawing or screenshot and fill these fields",

@@ -8122,6 +8122,103 @@
         ]);
       }
 
+      // ---- Planner keys section (rushroom only) --------------------------------
+      let plannerKeysSection = null;
+      if (role === "rushroom") {
+        const PKEY_SOURCE_TYPES = [
+          ["module", "Module"], ["interior", "Interior"], ["side_panel", "Side panel"],
+          ["feet", "Feet"], ["door", "Door"], ["cover", "Cover"], ["back_cover", "Back cover"],
+        ];
+        const pkLbl = (t) => el("span", {
+          style: "font-size:0.6875rem;font-weight:700;background:#e0e7ff;color:#4338ca;border-radius:4px;padding:1px 5px;white-space:nowrap;flex-shrink:0",
+        }, t);
+        const keysEl     = el("div", {});
+        const keysStatus = el("p", { style: "font-size:0.75rem;color:#e05454;min-height:1em;margin:0 0 0.25rem" }, "");
+
+        async function loadPlannerKeys() {
+          keysEl.replaceChildren(el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "Loading…"));
+          try {
+            const r = await API.post(token, "getComponentPlannerKeys", { component_id: componentId });
+            renderPlannerKeys(r.keys || []);
+          } catch (ex) {
+            keysEl.replaceChildren(el("span", { style: "font-size:0.8125rem;color:#e05454" }, ex.message));
+          }
+        }
+
+        function renderPlannerKeys(keys) {
+          const rows = keys.map((k) => {
+            const removeBtn = el("button", { class: "btn btn-sm", type: "button", style: "flex-shrink:0" }, "Remove");
+            removeBtn.onclick = async () => {
+              if (!confirm(`Remove planner key ${k.source_type}:${k.source_key} from this component?`)) return;
+              removeBtn.disabled = true; keysStatus.textContent = "";
+              try {
+                await API.post(token, "deactivatePlannerMapping", { mapping_id: k.id });
+                await loadPlannerKeys();
+              } catch (ex) { keysStatus.textContent = ex.message; removeBtn.disabled = false; }
+            };
+            const qtyLabel = k.quantity_rule === "fixed" ? `fixed × ${k.fixed_quantity}` : "cart qty";
+            return el("div", { style: "display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.5rem;border-radius:5px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);margin-bottom:3px" }, [
+              pkLbl(k.source_type),
+              el("code", { style: "font-size:0.8125rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, k.source_key),
+              el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, qtyLabel),
+              removeBtn,
+            ]);
+          });
+
+          // Inline add-key form (collapsed by default).
+          const typeSel  = el("select", { class: "up-text", style: "font-size:0.8125rem" },
+            PKEY_SOURCE_TYPES.map(([v, l]) => el("option", { value: v }, l)));
+          const keyInp   = el("input",  { class: "up-text", type: "text", placeholder: "e.g. module_m_color_white", style: "flex:1;font-size:0.8125rem;font-family:monospace;min-width:0" });
+          const qtySel   = el("select", { class: "up-text", style: "font-size:0.8125rem" }, [
+            el("option", { value: "cart_quantity" }, "Cart qty"),
+            el("option", { value: "fixed" },         "Fixed qty"),
+          ]);
+          const fixedInp = el("input",  { class: "up-text", type: "number", min: "1", placeholder: "Qty", style: "width:3.5rem;font-size:0.8125rem;display:none" });
+          qtySel.addEventListener("change", () => { fixedInp.style.display = qtySel.value === "fixed" ? "" : "none"; });
+          const saveKeyBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Assign");
+          const cancelKeyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Cancel");
+          const addFormErr   = el("p", { style: "font-size:0.75rem;color:#e05454;margin:0.2rem 0 0;min-height:1em" }, "");
+          const addForm = el("div", { style: "display:none;margin-top:0.4rem" }, [
+            el("div", { style: "display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap" }, [typeSel, keyInp, qtySel, fixedInp]),
+            el("div", { style: "display:flex;gap:0.3rem;margin-top:0.3rem" }, [saveKeyBtn, cancelKeyBtn]),
+            addFormErr,
+          ]);
+          const addBtn = el("button", { class: "btn btn-sm", type: "button", style: "margin-top:0.35rem" }, "+ Assign planner key");
+          addBtn.onclick    = () => { addForm.style.display = ""; addBtn.style.display = "none"; keyInp.focus(); };
+          cancelKeyBtn.onclick = () => { addForm.style.display = "none"; addBtn.style.display = ""; addFormErr.textContent = ""; keyInp.value = ""; };
+          saveKeyBtn.onclick = async () => {
+            const sourceKey = keyInp.value.trim();
+            if (!sourceKey) { addFormErr.textContent = "Enter a planner key."; return; }
+            if (qtySel.value === "fixed" && (!fixedInp.value || Number(fixedInp.value) <= 0)) {
+              addFormErr.textContent = "Enter a fixed quantity > 0."; return;
+            }
+            saveKeyBtn.disabled = true; addFormErr.textContent = "";
+            try {
+              await API.post(token, "savePlannerMapping", {
+                source_type: typeSel.value, source_key: sourceKey,
+                target_component_id: componentId, quantity_rule: qtySel.value,
+                ...(qtySel.value === "fixed" ? { fixed_quantity: Number(fixedInp.value) } : {}),
+              });
+              await loadPlannerKeys();
+            } catch (ex) { addFormErr.textContent = ex.message; saveKeyBtn.disabled = false; }
+          };
+
+          keysEl.replaceChildren(
+            ...rows,
+            ...(!rows.length ? [el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.25rem" }, "No planner keys assigned to this component.")] : []),
+            addBtn, addForm,
+          );
+        }
+
+        loadPlannerKeys();
+
+        plannerKeysSection = el("div", { style: "margin-bottom:1rem;padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [
+          el("div", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.5rem" }, "Planner keys"),
+          keysStatus,
+          keysEl,
+        ]);
+      }
+
       // ---- Product Families section ----------------------------------------
       const compFamilies = (compFamiliesR && compFamiliesR.families) || [];
       const allFamilies  = (allFamiliesR  && allFamiliesR.families)  || [];
@@ -8810,6 +8907,7 @@
       tabPanels["overview"]   = el("div", { style: "display:none" }, [
         ...(sourceCallout      ? [sourceCallout]      : []),
         ...(propertiesSection  ? [propertiesSection]  : []),
+        ...(plannerKeysSection ? [plannerKeysSection] : []),
       ]);
       tabPanels["relations"]  = el("div", { style: "display:none" }, [
         variantGroupSection,

@@ -3177,6 +3177,19 @@ Deno.serve(async (req) => {
     return json({ mappings, count: mappings.length, include_history: includeHistory });
   }
 
+  if (action === "getComponentPlannerKeys") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const componentId = String(body.component_id ?? "");
+    if (!componentId) return json({ error: "component_id required" }, 400);
+    const { data, error } = await tdb("planner_mappings")
+      .select("id, source_type, source_key, quantity_rule, fixed_quantity, mapping_revision")
+      .eq("target_component_id", componentId)
+      .eq("is_active", true)
+      .order("source_type").order("source_key");
+    if (error) return json({ error: error.message }, 400);
+    return json({ keys: data || [] });
+  }
+
   if (action === "savePlannerMapping") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const sourceType = String(body.source_type ?? "");

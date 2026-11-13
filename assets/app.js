@@ -8165,23 +8165,22 @@
           });
 
           // Inline add-key form (collapsed by default).
-          const typeSel  = el("select", { class: "up-text", style: "font-size:0.8125rem" }, [
-            el("option", { value: "", disabled: "disabled", selected: "selected" }, "Pick key group"),
+          const typeSel  = el("select", { class: "up-text", style: "font-size:0.8125rem;width:7.5rem;flex-shrink:0" }, [
+            el("option", { value: "", disabled: "disabled", selected: "selected" }, "Key group"),
             ...PKEY_SOURCE_TYPES.map(([v, l]) => el("option", { value: v }, l)),
           ]);
-          const keyInp   = el("input",  { class: "up-text", type: "text", placeholder: "e.g. module_m_color_white", style: "flex:1;font-size:0.8125rem;font-family:monospace;min-width:0" });
-          const qtySel   = el("select", { class: "up-text", style: "font-size:0.8125rem" }, [
+          const keyInp   = el("input",  { class: "up-text", type: "text", placeholder: "key_name", style: "flex:1;font-size:0.8125rem;font-family:monospace;min-width:0" });
+          const qtySel   = el("select", { class: "up-text", style: "font-size:0.8125rem;width:5.5rem;flex-shrink:0" }, [
             el("option", { value: "cart_quantity" }, "Cart qty"),
             el("option", { value: "fixed" },         "Fixed qty"),
           ]);
-          const fixedInp = el("input",  { class: "up-text", type: "number", min: "1", placeholder: "Qty", style: "width:3.5rem;font-size:0.8125rem;display:none" });
+          const fixedInp = el("input",  { class: "up-text", type: "number", min: "1", placeholder: "Qty", style: "width:3.5rem;font-size:0.8125rem;flex-shrink:0;display:none" });
           qtySel.addEventListener("change", () => { fixedInp.style.display = qtySel.value === "fixed" ? "" : "none"; });
-          const saveKeyBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Assign");
-          const cancelKeyBtn = el("button", { class: "btn btn-sm", type: "button" }, "Cancel");
+          const saveKeyBtn   = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "flex-shrink:0" }, "Assign");
+          const cancelKeyBtn = el("button", { class: "btn btn-sm", type: "button", style: "flex-shrink:0" }, "Cancel");
           const addFormErr   = el("p", { style: "font-size:0.75rem;color:#e05454;margin:0.2rem 0 0;min-height:1em" }, "");
           const addForm = el("div", { style: "display:none;margin-top:3px;padding:0.3rem 0.5rem;border-radius:6px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0)" }, [
-            el("div", { style: "display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap" }, [typeSel, keyInp, qtySel, fixedInp]),
-            el("div", { style: "display:flex;gap:0.3rem;margin-top:0.3rem" }, [saveKeyBtn, cancelKeyBtn]),
+            el("div", { style: "display:flex;gap:0.3rem;align-items:center" }, [typeSel, keyInp, qtySel, fixedInp, saveKeyBtn, cancelKeyBtn]),
             addFormErr,
           ]);
           const addBtn = el("button", { class: "btn btn-sm", type: "button", style: "margin-top:0.3rem" }, "+ Assign planner key");

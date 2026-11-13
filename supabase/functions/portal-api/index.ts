@@ -3227,7 +3227,13 @@ Deno.serve(async (req) => {
         .eq("source_type", sourceType).eq("source_key", sourceKey).eq("is_active", true)
         .maybeSingle();
       if (existingActive) {
-        return json({ error: "An active mapping already exists for this planner key. Close this dialog, re-run the BOM gap check, and edit the existing mapping instead of creating a new one." }, 409);
+        // Reached from both the gap-check modal and the component panel, so name the holder rather than a dialog.
+        const sameTarget = existingActive.target_component_id === targetId;
+        const holder = sameTarget ? null : await plannerTarget(existingActive.target_component_id);
+        const error = sameTarget
+          ? "This planner key is already assigned to this component."
+          : `This planner key is already mapped to ${holder ? `"${holder.name}"` : "another component"}. Remove it there first, or use a different key.`;
+        return json({ error }, 409);
       }
     }
 

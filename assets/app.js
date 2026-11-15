@@ -6255,18 +6255,10 @@
     ]);
 
     // Create-new section
-    function genPN() {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      let s = "";
-      for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-      const now = new Date();
-      return `RR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-${s}`;
-    }
     const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
-    const newPN   = el("input",  { class: "up-text", type: "text" });
+    const newPN   = el("input",  { class: "up-text", type: "text", placeholder: "Auto-generated (RR-YYYYMM-XXXXXXXX)" });
     const newName = el("input",  { class: "up-text", type: "text", placeholder: "Name (required)" });
     const newType = el("select", { class: "up-text" }, TYPE_OPTS.map(([v, l]) => el("option", { value: v }, l)));
-    newPN.value = genPN();
     const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
     [newPN, newName].forEach((el_) => el_.style.cssText = F);
     newType.style.cssText = F + ";appearance:none;-webkit-appearance:none;cursor:pointer";
@@ -8002,7 +7994,7 @@
       let wrapInPreparedBtn = null;
       if (role === "rushroom") {
         const nameInp   = el("input", { class: "up-text", type: "text", value: nodeData?.name || "", style: "width:100%;font-size:0.8125rem" });
-        const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", style: "width:100%;font-size:0.8125rem;font-family:monospace" });
+        const pnInp     = el("input", { class: "up-text", type: "text", value: nodeData?.part_number || "", readonly: "readonly", title: "The part number identifies this part everywhere and cannot change", style: "width:100%;font-size:0.8125rem;font-family:monospace;opacity:0.7;cursor:default" });
         // Description was collected by the Create BOM Node modal, written to
         // bom_components.description, and then shown nowhere — it surfaced only
         // inside a frozen version snapshot. 5 of 61 components already carried
@@ -8091,7 +8083,6 @@
               API.post(token, "updateComponent", {
                 component_id: componentId,
                 name: newName,
-                part_number: pnInp.value.trim() || undefined,
                 oem_number: oemInp.value.trim() || null,
                 description: descInp.value.trim() || null,
                 type: typeSel.value,
@@ -9023,15 +9014,6 @@
     const overlay = el("div", { class: "modal-overlay", "data-modal-overlay": "", class: "modal-scrim" });
     const dialog = el("div", { class: "modal-dialog", class: "modal-box" });
 
-    // --- Part-number generator ------------------------------------------------
-    function genPN() {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      let s = "";
-      for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-      const now = new Date();
-      return `RR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-${s}`;
-    }
-
     // --- Fields --------------------------------------------------------------
     const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
     const pn   = el("input",    { class: "up-text", type: "text", placeholder: "Auto-generated if left empty" });
@@ -9040,9 +9022,6 @@
     const typ  = el("select",   { class: "up-text" }, TYPE_OPTS.map(([v, l]) => el("option", { value: v }, l)));
     const cat  = categorySelect(null);   // PROP-038 — required for parts
     const desc = el("textarea", { class: "up-text", rows: "2", placeholder: "Purpose — what does this part do?" });
-
-    // Pre-fill part number so user can see what will be saved (still editable)
-    pn.value = genPN();
 
     // --- Upload zone + AI autofill -------------------------------------------
     const statusEl = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");

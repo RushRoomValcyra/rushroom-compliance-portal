@@ -68,6 +68,22 @@ function operationCondition(raw: unknown): Record<string, unknown> | null | unde
 const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
 const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
 
+// One format for every part number, enforced on every write: RR-YYYYMM- plus
+// 8 characters from an alphabet without 0/O/1/I. All 196 numbers in production
+// matched it on 2026-11-15, so there is no legacy shape to allow. The number is
+// stamped into CAD, Blender, supplier files and order snapshots, which is why
+// updateComponent refuses to change it.
+const PART_NUMBER_RE = /^RR-\d{6}-[A-Z2-9]{8}$/;
+const PART_NUMBER_FORMAT_ERROR = "Part number must look like RR-202611-AB3DE7KL, or be left empty to generate one.";
+const normalisePartNumber = (value: unknown) => String(value ?? "").trim().toUpperCase();
+function newPartNumber(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const rand = new Uint8Array(8);
+  crypto.getRandomValues(rand);
+  const d = new Date();
+  return `RR-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}-${Array.from(rand).map((b) => chars[b % chars.length]).join("")}`;
+}
+
 // Unlike a straight string comparison, this walks the longest input even when
 // lengths differ. It is deliberately used for service-to-service credentials.
 function constantTimeSecretEqual(actual: string, expected: string): boolean {
@@ -884,11 +900,7 @@ async function cloneComponentRow(tdb: any, session: any, srcId: string, nameOver
 
   // Always a fresh number: part_number is unique per org and is the thing
   // people scan for, so a copy must never be mistakable for the original.
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const rand = new Uint8Array(8);
-  crypto.getRandomValues(rand);
-  const d = new Date();
-  const part_number = `RR-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}-${Array.from(rand).map((b) => chars[b % chars.length]).join("")}`;
+  const part_number = newPartNumber();
   const name = String(nameOverride && nameOverride.trim() ? nameOverride.trim() : `${src.name} - copy`).slice(0, 255);
 
   const { data: comp, error: ce } = await tdb("bom_components").insert({
@@ -3599,18 +3611,10 @@ Deno.serve(async (req) => {
       const { data: cat } = await tdb("part_categories").select("id").eq("id", category_id).maybeSingle();
       if (!cat) return json({ error: "Category not found" }, 404);
     }
-    // Auto-generate part number if not supplied
-    if (!part_number || !String(part_number).trim()) {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      const rand = new Uint8Array(8);
-      crypto.getRandomValues(rand);
-      const suffix = Array.from(rand).map((b) => chars[b % chars.length]).join("");
-      const d = new Date();
-      const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
-      part_number = `RR-${ym}-${suffix}`;
-    }
+    part_number = normalisePartNumber(part_number) || newPartNumber();
+    if (!PART_NUMBER_RE.test(part_number)) return json({ error: PART_NUMBER_FORMAT_ERROR }, 400);
     const { data: comp, error: ce } = await tdb("bom_components").insert({
-      part_number: String(part_number).trim(), name: String(name), type,
+      part_number, name: String(name), type,
       oem_number: oem_number ? String(oem_number).trim() : null,
       description: description || null, notes: notes || null,
       category_id: category_id || null,
@@ -3830,7 +3834,12 @@ Deno.serve(async (req) => {
     if (description !== undefined) patch.description = description;
     if (notes       !== undefined) patch.notes       = notes;
     if (oem_number  !== undefined) patch.oem_number  = oem_number ? String(oem_number).trim() : null;
-    if (part_number !== undefined && String(part_number).trim()) patch.part_number = String(part_number).trim();
+    if (part_number !== undefined) {
+      const { data: cur } = await tdb("bom_components").select("part_number").eq("id", component_id).maybeSingle();
+      if (cur && normalisePartNumber(part_number) !== cur.part_number) {
+        return json({ error: "The part number cannot be changed: it identifies this part in CAD, Blender, supplier files and orders. Create a new part instead." }, 400);
+      }
+    }
     if (newType     !== undefined) {
       const validTypes = COMPONENT_TYPES;
       if (!validTypes.includes(newType)) return json({ error: "Invalid type" }, 400);
@@ -5476,16 +5485,8 @@ Deno.serve(async (req) => {
     if (cfgErr || !cfg) return json({ error: cfgErr?.message ?? "Configuration not found" }, 404);
 
     // Derive part number and name from the request or fall back to config defaults
-    let part_number = requestedPN ? String(requestedPN).trim() : (cfg.part_number ? String(cfg.part_number).trim() : null);
-    if (!part_number) {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      const rand = new Uint8Array(8);
-      crypto.getRandomValues(rand);
-      const suffix = Array.from(rand).map((b: number) => chars[b % chars.length]).join("");
-      const d = new Date();
-      const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
-      part_number = `RR-${ym}-${suffix}`;
-    }
+    let part_number = normalisePartNumber(requestedPN) || normalisePartNumber(cfg.part_number) || newPartNumber();
+    if (!PART_NUMBER_RE.test(part_number)) return json({ error: PART_NUMBER_FORMAT_ERROR }, 400);
     const name = requestedName ? String(requestedName).trim() : String(cfg.name).trim();
 
     // Create the stocked variant as a sub_assembly bom_component

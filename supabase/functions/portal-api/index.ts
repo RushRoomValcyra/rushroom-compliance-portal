@@ -68,13 +68,10 @@ function operationCondition(raw: unknown): Record<string, unknown> | null | unde
 const plannerSourceKey = (value: unknown) => String(value ?? "").trim();
 const plannerKeyValid = (key: string) => /^[A-Za-z0-9][A-Za-z0-9._:*\/-]{0,159}$/.test(key);
 
-// One format for every part number, enforced on every write: RR-YYYYMM- plus
-// 8 characters from an alphabet without 0/O/1/I. All 196 numbers in production
-// matched it on 2026-11-15, so there is no legacy shape to allow. The number is
-// stamped into CAD, Blender, supplier files and order snapshots, which is why
-// updateComponent refuses to change it.
-const PART_NUMBER_RE = /^RR-\d{6}-[A-Z2-9]{8}$/;
-const PART_NUMBER_FORMAT_ERROR = "Part number must look like RR-202611-AB3DE7KL, or be left empty to generate one.";
+// Every part number is generated here, never typed: RR-YYYYMM- plus 8
+// characters from an alphabet without 0/O/1/I. The number is stamped into CAD,
+// Blender, supplier files and order snapshots, which is why no create path
+// accepts one from the client and updateComponent refuses to change it.
 const normalisePartNumber = (value: unknown) => String(value ?? "").trim().toUpperCase();
 function newPartNumber(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -3560,7 +3557,6 @@ Deno.serve(async (req) => {
   if (action === "addComponent") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
     const { name, type, oem_number, description, notes, category_id, make_or_buy } = body;
-    let { part_number } = body;
     if (!name || !type) return json({ error: "name and type are required" }, 400);
 
     // Name-collision guard: block accidental duplicates before they are created.
@@ -3611,8 +3607,7 @@ Deno.serve(async (req) => {
       const { data: cat } = await tdb("part_categories").select("id").eq("id", category_id).maybeSingle();
       if (!cat) return json({ error: "Category not found" }, 404);
     }
-    part_number = normalisePartNumber(part_number) || newPartNumber();
-    if (!PART_NUMBER_RE.test(part_number)) return json({ error: PART_NUMBER_FORMAT_ERROR }, 400);
+    const part_number = newPartNumber();
     const { data: comp, error: ce } = await tdb("bom_components").insert({
       part_number, name: String(name), type,
       oem_number: oem_number ? String(oem_number).trim() : null,
@@ -5475,7 +5470,7 @@ Deno.serve(async (req) => {
   // --- PROP-033: Materialise a saved configuration as a stocked SKU ---------
   if (action === "materialiseConfiguration") {
     if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
-    const { saved_configuration_id, part_number: requestedPN, name: requestedName, notes } = body;
+    const { saved_configuration_id, name: requestedName, notes } = body;
     if (!saved_configuration_id) return json({ error: "saved_configuration_id required" }, 400);
 
     // Fetch the saved configuration (validates org ownership via tdb)
@@ -5485,8 +5480,7 @@ Deno.serve(async (req) => {
     if (cfgErr || !cfg) return json({ error: cfgErr?.message ?? "Configuration not found" }, 404);
 
     // Derive part number and name from the request or fall back to config defaults
-    let part_number = normalisePartNumber(requestedPN) || normalisePartNumber(cfg.part_number) || newPartNumber();
-    if (!PART_NUMBER_RE.test(part_number)) return json({ error: PART_NUMBER_FORMAT_ERROR }, 400);
+    const part_number = newPartNumber();
     const name = requestedName ? String(requestedName).trim() : String(cfg.name).trim();
 
     // Create the stocked variant as a sub_assembly bom_component

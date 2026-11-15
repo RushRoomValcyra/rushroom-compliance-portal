@@ -6256,11 +6256,10 @@
 
     // Create-new section
     const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
-    const newPN   = el("input",  { class: "up-text", type: "text", placeholder: "Auto-generated (RR-YYYYMM-XXXXXXXX)" });
     const newName = el("input",  { class: "up-text", type: "text", placeholder: "Name (required)" });
     const newType = el("select", { class: "up-text" }, TYPE_OPTS.map(([v, l]) => el("option", { value: v }, l)));
     const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
-    [newPN, newName].forEach((el_) => el_.style.cssText = F);
+    newName.style.cssText = F;
     newType.style.cssText = F + ";appearance:none;-webkit-appearance:none;cursor:pointer";
     const LBL = "display:block;font-size:0.8125rem;font-weight:600;color:var(--muted,#8b93a1);margin-bottom:0.25rem";
     const ROW = "margin-bottom:0.6rem";
@@ -6277,7 +6276,6 @@
     newType.addEventListener("change", syncCatRequired);
     syncCatRequired();
     const newSection = el("div", {}, [
-      el("div", { style: ROW }, [el("label", { style: LBL }, "Part number"), newPN]),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Name"), newName]),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Type"), newType]),
       newMobRow,
@@ -6404,7 +6402,6 @@
           } else if (mode === "new") {
             submitBtn.textContent = "Creating…";
             const r = await API.post(token, "addComponent", {
-              part_number: newPN.value.trim() || null,
               name:        newName.value.trim(),
               type:        newType.value,
               make_or_buy: sourcingFor(newType.value, newMob.value),
@@ -6414,7 +6411,7 @@
             batch[0].childId = r.id;
             batch[0].name = createdNew.name;
             // From here the part exists: its fields are no longer the dialog's to change.
-            [newPN, newName, newType, newMob, newCat].forEach((f) => { f.disabled = true; });
+            [newName, newType, newMob, newCat].forEach((f) => { f.disabled = true; });
           }
           // Sequential, not Promise.all — and this is correctness, not taste.
           // addBomEdge derives sort_order by reading the current maximum and
@@ -6437,8 +6434,10 @@
           // Say what DID happen. Silently reporting only the failure, after
           // three of five edges were written, is how a BOM ends up with
           // duplicates the next time someone retries the whole batch.
+          // The number is generated, so a duplicate is a one-in-a-trillion
+          // collision, not a typo — but it still has to read as a sentence.
           const msg = /part_number_key/.test(ex.message)
-            ? `Part number ${newPN.value.trim()} already exists. Change it, or use Link existing to add that part.`
+            ? "The generated part number collided with an existing one. Press again to get a new number."
             : ex.message;
           errEl.textContent = added.length
             ? `Added ${added.length} of ${batch.length}, then failed on “${batch[added.length].name || newName.value.trim()}”: ${msg}. The ones already added have been removed from the list.`
@@ -9016,7 +9015,6 @@
 
     // --- Fields --------------------------------------------------------------
     const TYPE_OPTS = [["part", "Part"], ["sub_assembly", "Sub-Assembly"], ["phantom_assembly", "Kit (picked together, not built)"], ["finished_good", "Finished Good"]];
-    const pn   = el("input",    { class: "up-text", type: "text", placeholder: "Auto-generated if left empty" });
     const oem  = el("input",    { class: "up-text", type: "text", placeholder: "OEM / distributor reference (optional)" });
     const nm   = el("input",    { class: "up-text", type: "text", placeholder: "Name" });
     const typ  = el("select",   { class: "up-text" }, TYPE_OPTS.map(([v, l]) => el("option", { value: v }, l)));
@@ -9031,7 +9029,6 @@
       statusEl.className = "up-status"; statusEl.textContent = "✨ Reading the file with AI…";
       try {
         const meta = await API.post(token, "suggestComponentMetadata", { path: up.path, fileName: up.fileName });
-        if (meta.part_number) pn.value  = meta.part_number;
         if (meta.oem_number)  oem.value = meta.oem_number;   // AI suggestion; stored as manufacturer_part_number on save
         if (meta.name)        nm.value  = meta.name;
         if (meta.type && TYPE_OPTS.some(([v]) => v === meta.type)) typ.value = meta.type;
@@ -9140,7 +9137,6 @@
           return;
         }
         const r = await API.post(token, "addComponent", {
-          part_number: pn.value.trim() || null,
           name:        nm.value.trim(),
           type:        typ.value,
           make_or_buy: sourcingFor(typ.value, mob.value),
@@ -9192,7 +9188,7 @@
 
     // Shared field style — applied to every input/select/textarea in this modal
     const F = "width:100%;font-size:0.875rem;padding:0.42rem 0.6rem;border:1px solid var(--border,#e2e8f0);border-radius:6px;background:var(--bg,#fff);color:var(--text,#1a1f2e);font-family:inherit;box-sizing:border-box";
-    [pn, oem, nm].forEach((el_) => el_.style.cssText = F);
+    [oem, nm].forEach((el_) => el_.style.cssText = F);
     typ.style.cssText  = F + ";appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:2rem;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a94a6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 0.6rem center;background-size:12px";
     desc.style.cssText = F + ";resize:vertical;min-height:64px";
 
@@ -9216,7 +9212,6 @@
       el("p", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);margin:0 0 0.9rem" },
         "Upload a datasheet and the AI will suggest fields. Or fill in manually."),
       el("div", { style: ROW }, [el("label", { style: LBL }, "Document (optional)"), zone.el, statusEl]),
-      frow("Part number", pn,   "Auto-generated if left as-is — you can edit it."),
       frow("OEM number",  oem,  null),
       frow("Name",        nm,   null),
       frow("Type",        typ,  null),

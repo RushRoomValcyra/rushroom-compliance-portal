@@ -38,6 +38,43 @@ def _log(msg):
         pass
 
 
+class _DocumentOpenedHandler(adsk.core.DocumentEventHandler):
+    """Auto-applies a pending stamp when a queued file is opened."""
+    def __init__(self, ui):
+        super().__init__()
+        self._ui = ui
+
+    def notify(self, args):
+        try:
+            import re
+            from lib.pending_stamps import consume
+            from lib.exports import ATTR_GROUP, ATTR_COMPONENT_ID, ATTR_PART_NUMBER
+
+            doc = args.document
+            if not doc or not doc.isValid:
+                return
+
+            # Match document name against the pending queue
+            raw = doc.name
+            clean = re.sub(r':\d+$', '', raw)
+            clean = re.sub(r'[_\s]+v\d+(\.\d+)*$', '', clean, flags=re.IGNORECASE).strip().lower()
+
+            entry = consume(clean)
+            if not entry:
+                return
+
+            design = adsk.fusion.Design.cast(doc.products.itemByProductType("DesignProductType"))
+            if not design:
+                return
+
+            root = design.rootComponent
+            root.attributes.add(ATTR_GROUP, ATTR_COMPONENT_ID, entry["portal_id"])
+            root.attributes.add(ATTR_GROUP, ATTR_PART_NUMBER, entry["portal_pn"])
+            _log(f"auto-stamped {raw} → {entry['portal_pn']}")
+        except Exception:
+            _log("DocumentOpened handler error:\n" + traceback.format_exc())
+
+
 def run(context):
     global _app, _ui, _commands, _handlers
     _log("=== run() called ===")
@@ -61,6 +98,12 @@ def run(context):
             cmd.register()
             _commands.append(cmd)
         _log("commands registered OK")
+
+        # Auto-stamp queued files on open
+        on_doc_opened = _DocumentOpenedHandler(_ui)
+        _app.documentOpened.add(on_doc_opened)
+        _handlers.append(on_doc_opened)
+        _log("documentOpened handler registered")
 
     except Exception:
         tb = traceback.format_exc()

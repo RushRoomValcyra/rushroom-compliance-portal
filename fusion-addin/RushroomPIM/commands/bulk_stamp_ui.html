@@ -39,6 +39,10 @@ td{padding:6px 10px;vertical-align:middle}
 .b-amb{background:#78350f;color:#fcd34d}
 .b-nf{background:#7f1d1d;color:#fca5a5}
 .b-con{background:#7c2d12;color:#fdba74}
+.b-queued{background:#1e3a5f;color:#a5b4fc}
+.tab-bar{display:flex;gap:0;border-bottom:2px solid #374151;flex-shrink:0;background:#111827}
+.tab{padding:8px 18px;cursor:pointer;font-size:12px;font-weight:600;color:#9ca3af;border-bottom:2px solid transparent;margin-bottom:-2px}
+.tab.on{color:#93c5fd;border-bottom-color:#3b82f6}
 
 .fname{font-family:monospace;font-size:12px;color:#e2e8f0}
 .mname{font-weight:600;color:#f1f5f9}
@@ -68,8 +72,15 @@ footer{padding:6px 14px;background:#1f2937;border-top:1px solid #374151;font-siz
   <span class="chip c-amb" id="c-amb">0 ambiguous</span>
   <span class="chip c-nf" id="c-nf">0 not found</span>
   <span class="chip c-con" id="c-con">0 conflict</span>
+  <span class="chip" style="background:#1e3a5f;color:#a5b4fc" id="c-pending" title="Pending auto-stamps queued for file open">0 pending</span>
 </header>
 
+<div class="tab-bar">
+  <div class="tab on" id="tab-doc" onclick="switchTab('doc')">Current Document</div>
+  <div class="tab"    id="tab-proj" onclick="switchTab('proj')">Project Files</div>
+</div>
+
+<div id="pane-doc">
 <div class="bar">
   <button class="fb on" data-f="all"          onclick="setFilter('all')">All</button>
   <button class="fb"    data-f="needs_action" onclick="setFilter('needs_action')">Needs action</button>
@@ -78,6 +89,19 @@ footer{padding:6px 14px;background:#1f2937;border-top:1px solid #374151;font-siz
   <button class="fb"    data-f="ok"           onclick="setFilter('ok')">OK</button>
   <button class="ab ab-scan" onclick="doScan()">↻ Re-scan</button>
   <button class="ab ab-apply" id="apply-btn" onclick="doApply()" disabled>Apply Selected</button>
+</div>
+</div>
+
+<div id="pane-proj" style="display:none">
+<div class="bar">
+  <button class="fb on" data-f="all"              onclick="setPFilter('all')">All</button>
+  <button class="fb"    data-f="needs_action"     onclick="setPFilter('needs_action')">Needs action</button>
+  <button class="fb"    data-f="auto_match"       onclick="setPFilter('auto_match')">Auto-match</button>
+  <button class="fb"    data-f="issues"           onclick="setPFilter('issues')">Issues</button>
+  <button class="fb"    data-f="queued"           onclick="setPFilter('queued')">Queued</button>
+  <button class="ab ab-scan" onclick="doProjectScan()">↻ Scan Project</button>
+  <button class="ab ab-apply" id="queue-btn" onclick="doQueue()" disabled>Queue Selected →</button>
+</div>
 </div>
 
 <div class="wrap">
@@ -93,6 +117,19 @@ footer{padding:6px 14px;background:#1f2937;border-top:1px solid #374151;font-siz
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
+  </table>
+
+  <div class="loading" id="p-loading" style="display:none"><span class="spin"></span>Scanning project files…</div>
+  <table id="p-tbl" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:34px"><input type="checkbox" id="p-sel-all" onchange="togglePAll(this.checked)"></th>
+        <th>Fusion File</th>
+        <th>Portal match</th>
+        <th style="width:95px">Status</th>
+      </tr>
+    </thead>
+    <tbody id="p-tbody"></tbody>
   </table>
 </div>
 
@@ -177,8 +214,8 @@ function esc(s) {
   return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-var BADGE = { ok:"b-ok", auto_match:"b-auto", ambiguous:"b-amb", not_found:"b-nf", conflict:"b-con" };
-var LABEL = { ok:"OK", auto_match:"Auto", ambiguous:"Ambiguous", not_found:"Not Found", conflict:"Conflict" };
+var BADGE = { ok:"b-ok", auto_match:"b-auto", ambiguous:"b-amb", not_found:"b-nf", conflict:"b-con", queued:"b-queued" };
+var LABEL = { ok:"OK", auto_match:"Auto", ambiguous:"Ambiguous", not_found:"Not Found", conflict:"Conflict", queued:"Queued" };
 
 function renderTable() {
   var rows = _rows.filter(visible);
@@ -311,6 +348,188 @@ function showError(msg) {
   document.getElementById("loading").style.display = "block";
   document.getElementById("tbl").style.display = "none";
 }
+
+/* ── Tabs ────────────────────────────────────────────────────────── */
+var _activeTab = "doc";
+function switchTab(t) {
+  _activeTab = t;
+  document.getElementById("tab-doc").classList.toggle("on", t === "doc");
+  document.getElementById("tab-proj").classList.toggle("on", t === "proj");
+  document.getElementById("pane-doc").style.display = t === "doc" ? "" : "none";
+  document.getElementById("pane-proj").style.display = t === "proj" ? "" : "none";
+  document.getElementById("tbl").style.display = (t === "doc" && _rows.length) ? "table" : "none";
+  document.getElementById("loading").style.display = (t === "doc" && !_rows.length) ? "block" : "none";
+  document.getElementById("p-tbl").style.display = (t === "proj" && _pRows.length) ? "table" : "none";
+  document.getElementById("p-loading").style.display = (t === "proj" && !_pRows.length) ? "block" : "none";
+  if (t === "proj" && !_pRows.length) {
+    document.getElementById("p-loading").innerHTML = 'Click <b>↻ Scan Project</b> to list all files in this project.';
+  }
+}
+
+/* ── Project Files ───────────────────────────────────────────────── */
+var _pRows = [], _pFilter = "all", _pOv = {};
+
+function doProjectScan() {
+  _pRows = [];
+  document.getElementById("p-loading").innerHTML = '<span class="spin"></span>Scanning project files (may take ~30 s for large projects)…';
+  document.getElementById("p-loading").style.display = "block";
+  document.getElementById("p-tbl").style.display = "none";
+  document.getElementById("foot").textContent = "Scanning project files…";
+  send("scanProject");
+}
+
+function onProjectScanDone(d) {
+  _pRows = d.rows || [];
+  _pOv = {};
+  updateChips(d.summary || {});
+  updatePendingChip(d.pending || 0);
+  renderPTable();
+  document.getElementById("p-loading").style.display = "none";
+  document.getElementById("p-tbl").style.display = "table";
+  var s = d.summary || {};
+  document.getElementById("foot").textContent =
+    s.total + " project files · " + s.auto_match + " auto-matched · " + (s.queued||0) + " already queued · " +
+    (s.ambiguous + s.not_found) + " need attention";
+  updateQueueBtn();
+}
+
+function setPFilter(f) {
+  _pFilter = f;
+  document.querySelectorAll("#pane-proj .fb").forEach(function(b){
+    b.classList.toggle("on", b.dataset.f === f);
+  });
+  renderPTable();
+}
+
+function pVisible(row) {
+  if (_pFilter === "all")          return true;
+  if (_pFilter === "needs_action") return ["auto_match","ambiguous","not_found"].indexOf(row.status) >= 0;
+  if (_pFilter === "auto_match")   return row.status === "auto_match";
+  if (_pFilter === "issues")       return ["ambiguous","not_found","conflict"].indexOf(row.status) >= 0;
+  if (_pFilter === "queued")       return row.status === "queued";
+  return true;
+}
+
+function renderPTable() {
+  var rows = _pRows.filter(pVisible);
+  var tb = document.getElementById("p-tbody");
+  tb.innerHTML = "";
+  rows.forEach(function(row) {
+    var canCheck = row.status === "auto_match" || !!_pOv[row.fusion_name];
+    var n = esc(row.fusion_name);
+    var matchHtml = pMatchCell(row);
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td><input type="checkbox" class="pcb" data-n="' + n + '" ' +
+        (canCheck ? '' : 'disabled ') + (canCheck ? 'checked ' : '') +
+        'onchange="onPCB()"></td>' +
+      '<td><span class="fname">' + n + '</span></td>' +
+      '<td>' + matchHtml + '</td>' +
+      '<td><span class="badge ' + (BADGE[row.status]||"") + '">' + (LABEL[row.status]||row.status) + '</span></td>';
+    tb.appendChild(tr);
+  });
+  updateQueueBtn();
+}
+
+function pMatchCell(row) {
+  var n = row.fusion_name;
+  var ov = _pOv[n];
+  if (row.status === "queued" && row.proposed) {
+    return '<span class="mname">' + esc(row.proposed.name||"") + '</span>' +
+           '<span class="mpn">' + esc(row.proposed.part_number||row.stamp.pim_part_number||"") + '</span>';
+  }
+  if (ov) {
+    return '<span class="mname">' + esc(ov.name) + '</span>' +
+           '<span class="mpn">' + esc(ov.part_number||"") + '</span>' +
+           '<button class="clr" onclick="clearPOv(\'' + esc(n).replace(/'/g,"\\'") + '\')">✕</button>';
+  }
+  if (row.status === "auto_match" && row.proposed) {
+    return '<span class="mname">' + esc(row.proposed.name) + '</span>' +
+           '<span class="mpn">' + esc(row.proposed.part_number||"") + '</span>';
+  }
+  if (["ambiguous","not_found"].indexOf(row.status) >= 0) {
+    var enc = esc(n).replace(/'/g,"\\'");
+    return '<div class="sr">' +
+      '<input class="si" id="psi_' + esc(n) + '" type="text" placeholder="Search portal…" value="' + esc(n) + '">' +
+      '<button class="sbtn" onclick="doPSearch(\'' + enc + '\')">Search</button>' +
+    '</div>';
+  }
+  return '<span class="hint">—</span>';
+}
+
+function doPSearch(fusionName) {
+  var inp = document.getElementById("psi_" + fusionName);
+  var q = inp ? inp.value.trim() : fusionName;
+  if (!q) return;
+  send("search", { fusion_name: "p:" + fusionName, query: q });
+}
+
+function clearPOv(fn) { delete _pOv[fn]; renderPTable(); }
+
+function togglePAll(checked) {
+  document.querySelectorAll(".pcb:not([disabled])").forEach(function(cb){ cb.checked = checked; });
+  updateQueueBtn();
+}
+
+function onPCB() { updateQueueBtn(); }
+
+function updateQueueBtn() {
+  var n = document.querySelectorAll(".pcb:checked").length;
+  var btn = document.getElementById("queue-btn");
+  btn.disabled = n === 0;
+  btn.textContent = n > 0 ? "Queue " + n + " stamps →" : "Queue Selected →";
+}
+
+function doQueue() {
+  var cbs = document.querySelectorAll(".pcb:checked");
+  var toQueue = [];
+  cbs.forEach(function(cb) {
+    var fn = cb.dataset.n;
+    var row = _pRows.find(function(r){ return r.fusion_name === fn; });
+    var ov = _pOv[fn];
+    var src = ov || (row && row.proposed);
+    if (src) toQueue.push({ fusion_name: fn, portal_id: src.id, portal_pn: src.part_number||"", portal_name: src.name||"" });
+  });
+  if (!toQueue.length) return;
+  if (!confirm("Queue " + toQueue.length + " stamps?\n\nThey will be applied automatically the next time each file is opened.")) return;
+  document.getElementById("foot").textContent = "Queuing stamps…";
+  send("queueStamps", { rows: toQueue });
+}
+
+function onQueueDone(d) {
+  updatePendingChip(d.total || 0);
+  alert("Queued " + d.queued + " stamps.\n\nTotal pending: " + d.total + ".\n\nOpen any of these files in Fusion and RushroomPIM will stamp them automatically.");
+  doProjectScan();
+}
+
+function updatePendingChip(n) {
+  document.getElementById("c-pending").textContent = n + " pending";
+}
+
+/* patch fusionJavaScriptHandler to handle new actions */
+var _origHandle = window.fusionJavaScriptHandler.handle;
+window.fusionJavaScriptHandler.handle = function(action, data) {
+  var d = JSON.parse(data || "{}");
+  if      (action === "projectScanDone") onProjectScanDone(d);
+  else if (action === "queueDone")       onQueueDone(d);
+  else if (action === "pendingCount")    updatePendingChip(d.count || 0);
+  else if (action === "searchResults") {
+    if (d.fusion_name && d.fusion_name.startsWith("p:")) {
+      // project-tab search result
+      var fn = d.fusion_name.slice(2);
+      var res = d.results || [];
+      if (!res.length) { alert("No matches found."); return; }
+      var opts = res.map(function(r,i){ return (i+1)+".  "+(r.part_number?r.part_number+"  —  ":"")+r.name; }).join("\n");
+      var choice = prompt("Pick a match (1–"+res.length+"):\n\n"+opts);
+      if (!choice) return;
+      var idx = parseInt(choice,10)-1;
+      if (idx >= 0 && idx < res.length) { _pOv[fn] = res[idx]; renderPTable(); }
+    } else {
+      _origHandle(action, data);
+    }
+  }
+  else _origHandle(action, data);
+};
 </script>
 </body>
 </html>

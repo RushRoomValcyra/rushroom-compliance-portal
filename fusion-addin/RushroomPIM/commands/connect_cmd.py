@@ -130,7 +130,7 @@ def _add_to_panel(ui, cmd_id, separator_before=False):
     if not ws:
         return None
     toolbar_panels = ws.toolbarPanels
-    panel = toolbar_panels.itemById("UtilitiesPanel") or toolbar_panels.itemById("InspectPanel")
+    panel = toolbar_panels.itemById("UtilityPanel") or toolbar_panels.itemById("InspectPanel")
     if not panel:
         return None
     ctrl = panel.controls.itemById(cmd_id)

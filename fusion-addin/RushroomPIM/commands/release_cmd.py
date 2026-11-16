@@ -270,7 +270,7 @@ def _add_to_panel(ui, cmd_id):
     ws = ui.workspaces.itemById("FusionSolidEnvironment")
     if not ws:
         return None
-    panel = ws.toolbarPanels.itemById("UtilitiesPanel") or ws.toolbarPanels.itemById("InspectPanel")
+    panel = ws.toolbarPanels.itemById("UtilityPanel") or ws.toolbarPanels.itemById("InspectPanel")
     if not panel:
         return None
     ctrl = panel.controls.itemById(cmd_id)

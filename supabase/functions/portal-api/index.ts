@@ -3448,11 +3448,13 @@ Deno.serve(async (req) => {
       .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id, description")
       .order("name");
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
-    const [{ data: comps, error: ce }, { data: metaRows }] = await Promise.all([
+    const [{ data: comps, error: ce }, { data: metaRows }, { data: cadRows }] = await Promise.all([
       q,
       // PROP-029: manufacturer_part_number is the canonical OEM field; oem_number on
       // bom_components is legacy. Fetch in parallel and merge below.
       tdb("component_metadata").select("component_id, manufacturer_part_number, preferred_supplier_name"),
+      // Phase 1.2: which components have a CAD model registered (for "Parts without CAD" filter).
+      tdb("cad_models").select("component_id").not("component_id", "is", null),
     ]);
     if (ce) return json({ error: ce.message }, 400);
     const metaByComp: Record<string, { oem?: string; supplier?: string }> = {};
@@ -3462,12 +3464,14 @@ Deno.serve(async (req) => {
         supplier: m.preferred_supplier_name || undefined,
       };
     }
+    const cadSet = new Set((cadRows || []).map((r: any) => r.component_id));
     const components = (comps || []).map((c: any) => ({
       ...c,
       oem_number: metaByComp[c.id]?.oem || c.oem_number || null,
       supplier_name: metaByComp[c.id]?.supplier || null,
       has_children: parentIdSet.has(c.id),
       box_count: boxCount[c.id] || 0,
+      has_cad: cadSet.has(c.id),
     }));
     return json({ components, root_ids: components.map((c: any) => c.id) });
   }
@@ -5210,8 +5214,162 @@ Deno.serve(async (req) => {
 
   // PROP-019: COGS/cost action blocks removed — financial analysis belongs in ERP, not compliance portal.
 
+  // ==========================================================================
+  // Phase 1.2: CAD file registry — cad_models + cad_model_files
+  //
+  // CAD and drawings are separate domains: CAD answers "what is the geometry",
+  // drawings answer "what are the instructions". The connection is indirect:
+  // component → cad_models (1:1) and component → drawing_components (1:N).
+  // Multiple formats per revision (f3z / step / glb) are separate rows in
+  // cad_model_files, keyed by (cad_model_id, revision, format).
+  // ==========================================================================
 
-  
+  if (action === "cadUploadUrl") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const fileName = String(body.fileName ?? "file");
+    // CAD files live in DOC_BUCKET under cad/<org>/ — same bucket as drawings,
+    // separate prefix so they can be scoped independently if needed later.
+    const path = `cad/${orgPrefix}${Date.now()}-${safeName(fileName)}`;
+    const { data, error } = await db.storage.from(DOC_BUCKET).createSignedUploadUrl(path);
+    if (error) return json({ error: error.message }, 500);
+    return json({ signedUrl: data.signedUrl, token: data.token, path });
+  }
+
+  if (action === "linkCadDocument") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const component_id = String(body.component_id ?? "").trim() || null;
+    const fusion_document_id   = String(body.fusion_document_id ?? "").trim().slice(0, 400) || null;
+    const fusion_project_id    = String(body.fusion_project_id ?? "").trim().slice(0, 200) || null;
+    const fusion_document_name = String(body.fusion_document_name ?? "").trim().slice(0, 400) || null;
+    const notes = body.notes ? String(body.notes).slice(0, 1000) : null;
+    if (!component_id && !fusion_document_id) {
+      return json({ error: "component_id or fusion_document_id required" }, 400);
+    }
+    // Check the component exists when supplied.
+    if (component_id) {
+      const { data: comp } = await tdb("bom_components").select("id").eq("id", component_id).maybeSingle();
+      if (!comp) return json({ error: "Component not found" }, 404);
+    }
+    // Upsert: one CAD model per component. If already linked, update the Fusion metadata.
+    const { data: existing } = component_id
+      ? await tdb("cad_models").select("id").eq("component_id", component_id).maybeSingle()
+      : { data: null };
+    if (existing) {
+      const patch: Record<string, unknown> = {};
+      if (fusion_project_id    !== null) patch.fusion_project_id    = fusion_project_id;
+      if (fusion_document_id   !== null) patch.fusion_document_id   = fusion_document_id;
+      if (fusion_document_name !== null) patch.fusion_document_name = fusion_document_name;
+      if (notes                !== null) patch.notes                = notes;
+      if (Object.keys(patch).length) {
+        await tdb("cad_models").update(patch).eq("id", existing.id);
+      }
+      if (component_id) {
+        await writeBomHistory(tdb, session, component_id, "updated",
+          `CAD document linked: ${fusion_document_name || fusion_document_id || "(no name)"}`);
+      }
+      return json({ ok: true, id: existing.id, updated: true });
+    }
+    const { data, error } = await tdb("cad_models").insert({
+      component_id, fusion_project_id, fusion_document_id, fusion_document_name,
+      notes, created_by: session.uid || null,
+    }).select("id").maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) {
+        return json({ error: "A CAD model is already registered for this component" }, 409);
+      }
+      return json({ error: error.message }, 400);
+    }
+    if (component_id) {
+      await writeBomHistory(tdb, session, component_id, "updated",
+        `CAD document linked: ${fusion_document_name || fusion_document_id || "(no name)"}`);
+    }
+    return json({ ok: true, id: data?.id, updated: false });
+  }
+
+  if (action === "registerCadRevision") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const cad_model_id  = String(body.cad_model_id ?? "");
+    const storage_path  = String(body.storage_path ?? "");
+    const file_name     = String(body.file_name ?? "");
+    const format        = String(body.format ?? "").toLowerCase().slice(0, 10);
+    if (!cad_model_id || !storage_path || !file_name) {
+      return json({ error: "cad_model_id, storage_path and file_name required" }, 400);
+    }
+    const FORMATS = ["f3z", "step", "glb", "dxf"];
+    if (!FORMATS.includes(format)) {
+      return json({ error: `format must be one of: ${FORMATS.join(", ")}` }, 400);
+    }
+    const { data: modelRows } = await tdb("cad_models").select("id, component_id, current_revision").eq("id", cad_model_id);
+    const model = (modelRows || [])[0];
+    if (!model) return json({ error: "CAD model not found" }, 404);
+
+    // Advance the revision letter when the caller does not name one.
+    // A caller adding a second format to the same revision passes the same
+    // letter they already registered (e.g. "A" for the step after the glb).
+    const { data: existing } = await tdb("cad_model_files")
+      .select("revision").eq("cad_model_id", cad_model_id).order("created_at", { ascending: true });
+    const priorLetters = [...new Set((existing || []).map((r: any) => r.revision))];
+    const suppliedRevision = String(body.revision ?? "").trim().toUpperCase().slice(0, 10);
+    const revision = suppliedRevision || nextRevisionLetter(priorLetters);
+
+    const { data: inserted, error } = await tdb("cad_model_files").insert({
+      cad_model_id,
+      revision,
+      format,
+      storage_path,
+      file_name: file_name.slice(0, 400),
+      fusion_version:  body.fusion_version ? Number(body.fusion_version) : null,
+      sha256:          body.sha256 ? String(body.sha256).slice(0, 64) : null,
+      released_at:     body.release ? new Date().toISOString() : null,
+      created_by:      session.uid || null,
+    }).select("id").maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) {
+        return json({ error: `Format ${format} at revision ${revision} already registered` }, 409);
+      }
+      return json({ error: error.message }, 400);
+    }
+
+    // Always keep current_revision pointing at the latest letter.
+    const latestLetter = [revision, ...(priorLetters || [])]
+      .sort((a: string, b: string) => a.length - b.length || a.localeCompare(b))
+      .pop() ?? revision;
+    const statusPatch: Record<string, unknown> = { current_revision: latestLetter };
+    if (body.release) statusPatch.status = "released";
+    await tdb("cad_models").update(statusPatch).eq("id", cad_model_id);
+
+    if (model.component_id) {
+      await writeBomHistory(tdb, session, model.component_id, "updated",
+        `CAD revision ${revision} registered (${format})`);
+    }
+    return json({ ok: true, id: inserted?.id, revision, format });
+  }
+
+  if (action === "getComponentCad") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const component_id = String(body.component_id ?? "");
+    if (!component_id) return json({ error: "component_id required" }, 400);
+
+    const { data: modelRows } = await tdb("cad_models").select("*").eq("component_id", component_id);
+    const model = (modelRows || [])[0] || null;
+    if (!model) return json({ cad_model: null, files: [] });
+
+    const { data: fileRows, error: fe } = await tdb("cad_model_files")
+      .select("id, revision, format, file_name, fusion_version, sha256, released_at, created_at, storage_path")
+      .eq("cad_model_id", model.id)
+      .order("revision").order("format");
+    if (fe) return json({ error: fe.message }, 400);
+
+    // Generate a 1-hour signed download URL for each file.
+    const files = await Promise.all((fileRows || []).map(async (f: any) => {
+      const { data: signed } = await db.storage.from(DOC_BUCKET).createSignedUrl(f.storage_path, 60 * 60);
+      return { ...f, download_url: signed?.signedUrl || null };
+    }));
+
+    return json({ cad_model: model, files });
+  }
+
+
   // ==========================================================================
   // PROP-015: Configure-to-Order Variant BOM actions
   // ==========================================================================

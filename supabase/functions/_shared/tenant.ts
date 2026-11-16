@@ -56,6 +56,8 @@ export const TENANT_TABLES = new Set([
   // PROP-0059: surgery template register (migration 0054)
   // PROP-075: versioning ledger (migration 0056)
   "surgery_templates", "surgery_template_faces", "surgery_template_face_events",
+  // Phase 1.2: CAD file registry (migration 0059)
+  "cad_models", "cad_model_files",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

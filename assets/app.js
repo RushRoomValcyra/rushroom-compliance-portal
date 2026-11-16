@@ -7080,13 +7080,17 @@
         // now; collapsing the panel into one getComponentDetail action is already
         // recorded in ROADMAP rather than widened into this build.
         API.post(token, "listDrawings", { component_id: componentId }).catch(() => ({ drawings: [] })),
+        // Phase 1.2: CAD model + files for this component (Rushroom only; null for others).
+        role === "rushroom"
+          ? API.post(token, "getComponentCad", { component_id: componentId }).catch(() => null)
+          : Promise.resolve(null),
       ];
       const familyPromises = isFamily ? [
         API.post(token, "listFamilyAttributes", { family_id: componentId }),
         API.post(token, "listConfigurations",    { family_id: componentId }),
         API.post(token, "listVariantsByFamily",  { family_id: componentId }),
       ] : [null, null, null];
-      const [hist, docs, mats, cl, usedIn, imgData, metaR, variantMembershipsR, drawingsR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR, csFieldsR] = await Promise.all([
+      const [hist, docs, mats, cl, usedIn, imgData, metaR, variantMembershipsR, drawingsR, cadR, familyAttrs, familyConfigs, variantsR, compFamiliesR, allFamiliesR, csFieldsR] = await Promise.all([
         ...basePromises, ...familyPromises,
         API.post(token, "listComponentFamilies", { component_id: componentId }),
         API.post(token, "listProductFamilies", {}),
@@ -7557,6 +7561,170 @@
                   : "No drawings have been shared for this part."),
             ]),
       ]);
+
+      // Phase 1.2: CAD tab — Fusion link, revision list, file downloads.
+      // cadR = { cad_model: {...}, files: [...] } or null when nothing is registered.
+      let cadSection = null;
+      if (role === "rushroom") {
+        const cadModel = cadR && cadR.cad_model;
+        const cadFiles = (cadR && cadR.files) || [];
+
+        // Group files by revision so each letter is one block.
+        const byRevision = {};
+        cadFiles.forEach((f) => { (byRevision[f.revision] = byRevision[f.revision] || []).push(f); });
+        const revisions = Object.keys(byRevision).sort((a, b) =>
+          a.length !== b.length ? a.length - b.length : a.localeCompare(b));
+
+        // Link-to-Fusion button (only when a Fusion document id is known).
+        const fusionHref = cadModel && cadModel.fusion_document_id
+          ? `https://manage.autodesk.com/en/redirect?productKey=fusion360&dcs=${encodeURIComponent(cadModel.fusion_document_id)}`
+          : null;
+
+        // "Link Fusion document" / "Edit" form
+        function openLinkCadModal(existing) {
+          const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
+          const projIn  = el("input",  { class: "up-text", type: "text", value: existing?.fusion_project_id    || "", placeholder: "optional" });
+          const docIdIn = el("input",  { class: "up-text", type: "text", value: existing?.fusion_document_id   || "", placeholder: "urn:adsk.wipprod:dm.lineage:…" });
+          const nameIn  = el("input",  { class: "up-text", type: "text", value: existing?.fusion_document_name || "", placeholder: "e.g. Side Panel Left" });
+          const notesIn = el("textarea", { class: "up-text", rows: 2, placeholder: "optional notes" }, existing?.notes || "");
+          const close = openModal(existing ? "Edit Fusion link" : "Link Fusion document", el("div", {}, [
+            el("div", { style: "margin-bottom:0.5rem" }, [el("div", { class: "form-label" }, "Project ID"),  projIn]),
+            el("div", { style: "margin-bottom:0.5rem" }, [el("div", { class: "form-label" }, "Document lineage URN"), docIdIn]),
+            el("div", { style: "margin-bottom:0.5rem" }, [el("div", { class: "form-label" }, "Document name"), nameIn]),
+            el("div", { style: "margin-bottom:0.5rem" }, [el("div", { class: "form-label" }, "Notes"), notesIn]),
+            status,
+            el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.75rem" }, [
+              el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+              el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+                ev.target.disabled = true; status.textContent = "";
+                try {
+                  await API.post(token, "linkCadDocument", {
+                    component_id: componentId,
+                    fusion_project_id:    projIn.value.trim() || null,
+                    fusion_document_id:   docIdIn.value.trim() || null,
+                    fusion_document_name: nameIn.value.trim() || null,
+                    notes: notesIn.value.trim() || null,
+                  });
+                  close(); await openComponentDetail(componentId, token, panel, nodeData, role);
+                } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+              } }, "Save"),
+            ]),
+          ]));
+        }
+
+        // "Register revision" modal — adds a cad_model_files row.
+        function openRegisterRevisionModal() {
+          if (!cadModel) return openLinkCadModal(null);
+          const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
+          const revIn   = el("input",  { class: "up-text", type: "text", maxLength: 10, placeholder: "leave blank for next letter" });
+          const fmtSel  = el("select", { class: "up-text" },
+            ["f3z", "step", "glb", "dxf"].map((f) => el("option", { value: f }, f.toUpperCase())));
+          const fvIn    = el("input",  { class: "up-text", type: "number", placeholder: "optional" });
+          const fileIn  = el("input",  { type: "file" });
+          let uploadPath = null;
+          const close = openModal("Register CAD revision", el("div", {}, [
+            el("div", { style: "margin-bottom:0.5rem" }, [el("div", { class: "form-label" }, "Revision letter (blank = next)"), revIn]),
+            el("div", { style: "margin-bottom:0.5rem" }, [el("div", { class: "form-label" }, "Format"), fmtSel]),
+            el("div", { style: "margin-bottom:0.5rem" }, [el("div", { class: "form-label" }, "Fusion version #"), fvIn]),
+            el("div", { style: "margin-bottom:0.5rem" }, [
+              el("div", { class: "form-label" }, "File"),
+              fileIn,
+              el("div", { class: "muted", style: "font-size:0.75rem;margin-top:3px" }, "Upload a .f3z, .step, .glb or .dxf export from Fusion."),
+            ]),
+            status,
+            el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.75rem" }, [
+              el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"),
+              el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
+                ev.target.disabled = true; status.textContent = "";
+                const file = fileIn.files && fileIn.files[0];
+                if (!file) { status.textContent = "Choose a file first."; ev.target.disabled = false; return; }
+                try {
+                  // 1. Get a signed upload URL.
+                  status.textContent = "Getting upload URL…";
+                  const { signedUrl, path } = await API.post(token, "cadUploadUrl", { fileName: file.name });
+                  // 2. Upload the file directly to Supabase Storage.
+                  status.textContent = "Uploading…";
+                  const up = await fetch(signedUrl, { method: "PUT", body: file, headers: { "Content-Type": "application/octet-stream" } });
+                  if (!up.ok) throw new Error(`Upload failed: ${up.status}`);
+                  uploadPath = path;
+                  // 3. Register the revision.
+                  status.textContent = "Registering…";
+                  await API.post(token, "registerCadRevision", {
+                    cad_model_id: cadModel.id,
+                    format: fmtSel.value,
+                    storage_path: uploadPath,
+                    file_name: file.name,
+                    revision: revIn.value.trim().toUpperCase() || undefined,
+                    fusion_version: fvIn.value ? Number(fvIn.value) : undefined,
+                  });
+                  close(); await openComponentDetail(componentId, token, panel, nodeData, role);
+                } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+              } }, "Upload & register"),
+            ]),
+          ]));
+        }
+
+        // Revision cards
+        const revisionCards = revisions.map((rev) => {
+          const files = byRevision[rev];
+          const fileRows = files.map((f) => el("tr", {}, [
+            el("td", {}, el("span", { style: "font-family:monospace;font-size:0.8125rem" }, f.format.toUpperCase())),
+            el("td", {}, f.file_name),
+            el("td", {}, f.fusion_version != null ? `v${f.fusion_version}` : el("span", { class: "muted" }, "—")),
+            el("td", {}, f.released_at ? new Date(f.released_at).toLocaleDateString() : el("span", { class: "muted" }, "not released")),
+            el("td", {}, f.download_url
+              ? el("a", { href: f.download_url, download: f.file_name, class: "btn btn-xs" }, "Download")
+              : el("span", { class: "muted" }, "—")),
+          ]));
+          return el("div", { style: "margin-bottom:1rem" }, [
+            el("div", { style: "display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem" }, [
+              el("span", { style: "font-weight:600;font-size:0.875rem" }, `Revision ${rev}`),
+              rev === cadModel.current_revision
+                ? el("span", { style: "font-size:0.75rem;padding:1px 6px;border-radius:4px;background:#d1fae5;color:#065f46" }, "current")
+                : null,
+            ].filter(Boolean)),
+            el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.8125rem" }, [
+              el("thead", {}, el("tr", {}, ["Format", "File", "Fusion ver.", "Released", ""].map((h) => el("th", {}, h)))),
+              el("tbody", {}, fileRows),
+            ])),
+          ]);
+        });
+
+        cadSection = el("div", { style: "margin-top:1rem" }, [
+          // Header row: title + action buttons
+          el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem;flex-wrap:wrap" }, [
+            el("h4", { style: "margin:0" }, "CAD model"),
+            cadModel
+              ? el("button", { class: "btn btn-xs", type: "button", onclick: () => openLinkCadModal(cadModel) }, "Edit Fusion link")
+              : el("button", { class: "btn btn-xs btn-primary", type: "button", onclick: () => openLinkCadModal(null) }, "+ Link Fusion document"),
+            cadModel
+              ? el("button", { class: "btn btn-xs btn-primary", type: "button", onclick: openRegisterRevisionModal }, "+ Register revision")
+              : null,
+          ].filter(Boolean)),
+          // Fusion metadata row
+          cadModel ? el("div", { style: "font-size:0.875rem;margin-bottom:0.75rem;display:flex;flex-wrap:wrap;gap:0.4rem 1.2rem;align-items:baseline" }, [
+            cadModel.fusion_document_name
+              ? el("span", {}, [el("span", { class: "muted" }, "Document: "), cadModel.fusion_document_name])
+              : null,
+            cadModel.current_revision
+              ? el("span", {}, [el("span", { class: "muted" }, "Current revision: "), cadModel.current_revision])
+              : null,
+            fusionHref
+              ? el("a", { href: fusionHref, target: "_blank", rel: "noopener", class: "btn btn-xs" }, "Open in Fusion ↗")
+              : null,
+            el("span", { class: "muted", style: "font-size:0.75rem" }, `Status: ${cadModel.status}`),
+          ].filter(Boolean)) : null,
+          // Revision list or empty state
+          revisions.length
+            ? el("div", {}, revisionCards)
+            : (cadModel
+                ? el("div", { class: "muted", style: "font-size:0.875rem" }, "No files registered yet. Use + Register revision to upload a Fusion export.")
+                : el("div", { class: "muted", style: "font-size:0.875rem" }, [
+                    el("div", {}, "No CAD model linked to this part."),
+                    el("div", { style: "margin-top:0.35rem" }, "Link the Fusion document first. Files are registered as revisions — each letter captures the exports (.f3z, .step, .glb) at that point in time."),
+                  ])),
+        ]);
+      }
 
       const docsSection = el("div", { style: "margin-top:1rem" }, [
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem" }, [
@@ -8740,6 +8908,8 @@
         { id: "materials",   label: "Materials" },
         { id: "documents",   label: `Documents${(docs.documents || []).length ? ` (${(docs.documents || []).length})` : ""}` },
         { id: "drawings",    label: `Drawings${partDrawings.length ? ` (${partDrawings.length})` : ""}` },
+        // Phase 1.2: CAD file registry — Rushroom only.
+        ...(role === "rushroom" ? [{ id: "cad", label: "CAD" }] : []),
         // How it is built and worked on at the hub: pre-assembly and operations.
         // Rushroom only, as the actions behind it are.
         ...(role === "rushroom" ? [{ id: "manufacturing", label: "Manufacturing" }] : []),
@@ -8962,6 +9132,7 @@
       tabPanels["materials"]  = el("div", { style: "display:none" }, [matsSection]);
       tabPanels["documents"]  = el("div", { style: "display:none" }, [docsSection]);
       tabPanels["drawings"]   = el("div", { style: "display:none" }, [drawingsSection]);
+      if (cadSection) tabPanels["cad"] = el("div", { style: "display:none" }, [cadSection]);
       if (TAB_DEFS.some((t) => t.id === "manufacturing")) {
         tabPanels["manufacturing"] = el("div", { style: "display:none" }, [
           el("div", { style: "padding:0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:6px" }, [

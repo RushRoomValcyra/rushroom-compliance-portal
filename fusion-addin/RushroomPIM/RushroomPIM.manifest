@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "addin",
+  "id": "RushroomPIM",
+  "author": "Rushroom AB",
+  "description": {
+    "en-US": "Links Fusion components to the Rushroom Engineering & Compliance portal (Phase 3.1 of the identity programme)"
+  },
+  "version": "1.2.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "internetRequired": true
+}

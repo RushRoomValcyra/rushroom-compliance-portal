@@ -207,4 +207,7 @@ def _add_to_panel(ui, cmd_id):
     ctrl = panel.controls.itemById(cmd_id)
     if ctrl:
         ctrl.deleteMe()
-    return panel.controls.addCommand(ui.commandDefinitions.itemById(cmd_id), "", False)
+    ctrl = panel.controls.addCommand(ui.commandDefinitions.itemById(cmd_id), "", False)
+    if ctrl:
+        ctrl.isPromoted = True
+    return ctrl

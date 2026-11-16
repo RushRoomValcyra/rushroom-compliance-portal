@@ -43,6 +43,8 @@ def run(context):
     _log("=== run() called ===")
     _log("Python: " + sys.version)
     _log("ADDIN_DIR: " + ADDIN_DIR)
+    if ADDIN_DIR not in sys.path:
+        sys.path.insert(0, ADDIN_DIR)
     try:
         _app = adsk.core.Application.get()
         _ui = _app.userInterface

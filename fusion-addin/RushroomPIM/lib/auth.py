@@ -16,6 +16,7 @@ config.json schema:
   "organization_id": "11111111-…"
 }
 """
+from __future__ import annotations
 import json
 import os
 import time

@@ -25,6 +25,7 @@ The "correct" unit for mass in Fusion's Python API depends on the document's
 unit system. For safety we return the raw value and label it as "Fusion units".
 Phase 3.4 will reconcile units when storing these in the portal.
 """
+from __future__ import annotations
 import os
 import tempfile
 from typing import Optional

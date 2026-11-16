@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rushroom Bulk Stamp</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;background:#111827;color:#e2e8f0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+header{padding:9px 14px;background:#1f2937;border-bottom:1px solid #374151;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+h1{font-size:14px;font-weight:700;color:#f9fafb;margin-right:4px}
+.chip{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap}
+.c-ok{background:#14532d;color:#86efac}
+.c-auto{background:#1e3a5f;color:#93c5fd}
+.c-amb{background:#78350f;color:#fcd34d}
+.c-nf{background:#7f1d1d;color:#fca5a5}
+.c-con{background:#7c2d12;color:#fdba74}
+
+.bar{padding:7px 14px;background:#1f2937;border-bottom:1px solid #374151;display:flex;gap:6px;align-items:center;flex-shrink:0}
+.fb{padding:3px 10px;border:1px solid #374151;border-radius:4px;background:transparent;color:#9ca3af;cursor:pointer;font-size:12px}
+.fb.on{background:#1d4ed8;color:#fff;border-color:#1d4ed8}
+.ab{padding:4px 12px;border-radius:4px;border:none;cursor:pointer;font-size:12px;font-weight:600}
+.ab-scan{background:#374151;color:#e2e8f0}
+.ab-scan:hover{background:#4b5563}
+.ab-apply{background:#2563eb;color:#fff;margin-left:auto}
+.ab-apply:hover:not(:disabled){background:#1d4ed8}
+.ab-apply:disabled{background:#374151;color:#6b7280;cursor:default}
+
+.wrap{flex:1;overflow-y:auto;min-height:0}
+table{width:100%;border-collapse:collapse}
+thead th{padding:7px 10px;background:#1f2937;color:#9ca3af;font-size:11px;font-weight:700;text-align:left;position:sticky;top:0;z-index:5;border-bottom:2px solid #374151}
+tbody tr{border-bottom:1px solid #1f2937}
+tbody tr:hover{background:#1f2937}
+td{padding:6px 10px;vertical-align:middle}
+
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.b-ok{background:#14532d;color:#86efac}
+.b-auto{background:#1e3a5f;color:#93c5fd}
+.b-amb{background:#78350f;color:#fcd34d}
+.b-nf{background:#7f1d1d;color:#fca5a5}
+.b-con{background:#7c2d12;color:#fdba74}
+
+.fname{font-family:monospace;font-size:12px;color:#e2e8f0}
+.mname{font-weight:600;color:#f1f5f9}
+.mpn{font-size:11px;color:#9ca3af;margin-left:4px}
+.hint{font-size:11px;color:#6b7280}
+.sr{display:flex;gap:4px;align-items:center}
+.si{flex:1;background:#111827;border:1px solid #374151;color:#e2e8f0;padding:4px 7px;border-radius:4px;font-size:12px}
+.si:focus{outline:none;border-color:#3b82f6}
+.sbtn{background:#374151;color:#d1d5db;border:none;padding:4px 9px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap}
+.sbtn:hover{background:#4b5563}
+.clr{background:none;border:none;color:#9ca3af;cursor:pointer;font-size:11px;padding:1px 5px;margin-left:4px;border-radius:3px}
+.clr:hover{background:#374151;color:#e2e8f0}
+
+.loading{text-align:center;padding:50px 20px;color:#6b7280;font-size:14px}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid #374151;border-top-color:#3b82f6;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+footer{padding:6px 14px;background:#1f2937;border-top:1px solid #374151;font-size:11px;color:#6b7280;flex-shrink:0}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Rushroom Bulk Stamp</h1>
+  <span class="chip c-ok" id="c-ok">0 ok</span>
+  <span class="chip c-auto" id="c-auto">0 auto</span>
+  <span class="chip c-amb" id="c-amb">0 ambiguous</span>
+  <span class="chip c-nf" id="c-nf">0 not found</span>
+  <span class="chip c-con" id="c-con">0 conflict</span>
+</header>
+
+<div class="bar">
+  <button class="fb on" data-f="all"          onclick="setFilter('all')">All</button>
+  <button class="fb"    data-f="needs_action" onclick="setFilter('needs_action')">Needs action</button>
+  <button class="fb"    data-f="auto_match"   onclick="setFilter('auto_match')">Auto-match</button>
+  <button class="fb"    data-f="issues"       onclick="setFilter('issues')">Issues</button>
+  <button class="fb"    data-f="ok"           onclick="setFilter('ok')">OK</button>
+  <button class="ab ab-scan" onclick="doScan()">↻ Re-scan</button>
+  <button class="ab ab-apply" id="apply-btn" onclick="doApply()" disabled>Apply Selected</button>
+</div>
+
+<div class="wrap">
+  <div class="loading" id="loading"><span class="spin"></span>Scanning components…</div>
+  <table id="tbl" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:34px"><input type="checkbox" id="sel-all" onchange="toggleAll(this.checked)" title="Select all visible"></th>
+        <th>Fusion Component</th>
+        <th>Current stamp</th>
+        <th>Portal match</th>
+        <th style="width:95px">Status</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<footer id="foot">Connecting to Fusion…</footer>
+
+<script>
+var _rows = [], _filter = "all", _ov = {}, _ready = false;
+
+/* ── Fusion bridge ───────────────────────────────────────────────── */
+window.fusionJavaScriptHandler = {
+  handle: function(action, data) {
+    var d = JSON.parse(data || "{}");
+    if      (action === "scanDone")      onScanDone(d);
+    else if (action === "applyDone")     onApplyDone(d);
+    else if (action === "searchResults") onSearchResults(d);
+    else if (action === "triggerScan")   doScan();
+    else if (action === "error")         showError(d.message);
+  }
+};
+
+function send(action, payload) {
+  if (!window.adsk || !window.adsk.fusionSendData) {
+    setTimeout(function(){ send(action, payload); }, 100);
+    return;
+  }
+  window.adsk.fusionSendData(action, JSON.stringify(payload || {}));
+}
+
+window.addEventListener("load", function() { doScan(); });
+
+/* ── Scan ──────────────────────────────────────────────────────────── */
+function doScan() {
+  document.getElementById("loading").innerHTML = '<span class="spin"></span>Scanning components…';
+  document.getElementById("loading").style.display = "block";
+  document.getElementById("tbl").style.display = "none";
+  document.getElementById("foot").textContent = "Scanning…";
+  send("scan");
+}
+
+function onScanDone(d) {
+  _rows = d.rows || [];
+  _ov = {};
+  updateChips(d.summary || {});
+  renderTable();
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("tbl").style.display = "table";
+  var s = d.summary || {};
+  document.getElementById("foot").textContent =
+    s.total + " components · " + s.ok + " ok · " + s.auto_match + " auto-matched · " +
+    (s.ambiguous + s.not_found + s.conflict) + " need attention";
+  updateApplyBtn();
+}
+
+function updateChips(s) {
+  document.getElementById("c-ok").textContent   = (s.ok        || 0) + " ok";
+  document.getElementById("c-auto").textContent = (s.auto_match|| 0) + " auto";
+  document.getElementById("c-amb").textContent  = (s.ambiguous || 0) + " ambiguous";
+  document.getElementById("c-nf").textContent   = (s.not_found || 0) + " not found";
+  document.getElementById("c-con").textContent  = (s.conflict  || 0) + " conflict";
+}
+
+/* ── Filter ─────────────────────────────────────────────────────── */
+function setFilter(f) {
+  _filter = f;
+  document.querySelectorAll(".fb").forEach(function(b){
+    b.classList.toggle("on", b.dataset.f === f);
+  });
+  renderTable();
+}
+
+function visible(row) {
+  if (_filter === "all")          return true;
+  if (_filter === "needs_action") return ["auto_match","ambiguous","not_found","conflict"].indexOf(row.status) >= 0;
+  if (_filter === "auto_match")   return row.status === "auto_match";
+  if (_filter === "issues")       return ["ambiguous","not_found","conflict"].indexOf(row.status) >= 0;
+  if (_filter === "ok")           return row.status === "ok";
+  return true;
+}
+
+/* ── Render ──────────────────────────────────────────────────────── */
+function esc(s) {
+  return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+var BADGE = { ok:"b-ok", auto_match:"b-auto", ambiguous:"b-amb", not_found:"b-nf", conflict:"b-con" };
+var LABEL = { ok:"OK", auto_match:"Auto", ambiguous:"Ambiguous", not_found:"Not Found", conflict:"Conflict" };
+
+function renderTable() {
+  var rows = _rows.filter(visible);
+  var tb = document.getElementById("tbody");
+  tb.innerHTML = "";
+
+  rows.forEach(function(row) {
+    var canCheck = row.status === "auto_match" || !!_ov[row.fusion_name];
+    var checked  = canCheck;
+    var tr = document.createElement("tr");
+    var n = esc(row.fusion_name);
+
+    var stampHtml = row.stamp && row.stamp.pim_part_number
+      ? '<span class="hint">' + esc(row.stamp.pim_part_number) + '</span>'
+      : (row.stamp && row.stamp.pim_component_id
+          ? '<span class="hint">' + esc(row.stamp.pim_component_id.slice(0,8)) + '…</span>'
+          : '<span class="hint">—</span>');
+
+    var matchHtml = matchCell(row);
+
+    tr.innerHTML =
+      '<td><input type="checkbox" class="rcb" data-n="' + n + '" ' +
+        (canCheck ? '' : 'disabled ') + (checked ? 'checked ' : '') +
+        'onchange="onCB()"></td>' +
+      '<td><span class="fname">' + n + '</span></td>' +
+      '<td>' + stampHtml + '</td>' +
+      '<td>' + matchHtml + '</td>' +
+      '<td><span class="badge ' + (BADGE[row.status]||"") + '">' + (LABEL[row.status]||row.status) + '</span></td>';
+
+    tb.appendChild(tr);
+  });
+
+  updateApplyBtn();
+}
+
+function matchCell(row) {
+  var n = row.fusion_name;
+  var ov = _ov[n];
+  if (ov) {
+    return '<span class="mname">' + esc(ov.name) + '</span>' +
+           '<span class="mpn">' + esc(ov.part_number || "") + '</span>' +
+           '<button class="clr" onclick="clearOv(\'' + esc(n) + '\')">✕ clear</button>';
+  }
+  if ((row.status === "ok" || row.status === "auto_match") && row.proposed) {
+    return '<span class="mname">' + esc(row.proposed.name) + '</span>' +
+           '<span class="mpn">' + esc(row.proposed.part_number || "") + '</span>';
+  }
+  if (["ambiguous","not_found","conflict"].indexOf(row.status) >= 0) {
+    var enc = esc(n).replace(/'/g, "\\'");
+    return '<div class="sr">' +
+      '<input class="si" id="si_' + esc(n) + '" type="text" placeholder="Search portal…" value="' + esc(n) + '">' +
+      '<button class="sbtn" onclick="doSearch(\'' + enc + '\')">Search</button>' +
+    '</div>';
+  }
+  return '<span class="hint">—</span>';
+}
+
+/* ── Search ──────────────────────────────────────────────────────── */
+function doSearch(fusionName) {
+  var inp = document.getElementById("si_" + fusionName);
+  var q = inp ? inp.value.trim() : fusionName;
+  if (!q) return;
+  send("search", { fusion_name: fusionName, query: q });
+}
+
+function onSearchResults(d) {
+  var fn = d.fusion_name;
+  var res = d.results || [];
+  if (!res.length) { showError("No portal components found for this search."); return; }
+
+  /* Build a simple text picker */
+  var opts = res.map(function(r, i) {
+    return (i + 1) + ".  " + (r.part_number ? r.part_number + "  —  " : "") + r.name;
+  }).join("\n");
+  var choice = prompt("Pick a match (enter number 1–" + res.length + "):\n\n" + opts);
+  if (!choice) return;
+  var idx = parseInt(choice, 10) - 1;
+  if (idx >= 0 && idx < res.length) {
+    _ov[fn] = res[idx];
+    renderTable();
+  }
+}
+
+function clearOv(fn) {
+  delete _ov[fn];
+  renderTable();
+}
+
+/* ── Apply ───────────────────────────────────────────────────────── */
+function toggleAll(checked) {
+  document.querySelectorAll(".rcb:not([disabled])").forEach(function(cb){ cb.checked = checked; });
+  updateApplyBtn();
+}
+
+function onCB() { updateApplyBtn(); }
+
+function updateApplyBtn() {
+  var n = document.querySelectorAll(".rcb:checked").length;
+  var btn = document.getElementById("apply-btn");
+  btn.disabled = n === 0;
+  btn.textContent = n > 0 ? "Apply " + n + " stamps →" : "Apply Selected";
+}
+
+function doApply() {
+  var cbs = document.querySelectorAll(".rcb:checked");
+  var toApply = [];
+  cbs.forEach(function(cb) {
+    var fn = cb.dataset.n;
+    var row = _rows.find(function(r){ return r.fusion_name === fn; });
+    var ov = _ov[fn];
+    var src = ov || (row && row.proposed);
+    if (src) toApply.push({ fusion_name: fn, portal_id: src.id, portal_pn: src.part_number || "" });
+  });
+  if (!toApply.length) return;
+  if (!confirm("Stamp " + toApply.length + " component(s)?")) return;
+  document.getElementById("foot").textContent = "Applying " + toApply.length + " stamps…";
+  send("apply", { rows: toApply });
+}
+
+function onApplyDone(d) {
+  var msg = "Stamped " + d.stamped + " component(s).";
+  if (d.errors && d.errors.length) msg += "\n\nErrors:\n" + d.errors.slice(0,5).join("\n");
+  alert(msg);
+  doScan();
+}
+
+/* ── Error ───────────────────────────────────────────────────────── */
+function showError(msg) {
+  document.getElementById("loading").innerHTML = '<span style="color:#fca5a5">Error: ' + esc(msg) + '</span>';
+  document.getElementById("loading").style.display = "block";
+  document.getElementById("tbl").style.display = "none";
+}
+</script>
+</body>
+</html>

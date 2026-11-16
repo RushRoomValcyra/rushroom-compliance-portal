@@ -53,9 +53,10 @@ def run(context):
         from commands.connect_cmd import ConnectCommand
         from commands.stamp_cmd import StampCommand
         from commands.release_cmd import ReleaseCommand
+        from commands.bulk_stamp_cmd import BulkStampCommand
         _log("imports OK")
 
-        for Cmd in [ConnectCommand, StampCommand, ReleaseCommand]:
+        for Cmd in [ConnectCommand, StampCommand, ReleaseCommand, BulkStampCommand]:
             cmd = Cmd(_app, _ui, _handlers)
             cmd.register()
             _commands.append(cmd)

@@ -17,32 +17,53 @@ Install:
 """
 import adsk.core
 import adsk.fusion
+import os
+import sys
 import traceback
 
-from commands.connect_cmd import ConnectCommand
-from commands.stamp_cmd import StampCommand
-from commands.release_cmd import ReleaseCommand
-
-_app: adsk.core.Application = None
-_ui: adsk.core.UserInterface = None
+_app = None
+_ui = None
 _commands = []
 _handlers = []  # keep handlers alive so the GC doesn't destroy them
+
+ADDIN_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEBUG_LOG = os.path.join(ADDIN_DIR, "debug.log")
+
+
+def _log(msg):
+    try:
+        with open(_DEBUG_LOG, "a", encoding="utf-8") as _f:
+            _f.write(msg + "\n")
+    except Exception:
+        pass
 
 
 def run(context):
     global _app, _ui, _commands, _handlers
+    _log("=== run() called ===")
+    _log("Python: " + sys.version)
+    _log("ADDIN_DIR: " + ADDIN_DIR)
     try:
         _app = adsk.core.Application.get()
         _ui = _app.userInterface
+
+        # Imports are inside run() so any ImportError surfaces via messageBox
+        from commands.connect_cmd import ConnectCommand
+        from commands.stamp_cmd import StampCommand
+        from commands.release_cmd import ReleaseCommand
+        _log("imports OK")
 
         for Cmd in [ConnectCommand, StampCommand, ReleaseCommand]:
             cmd = Cmd(_app, _ui, _handlers)
             cmd.register()
             _commands.append(cmd)
+        _log("commands registered OK")
 
     except Exception:
+        tb = traceback.format_exc()
+        _log("FAILED:\n" + tb)
         if _ui:
-            _ui.messageBox("RushroomPIM failed to start:\n" + traceback.format_exc())
+            _ui.messageBox("RushroomPIM failed to start:\n" + tb)
 
 
 def stop(context):

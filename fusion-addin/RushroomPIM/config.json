@@ -1,7 +1,7 @@
 {
   "portal_url": "https://iwoqujpwhsoywudjtsnj.supabase.co/functions/v1/portal-api",
-  "token": "eyJyb2xlIjoicnVzaHJvb20iLCJhZG1pbiI6dHJ1ZSwidWlkIjoiNmFmYjUzNGItMTlhMS00M2I0LTk3ZTYtNGRhMGJjMjQyZjk1IiwiZW1haWwiOiJtYXRoaWFzQHZhbGN5cmEuY29tIiwidXJvbGUiOiJhZG1pbiIsIm9yZyI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIm1yb2xlIjoib3JnX2FkbWluIiwiZXhwIjoxNzk0ODYzMjI0fQ.o3GW9_4T6dIIkE67PA2IMB4JiEhg1S3E3nNd3GzUAZU",
-  "token_expires_at": 1794863164,
+  "token": "eyJyb2xlIjoicnVzaHJvb20iLCJhZG1pbiI6dHJ1ZSwidWlkIjoiNmFmYjUzNGItMTlhMS00M2I0LTk3ZTYtNGRhMGJjMjQyZjk1IiwiZW1haWwiOiJtYXRoaWFzQHZhbGN5cmEuY29tIiwidXJvbGUiOiJhZG1pbiIsIm9yZyI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIm1yb2xlIjoib3JnX2FkbWluIiwiZXhwIjoxNzk0OTY0NDc2fQ.gzyKZXYd4ajfwWaN_am-1NBXpiUThNdwEZ0YM4eiURA",
+  "token_expires_at": 1794964416,
   "role": "rushroom",
   "name": "Mathias Qvick",
   "organization_id": "11111111-1111-4111-8111-111111111111",

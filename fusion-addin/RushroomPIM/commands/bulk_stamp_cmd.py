@@ -45,9 +45,20 @@ _palette_handler = None
 # ---------------------------------------------------------------------------
 
 def _clean(name: str) -> str:
-    """Strip Fusion occurrence / version suffixes for name matching."""
+    """
+    Normalise a Fusion component name or portal component name to a
+    comparable form for matching.
+
+    Steps:
+      1. Strip Fusion occurrence suffix  :N
+      2. Strip version suffix            _vN / _v9.1 / _V9
+      3. Normalise separators (_  -) → space
+      4. Collapse whitespace, lowercase
+    """
     n = re.sub(r':\d+$', '', name)
-    n = re.sub(r'[_\s]+v\d+(\.\d+)*$', '', n, flags=re.IGNORECASE)
+    n = re.sub(r'[_\s\-]+v\d+(\.\d+)*$', '', n, flags=re.IGNORECASE)
+    n = re.sub(r'[_\-]', ' ', n)
+    n = re.sub(r'\s+', ' ', n)
     return n.strip().lower()
 
 
@@ -96,6 +107,7 @@ def _scan() -> list:
             portal_entry = portal_by_id.get(stamp["pim_component_id"])
             rows.append({
                 "fusion_name": fc.name,
+                "clean_name": fc_clean,
                 "stamp": stamp,
                 "status": "ok" if portal_entry else "conflict",
                 "proposed": portal_entry,
@@ -124,6 +136,7 @@ def _scan() -> list:
 
         rows.append({
             "fusion_name": fc.name,
+            "clean_name": fc_clean,
             "stamp": stamp,
             "status": status,
             "proposed": exact[0] if len(exact) == 1 else None,
@@ -192,6 +205,7 @@ def _scan_project_files() -> list:
             entry = pending[fc_clean]
             rows.append({
                 "fusion_name": fname,
+                "clean_name": fc_clean,
                 "stamp": {"pim_component_id": entry["portal_id"], "pim_part_number": entry["portal_pn"]},
                 "status": "queued",
                 "proposed": {"id": entry["portal_id"], "name": entry.get("portal_name", ""), "part_number": entry["portal_pn"]},
@@ -218,6 +232,7 @@ def _scan_project_files() -> list:
 
         rows.append({
             "fusion_name": fname,
+            "clean_name": fc_clean,
             "stamp": {"pim_component_id": "", "pim_part_number": ""},
             "status": status,
             "proposed": exact[0] if len(exact) == 1 else None,
@@ -341,22 +356,23 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args):
         global _palette, _palette_handler
         try:
-            palette = self._ui.palettes.itemById(PALETTE_ID)
-            if palette:
-                palette.isVisible = True
-                # HTML is already loaded — tell it to re-scan
-                palette.sendInfoToHTML("triggerScan", "{}")
-            else:
-                html_url = "file://" + _UI_HTML
-                palette = self._ui.palettes.add(
-                    PALETTE_ID, "Rushroom Bulk Stamp",
-                    html_url, True, True, True, 1000, 660,
-                )
-                handler = _PaletteHTMLHandler(self._app, self._ui, self._handlers)
-                palette.incomingFromHTML.add(handler)
-                self._handlers.append(handler)
-                _palette_handler = handler
+            # Always delete and recreate so the HTML file is freshly loaded.
+            existing = self._ui.palettes.itemById(PALETTE_ID)
+            if existing:
+                try:
+                    existing.deleteMe()
+                except Exception:
+                    pass
 
+            html_url = "file://" + _UI_HTML
+            palette = self._ui.palettes.add(
+                PALETTE_ID, "Rushroom Bulk Stamp",
+                html_url, True, True, True, 1000, 660,
+            )
+            handler = _PaletteHTMLHandler(self._app, self._ui, self._handlers)
+            palette.incomingFromHTML.add(handler)
+            self._handlers.append(handler)
+            _palette_handler = handler
             _palette = palette
 
         except Exception:

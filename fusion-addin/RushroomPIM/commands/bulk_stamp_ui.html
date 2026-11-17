@@ -265,8 +265,9 @@ function matchCell(row) {
   }
   if (["ambiguous","not_found","conflict"].indexOf(row.status) >= 0) {
     var enc = esc(n).replace(/'/g, "\\'");
+    var sv = esc(row.clean_name || row.fusion_name);
     return '<div class="sr">' +
-      '<input class="si" id="si_' + esc(n) + '" type="text" placeholder="Search portal…" value="' + esc(n) + '">' +
+      '<input class="si" id="si_' + esc(n) + '" type="text" placeholder="Search portal…" value="' + sv + '">' +
       '<button class="sbtn" onclick="doSearch(\'' + enc + '\')">Search</button>' +
     '</div>';
   }
@@ -449,8 +450,9 @@ function pMatchCell(row) {
   }
   if (["ambiguous","not_found"].indexOf(row.status) >= 0) {
     var enc = esc(n).replace(/'/g,"\\'");
+    var sv = esc(row.clean_name || row.fusion_name);
     return '<div class="sr">' +
-      '<input class="si" id="psi_' + esc(n) + '" type="text" placeholder="Search portal…" value="' + esc(n) + '">' +
+      '<input class="si" id="psi_' + esc(n) + '" type="text" placeholder="Search portal…" value="' + sv + '">' +
       '<button class="sbtn" onclick="doPSearch(\'' + enc + '\')">Search</button>' +
     '</div>';
   }

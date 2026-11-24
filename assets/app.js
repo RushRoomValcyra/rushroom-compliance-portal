@@ -1868,18 +1868,19 @@
     };
     const onKey = (e) => { if (e.key === "Escape") closeViewer(); };
 
-    const cadContainer = el("div", { style: "width:100%;height:100%;min-height:0" });
+    const cadContainer = el("div", { style: "width:100%;height:100%;min-height:0;flex:1" });
     const label = [componentName, file.format.toUpperCase(), `Rev ${file.revision}`].filter(Boolean).join(" — ");
 
     const dialog = el("div", {
       class: "viewer-dialog", role: "dialog", "aria-modal": "true", "aria-label": label,
+      style: "height:min(94vh,1400px)",
     }, [
       el("div", { class: "viewer-head" }, [
         el("h3", { class: "viewer-title" }, label),
         el("span", { class: "spacer" }),
         el("button", { class: "btn btn-sm", type: "button", onclick: closeViewer }, "✕ Close"),
       ]),
-      el("div", { class: "viewer-body", style: "padding:0;overflow:hidden" }, cadContainer),
+      el("div", { class: "viewer-body", style: "padding:0;overflow:hidden;flex:1;display:flex;flex-direction:column" }, cadContainer),
     ]);
     const overlay = el("div", {
       "data-modal-overlay": "", class: "viewer-overlay",
@@ -1896,12 +1897,15 @@
       }
       cadContainer.innerHTML = `<div class="viewer-msg"><span class="muted">Loading ${file.format.toUpperCase()} model…</span></div>`;
       const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-      const bg = isDark ? new window.OV.RGBAColor(26, 29, 35, 255) : new window.OV.RGBAColor(245, 246, 248, 255);
-      const partColor = isDark ? new window.OV.RGBColor(190, 200, 210) : new window.OV.RGBColor(160, 170, 185);
+      // Light: near-white bg, light-grey part, dark edges → grooves naturally darker via shading
+      // Dark:  near-black bg, mid-grey part, medium edges
+      const bg        = isDark ? new window.OV.RGBAColor(26, 29, 35, 255)    : new window.OV.RGBAColor(242, 244, 247, 255);
+      const partColor = isDark ? new window.OV.RGBColor(180, 190, 200)       : new window.OV.RGBColor(210, 215, 222);
+      const edgeColor = isDark ? new window.OV.RGBColor(90, 100, 115)        : new window.OV.RGBColor(80, 90, 105);
       const viewer = new window.OV.EmbeddedViewer(cadContainer, {
         backgroundColor: bg,
         defaultColor: partColor,
-        edgeSettings: new window.OV.EdgeSettings(true, isDark ? new window.OV.RGBColor(80, 90, 100) : new window.OV.RGBColor(100, 110, 125), 1),
+        edgeSettings: new window.OV.EdgeSettings(true, edgeColor, 1),
       });
       viewer.LoadModelFromUrlList([file.download_url]);
     });

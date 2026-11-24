@@ -4770,7 +4770,44 @@ Deno.serve(async (req) => {
       if (!res.ok) throw new Error(`Order Operations answered ${res.status}`);
       const rules = await res.json();
       if (!rules || !Array.isArray(rules.interiors) || !Array.isArray(rules.faces)) throw new Error("Unexpected answer from Order Operations");
-      return json({ role: found.role, worked: true, rules });
+      // Build a map of rule_id → template drawing for the sidebar.
+      const allRuleIds: string[] = [];
+      for (const interior of rules.interiors as any[]) {
+        for (const faceRules of Object.values(interior.faces ?? {}) as any[][]) {
+          for (const rule of faceRules) { if (rule.id) allRuleIds.push(rule.id); }
+        }
+      }
+      const template_map: Record<string, { drawing_number: string; revision: string | null; drawing_status: string }> = {};
+      if (allRuleIds.length) {
+        const { data: stFaces } = await tdb("surgery_template_faces")
+          .select("rule_id, template_id").in("rule_id", allRuleIds).eq("status", "active");
+        if (stFaces && (stFaces as any[]).length) {
+          const tplIds = [...new Set((stFaces as any[]).map((f: any) => f.template_id))];
+          const { data: tpls } = await tdb("surgery_templates").select("id, drawing_id").in("id", tplIds);
+          const drawingIds = [...new Set(((tpls || []) as any[]).map((t: any) => t.drawing_id).filter(Boolean))];
+          if (drawingIds.length) {
+            const { data: drws } = await tdb("drawings").select("id, drawing_number, status, current_revision_id").in("id", drawingIds);
+            const revIds = [...new Set(((drws || []) as any[]).map((d: any) => d.current_revision_id).filter(Boolean))];
+            const revMap: Record<string, string> = {};
+            if (revIds.length) {
+              const { data: revs } = await tdb("drawing_revisions").select("id, revision").in("id", revIds);
+              for (const rv of (revs || []) as any[]) revMap[rv.id] = rv.revision;
+            }
+            const drawingMap: Record<string, { drawing_number: string; revision: string | null; drawing_status: string }> = {};
+            for (const d of (drws || []) as any[]) {
+              drawingMap[d.id] = { drawing_number: d.drawing_number, drawing_status: d.status, revision: d.current_revision_id ? (revMap[d.current_revision_id] ?? null) : null };
+            }
+            const tplMap: Record<string, string> = {};
+            for (const t of (tpls || []) as any[]) tplMap[t.id] = t.drawing_id;
+            for (const f of stFaces as any[]) {
+              const drawingId = tplMap[f.template_id];
+              const drw = drawingId ? drawingMap[drawingId] : null;
+              if (drw) template_map[f.rule_id] = drw;
+            }
+          }
+        }
+      }
+      return json({ role: found.role, worked: true, rules, template_map });
     } catch (e) {
       console.error("getSidePanelSurgery", e);
       return json({ role: found.role, worked: true, error: "Order Operations could not be reached. Try again in a moment." });

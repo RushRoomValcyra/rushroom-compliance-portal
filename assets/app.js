@@ -7101,12 +7101,6 @@
       el("p", { style: small }, "The extra holes and milling a side panel needs for a customer order are set per interior in Order Operations, not on the part. Drawings and templates they refer to stay in this part's Drawings tab."),
       rulesLink(),
     ];
-    const cell = (rules) => !rules || !rules.length
-      ? el("span", { style: "color:var(--muted,#8b93a1)" }, "Supplier's predrilling")
-      : el("div", {}, rules.map((r) => el("div", { style: "margin:0.1rem 0" }, [
-          el("strong", {}, `${r.stage === "site" ? "On site" : "Hub"} · ${SURGERY_OPERATION[r.operation_type] || r.operation_type}`),
-          `${r.size ? ` (${r.size} only)` : ""}: ${r.instruction}${r.drawing_number ? ` · drawing ${r.drawing_number}` : ""}`,
-        ])));
     API.post(token, "getSidePanelSurgery", { component_id: componentId })
       .then((r) => {
         if (!r.role) return body.replaceChildren(...note());
@@ -7117,6 +7111,19 @@
           );
         }
         if (r.error) return body.replaceChildren(el("p", { style: small }, r.error), rulesLink());
+        const tmap = r.template_map || {};
+        const cell = (rules) => !rules || !rules.length
+          ? el("span", { style: "color:var(--muted,#8b93a1)" }, "Supplier's predrilling")
+          : el("div", {}, rules.map((ru) => {
+              const tmpl = tmap[ru.id];
+              return el("div", { style: "margin:0.1rem 0" }, [
+                el("strong", {}, `${ru.stage === "site" ? "On site" : "Hub"} · ${SURGERY_OPERATION[ru.operation_type] || ru.operation_type}`),
+                `${ru.size ? ` (${ru.size} only)` : ""}: ${ru.instruction}${ru.drawing_number ? ` · drawing ${ru.drawing_number}` : ""}`,
+                tmpl
+                  ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:#16a34a18;color:#16a34a;font-weight:600;margin-left:0.4rem;white-space:nowrap" }, `Template: ${tmpl.drawing_number}${tmpl.revision ? ` Rev ${tmpl.revision}` : ""}`)
+                  : null,
+              ].filter(Boolean));
+            }));
         const faces = r.rules.faces;
         const th = "text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);font-size:0.75rem;color:var(--muted,#8b93a1)";
         const td = "padding:0.35rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0);vertical-align:top;font-size:0.8125rem";
@@ -7576,7 +7583,7 @@
         const close = openModal("Link a drawing to this part", box);
         API.post(token, "listDrawings", {}).then(({ drawings }) => {
           const linked = new Set(partDrawings.map((d) => d.id));
-          const available = (drawings || []).filter((d) => !linked.has(d.id));
+          const available = (drawings || []).filter((d) => !linked.has(d.id) && d.drawing_type !== "surgery_template");
           if (!available.length) {
             box.replaceChildren(
               el("p", { class: "notice" }, (drawings || []).length
@@ -7612,7 +7619,12 @@
 
       const drawingRows = partDrawings.map((d) => el("tr", {}, [
         el("td", {}, el("strong", {}, d.drawing_number)),
-        el("td", {}, d.title),
+        el("td", {}, [
+          d.title,
+          d.drawing_type === "surgery_template"
+            ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:#16a34a18;color:#16a34a;font-weight:600;margin-left:0.4rem;white-space:nowrap" }, "Surgery Template")
+            : null,
+        ].filter(Boolean)),
         el("td", {}, d.revision ? `Rev ${d.revision}` : el("span", { class: "muted" }, "no revision")),
         el("td", {}, drawingStatusChip(d.status)),
         el("td", {}, d.parts_count > 1

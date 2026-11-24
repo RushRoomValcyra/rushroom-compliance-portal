@@ -61,10 +61,8 @@
 
     <div id="portal-app" hidden>
       <div class="tabs" id="tablist" role="tablist" aria-label="Supplier sections">
-        <button class="tab" id="tab-steps" role="tab" aria-selected="true"
-                aria-controls="steps-panel" tabindex="0">Supplier Actions</button>
-        <button class="tab" id="tab-documents" role="tab" aria-selected="false"
-                aria-controls="documents-panel" tabindex="-1">Supplier Documents</button>
+        <button class="tab" id="tab-documents" role="tab" aria-selected="true"
+                aria-controls="documents-panel" tabindex="0">Supplier Documents</button>
         <button class="tab" id="tab-drawings" role="tab" aria-selected="false"
                 aria-controls="drawings-panel" tabindex="-1">Drawings</button>
         <button class="tab" id="tab-standards" role="tab" aria-selected="false"
@@ -73,11 +71,9 @@
                 aria-controls="bom-panel" tabindex="-1">Product BOM</button>
       </div>
 
-      <section id="steps-panel" role="tabpanel" aria-labelledby="tab-steps" tabindex="0">
-        <div class="loading">Loading status…</div>
-      </section>
+      <section id="steps-panel" hidden aria-hidden="true"></section>
 
-      <section id="documents-panel" role="tabpanel" aria-labelledby="tab-documents" tabindex="0" hidden>
+      <section id="documents-panel" role="tabpanel" aria-labelledby="tab-documents" tabindex="0">
         <div class="loading">Loading documents…</div>
       </section>
 
@@ -106,7 +102,7 @@
   <script src="./assets/api.js?v=432"></script>
   <script src="./assets/viewer.js?v=310"></script>
   <script src="./assets/bom-structure.js?v=310"></script>
-  <script src="./assets/app.js?v=437"></script>
+  <script src="./assets/app.js?v=438"></script>
   <script src="./assets/supplier.js?v=310"></script>
 </body>
 </html>

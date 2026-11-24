@@ -11852,105 +11852,177 @@
   // ==========================================================================
   async function renderSupplierBom(role, mount) {
     const token = API.getToken(role);
-    mount.replaceChildren(el("div", { class: "loading" }, "Loading product BOM…"));
-    let roots;
+    mount.replaceChildren(el("div", { class: "loading" }, "Loading parts…"));
+
+    let allComponents = [], categories = [];
     try {
-      const r = await API.post(token, "getSupplierBomRoots", {});
-      roots = r.roots || [];
+      const r = await API.post(token, "listSupplierComponents", {});
+      allComponents = r.components || [];
+      categories = r.categories || [];
     } catch (ex) {
-      mount.replaceChildren(el("div", { class: "error" }, `Couldn't load BOM: ${ex.message}`));
+      mount.replaceChildren(el("div", { class: "error" }, `Couldn't load parts: ${ex.message}`));
       return;
     }
-    if (!roots.length) {
-      mount.replaceChildren(el("div", { class: "empty" }, "No product assemblies are available."));
+    if (!allComponents.length) {
+      mount.replaceChildren(el("div", { class: "empty" }, "No parts available yet."));
       return;
     }
 
     const TYPE_COLOR = { part: "#2fa564", raw_material: "#8b93a1", sub_assembly: "#4a9eed", phantom_assembly: "#0d9488", finished_good: "#a855f7", spare_part: "#f59e0b", product_family: "#e05454" };
+    const STATUS_COLOR = { active: "#2fa564", inactive: "#8b93a1", replaced: "#e5a326", flagged: "#e05454" };
+    const categoryNameOf = (id) => (categories.find((c) => c.id === id) || {}).name || "";
 
-    function typePill(type) {
-      const c = TYPE_COLOR[type] || "#8b93a1";
-      return el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid ${c}55;color:${c};background:${c}11;white-space:nowrap` }, (type || "").replace(/_/g, " "));
-    }
+    // ---- state ---------------------------------------------------------------
+    let searchQ = "";
+    let catFilter = "all"; // "all" | category id
+    let sortKey = "name";  // "name" | "part_number"
+    let sortDir = 1;       // 1 asc / -1 desc
+    const PAGE_SIZE = 50;
+    let pageShown = PAGE_SIZE;
 
-    function renderTree(rootId, bom) {
-      const { nodes = [], edges = [] } = bom;
-      if (!nodes.length) return el("div", { class: "notice" }, "Empty BOM.");
-      const nodeMap = Object.fromEntries(nodes.map((n) => [n.id, n]));
-      const childrenOf = {};
-      edges.forEach((e) => { (childrenOf[e.parent_id] ||= []).push(e); });
-      Object.values(childrenOf).forEach((list) => list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)));
-
-      const colWidths = "4rem 8rem 1fr 8rem 4rem 5rem 7rem";
-      const hdr = el("div", { style: `display:grid;grid-template-columns:${colWidths};gap:0.5rem;padding:0.25rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);position:sticky;top:0;background:var(--bg,#fff);z-index:1` },
-        ["Pos", "Part #", "Name", "Type", "Qty", "Unit", "Status"].map((t) => el("span", {}, t)));
-
-      const rows = [];
-      function walk(nodeId, posNum, depth, ancestorLastFlags, qty) {
-        const n = nodeMap[nodeId];
-        if (!n || depth > 12) return;
-        const children = childrenOf[nodeId] || [];
-        rows.push({ n, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: !!children.length, qty });
-        children.forEach((e, i) =>
-          walk(e.child_id, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.quantity));
+    // ---- filter + sort -------------------------------------------------------
+    function filtered() {
+      let list = allComponents;
+      if (catFilter !== "all") list = list.filter((c) => c.category_id === catFilter);
+      if (searchQ) {
+        const q = searchQ.toLowerCase();
+        list = list.filter((c) => (c.name || "").toLowerCase().includes(q) || (c.part_number || "").toLowerCase().includes(q));
       }
-      (childrenOf[rootId] || []).forEach((e, i) =>
-        walk(e.child_id, `${i + 1}`, 0, [], e.quantity));
-
-      const wrap = el("div", { style: "overflow-x:auto;font-size:0.8125rem" }, [hdr]);
-      rows.forEach(({ n, posNum, depth, ancestorLastFlags, qty }) => {
-        let conn = "";
-        for (let i = 0; i < depth - 1; i++) conn += ancestorLastFlags[i] ? "   " : "│  ";
-        if (depth > 0) conn += ancestorLastFlags[depth - 1] ? "└─ " : "├─ ";
-        wrap.append(el("div", { style: `display:grid;grid-template-columns:${colWidths};gap:0.5rem;padding:0.2rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0)22;align-items:center` }, [
-          el("span", { style: "color:var(--muted,#8b93a1);font-size:0.75rem;font-variant-numeric:tabular-nums" }, posNum),
-          el("span", { style: "font-family:var(--mono,monospace);font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number || "—"),
-          el("span", { style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, [
-            conn ? el("span", { style: "font-family:monospace;color:var(--muted,#8b93a1);white-space:pre" }, conn) : null,
-            n.name,
-          ].filter(Boolean)),
-          typePill(n.type),
-          el("span", { style: "text-align:right;font-variant-numeric:tabular-nums" }, qty ? String(qty) : ""),
-          el("span", { style: "color:var(--muted,#8b93a1)" }, n.unit_of_measure || ""),
-          el("span", {}, n.lifecycle_status ? el("span", { class: `status-pill status-${n.lifecycle_status.replace(/ /g, "-")}`, style: "font-size:0.6875rem" }, n.lifecycle_status) : ""),
-        ]));
+      list = [...list].sort((a, b) => {
+        const av = (a[sortKey] || "").toLowerCase();
+        const bv = (b[sortKey] || "").toLowerCase();
+        return sortDir * av.localeCompare(bv, undefined, { numeric: true });
       });
-      return wrap;
+      return list;
     }
 
-    const sections = roots.map((root) => {
-      const treeMount = el("div", { hidden: true });
-      const expanded = { done: false, busy: false };
-      const toggleBtn = el("button", { class: "btn btn-sm", type: "button" }, "▶ Expand");
-      toggleBtn.onclick = async () => {
-        if (expanded.busy) return;
-        if (expanded.done) { treeMount.hidden = !treeMount.hidden; toggleBtn.textContent = treeMount.hidden ? "▶ Expand" : "▼ Collapse"; return; }
-        expanded.busy = true; toggleBtn.disabled = true; toggleBtn.textContent = "Loading…";
-        try {
-          const bom = await API.post(token, "getBom", { root_component_id: root.id, max_depth: 10 });
-          treeMount.replaceChildren(renderTree(root.id, bom));
-          treeMount.hidden = false; toggleBtn.textContent = "▼ Collapse"; expanded.done = true;
-        } catch (ex) {
-          treeMount.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
-          treeMount.hidden = false; toggleBtn.textContent = "Retry";
-        } finally { expanded.busy = false; toggleBtn.disabled = false; }
-      };
-      return el("div", { class: "card", style: "margin-bottom:1rem;padding:1rem 1.25rem" }, [
-        el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap" }, [
-          typePill(root.type),
-          el("strong", {}, root.name),
-          root.part_number ? el("code", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, root.part_number) : null,
-          el("span", { style: "flex:1" }),
-          toggleBtn,
+    // ---- drawing detail rows -------------------------------------------------
+    function drawingRows(drawings) {
+      if (!drawings.length) return el("div", { class: "muted", style: "padding:0.5rem 0.6rem;font-size:0.8125rem" }, "No supplier drawings linked to this part.");
+      const DT_COLOR = { engineering: "#4a9eed", production: "#a855f7", assembly: "#2fa564" };
+      const rows = drawings.map((d) => {
+        const dtc = DT_COLOR[d.drawing_type] || "#8b93a1";
+        return el("div", { style: "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.6rem;border-bottom:1px solid var(--border,#e2e8f0)44;flex-wrap:wrap;font-size:0.8125rem" }, [
+          el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${dtc}18;color:${dtc};white-space:nowrap;flex-shrink:0` }, (d.drawing_type || "engineering")),
+          el("strong", { style: "white-space:nowrap;flex-shrink:0" }, d.drawing_number),
+          d.revision ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);flex-shrink:0" }, `Rev ${d.revision}`) : null,
+          el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, d.title || ""),
+          d.supplier_drawing_number ? el("span", { style: "font-family:var(--mono,monospace);font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, d.supplier_drawing_number) : null,
+          el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${STATUS_COLOR[d.status] || "#8b93a1"}18;color:${STATUS_COLOR[d.status] || "#8b93a1"};white-space:nowrap;flex-shrink:0` }, d.status || ""),
+        ].filter(Boolean));
+      });
+      return el("div", { style: "border-top:1px solid var(--border,#e2e8f0)" }, rows);
+    }
+
+    // ---- single part row -----------------------------------------------------
+    function partRow(comp) {
+      const tfg = TYPE_COLOR[comp.type] || "#888";
+      const sfg = STATUS_COLOR[comp.lifecycle_status] || "#888";
+      const detailDiv = el("div", { style: "display:none;border-top:1px solid var(--border,#e2e8f0)" });
+
+      const hasDrawings = (comp.drawings || []).length > 0;
+      const expandBtn = el("button", {
+        type: "button",
+        style: `background:none;border:none;cursor:pointer;padding:0 4px;font-size:0.75rem;color:${hasDrawings ? "var(--accent,#2fa564)" : "var(--muted,#8b93a1)"};transition:transform 0.15s;flex-shrink:0`,
+        title: hasDrawings ? "Show drawings" : "No drawings",
+        onclick: (ev) => {
+          ev.stopPropagation();
+          const open = detailDiv.style.display !== "none";
+          if (open) {
+            detailDiv.style.display = "none";
+            expandBtn.style.transform = "";
+            expandBtn.title = hasDrawings ? "Show drawings" : "No drawings";
+          } else {
+            detailDiv.style.display = "";
+            expandBtn.style.transform = "rotate(90deg)";
+            expandBtn.title = "Collapse";
+            if (!detailDiv.childNodes.length) detailDiv.append(drawingRows(comp.drawings || []));
+          }
+        },
+      }, "▶");
+      if (!hasDrawings) expandBtn.disabled = true;
+
+      const row = el("div", { style: "display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;user-select:none" }, [
+        expandBtn,
+        el("div", { style: "flex:1;min-width:0;overflow:hidden" }, [
+          el("span", { style: "font-weight:600;font-size:0.875rem" }, comp.name || "—"),
+          comp.part_number ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-left:0.4rem;font-family:monospace" }, comp.part_number) : null,
         ].filter(Boolean)),
-        treeMount,
-      ]);
-    });
+        el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, (comp.type || "").replace(/_/g, " ")),
+        comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id)) : null,
+        el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status || ""),
+        hasDrawings ? el("span", { title: `${comp.drawings.length} drawing${comp.drawings.length !== 1 ? "s" : ""}`, style: "font-size:0.6875rem;color:var(--accent,#2fa564);white-space:nowrap;flex-shrink:0" }, `📐 ${comp.drawings.length}`) : null,
+      ].filter(Boolean));
+
+      return el("div", { style: "border:1px solid var(--border,#e2e8f0);border-radius:6px;margin-bottom:0.4rem;overflow:hidden" }, [row, detailDiv]);
+    }
+
+    // ---- main render ---------------------------------------------------------
+    const searchEl = el("input", { type: "search", class: "up-text", placeholder: "Search by name or part number…", style: "flex:1;max-width:360px", value: searchQ });
+    searchEl.addEventListener("input", () => { searchQ = searchEl.value.trim(); pageShown = PAGE_SIZE; renderList(); });
+
+    // Category chips — same style as the admin BOM tab
+    const catWrap = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.5rem" });
+    function renderCats(list) {
+      const usedCats = new Set(allComponents.map((c) => c.category_id).filter(Boolean));
+      const chips = [
+        chipBtn("All", catFilter === "all", () => { catFilter = "all"; pageShown = PAGE_SIZE; renderList(); }),
+        ...categories.filter((c) => usedCats.has(c.id)).map((c) =>
+          chipBtn(c.name, catFilter === c.id, () => { catFilter = c.id; pageShown = PAGE_SIZE; renderList(); })),
+      ];
+      catWrap.replaceChildren(...chips);
+    }
+    function chipBtn(label, active, onClick) {
+      return el("button", {
+        type: "button",
+        class: active ? "chip chip-active" : "chip",
+        style: active ? "background:var(--accent,#2fa564);color:#fff;border-color:var(--accent,#2fa564)" : "",
+        onclick: onClick,
+      }, label);
+    }
+
+    // Sort buttons — same as admin sort bar
+    const sortWrap = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;margin-top:0.5rem" });
+    function renderSortBar() {
+      const btn = (key, label) => el("button", {
+        type: "button",
+        class: "btn btn-xs",
+        style: sortKey === key ? "font-weight:700;border-color:var(--accent,#2fa564);color:var(--accent,#2fa564)" : "",
+        onclick: () => { if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; } renderList(); },
+      }, sortKey === key ? `${label} ${sortDir > 0 ? "↑" : "↓"}` : label);
+      sortWrap.replaceChildren(
+        el("span", { style: "font-size:0.6875rem;color:var(--muted,#8b93a1);white-space:nowrap" }, "Sort:"),
+        btn("name", "Name"), btn("part_number", "Part #"),
+      );
+    }
+
+    const listArea = el("div", { style: "margin-top:0.75rem" });
+    const countEl = el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "");
+
+    function renderList() {
+      const items = filtered();
+      countEl.textContent = `${items.length} part${items.length !== 1 ? "s" : ""}`;
+      renderCats(items);
+      renderSortBar();
+      const shown = items.slice(0, pageShown);
+      const rows = shown.map(partRow);
+      if (!items.length) rows.push(el("div", { class: "notice", style: "margin-top:1rem" }, searchQ || catFilter !== "all" ? "No parts match the current filter." : "No parts yet."));
+      if (items.length > pageShown) {
+        const rem = items.length - pageShown;
+        rows.push(el("div", { style: "text-align:center;padding:0.75rem" },
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => { pageShown += PAGE_SIZE; renderList(); } },
+            `Load ${Math.min(rem, PAGE_SIZE)} more (${rem} remaining)`)));
+      }
+      listArea.replaceChildren(...rows);
+    }
 
     mount.replaceChildren(
-      el("p", { class: "muted", style: "margin:0.5rem 0 1rem" }, `${roots.length} product assembl${roots.length === 1 ? "y" : "ies"}. Expand to view the full BOM structure.`),
-      ...sections,
+      el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap" }, [searchEl, countEl]),
+      catWrap,
+      sortWrap,
+      listArea,
     );
+    renderList();
   }
 
   // ==========================================================================

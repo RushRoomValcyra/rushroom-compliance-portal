@@ -3981,6 +3981,62 @@ Deno.serve(async (req) => {
       : { changelog });
   }
 
+  // --- BOM: full component list for the supplier portal (no cost / sourcing) --
+  // Returns all active components plus their supplier-visible drawings in one
+  // round trip, so the supplier parts list can show drawings inline.
+  if (action === "listSupplierComponents") {
+    const [
+      { data: comps, error: ce },
+      { data: drawingRows },
+      { data: cadRows },
+      { data: catRows },
+    ] = await Promise.all([
+      tdb("bom_components")
+        .select("id, part_number, name, type, lifecycle_status, category_id, unit_of_measure, description")
+        .not("lifecycle_status", "in", '("replaced","inactive")')
+        .order("name"),
+      tdb("drawings")
+        .select("id, drawing_number, title, status, current_revision_id, owner_component_id, supplier_drawing_number, drawing_type")
+        .eq("is_supplier_visible", true)
+        .neq("drawing_type", "surgery_template"),
+      tdb("cad_models").select("component_id").not("component_id", "is", null),
+      tdb("part_categories").select("id, name").order("sort_order").order("name"),
+    ]);
+    if (ce) return json({ error: ce.message }, 400);
+
+    const revIds = (drawingRows || []).map((d: any) => d.current_revision_id).filter(Boolean);
+    const revMap: Record<string, string> = {};
+    if (revIds.length) {
+      const { data: revs } = await tdb("drawing_revisions").select("id, revision").in("id", revIds);
+      (revs || []).forEach((r: any) => { revMap[r.id] = r.revision; });
+    }
+    const drawingIds = (drawingRows || []).map((d: any) => d.id);
+    const compLinks: Record<string, any[]> = {};
+    if (drawingIds.length) {
+      const { data: links } = await tdb("drawing_components").select("drawing_id, component_id").in("drawing_id", drawingIds);
+      const drawById: Record<string, any> = {};
+      (drawingRows || []).forEach((d: any) => {
+        drawById[d.id] = {
+          id: d.id, drawing_number: d.drawing_number, title: d.title, status: d.status,
+          revision: d.current_revision_id ? (revMap[d.current_revision_id] || "") : "",
+          owner_component_id: d.owner_component_id || null,
+          supplier_drawing_number: d.supplier_drawing_number || "",
+          drawing_type: d.drawing_type || "engineering",
+        };
+      });
+      (links || []).forEach((l: any) => {
+        (compLinks[l.component_id] ||= []).push(drawById[l.drawing_id]);
+      });
+    }
+    const cadSet = new Set((cadRows || []).map((r: any) => r.component_id));
+    const components = (comps || []).map((c: any) => ({
+      ...c, has_cad: cadSet.has(c.id),
+      drawings: (compLinks[c.id] || []).filter(Boolean).sort((a: any, b: any) =>
+        a.drawing_number.localeCompare(b.drawing_number, undefined, { numeric: true, sensitivity: "base" })),
+    }));
+    return json({ components, categories: catRows || [] });
+  }
+
   // --- BOM: roots visible to suppliers (product_family / sub_assembly not yet
   //     a child of anything else in this org). No cost or sourcing data returned.
   if (action === "getSupplierBomRoots") {

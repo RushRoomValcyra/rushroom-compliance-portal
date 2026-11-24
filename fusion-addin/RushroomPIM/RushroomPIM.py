@@ -68,6 +68,17 @@ class _DocumentOpenedHandler(adsk.core.DocumentEventHandler):
             if not entry:
                 return
 
+            # Safety check: the document name must contain the portal part number.
+            # This prevents a name-match false positive from stamping the wrong
+            # root component when unrelated files happen to clean to the same string.
+            portal_pn = entry.get("portal_pn") or ""
+            if portal_pn and portal_pn not in raw:
+                # Put the entry back — it wasn't this file.
+                from lib.pending_stamps import merge as _merge
+                _merge({clean: entry})
+                _log(f"auto-stamp skipped for {raw}: part# {portal_pn} not in filename")
+                return
+
             design = adsk.fusion.Design.cast(doc.products.itemByProductType("DesignProductType"))
             if not design:
                 return

@@ -1896,11 +1896,11 @@
         return;
       }
       const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-      // Light: near-white bg, light-grey part, dark edges → grooves naturally darker via shading
-      // Dark:  near-black bg, mid-grey part, medium edges
-      const bg        = isDark ? new window.OV.RGBAColor(26, 29, 35, 255)    : new window.OV.RGBAColor(242, 244, 247, 255);
-      const partColor = isDark ? new window.OV.RGBColor(180, 190, 200)       : new window.OV.RGBColor(210, 215, 222);
-      const edgeColor = isDark ? new window.OV.RGBColor(90, 100, 115)        : new window.OV.RGBColor(80, 90, 105);
+      // Light: matches Fusion's default appearance — white bg, warm mid-grey part, near-black edges
+      // Dark:  dark bg, slightly lighter warm grey, medium-dark edges
+      const bg        = isDark ? new window.OV.RGBAColor(30, 32, 36, 255)    : new window.OV.RGBAColor(255, 255, 255, 255);
+      const partColor = isDark ? new window.OV.RGBColor(155, 157, 150)       : new window.OV.RGBColor(158, 160, 153);
+      const edgeColor = isDark ? new window.OV.RGBColor(80, 85, 80)          : new window.OV.RGBColor(50, 52, 48);
       // Loading overlay — sits on top of the canvas until the model is ready, then removed.
       const loadingEl = el("div", {
         style: "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:1",

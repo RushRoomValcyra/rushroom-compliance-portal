@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rushroom Bulk Release</title>
+<style>
+  :root {
+    --bg:         #1a1d23;
+    --bg2:        #22262e;
+    --bg3:        #2a2f3a;
+    --border:     #3a3f4d;
+    --text:       #e4e7ee;
+    --muted:      #8b93a1;
+    --green:      #2fa564;
+    --green-bg:   #1a3327;
+    --red:        #e05252;
+    --red-bg:     #331a1a;
+    --amber:      #f59e0b;
+    --amber-bg:   #332b1a;
+    --blue:       #4a9eed;
+    --purple:     #a855f7;
+    --pill-step:  #4a9eed22;
+    --pill-glb:   #a855f722;
+    --pill-f3z:   #f59e0b22;
+    --radius:     6px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--bg);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { padding: 12px 14px; display: flex; flex-direction: column; height: 100vh; gap: 10px; }
+
+  h1 { font-size: 14px; font-weight: 600; }
+  .subtitle { color: var(--muted); font-size: 12px; }
+
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+
+  button {
+    padding: 5px 12px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--bg3); color: var(--text); cursor: pointer; font-size: 12px;
+    white-space: nowrap;
+  }
+  button:hover { background: var(--border); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #25935a; }
+  button.danger { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+
+  label { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--muted); font-size: 12px; }
+  label input[type=checkbox] { accent-color: var(--green); width: 13px; height: 13px; }
+
+  .fmt-row { display: flex; gap: 10px; align-items: center; }
+  .fmt-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+  .fmt-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 999px; border: 1px solid;
+    font-size: 11px; font-weight: 600; cursor: pointer; user-select: none;
+  }
+  .fmt-chip.step  { background: var(--pill-step); border-color: var(--blue);   color: var(--blue); }
+  .fmt-chip.glb   { background: var(--pill-glb);  border-color: var(--purple); color: var(--purple); }
+  .fmt-chip.f3z   { background: var(--pill-f3z);  border-color: var(--amber);  color: var(--amber); }
+  .fmt-chip.off   { opacity: 0.35; }
+
+  .table-wrap { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); min-height: 0; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    position: sticky; top: 0; background: var(--bg2);
+    padding: 7px 10px; text-align: left; font-size: 11px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--bg2); }
+  tbody td { padding: 6px 10px; vertical-align: middle; }
+
+  td.check { width: 32px; }
+  td.part  { font-weight: 600; font-family: monospace; font-size: 12px; color: var(--muted); }
+  td.name  { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.rev   { font-size: 11px; color: var(--muted); }
+  td.status-cell { width: 120px; }
+
+  .status-badge {
+    display: inline-block; padding: 2px 7px; border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+  }
+  .status-badge.none    { background: var(--bg3); color: var(--muted); }
+  .status-badge.ok      { background: var(--green-bg); color: var(--green); }
+  .status-badge.error   { background: var(--red-bg); color: var(--red); }
+  .status-badge.working { background: var(--amber-bg); color: var(--amber); }
+  .status-badge.done    { background: var(--green-bg); color: var(--green); }
+
+  .progress-row { display: flex; align-items: center; gap: 10px; }
+  .progress-bar-wrap { flex: 1; height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+  .progress-bar { height: 100%; background: var(--green); border-radius: 3px; transition: width .3s; }
+  .progress-text { font-size: 11px; color: var(--muted); white-space: nowrap; min-width: 70px; text-align: right; }
+
+  .log { font-size: 11px; color: var(--muted); background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 6px 10px; max-height: 72px; overflow-y: auto; }
+  .log .err { color: var(--red); }
+  .log .ok  { color: var(--green); }
+
+  .select-all-row { display: flex; align-items: center; gap: 8px; }
+  .count-badge { font-size: 11px; color: var(--muted); }
+  .f3z-note { font-size: 11px; color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+
+<div style="display:flex;align-items:baseline;gap:10px">
+  <h1>Bulk Release to Portal</h1>
+  <span class="subtitle" id="scan-status">Scanning design…</span>
+</div>
+
+<!-- Format selector -->
+<div class="fmt-row">
+  <span class="fmt-label">Formats:</span>
+  <span class="fmt-chip step" id="chip-step" onclick="toggleFmt('step')">STEP</span>
+  <span class="fmt-chip glb"  id="chip-glb"  onclick="toggleFmt('glb')">GLB</span>
+  <span class="fmt-chip f3z"  id="chip-f3z off" onclick="toggleFmt('f3z')">F3Z</span>
+  <span class="f3z-note" id="f3z-note" style="display:none">⚠ F3Z is document-level — uploaded once for the whole design</span>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <div class="select-all-row">
+    <label><input type="checkbox" id="chk-all" onchange="toggleAll()" checked /> Select all</label>
+    <span class="count-badge" id="count-badge"></span>
+  </div>
+  <div class="spacer"></div>
+  <button onclick="rescan()">Rescan</button>
+  <button class="primary" id="btn-release" onclick="startRelease()" disabled>Release selected</button>
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th class="check"></th>
+        <th>Part #</th>
+        <th>Component</th>
+        <th>Portal revision</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="tbl-body">
+      <tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted)">Scanning…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Progress -->
+<div class="progress-row" id="progress-row" style="display:none">
+  <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+  <span class="progress-text" id="progress-text">0 / 0</span>
+</div>
+
+<!-- Log -->
+<div class="log" id="log"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let rows = [];
+const fmtState = { step: true, glb: true, f3z: false };
+let running = false;
+
+// ---------------------------------------------------------------------------
+// Fusion bridge
+// ---------------------------------------------------------------------------
+function send(action, data) {
+  adsk.fusionSendData(action, JSON.stringify(data || {}));
+}
+
+window.fusionJavaScriptHandler = {
+  handle: function(action, dataStr) {
+    try {
+      const data = dataStr ? JSON.parse(dataStr) : {};
+      if (action === "scanDone")       onScanDone(data);
+      else if (action === "releaseProgress") onProgress(data);
+      else if (action === "releaseDone")     onReleaseDone(data);
+      else if (action === "error")           onError(data);
+    } catch(e) { logMsg("JS error: " + e, "err"); }
+    return "ok";
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Scan
+// ---------------------------------------------------------------------------
+function rescan() {
+  rows = [];
+  document.getElementById("tbl-body").innerHTML =
+    '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted)">Scanning…</td></tr>';
+  document.getElementById("scan-status").textContent = "Scanning design…";
+  document.getElementById("btn-release").disabled = true;
+  send("scan");
+}
+
+function onScanDone(data) {
+  rows = data.rows || [];
+  document.getElementById("scan-status").textContent =
+    rows.length === 0 ? "No stamped components found." : rows.length + " stamped component" + (rows.length !== 1 ? "s" : "") + " found";
+  renderTable();
+  updateCount();
+  document.getElementById("btn-release").disabled = rows.length === 0;
+}
+
+// ---------------------------------------------------------------------------
+// Table rendering
+// ---------------------------------------------------------------------------
+function statusBadge(cad_status) {
+  const map = {
+    "none":  ["none",  "No CAD"],
+    "":      ["none",  "No CAD"],
+    "draft": ["ok",    "Draft"],
+    "ok":    ["ok",    "Current"],
+    "error": ["error", "Error"],
+  };
+  const [cls, label] = map[cad_status] || ["none", cad_status || "—"];
+  return `<span class="status-badge ${cls}">${label}</span>`;
+}
+
+function renderTable() {
+  const tbody = document.getElementById("tbl-body");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted)">No stamped components in this design.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((r, i) => `
+    <tr id="row-${i}">
+      <td class="check"><input type="checkbox" checked onchange="updateCount()" /></td>
+      <td class="part">${esc(r.pim_part_number || "—")}</td>
+      <td class="name" title="${esc(r.fusion_name)}">${esc(r.fusion_name)}</td>
+      <td class="rev">${r.current_revision ? "Rev " + esc(r.current_revision) : "—"}</td>
+      <td class="status-cell" id="st-${i}">${statusBadge(r.cad_status)}</td>
+    </tr>
+  `).join("");
+}
+
+function updateCount() {
+  const checked = checkedIds();
+  const badge = document.getElementById("count-badge");
+  badge.textContent = checked.length + " of " + rows.length + " selected";
+  document.getElementById("chk-all").checked = checked.length === rows.length;
+  document.getElementById("btn-release").disabled = checked.length === 0 || running;
+}
+
+function toggleAll() {
+  const all = document.getElementById("chk-all").checked;
+  document.querySelectorAll("#tbl-body input[type=checkbox]").forEach(c => c.checked = all);
+  updateCount();
+}
+
+function checkedIds() {
+  const ids = [];
+  document.querySelectorAll("#tbl-body tr").forEach((tr, i) => {
+    const cb = tr.querySelector("input[type=checkbox]");
+    if (cb && cb.checked && rows[i]) ids.push(rows[i].pim_component_id);
+  });
+  return ids;
+}
+
+// ---------------------------------------------------------------------------
+// Format chips
+// ---------------------------------------------------------------------------
+function toggleFmt(fmt) {
+  fmtState[fmt] = !fmtState[fmt];
+  const chip = document.getElementById("chip-" + fmt);
+  chip.classList.toggle("off", !fmtState[fmt]);
+  if (fmt === "f3z") {
+    document.getElementById("f3z-note").style.display = fmtState.f3z ? "inline" : "none";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Release
+// ---------------------------------------------------------------------------
+function startRelease() {
+  const ids = checkedIds();
+  if (!ids.length) return;
+  const fmts = Object.entries(fmtState).filter(([,v]) => v && arguments[0] !== "f3z").map(([k]) => k).filter(k => k !== "f3z");
+  running = true;
+  document.getElementById("btn-release").disabled = true;
+  document.getElementById("progress-row").style.display = "flex";
+  document.getElementById("progress-bar").style.width = "0%";
+  document.getElementById("progress-text").textContent = "0 / " + ids.length;
+  logMsg("Starting release of " + ids.length + " component" + (ids.length !== 1 ? "s" : "") + "…");
+  send("releaseBatch", {
+    component_ids: ids,
+    formats: fmts,
+    include_f3z: fmtState.f3z,
+  });
+}
+
+let _progressCount = 0;
+let _progressTotal = 0;
+
+function onProgress(data) {
+  if (!data.error && data.done) _progressCount++;
+  _progressTotal = data.total || _progressTotal;
+
+  const pct = _progressTotal ? Math.round((_progressCount / _progressTotal) * 100) : 0;
+  document.getElementById("progress-bar").style.width = pct + "%";
+  document.getElementById("progress-text").textContent = _progressCount + " / " + _progressTotal;
+
+  // Update row status
+  const idx = rows.findIndex(r => r.pim_component_id === data.pim_component_id);
+  if (idx >= 0) {
+    const cell = document.getElementById("st-" + idx);
+    if (cell) {
+      if (data.error) {
+        cell.innerHTML = '<span class="status-badge error">Error</span>';
+      } else if (data.done) {
+        const rev = data.revision ? " Rev " + data.revision : "";
+        cell.innerHTML = '<span class="status-badge done">Done' + rev + '</span>';
+      } else {
+        cell.innerHTML = '<span class="status-badge working">…</span>';
+      }
+    }
+  }
+
+  if (data.message) {
+    logMsg(data.message, data.error ? "err" : (data.done ? "ok" : ""));
+  }
+}
+
+function onReleaseDone(data) {
+  running = false;
+  document.getElementById("btn-release").disabled = false;
+  const msg = "Done — " + data.ok + " ok, " + data.errors + " error" + (data.errors !== 1 ? "s" : "");
+  logMsg(msg, data.errors ? "err" : "ok");
+  document.getElementById("scan-status").textContent = msg;
+  if (data.messages && data.messages.length) {
+    data.messages.forEach(m => logMsg(m, "err"));
+  }
+}
+
+function onError(data) {
+  running = false;
+  logMsg("Error: " + (data.message || "unknown"), "err");
+  document.getElementById("btn-release").disabled = false;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function esc(s) {
+  return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function logMsg(text, cls) {
+  const el = document.getElementById("log");
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = text;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+document.addEventListener("DOMContentLoaded", function() {
+  send("ready");
+});
+</script>
+</body>
+</html>

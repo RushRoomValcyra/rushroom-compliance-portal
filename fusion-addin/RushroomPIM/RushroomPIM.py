@@ -123,9 +123,10 @@ def run(context):
         from commands.stamp_cmd import StampCommand
         from commands.release_cmd import ReleaseCommand
         from commands.bulk_stamp_cmd import BulkStampCommand
+        from commands.bulk_release_cmd import BulkReleaseCommand
         _log("imports OK")
 
-        for Cmd in [ConnectCommand, StampCommand, ReleaseCommand, BulkStampCommand]:
+        for Cmd in [ConnectCommand, StampCommand, ReleaseCommand, BulkStampCommand, BulkReleaseCommand]:
             cmd = Cmd(_app, _ui, _handlers)
             cmd.register()
             _commands.append(cmd)

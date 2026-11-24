@@ -3812,6 +3812,7 @@
     // PROP-070: "only parts with something In the box" — independent of the
     // category, so it combines with it (Electronics + In the box).
     const boxOnlyByTab = { components: false, assemblies: false, dynamic: false };
+    const noCadByTab   = { components: false, assemblies: false, dynamic: false };
     let sortKey = "name";         // any SORT_COLS key
     let sortDir = "asc";
     // What the list actually shows per row, so every visible column is sortable.
@@ -4079,6 +4080,20 @@
             onclick: () => { boxOnlyByTab[activeTab] = !on; tabPageShown[activeTab] = PAGE_SIZE; renderAll(); },
           }, `▢ In the box (${boxN})`));
         }
+        // "Without CAD" toggle — Parts tab only; hides parts that already have a Fusion model registered.
+        if (activeTab === "components") {
+          const noCadN = parts.filter((c) => !c.has_cad).length;
+          if (noCadN || noCadByTab[activeTab]) {
+            const onNoCad = noCadByTab[activeTab];
+            chips.push(el("button", {
+              type: "button", "aria-pressed": onNoCad ? "true" : "false",
+              title: "Only show parts with no CAD model registered in Fusion",
+              style: `padding:0.28rem 0.7rem;font-size:0.75rem;font-weight:600;border-radius:999px;cursor:pointer;white-space:nowrap;border:1px dashed #f59e0b;`
+                + (onNoCad ? "background:#f59e0b;color:#fff" : "background:#fef3c711;color:#b45309"),
+              onclick: () => { noCadByTab[activeTab] = !onNoCad; tabPageShown[activeTab] = PAGE_SIZE; renderAll(); },
+            }, `⚠ Without CAD (${noCadN})`));
+          }
+        }
         chips.push(el("button", {
           type: "button", title: "Add, rename, reorder or delete categories",
           style: "padding:0.28rem 0.6rem;font-size:0.75rem;border-radius:999px;cursor:pointer;background:transparent;color:var(--muted,#8b93a1);border:1px dashed var(--border,#e2e8f0)",
@@ -4094,6 +4109,7 @@
         items = items.filter((c) => curCategory() === "none" ? !c.category_id : c.category_id === curCategory());
       }
       if (boxOnlyByTab[activeTab]) items = items.filter((c) => (c.box_count || 0) > 0);
+      if (noCadByTab[activeTab])   items = items.filter((c) => !c.has_cad);
 
       // Sort the filtered set, not the whole list, so the order you see is the
       // order of what is actually shown. Copy first — `items` may be the array
@@ -11949,12 +11965,66 @@
         const [bg, fg] = c.split(":");
         return el("span", { style: `font-size:0.72rem;padding:2px 7px;border-radius:4px;background:${bg};color:${fg};font-weight:500` }, s);
       };
+      const FMT_COLOR = { f3z: "#4a9eed", step: "#8b93a1", glb: "#a855f7", dxf: "#f59e0b" };
       const tbody = el("tbody", {});
-      const rows = models.map((m) => {
+      const rows = models.flatMap((m) => {
         const fusionHref = m.fusion_document_id
           ? `https://manage.autodesk.com/en/redirect?productKey=fusion360&dcs=${encodeURIComponent(m.fusion_document_id)}`
           : null;
-        return el("tr", {}, [
+        const detailTr = el("tr", { style: "display:none" });
+        const detailTd = el("td", { colspan: 7, style: "padding:0 0.75rem 0.6rem 2.5rem;background:var(--bg-subtle,#f8fafc)" });
+        detailTr.append(detailTd);
+        let detailLoaded = false;
+        let detailBusy = false;
+
+        const expandBtn = el("button", {
+          type: "button",
+          style: "background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--muted,#8b93a1);padding:0 2px;transition:transform 0.15s",
+          title: m.component_id ? "Show file revisions" : "No component linked",
+          disabled: !m.component_id,
+        }, "▶");
+        expandBtn.onclick = async () => {
+          const open = detailTr.style.display !== "none";
+          if (open) {
+            detailTr.style.display = "none";
+            expandBtn.style.transform = "";
+            return;
+          }
+          detailTr.style.display = "";
+          expandBtn.style.transform = "rotate(90deg)";
+          if (detailLoaded || detailBusy) return;
+          detailBusy = true;
+          detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "Loading revisions…"));
+          try {
+            const r = await API.post(token, "getComponentCad", { component_id: m.component_id });
+            const files = (r.files || []).sort((a, b) => a.revision.localeCompare(b.revision) || a.format.localeCompare(b.format));
+            if (!files.length) {
+              detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No files registered yet. Use Release to Portal in Fusion to upload a revision."));
+            } else {
+              const fileRows = files.map((f) => {
+                const fc = FMT_COLOR[f.format] || "#888";
+                const relDate = f.released_at ? new Date(f.released_at).toLocaleDateString("en-GB") : null;
+                return el("div", { style: "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid var(--border,#e2e8f0)44;flex-wrap:wrap;font-size:0.8125rem" }, [
+                  el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap;flex-shrink:0` }, f.format.toUpperCase()),
+                  el("span", { style: "white-space:nowrap;flex-shrink:0" }, `Rev ${f.revision}`),
+                  el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, f.file_name || ""),
+                  f.fusion_version ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Fusion v${f.fusion_version}`) : null,
+                  relDate ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Released ${relDate}`) : null,
+                  f.download_url ? el("a", { href: f.download_url, download: f.file_name || undefined, class: "btn btn-xs", style: "flex-shrink:0" }, "⬇ Download") : null,
+                ].filter(Boolean));
+              });
+              detailTd.replaceChildren(el("div", { style: "padding:0.4rem 0 0.2rem" }, fileRows));
+            }
+            detailLoaded = true;
+          } catch (ex) {
+            detailTd.replaceChildren(el("span", { style: "color:var(--danger,#e05454);font-size:0.8125rem" }, `Couldn't load revisions: ${ex.message}`));
+          } finally {
+            detailBusy = false;
+          }
+        };
+
+        const mainTr = el("tr", {}, [
+          el("td", { style: "width:1.5rem;padding-right:0" }, expandBtn),
           el("td", {}, m.part_number ? el("span", { style: "font-family:monospace;font-size:0.8125rem" }, m.part_number) : el("span", { class: "muted" }, "—")),
           el("td", {}, m.component_name || el("span", { class: "muted" }, "unlinked")),
           el("td", {}, m.fusion_document_name || el("span", { class: "muted" }, "—")),
@@ -11964,9 +12034,10 @@
             fusionHref ? el("a", { href: fusionHref, target: "_blank", rel: "noopener", class: "btn btn-xs" }, "Open in Fusion ↗") : null,
           ].filter(Boolean))),
         ]);
+        return [mainTr, detailTr];
       });
       tbody.replaceChildren(...rows.length ? rows : [
-        el("tr", {}, el("td", { colspan: 6, class: "muted", style: "padding:1rem" }, "No CAD models registered yet. Auto-stamp a Fusion document to link it here.")),
+        el("tr", {}, el("td", { colspan: 7, class: "muted", style: "padding:1rem" }, "No CAD models registered yet. Auto-stamp a Fusion document to link it here.")),
       ]);
       cadModelsContentEl.replaceChildren(
         el("div", { class: "card" }, [
@@ -11979,7 +12050,7 @@
           el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
             "CAD models are linked here automatically when a file is opened in Fusion (auto-stamp). To register a new revision or export, open the part and use the Release to Portal command."),
           el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
-            el("thead", {}, el("tr", {}, ["Part no.", "Component", "Fusion document", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
+            el("thead", {}, el("tr", {}, ["", "Part no.", "Component", "Fusion document", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
             tbody,
           ])),
         ]),

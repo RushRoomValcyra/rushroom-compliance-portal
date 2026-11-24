@@ -11894,7 +11894,7 @@
           el("span", { style: "font-weight:600;font-size:0.875rem" }, comp.name || "—"),
           comp.part_number ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);margin-left:0.4rem;font-family:monospace" }, comp.part_number) : null,
         ].filter(Boolean)),
-        el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, (comp.type || "").replace(/_/g, " ")),
+        el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, typeDisplay(comp.type)),
         comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id)) : null,
         el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status || ""),
         hasDrawings ? el("span", { title: `${comp.drawings.length} drawing${comp.drawings.length !== 1 ? "s" : ""}`, style: "font-size:0.6875rem;color:var(--accent,#2fa564);white-space:nowrap;flex-shrink:0" }, `📐 ${comp.drawings.length}`) : null,
@@ -11989,7 +11989,7 @@
     const cadModelsContentEl = el("div", { style: "display:none" });
 
     function topTabStyle(active) {
-      return `padding:9px 22px;font-size:0.9rem;font-weight:${active ? "600" : "400"};background:none;border:none;border-bottom:3px solid ${active ? "var(--brand,#2fa564)" : "transparent"};margin-bottom:-3px;cursor:pointer;white-space:nowrap;color:${active ? "var(--brand,#2fa564)" : "var(--text-muted,#888)"};transition:color .15s,border-color .15s`;
+      return `padding:9px 22px;font-size:0.875rem;font-weight:${active ? "600" : "400"};background:none;border:none;border-bottom:3px solid ${active ? "var(--brand,#2fa564)" : "transparent"};margin-bottom:-3px;cursor:pointer;white-space:nowrap;color:${active ? "var(--brand,#2fa564)" : "var(--text-muted,#888)"};transition:color .15s,border-color .15s`;
     }
     const TOP_TABS = [{ id: "drawings", label: "Drawings" }, { id: "cad_models", label: "CAD Models" }];
     const topTabBtns = TOP_TABS.map((t) =>
@@ -12027,7 +12027,7 @@
       const statusChip = (s) => {
         const c = s === "released" ? "#d1fae5:#065f46" : s === "draft" ? "#e0e7ff:#3730a3" : "#fef3c7:#92400e";
         const [bg, fg] = c.split(":");
-        return el("span", { style: `font-size:0.72rem;padding:2px 7px;border-radius:4px;background:${bg};color:${fg};font-weight:500` }, s);
+        return el("span", { style: `font-size:0.75rem;padding:2px 7px;border-radius:4px;background:${bg};color:${fg};font-weight:500` }, s);
       };
       const FMT_COLOR = { f3z: "#4a9eed", step: "#8b93a1", glb: "#a855f7", dxf: "#f59e0b" };
       const tbody = el("tbody", {});
@@ -12069,7 +12069,7 @@
                 const fc = FMT_COLOR[f.format] || "#888";
                 const relDate = f.released_at ? new Date(f.released_at).toLocaleDateString("en-GB") : null;
                 return el("div", { style: "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid var(--border,#e2e8f0)44;flex-wrap:wrap;font-size:0.8125rem" }, [
-                  el("span", { style: `font-size:0.7rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap;flex-shrink:0` }, f.format.toUpperCase()),
+                  el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap;flex-shrink:0` }, f.format.toUpperCase()),
                   el("span", { style: "white-space:nowrap;flex-shrink:0" }, `Rev ${f.revision}`),
                   el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, f.file_name || ""),
                   f.fusion_version ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Fusion v${f.fusion_version}`) : null,

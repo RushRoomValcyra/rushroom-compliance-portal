@@ -156,92 +156,42 @@ def _summary(rows: list) -> dict:
     return s
 
 
-def _walk_folder(folder, results: list) -> None:
-    """Recursively collect DataFile objects from a Fusion data folder."""
-    try:
-        for f in folder.dataFiles:
-            results.append(f)
-    except Exception:
-        pass
-    try:
-        for sub in folder.dataFolders:
-            _walk_folder(sub, results)
-    except Exception:
-        pass
-
-
-def _scan_project_files() -> list:
+def _scan_project_files() -> tuple:
     """
-    List all design files in the active Fusion project, match to portal
-    components by filename, and return rows in the same format as _scan().
-    Already-queued filenames are shown as 'queued'; already-stamped docs
-    would only appear if the doc is currently open (not checked here).
-    """
-    app = adsk.core.Application.get()
-    project = app.data.activeProject
-    all_files: list = []
-    _walk_folder(project.rootFolder, all_files)
+    Return portal components annotated with their queue status.
 
+    No Fusion data-panel walk — the portal is the source of truth.
+    The queue key is the cleaned portal component name, which must match
+    the cleaned filename when a .f3d file is opened (same _clean() logic).
+    """
     r = call("listComponents")
     portal_comps = [
         c for c in (r.get("components") or [])
         if c.get("lifecycle_status") not in ("replaced", "inactive")
     ]
 
-    by_clean: dict = {}
-    for pc in portal_comps:
-        cn = _clean(pc.get("name") or "")
-        if cn:
-            by_clean.setdefault(cn, []).append(pc)
-
     pending = load_pending()
-
     rows = []
-    for df in all_files:
-        fname = df.name  # Fusion omits extension in .name
-        fc_clean = _clean(fname)
 
-        if fc_clean in pending:
-            entry = pending[fc_clean]
-            rows.append({
-                "fusion_name": fname,
-                "clean_name": fc_clean,
-                "stamp": {"pim_component_id": entry["portal_id"], "pim_part_number": entry["portal_pn"]},
-                "status": "queued",
-                "proposed": {"id": entry["portal_id"], "name": entry.get("portal_name", ""), "part_number": entry["portal_pn"]},
-                "candidates": [],
-            })
-            continue
+    for pc in portal_comps:
+        pc_name = pc.get("name") or ""
+        pc_clean = _clean(pc_name)
+        pc_pn = pc.get("part_number") or ""
 
-        exact = by_clean.get(fc_clean, [])
-        if not exact:
-            exact = [
-                pc for pc in portal_comps
-                if fc_clean and (
-                    fc_clean in _clean(pc.get("name") or "") or
-                    _clean(pc.get("name") or "") in fc_clean
-                )
-            ]
-
-        if len(exact) == 1:
-            status = "auto_match"
-        elif len(exact) > 1:
-            status = "ambiguous"
-        else:
-            status = "not_found"
+        status = "queued" if pc_clean in pending else "auto_match"
 
         rows.append({
-            "fusion_name": fname,
-            "clean_name": fc_clean,
-            "stamp": {"pim_component_id": "", "pim_part_number": ""},
+            "fusion_name": pc_clean,   # queue key (matches cleaned filename on open)
+            "clean_name": pc_clean,
+            "portal_name": pc_name,    # display name
+            "stamp": {"pim_component_id": pc["id"], "pim_part_number": pc_pn},
             "status": status,
-            "proposed": exact[0] if len(exact) == 1 else None,
-            "candidates": exact[:10] if len(exact) > 1 else [],
+            "proposed": pc,
+            "candidates": [],
         })
 
-    order = {"conflict": 0, "not_found": 1, "ambiguous": 2, "auto_match": 3, "queued": 4, "ok": 5}
-    rows.sort(key=lambda x: order.get(x["status"], 99))
-    return rows
+    rows.sort(key=lambda x: 0 if x["status"] == "auto_match" else 1)
+    return rows, False
 
 
 # ---------------------------------------------------------------------------
@@ -297,8 +247,13 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                 self._send("searchResults", {"fusion_name": data.get("fusion_name", ""), "results": results})
 
             elif action == "scanProject":
-                rows = _scan_project_files()
-                self._send("projectScanDone", {"rows": rows, "summary": _summary(rows), "pending": pending_count()})
+                rows, timed_out = _scan_project_files()
+                self._send("projectScanDone", {
+                    "rows": rows,
+                    "summary": _summary(rows),
+                    "pending": pending_count(),
+                    "timed_out": timed_out,
+                })
 
             elif action == "queueStamps":
                 entries = {}

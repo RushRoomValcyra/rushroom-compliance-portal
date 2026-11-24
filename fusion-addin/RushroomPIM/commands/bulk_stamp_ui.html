@@ -99,7 +99,7 @@ footer{padding:6px 14px;background:#1f2937;border-top:1px solid #374151;font-siz
   <button class="fb"    data-f="auto_match"       onclick="setPFilter('auto_match')">Auto-match</button>
   <button class="fb"    data-f="issues"           onclick="setPFilter('issues')">Issues</button>
   <button class="fb"    data-f="queued"           onclick="setPFilter('queued')">Queued</button>
-  <button class="ab ab-scan" onclick="doProjectScan()">↻ Scan Project</button>
+  <button class="ab ab-scan" onclick="doProjectScan()">↻ Load Components</button>
   <button class="ab ab-apply" id="queue-btn" onclick="doQueue()" disabled>Queue Selected →</button>
 </div>
 </div>
@@ -119,13 +119,13 @@ footer{padding:6px 14px;background:#1f2937;border-top:1px solid #374151;font-siz
     <tbody id="tbody"></tbody>
   </table>
 
-  <div class="loading" id="p-loading" style="display:none"><span class="spin"></span>Scanning project files…</div>
+  <div class="loading" id="p-loading" style="display:none"><span class="spin"></span>Loading portal components…</div>
   <table id="p-tbl" style="display:none">
     <thead>
       <tr>
         <th style="width:34px"><input type="checkbox" id="p-sel-all" onchange="togglePAll(this.checked)"></th>
-        <th>Fusion File</th>
-        <th>Portal match</th>
+        <th>Component</th>
+        <th>Part number</th>
         <th style="width:95px">Status</th>
       </tr>
     </thead>
@@ -363,7 +363,7 @@ function switchTab(t) {
   document.getElementById("p-tbl").style.display = (t === "proj" && _pRows.length) ? "table" : "none";
   document.getElementById("p-loading").style.display = (t === "proj" && !_pRows.length) ? "block" : "none";
   if (t === "proj" && !_pRows.length) {
-    document.getElementById("p-loading").innerHTML = 'Click <b>↻ Scan Project</b> to list all files in this project.';
+    document.getElementById("p-loading").innerHTML = 'Click <b>↻ Load Components</b> to load portal components for queuing.';
   }
 }
 
@@ -372,7 +372,7 @@ var _pRows = [], _pFilter = "all", _pOv = {};
 
 function doProjectScan() {
   _pRows = [];
-  document.getElementById("p-loading").innerHTML = '<span class="spin"></span>Scanning project files (may take ~30 s for large projects)…';
+  document.getElementById("p-loading").innerHTML = '<span class="spin"></span>Loading portal components…';
   document.getElementById("p-loading").style.display = "block";
   document.getElementById("p-tbl").style.display = "none";
   document.getElementById("foot").textContent = "Scanning project files…";
@@ -389,8 +389,7 @@ function onProjectScanDone(d) {
   document.getElementById("p-tbl").style.display = "table";
   var s = d.summary || {};
   document.getElementById("foot").textContent =
-    s.total + " project files · " + s.auto_match + " auto-matched · " + (s.queued||0) + " already queued · " +
-    (s.ambiguous + s.not_found) + " need attention";
+    s.total + " portal components · " + s.auto_match + " ready to queue · " + (s.queued||0) + " already queued";
   updateQueueBtn();
 }
 
@@ -418,13 +417,14 @@ function renderPTable() {
   rows.forEach(function(row) {
     var canCheck = row.status === "auto_match" || !!_pOv[row.fusion_name];
     var n = esc(row.fusion_name);
+    var displayName = esc(row.portal_name || row.fusion_name);
     var matchHtml = pMatchCell(row);
     var tr = document.createElement("tr");
     tr.innerHTML =
       '<td><input type="checkbox" class="pcb" data-n="' + n + '" ' +
         (canCheck ? '' : 'disabled ') + (canCheck ? 'checked ' : '') +
         'onchange="onPCB()"></td>' +
-      '<td><span class="fname">' + n + '</span></td>' +
+      '<td><span class="mname">' + displayName + '</span></td>' +
       '<td>' + matchHtml + '</td>' +
       '<td><span class="badge ' + (BADGE[row.status]||"") + '">' + (LABEL[row.status]||row.status) + '</span></td>';
     tb.appendChild(tr);

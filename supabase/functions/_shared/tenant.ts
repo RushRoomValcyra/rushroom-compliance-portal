@@ -9,7 +9,7 @@ export const RUSHROOM_ORG_ID = "11111111-1111-4111-8111-111111111111";
 const MEMBERSHIP_ROLE: Record<string, string> = {
   admin: "org_admin", internal: "manager", reviewer: "reviewer", supplier: "collaborator", installer: "collaborator",
 };
-const membershipRoleFor = (assigned: string) => MEMBERSHIP_ROLE[assigned] || "collaborator";
+export const membershipRoleFor = (assigned: string) => MEMBERSHIP_ROLE[assigned] || "collaborator";
 
 // --- Stage 2: central tenant scoping (module-level factory) ----------------
 // Tenant tables carry organization_id; reads are filtered and writes are stamped

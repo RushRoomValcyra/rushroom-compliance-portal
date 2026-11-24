@@ -54,10 +54,14 @@ class _DocumentOpenedHandler(adsk.core.DocumentEventHandler):
             if not doc or not doc.isValid:
                 return
 
-            # Match document name against the pending queue
+            # Match document name against the pending queue.
+            # Must use the same normalisation as _clean() in bulk_stamp_cmd.py:
+            # strip occurrence :N, strip version _vN, normalise _/- → space.
             raw = doc.name
             clean = re.sub(r':\d+$', '', raw)
-            clean = re.sub(r'[_\s]+v\d+(\.\d+)*$', '', clean, flags=re.IGNORECASE).strip().lower()
+            clean = re.sub(r'[_\s\-]+v\d+(\.\d+)*$', '', clean, flags=re.IGNORECASE)
+            clean = re.sub(r'[_\-]', ' ', clean)
+            clean = re.sub(r'\s+', ' ', clean).strip().lower()
 
             entry = consume(clean)
             if not entry:
@@ -82,6 +86,10 @@ def run(context):
     _log("ADDIN_DIR: " + ADDIN_DIR)
     if ADDIN_DIR not in sys.path:
         sys.path.insert(0, ADDIN_DIR)
+    # Purge cached modules so toggling the add-in always loads fresh code from disk.
+    _own = ("commands.", "lib.")
+    for _k in [k for k in sys.modules if any(k.startswith(p) for p in _own)]:
+        del sys.modules[_k]
     try:
         _app = adsk.core.Application.get()
         _ui = _app.userInterface

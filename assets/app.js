@@ -12027,6 +12027,9 @@
 
     // ---- CAD Models section --------------------------------------------------
     let _cadLoaded = false;
+    let _cadAll = [];   // full list from server — filter client-side
+    const _cadFilter = { q: "", status: "" };
+
     async function loadCadModels() {
       if (_cadLoaded) return;
       cadModelsContentEl.replaceChildren(el("div", { class: "loading" }, "Loading CAD models…"));
@@ -12038,23 +12041,42 @@
         return;
       }
       _cadLoaded = true;
-      drawCadModels(data.cad_models || []);
+      _cadAll = data.cad_models || [];
+      drawCadModels();
     }
 
-    function drawCadModels(models) {
+    function drawCadModels() {
+      const FMT_COLOR = { f3z: "#4a9eed", step: "#8b93a1", glb: "#a855f7", dxf: "#f59e0b" };
+
       const statusChip = (s) => {
         const c = s === "released" ? "#d1fae5:#065f46" : s === "draft" ? "#e0e7ff:#3730a3" : "#fef3c7:#92400e";
         const [bg, fg] = c.split(":");
         return el("span", { style: `font-size:0.75rem;padding:2px 7px;border-radius:4px;background:${bg};color:${fg};font-weight:500` }, s);
       };
-      const FMT_COLOR = { f3z: "#4a9eed", step: "#8b93a1", glb: "#a855f7", dxf: "#f59e0b" };
+
+      const fmtBadge = (fmt) => {
+        const fc = FMT_COLOR[fmt] || "#888";
+        return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap` }, fmt.toUpperCase());
+      };
+
+      // Client-side filter
+      const q = _cadFilter.q.trim().toLowerCase();
+      const visible = _cadAll.filter((m) => {
+        if (_cadFilter.status && (m.status || "draft") !== _cadFilter.status) return false;
+        if (!q) return true;
+        return (m.part_number || "").toLowerCase().includes(q) ||
+               (m.component_name || "").toLowerCase().includes(q) ||
+               (m.fusion_document_name || "").toLowerCase().includes(q);
+      });
+
       const tbody = el("tbody", {});
-      const rows = models.flatMap((m) => {
+      const COLS = 8; // ▶ | Part no. | Component | Formats | Rev | Status | actions
+      const rows = visible.flatMap((m) => {
         const fusionHref = m.fusion_document_id
           ? `https://manage.autodesk.com/en/redirect?productKey=fusion360&dcs=${encodeURIComponent(m.fusion_document_id)}`
           : null;
         const detailTr = el("tr", { style: "display:none" });
-        const detailTd = el("td", { colspan: 7, style: "padding:0 0.75rem 0.6rem 2.5rem;background:var(--bg-subtle,#f8fafc)" });
+        const detailTd = el("td", { colspan: COLS, style: "padding:0 0.75rem 0.6rem 2.5rem;background:var(--bg-subtle,#f8fafc)" });
         detailTr.append(detailTd);
         let detailLoaded = false;
         let detailBusy = false;
@@ -12062,16 +12084,12 @@
         const expandBtn = el("button", {
           type: "button",
           style: "background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--muted,#8b93a1);padding:0 2px;transition:transform 0.15s",
-          title: m.component_id ? "Show file revisions" : "No component linked",
+          title: m.component_id ? "Show all file revisions" : "No component linked",
           disabled: !m.component_id,
         }, "▶");
         expandBtn.onclick = async () => {
           const open = detailTr.style.display !== "none";
-          if (open) {
-            detailTr.style.display = "none";
-            expandBtn.style.transform = "";
-            return;
-          }
+          if (open) { detailTr.style.display = "none"; expandBtn.style.transform = ""; return; }
           detailTr.style.display = "";
           expandBtn.style.transform = "rotate(90deg)";
           if (detailLoaded || detailBusy) return;
@@ -12081,7 +12099,7 @@
             const r = await API.post(token, "getComponentCad", { component_id: m.component_id });
             const files = (r.files || []).sort((a, b) => a.revision.localeCompare(b.revision) || a.format.localeCompare(b.format));
             if (!files.length) {
-              detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No files registered yet. Use Release to Portal in Fusion to upload a revision."));
+              detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No files yet. Use Release to Portal in Fusion to upload a revision."));
             } else {
               const fileRows = files.map((f) => {
                 const fc = FMT_COLOR[f.format] || "#888";
@@ -12091,7 +12109,7 @@
                   el("span", { style: "white-space:nowrap;flex-shrink:0" }, `Rev ${f.revision}`),
                   el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, f.file_name || ""),
                   f.fusion_version ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Fusion v${f.fusion_version}`) : null,
-                  relDate ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Released ${relDate}`) : null,
+                  relDate ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, relDate) : null,
                   (f.download_url && ["step", "glb"].includes(f.format))
                     ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0", onclick: () => openCadViewer(f, m.component_name || m.part_number) }, "👁 Preview")
                     : null,
@@ -12103,43 +12121,84 @@
             detailLoaded = true;
           } catch (ex) {
             detailTd.replaceChildren(el("span", { style: "color:var(--danger,#e05454);font-size:0.8125rem" }, `Couldn't load revisions: ${ex.message}`));
-          } finally {
-            detailBusy = false;
-          }
+          } finally { detailBusy = false; }
         };
+
+        const previewBtn = (m.preview_file?.download_url && ["step", "glb"].includes(m.preview_file.format))
+          ? el("button", { type: "button", class: "btn btn-xs", onclick: () => openCadViewer(m.preview_file, m.component_name || m.part_number) }, "👁 Preview")
+          : null;
 
         const mainTr = el("tr", {}, [
           el("td", { style: "width:1.5rem;padding-right:0" }, expandBtn),
           el("td", {}, m.part_number ? el("span", { style: "font-family:monospace;font-size:0.8125rem" }, m.part_number) : el("span", { class: "muted" }, "—")),
           el("td", {}, m.component_name || el("span", { class: "muted" }, "unlinked")),
-          el("td", {}, m.fusion_document_name || el("span", { class: "muted" }, "—")),
-          el("td", {}, m.current_revision ? `Rev ${m.current_revision}` : el("span", { class: "muted" }, "no revision")),
+          el("td", {}, el("div", { style: "display:flex;gap:3px;flex-wrap:wrap" },
+            (m.formats || []).length ? (m.formats).map(fmtBadge) : [el("span", { class: "muted" }, "—")])),
+          el("td", {}, m.current_revision ? `Rev ${m.current_revision}` : el("span", { class: "muted" }, "—")),
           el("td", {}, statusChip(m.status || "draft")),
-          el("td", {}, el("div", { style: "display:flex;gap:4px" }, [
-            fusionHref ? el("a", { href: fusionHref, target: "_blank", rel: "noopener", class: "btn btn-xs" }, "Open in Fusion ↗") : null,
+          el("td", {}, el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" }, [
+            previewBtn,
+            fusionHref ? el("a", { href: fusionHref, target: "_blank", rel: "noopener", class: "btn btn-xs" }, "Fusion ↗") : null,
           ].filter(Boolean))),
         ]);
         return [mainTr, detailTr];
       });
+
       tbody.replaceChildren(...rows.length ? rows : [
-        el("tr", {}, el("td", { colspan: 7, class: "muted", style: "padding:1rem" }, "No CAD models registered yet. Auto-stamp a Fusion document to link it here.")),
+        el("tr", {}, el("td", { colspan: COLS, class: "muted", style: "padding:1rem" },
+          q || _cadFilter.status ? "No models match the current filter." : "No CAD models registered yet. Auto-stamp a Fusion document to link it here.")),
       ]);
+
+      // Search + status filter toolbar
+      const searchEl = el("input", {
+        class: "up-text", type: "search", placeholder: "Search part no. or name…",
+        value: _cadFilter.q, style: "min-width:200px;max-width:280px",
+        oninput: (e) => { _cadFilter.q = e.target.value; repaintCad(); },
+      });
+      const STATUS_OPTS = [["", "All"], ["draft", "Draft"], ["released", "Released"]];
+      const statusChips = el("div", { style: "display:flex;gap:4px;align-items:center;flex-wrap:wrap" },
+        STATUS_OPTS.map(([v, label]) => {
+          const active = _cadFilter.status === v;
+          const btn = el("button", {
+            type: "button",
+            style: `font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid ${active ? "var(--brand,#2fa564)" : "var(--border,#e2e8f0)"};background:${active ? "var(--brand,#2fa564)" : "transparent"};color:${active ? "#fff" : "var(--text-muted,#888)"};cursor:pointer`,
+            onclick: () => { _cadFilter.status = v; drawCadModels(); },
+          }, label);
+          return btn;
+        }));
+
+      const countEl = el("span", { class: "muted", style: "font-size:0.8125rem" },
+        visible.length === _cadAll.length
+          ? `${_cadAll.length} model${_cadAll.length === 1 ? "" : "s"}`
+          : `${visible.length} of ${_cadAll.length}`);
+
       cadModelsContentEl.replaceChildren(
         el("div", { class: "card" }, [
-          el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
+          el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
             el("h3", { style: "margin:0" }, "CAD Models"),
-            el("span", { class: "muted", style: "font-size:0.8125rem" }, `${models.length} model${models.length === 1 ? "" : "s"}`),
+            countEl,
             el("span", { style: "flex:1" }),
             actionBtn("Refresh", "refresh", { onClick: () => { _cadLoaded = false; loadCadModels(); } }),
           ]),
+          el("div", { style: "display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
+            searchEl, statusChips,
+          ]),
           el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-            "CAD models are linked here automatically when a file is opened in Fusion (auto-stamp). To register a new revision or export, open the part and use the Release to Portal command."),
+            "Models link here automatically via the Fusion add-in (auto-stamp). Use Release to Portal in Fusion to register a new revision or format."),
           el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
-            el("thead", {}, el("tr", {}, ["", "Part no.", "Component", "Fusion document", "Revision", "Status", ""].map((h) => el("th", {}, h)))),
+            el("thead", {}, el("tr", {}, ["", "Part no.", "Component", "Formats", "Rev", "Status", ""].map((h) => el("th", {}, h)))),
             tbody,
           ])),
         ]),
       );
+
+      // Focus the search box after redraw only when user typed into it
+      if (document.activeElement?.type === "search") searchEl.focus();
+    }
+
+    function repaintCad() {
+      // Lightweight repaint: re-filter and redraw without touching _cadFilter state.
+      drawCadModels();
     }
 
     // ---- Drawings section (existing, now mounts into drawingsContentEl) ------

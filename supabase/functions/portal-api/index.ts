@@ -5463,13 +5463,46 @@ Deno.serve(async (req) => {
       for (const c of (comps || []) as any[]) compMap[c.id] = { name: c.name, part_number: c.part_number };
     }
 
-    return json({
-      cad_models: (models as any[]).map((m) => ({
+    // Fetch all files in one query so we can show format badges + a quick-preview URL
+    // per model without N extra round-trips from the browser.
+    const modelIds = (models as any[]).map((m) => m.id);
+    const fileMap: Record<string, any[]> = {};
+    if (modelIds.length) {
+      const { data: allFiles } = await tdb("cad_model_files")
+        .select("cad_model_id, format, revision, storage_path, file_name, released_at")
+        .in("cad_model_id", modelIds)
+        .order("released_at", { ascending: false });
+      for (const f of (allFiles || []) as any[]) {
+        if (!fileMap[f.cad_model_id]) fileMap[f.cad_model_id] = [];
+        fileMap[f.cad_model_id].push(f);
+      }
+    }
+
+    const enriched = await Promise.all((models as any[]).map(async (m) => {
+      const files = fileMap[m.id] || [];
+      const formats = [...new Set(files.map((f: any) => f.format as string))];
+      // Pick latest STEP first (preferred for viewer), fallback to GLB.
+      const previewRaw = files.find((f: any) => f.format === "step") ?? files.find((f: any) => f.format === "glb");
+      let preview_file = null;
+      if (previewRaw) {
+        const { data: signed } = await db.storage.from(DOC_BUCKET).createSignedUrl(previewRaw.storage_path, 60 * 60);
+        preview_file = {
+          format: previewRaw.format,
+          revision: previewRaw.revision,
+          file_name: previewRaw.file_name,
+          download_url: signed?.signedUrl ?? null,
+        };
+      }
+      return {
         ...m,
         component_name: m.component_id ? (compMap[m.component_id]?.name ?? null) : null,
         part_number:    m.component_id ? (compMap[m.component_id]?.part_number ?? null) : null,
-      })),
-    });
+        formats,
+        preview_file,
+      };
+    }));
+
+    return json({ cad_models: enriched });
   }
 
 

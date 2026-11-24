@@ -1911,7 +1911,25 @@
         backgroundColor: bg,
         defaultColor: partColor,
         edgeSettings: new window.OV.EdgeSettings(true, edgeColor, 1),
-        onModelLoaded: () => loadingEl.remove(),
+        onModelLoaded: () => {
+          loadingEl.remove();
+          // Fusion STEP exports embed appearance colors that override defaultColor.
+          // Walk the Three.js scene and force every mesh material to our target colour.
+          const inner = viewer.GetViewer();
+          if (inner && inner.mainModel) {
+            const cr = partColor.r / 255;
+            const cg = partColor.g / 255;
+            const cb = partColor.b / 255;
+            inner.mainModel.traverse((obj) => {
+              if (!obj.isMesh) return;
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+              mats.forEach((m) => {
+                if (m && m.color) { m.color.setRGB(cr, cg, cb); m.needsUpdate = true; }
+              });
+            });
+            inner.Render();
+          }
+        },
         onModelLoadFailed: () => {
           loadingEl.innerHTML = `<div class="viewer-msg"><p>Failed to load model.</p><a href="${file.download_url}" class="btn" download="${file.file_name || ""}">⬇ Download instead</a></div>`;
           loadingEl.style.pointerEvents = "auto";

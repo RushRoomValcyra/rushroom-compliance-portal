@@ -1857,6 +1857,53 @@
     return closeModal;
   }
 
+  // CAD model viewer — opens a full-height modal with Online3DViewer (o3dv).
+  // Supports STEP and GLB natively via the CDN-loaded OV global.
+  function openCadViewer(file, componentName) {
+    const lastFocus = document.activeElement;
+    const closeViewer = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey);
+      if (lastFocus?.focus) lastFocus.focus();
+    };
+    const onKey = (e) => { if (e.key === "Escape") closeViewer(); };
+
+    const cadContainer = el("div", { style: "width:100%;height:100%;min-height:0" });
+    const label = [componentName, file.format.toUpperCase(), `Rev ${file.revision}`].filter(Boolean).join(" — ");
+
+    const dialog = el("div", {
+      class: "viewer-dialog", role: "dialog", "aria-modal": "true", "aria-label": label,
+    }, [
+      el("div", { class: "viewer-head" }, [
+        el("h3", { class: "viewer-title" }, label),
+        el("span", { class: "spacer" }),
+        el("button", { class: "btn btn-sm", type: "button", onclick: closeViewer }, "✕ Close"),
+      ]),
+      el("div", { class: "viewer-body", style: "padding:0;overflow:hidden" }, cadContainer),
+    ]);
+    const overlay = el("div", {
+      "data-modal-overlay": "", class: "viewer-overlay",
+      onclick: (e) => { if (e.target === overlay) closeViewer(); },
+    }, dialog);
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", onKey);
+
+    requestAnimationFrame(() => {
+      if (!window.OV) {
+        cadContainer.innerHTML = `<div class="viewer-msg"><p>3D viewer library not loaded.</p>
+          <a href="${file.download_url}" class="btn" download="${file.file_name || ""}">⬇ Download instead</a></div>`;
+        return;
+      }
+      cadContainer.innerHTML = `<div class="viewer-msg"><span class="muted">Loading ${file.format.toUpperCase()} model…</span></div>`;
+      const viewer = new window.OV.EmbeddedViewer(cadContainer, {
+        backgroundColor: new window.OV.RGBAColor(26, 29, 35, 255),
+        defaultColor: new window.OV.RGBColor(190, 200, 210),
+        edgeSettings: new window.OV.EdgeSettings(false, new window.OV.RGBColor(0, 0, 0), 1),
+      });
+      viewer.LoadModelFromURLList([file.download_url]);
+    });
+  }
+
   // Add / edit a plan step (Rushroom). `existing` null = add a new step.
   function stepEditor(existing, phases, onSave) {
     const v = existing || {};
@@ -12010,6 +12057,9 @@
                   el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, f.file_name || ""),
                   f.fusion_version ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Fusion v${f.fusion_version}`) : null,
                   relDate ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Released ${relDate}`) : null,
+                  (f.download_url && ["step", "glb"].includes(f.format))
+                    ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0", onclick: () => openCadViewer(f, m.component_name || m.part_number) }, "👁 Preview")
+                    : null,
                   f.download_url ? el("a", { href: f.download_url, download: f.file_name || undefined, class: "btn btn-xs", style: "flex-shrink:0" }, "⬇ Download") : null,
                 ].filter(Boolean));
               });

@@ -1899,7 +1899,7 @@
       // Light: matches Fusion's default appearance — white bg, warm mid-grey part, near-black edges
       // Dark:  dark bg, slightly lighter warm grey, medium-dark edges
       const bg        = isDark ? new window.OV.RGBAColor(30, 32, 36, 255)    : new window.OV.RGBAColor(255, 255, 255, 255);
-      const partColor = isDark ? new window.OV.RGBColor(170, 172, 165)       : new window.OV.RGBColor(192, 194, 188);
+      const partColor = isDark ? new window.OV.RGBColor(185, 187, 181)       : new window.OV.RGBColor(225, 227, 221);
       const edgeColor = isDark ? new window.OV.RGBColor(80, 85, 80)          : new window.OV.RGBColor(50, 52, 48);
       // Loading overlay — sits on top of the canvas until the model is ready, then removed.
       const loadingEl = el("div", {

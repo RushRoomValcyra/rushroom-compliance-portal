@@ -74,6 +74,34 @@ class _CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 1, True,
             )
 
+            # Fetch current portal status so the user knows what they're releasing into.
+            cad_status = "unknown"
+            cur_rev = ""
+            try:
+                cad_r = call("getComponentCad", component_id=stamp["pim_component_id"])
+                if cad_r.get("cad_model"):
+                    cad_status = cad_r["cad_model"].get("status") or "draft"
+                    cur_rev = cad_r["cad_model"].get("current_revision") or ""
+                else:
+                    cad_status = "not registered"
+            except Exception:
+                pass
+
+            status_text = {
+                "draft":          f"DRAFT{(' · ' + cur_rev) if cur_rev else ''}",
+                "released":       f"Released{(' · Rev ' + cur_rev) if cur_rev else ''}",
+                "not registered": "Not yet registered in portal",
+            }.get(cad_status, cad_status)
+            inputs.addTextBoxCommandInput("portal_status", "Portal status", status_text, 1, True)
+
+            if cad_status == "draft":
+                inputs.addTextBoxCommandInput(
+                    "draft_warning", "",
+                    "⚠  DRAFT model — files will be registered but status stays DRAFT "
+                    "until released in the portal (Drawings → CAD Models → Release).",
+                    2, True,
+                )
+
             # Format checkboxes
             inputs.addBoolValueInput("fmt_f3z",  "Export .f3z  (Fusion archive)", True, "", True)
             inputs.addBoolValueInput("fmt_step", "Export .step (neutral, for suppliers)", True, "", True)

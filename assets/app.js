@@ -1900,7 +1900,7 @@
         defaultColor: new window.OV.RGBColor(190, 200, 210),
         edgeSettings: new window.OV.EdgeSettings(false, new window.OV.RGBColor(0, 0, 0), 1),
       });
-      viewer.LoadModelFromURLList([file.download_url]);
+      viewer.LoadModelFromUrlList([file.download_url]);
     });
   }
 

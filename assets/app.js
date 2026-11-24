@@ -12140,6 +12140,21 @@
           ? el("button", { type: "button", class: "btn btn-xs", onclick: () => openCadViewer(m.preview_file, m.component_name || m.part_number) }, "👁 Preview")
           : null;
 
+        const releaseBtn = (m.status || "draft") !== "released"
+          ? el("button", { type: "button", class: "btn btn-xs btn-primary", onclick: async (ev) => {
+              if (!confirm(`Release CAD model for ${m.component_name || m.part_number || "this part"}? This marks it as the released revision.`)) return;
+              ev.target.disabled = true;
+              try {
+                await API.post(token, "releaseCadModel", { cad_model_id: m.id });
+                _cadLoaded = false;
+                await loadCadModels();
+              } catch (ex) {
+                alert(ex.message);
+                ev.target.disabled = false;
+              }
+            } }, "Release")
+          : null;
+
         const mainTr = el("tr", {}, [
           el("td", { style: "width:1.5rem;padding-right:0" }, expandBtn),
           el("td", {}, m.part_number ? el("span", { style: "font-family:monospace;font-size:0.8125rem" }, m.part_number) : el("span", { class: "muted" }, "—")),
@@ -12150,6 +12165,7 @@
           el("td", {}, statusChip(m.status || "draft")),
           el("td", {}, el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" }, [
             previewBtn,
+            releaseBtn,
             fusionHref ? el("a", { href: fusionHref, target: "_blank", rel: "noopener", class: "btn btn-xs" }, "Fusion ↗") : null,
           ].filter(Boolean))),
         ]);

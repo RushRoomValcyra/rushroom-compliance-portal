@@ -5481,6 +5481,24 @@ Deno.serve(async (req) => {
     return json({ cad_model: model, files });
   }
 
+  if (action === "releaseCadModel") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const cad_model_id = String(body.cad_model_id ?? "");
+    if (!cad_model_id) return json({ error: "cad_model_id required" }, 400);
+    const { data: modelRows, error: mErr } = await tdb("cad_models")
+      .select("id, status, component_id").eq("id", cad_model_id);
+    if (mErr || !modelRows?.length) return json({ error: "CAD model not found" }, 404);
+    const model = (modelRows as any[])[0];
+    if (model.status === "released") return json({ ok: true, already: true });
+    const now = new Date().toISOString();
+    await tdb("cad_models").update({ status: "released" }).eq("id", cad_model_id);
+    await tdb("cad_model_files").update({ released_at: now }).eq("cad_model_id", cad_model_id).is("released_at", null);
+    if (model.component_id) {
+      await writeBomHistory(tdb, session, model.component_id, "updated", "CAD model released");
+    }
+    return json({ ok: true });
+  }
+
   if (action === "listCadModels") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
 

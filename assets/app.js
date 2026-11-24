@@ -1895,10 +1895,13 @@
         return;
       }
       cadContainer.innerHTML = `<div class="viewer-msg"><span class="muted">Loading ${file.format.toUpperCase()} model…</span></div>`;
+      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+      const bg = isDark ? new window.OV.RGBAColor(26, 29, 35, 255) : new window.OV.RGBAColor(245, 246, 248, 255);
+      const partColor = isDark ? new window.OV.RGBColor(190, 200, 210) : new window.OV.RGBColor(160, 170, 185);
       const viewer = new window.OV.EmbeddedViewer(cadContainer, {
-        backgroundColor: new window.OV.RGBAColor(26, 29, 35, 255),
-        defaultColor: new window.OV.RGBColor(190, 200, 210),
-        edgeSettings: new window.OV.EdgeSettings(false, new window.OV.RGBColor(0, 0, 0), 1),
+        backgroundColor: bg,
+        defaultColor: partColor,
+        edgeSettings: new window.OV.EdgeSettings(true, isDark ? new window.OV.RGBColor(80, 90, 100) : new window.OV.RGBColor(100, 110, 125), 1),
       });
       viewer.LoadModelFromUrlList([file.download_url]);
     });

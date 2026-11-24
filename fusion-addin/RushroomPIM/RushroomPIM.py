@@ -49,6 +49,7 @@ class _DocumentOpenedHandler(adsk.core.DocumentEventHandler):
             import re
             from lib.pending_stamps import consume
             from lib.exports import ATTR_GROUP, ATTR_COMPONENT_ID, ATTR_PART_NUMBER
+            from lib.portal import call
 
             doc = args.document
             if not doc or not doc.isValid:
@@ -75,6 +76,29 @@ class _DocumentOpenedHandler(adsk.core.DocumentEventHandler):
             root.attributes.add(ATTR_GROUP, ATTR_COMPONENT_ID, entry["portal_id"])
             root.attributes.add(ATTR_GROUP, ATTR_PART_NUMBER, entry["portal_pn"])
             _log(f"auto-stamped {raw} → {entry['portal_pn']}")
+
+            # Register the Fusion document link in the portal (non-fatal if offline/fails).
+            try:
+                fusion_doc_id = None
+                fusion_proj_id = None
+                df = doc.dataFile
+                if df:
+                    fusion_doc_id = df.id
+                    try:
+                        fusion_proj_id = df.parentFolder.parentProject.id
+                    except Exception:
+                        pass
+                call(
+                    "linkCadDocument",
+                    component_id=entry["portal_id"],
+                    fusion_document_id=fusion_doc_id,
+                    fusion_document_name=raw,
+                    fusion_project_id=fusion_proj_id,
+                )
+                _log(f"portal link registered for {raw}")
+            except Exception:
+                _log("portal linkCadDocument failed (non-fatal):\n" + traceback.format_exc())
+
         except Exception:
             _log("DocumentOpened handler error:\n" + traceback.format_exc())
 

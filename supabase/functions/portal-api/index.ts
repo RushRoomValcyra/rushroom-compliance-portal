@@ -5444,6 +5444,34 @@ Deno.serve(async (req) => {
     return json({ cad_model: model, files });
   }
 
+  if (action === "listCadModels") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+
+    const { data: models, error } = await tdb("cad_models")
+      .select("id, component_id, fusion_document_id, fusion_document_name, fusion_project_id, current_revision, status, notes, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) return json({ error: error.message }, 500);
+    if (!models?.length) return json({ cad_models: [] });
+
+    const compIds = (models as any[]).map((m) => m.component_id).filter(Boolean);
+    const compMap: Record<string, { name: string; part_number: string }> = {};
+    if (compIds.length) {
+      const { data: comps } = await tdb("bom_components")
+        .select("id, name, part_number")
+        .in("id", compIds);
+      for (const c of (comps || []) as any[]) compMap[c.id] = { name: c.name, part_number: c.part_number };
+    }
+
+    return json({
+      cad_models: (models as any[]).map((m) => ({
+        ...m,
+        component_name: m.component_id ? (compMap[m.component_id]?.name ?? null) : null,
+        part_number:    m.component_id ? (compMap[m.component_id]?.part_number ?? null) : null,
+      })),
+    });
+  }
+
 
   // ==========================================================================
   // PROP-015: Configure-to-Order Variant BOM actions

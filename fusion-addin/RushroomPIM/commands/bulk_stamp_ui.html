@@ -102,6 +102,9 @@ footer{padding:6px 14px;background:#1f2937;border-top:1px solid #374151;font-siz
   <button class="ab ab-scan" onclick="doProjectScan()">↻ Load Components</button>
   <button class="ab ab-apply" id="queue-btn" onclick="doQueue()" disabled>Queue Selected →</button>
 </div>
+<div class="bar" id="p-cat-bar" style="display:none;flex-wrap:wrap;gap:4px">
+  <span style="color:#9ca3af;font-size:11px;line-height:26px;margin-right:2px">Category:</span>
+</div>
 </div>
 
 <div class="wrap">
@@ -368,7 +371,36 @@ function switchTab(t) {
 }
 
 /* ── Project Files ───────────────────────────────────────────────── */
-var _pRows = [], _pFilter = "all", _pOv = {};
+var _pRows = [], _pFilter = "all", _pOv = {}, _pCategory = null;
+
+function buildCatBar(cats) {
+  var bar = document.getElementById("p-cat-bar");
+  // keep the "Category:" label, replace the rest
+  bar.innerHTML = '<span style="color:#9ca3af;font-size:11px;line-height:26px;margin-right:2px">Category:</span>';
+  if (!cats || !cats.length) { bar.style.display = "none"; return; }
+  var allBtn = document.createElement("button");
+  allBtn.className = "fb on"; allBtn.id = "pcat-all";
+  allBtn.textContent = "All";
+  allBtn.onclick = function() { setPCategory(null); };
+  bar.appendChild(allBtn);
+  cats.forEach(function(cat) {
+    var btn = document.createElement("button");
+    btn.className = "fb"; btn.dataset.cid = cat.id;
+    btn.textContent = cat.name;
+    btn.onclick = function() { setPCategory(cat.id); };
+    bar.appendChild(btn);
+  });
+  bar.style.display = "";
+}
+
+function setPCategory(id) {
+  _pCategory = id;
+  document.querySelectorAll("#p-cat-bar .fb").forEach(function(b) {
+    b.classList.toggle("on", id === null ? b.id === "pcat-all" : b.dataset.cid === id);
+  });
+  renderPTable();
+  updateQueueBtn();
+}
 
 function doProjectScan() {
   _pRows = [];
@@ -382,6 +414,8 @@ function doProjectScan() {
 function onProjectScanDone(d) {
   _pRows = d.rows || [];
   _pOv = {};
+  _pCategory = null;
+  buildCatBar(d.categories || []);
   updateChips(d.summary || {});
   updatePendingChip(d.pending || 0);
   renderPTable();
@@ -402,6 +436,7 @@ function setPFilter(f) {
 }
 
 function pVisible(row) {
+  if (_pCategory && row.category_id !== _pCategory) return false;
   if (_pFilter === "all")          return true;
   if (_pFilter === "needs_action") return ["auto_match","ambiguous","not_found"].indexOf(row.status) >= 0;
   if (_pFilter === "auto_match")   return row.status === "auto_match";
@@ -418,13 +453,16 @@ function renderPTable() {
     var canCheck = row.status === "auto_match" || !!_pOv[row.fusion_name];
     var n = esc(row.fusion_name);
     var displayName = esc(row.portal_name || row.fusion_name);
+    var catTag = row.category_name
+      ? '<br><span style="font-size:10px;color:#6b7280">' + esc(row.category_name) + '</span>'
+      : '';
     var matchHtml = pMatchCell(row);
     var tr = document.createElement("tr");
     tr.innerHTML =
       '<td><input type="checkbox" class="pcb" data-n="' + n + '" ' +
         (canCheck ? '' : 'disabled ') + (canCheck ? 'checked ' : '') +
         'onchange="onPCB()"></td>' +
-      '<td><span class="mname">' + displayName + '</span></td>' +
+      '<td><span class="mname">' + displayName + '</span>' + catTag + '</td>' +
       '<td>' + matchHtml + '</td>' +
       '<td><span class="badge ' + (BADGE[row.status]||"") + '">' + (LABEL[row.status]||row.status) + '</span></td>';
     tb.appendChild(tr);

@@ -164,11 +164,20 @@ def _scan_project_files() -> tuple:
     The queue key is the cleaned portal component name, which must match
     the cleaned filename when a .f3d file is opened (same _clean() logic).
     """
+    _EXCLUDE_TYPES = {"finished_good", "product_family", "phantom_assembly", "sub_assembly"}
+
     r = call("listComponents")
+    cat_r = call("listPartCategories")
+
     portal_comps = [
         c for c in (r.get("components") or [])
         if c.get("lifecycle_status") not in ("replaced", "inactive")
+        and c.get("type") not in _EXCLUDE_TYPES
+        and not c.get("has_children")
     ]
+
+    categories = cat_r.get("categories") or []
+    cat_by_id = {cat["id"]: cat["name"] for cat in categories}
 
     pending = load_pending()
     rows = []
@@ -177,21 +186,25 @@ def _scan_project_files() -> tuple:
         pc_name = pc.get("name") or ""
         pc_clean = _clean(pc_name)
         pc_pn = pc.get("part_number") or ""
+        cat_id = pc.get("category_id") or None
+        cat_name = cat_by_id.get(cat_id, "") if cat_id else ""
 
         status = "queued" if pc_clean in pending else "auto_match"
 
         rows.append({
-            "fusion_name": pc_clean,   # queue key (matches cleaned filename on open)
+            "fusion_name": pc_clean,
             "clean_name": pc_clean,
-            "portal_name": pc_name,    # display name
+            "portal_name": pc_name,
+            "category_id": cat_id,
+            "category_name": cat_name,
             "stamp": {"pim_component_id": pc["id"], "pim_part_number": pc_pn},
             "status": status,
             "proposed": pc,
             "candidates": [],
         })
 
-    rows.sort(key=lambda x: 0 if x["status"] == "auto_match" else 1)
-    return rows, False
+    rows.sort(key=lambda x: (x.get("category_name") or "zzz", x["fusion_name"]))
+    return rows, False, categories
 
 
 # ---------------------------------------------------------------------------
@@ -247,12 +260,13 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                 self._send("searchResults", {"fusion_name": data.get("fusion_name", ""), "results": results})
 
             elif action == "scanProject":
-                rows, timed_out = _scan_project_files()
+                rows, timed_out, categories = _scan_project_files()
                 self._send("projectScanDone", {
                     "rows": rows,
                     "summary": _summary(rows),
                     "pending": pending_count(),
                     "timed_out": timed_out,
+                    "categories": categories,
                 })
 
             elif action == "queueStamps":

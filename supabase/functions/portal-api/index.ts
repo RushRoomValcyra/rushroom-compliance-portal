@@ -27,7 +27,7 @@ import {
   ab, toHex, b64url, b64urlDecode, sha256Hex, hmacKey, eq,
   issueSession, verifySession, hashPassword, verifyPassword,
 } from "../_shared/auth.ts";
-import { RUSHROOM_ORG_ID, TENANT_TABLES, makeTdb } from "../_shared/tenant.ts";
+import { RUSHROOM_ORG_ID, TENANT_TABLES, makeTdb, membershipRoleFor } from "../_shared/tenant.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
@@ -3981,6 +3981,21 @@ Deno.serve(async (req) => {
       : { changelog });
   }
 
+  // --- BOM: roots visible to suppliers (product_family / sub_assembly not yet
+  //     a child of anything else in this org). No cost or sourcing data returned.
+  if (action === "getSupplierBomRoots") {
+    const { data: childRows } = await tdb("bom_edges")
+      .select("child_id").is("effective_to", null).eq("is_reference", false);
+    const childSet = new Set((childRows || []).map((r: any) => r.child_id));
+    const { data: comps, error } = await tdb("bom_components")
+      .select("id, part_number, name, type, description, lifecycle_status, unit_of_measure")
+      .in("type", ["product_family", "sub_assembly", "phantom_assembly"])
+      .order("name");
+    if (error) return json({ error: error.message }, 400);
+    const roots = (comps || []).filter((c: any) => !childSet.has(c.id));
+    return json({ roots });
+  }
+
   // --- BOM: get tree (BFS, max_depth levels deep) ---------------------------
   if (action === "getBom") {
     const { root_component_id, max_depth, scenario_id } = body;
@@ -3991,12 +4006,16 @@ Deno.serve(async (req) => {
     const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null; sort_order?: number; fitting_stage?: string | null; is_reference?: boolean }> = [];
     const queue: Array<{ id: string; depth: number }> = [{ id: root_component_id, depth: 0 }];
     const visited = new Set<string>();
+    // Supplier role gets a reduced field set: no internal notes or sourcing strategy.
+    const nodeFields = role === "supplier"
+      ? "id, part_number, name, type, category_id, unit_of_measure, lifecycle_status, description"
+      : "id, part_number, name, type, make_or_buy, category_id, unit_of_measure, lifecycle_status, notes, description";
     while (queue.length > 0) {
       const batch = queue.splice(0, queue.length);
       const ids = batch.map((n) => n.id).filter((id) => !visited.has(id));
       if (!ids.length) break;
       ids.forEach((id) => visited.add(id));
-      const { data: comps } = await tdb("bom_components").select("id, part_number, name, type, make_or_buy, category_id, unit_of_measure, lifecycle_status, notes, description").in("id", ids);
+      const { data: comps } = await tdb("bom_components").select(nodeFields).in("id", ids);
       (comps || []).forEach((c: any) => { nodeMap[c.id] = c; });
       const currentDepth = batch[0].depth;
       if (currentDepth >= depthLimit) continue;

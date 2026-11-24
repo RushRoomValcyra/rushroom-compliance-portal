@@ -11838,10 +11838,119 @@
     const drawPanel = $("#drawings-panel");
     if (drawPanel && (role === "rushroom" || role === "supplier")) renderDrawings(role, drawPanel);
 
+    const bomPanel = $("#bom-panel");
+    if (bomPanel && role === "supplier") renderSupplierBom(role, bomPanel);
+
     const acctPanel = $("#accounts-panel");
     if (acctPanel && API.isAdmin()) renderAccounts(role, acctPanel);
     const l2Panel = $("#level2-panel");
     if (l2Panel && role === "rushroom") renderLevel2(role, l2Panel);
+  }
+
+  // ==========================================================================
+  // Supplier BOM view — read-only product structure, no costs or sourcing data.
+  // ==========================================================================
+  async function renderSupplierBom(role, mount) {
+    const token = API.getToken(role);
+    mount.replaceChildren(el("div", { class: "loading" }, "Loading product BOM…"));
+    let roots;
+    try {
+      const r = await API.post(token, "getSupplierBomRoots", {});
+      roots = r.roots || [];
+    } catch (ex) {
+      mount.replaceChildren(el("div", { class: "error" }, `Couldn't load BOM: ${ex.message}`));
+      return;
+    }
+    if (!roots.length) {
+      mount.replaceChildren(el("div", { class: "empty" }, "No product assemblies are available."));
+      return;
+    }
+
+    const TYPE_COLOR = { part: "#2fa564", raw_material: "#8b93a1", sub_assembly: "#4a9eed", phantom_assembly: "#0d9488", finished_good: "#a855f7", spare_part: "#f59e0b", product_family: "#e05454" };
+
+    function typePill(type) {
+      const c = TYPE_COLOR[type] || "#8b93a1";
+      return el("span", { style: `font-size:0.6875rem;font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid ${c}55;color:${c};background:${c}11;white-space:nowrap` }, (type || "").replace(/_/g, " "));
+    }
+
+    function renderTree(rootId, bom) {
+      const { nodes = [], edges = [] } = bom;
+      if (!nodes.length) return el("div", { class: "notice" }, "Empty BOM.");
+      const nodeMap = Object.fromEntries(nodes.map((n) => [n.id, n]));
+      const childrenOf = {};
+      edges.forEach((e) => { (childrenOf[e.parent_id] ||= []).push(e); });
+      Object.values(childrenOf).forEach((list) => list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)));
+
+      const colWidths = "4rem 8rem 1fr 8rem 4rem 5rem 7rem";
+      const hdr = el("div", { style: `display:grid;grid-template-columns:${colWidths};gap:0.5rem;padding:0.25rem 0.5rem 0.35rem;font-size:0.6875rem;font-weight:700;color:var(--muted,#8b93a1);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border,#e2e8f0);position:sticky;top:0;background:var(--bg,#fff);z-index:1` },
+        ["Pos", "Part #", "Name", "Type", "Qty", "Unit", "Status"].map((t) => el("span", {}, t)));
+
+      const rows = [];
+      function walk(nodeId, posNum, depth, ancestorLastFlags, qty) {
+        const n = nodeMap[nodeId];
+        if (!n || depth > 12) return;
+        const children = childrenOf[nodeId] || [];
+        rows.push({ n, posNum, depth, ancestorLastFlags: [...ancestorLastFlags], hasChildren: !!children.length, qty });
+        children.forEach((e, i) =>
+          walk(e.child_id, `${posNum}.${i + 1}`, depth + 1, [...ancestorLastFlags, i === children.length - 1], e.quantity));
+      }
+      (childrenOf[rootId] || []).forEach((e, i) =>
+        walk(e.child_id, `${i + 1}`, 0, [], e.quantity));
+
+      const wrap = el("div", { style: "overflow-x:auto;font-size:0.8125rem" }, [hdr]);
+      rows.forEach(({ n, posNum, depth, ancestorLastFlags, qty }) => {
+        let conn = "";
+        for (let i = 0; i < depth - 1; i++) conn += ancestorLastFlags[i] ? "   " : "│  ";
+        if (depth > 0) conn += ancestorLastFlags[depth - 1] ? "└─ " : "├─ ";
+        wrap.append(el("div", { style: `display:grid;grid-template-columns:${colWidths};gap:0.5rem;padding:0.2rem 0.5rem;border-bottom:1px solid var(--border,#e2e8f0)22;align-items:center` }, [
+          el("span", { style: "color:var(--muted,#8b93a1);font-size:0.75rem;font-variant-numeric:tabular-nums" }, posNum),
+          el("span", { style: "font-family:var(--mono,monospace);font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, n.part_number || "—"),
+          el("span", { style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, [
+            conn ? el("span", { style: "font-family:monospace;color:var(--muted,#8b93a1);white-space:pre" }, conn) : null,
+            n.name,
+          ].filter(Boolean)),
+          typePill(n.type),
+          el("span", { style: "text-align:right;font-variant-numeric:tabular-nums" }, qty ? String(qty) : ""),
+          el("span", { style: "color:var(--muted,#8b93a1)" }, n.unit_of_measure || ""),
+          el("span", {}, n.lifecycle_status ? el("span", { class: `status-pill status-${n.lifecycle_status.replace(/ /g, "-")}`, style: "font-size:0.6875rem" }, n.lifecycle_status) : ""),
+        ]));
+      });
+      return wrap;
+    }
+
+    const sections = roots.map((root) => {
+      const treeMount = el("div", { hidden: true });
+      const expanded = { done: false, busy: false };
+      const toggleBtn = el("button", { class: "btn btn-sm", type: "button" }, "▶ Expand");
+      toggleBtn.onclick = async () => {
+        if (expanded.busy) return;
+        if (expanded.done) { treeMount.hidden = !treeMount.hidden; toggleBtn.textContent = treeMount.hidden ? "▶ Expand" : "▼ Collapse"; return; }
+        expanded.busy = true; toggleBtn.disabled = true; toggleBtn.textContent = "Loading…";
+        try {
+          const bom = await API.post(token, "getBom", { root_component_id: root.id, max_depth: 10 });
+          treeMount.replaceChildren(renderTree(root.id, bom));
+          treeMount.hidden = false; toggleBtn.textContent = "▼ Collapse"; expanded.done = true;
+        } catch (ex) {
+          treeMount.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
+          treeMount.hidden = false; toggleBtn.textContent = "Retry";
+        } finally { expanded.busy = false; toggleBtn.disabled = false; }
+      };
+      return el("div", { class: "card", style: "margin-bottom:1rem;padding:1rem 1.25rem" }, [
+        el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap" }, [
+          typePill(root.type),
+          el("strong", {}, root.name),
+          root.part_number ? el("code", { style: "font-size:0.75rem;color:var(--muted,#8b93a1)" }, root.part_number) : null,
+          el("span", { style: "flex:1" }),
+          toggleBtn,
+        ].filter(Boolean)),
+        treeMount,
+      ]);
+    });
+
+    mount.replaceChildren(
+      el("p", { class: "muted", style: "margin:0.5rem 0 1rem" }, `${roots.length} product assembl${roots.length === 1 ? "y" : "ies"}. Expand to view the full BOM structure.`),
+      ...sections,
+    );
   }
 
   // ==========================================================================

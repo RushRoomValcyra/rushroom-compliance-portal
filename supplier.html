@@ -69,6 +69,8 @@
                 aria-controls="drawings-panel" tabindex="-1">Drawings</button>
         <button class="tab" id="tab-standards" role="tab" aria-selected="false"
                 aria-controls="standards-panel" tabindex="-1">Standards &amp; Regulations</button>
+        <button class="tab" id="tab-bom" role="tab" aria-selected="false"
+                aria-controls="bom-panel" tabindex="-1">Product BOM</button>
       </div>
 
       <section id="steps-panel" role="tabpanel" aria-labelledby="tab-steps" tabindex="0">
@@ -86,6 +88,10 @@
       <section id="standards-panel" role="tabpanel" aria-labelledby="tab-standards" tabindex="0" hidden>
         <div class="loading">Loading standards…</div>
       </section>
+
+      <section id="bom-panel" role="tabpanel" aria-labelledby="tab-bom" tabindex="0" hidden>
+        <div class="loading">Loading product BOM…</div>
+      </section>
     </div>
   </main>
 
@@ -100,7 +106,7 @@
   <script src="./assets/api.js?v=432"></script>
   <script src="./assets/viewer.js?v=310"></script>
   <script src="./assets/bom-structure.js?v=310"></script>
-  <script src="./assets/app.js?v=436"></script>
+  <script src="./assets/app.js?v=437"></script>
   <script src="./assets/supplier.js?v=310"></script>
 </body>
 </html>

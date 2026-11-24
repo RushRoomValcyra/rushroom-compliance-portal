@@ -1895,17 +1895,27 @@
           <a href="${file.download_url}" class="btn" download="${file.file_name || ""}">⬇ Download instead</a></div>`;
         return;
       }
-      cadContainer.innerHTML = `<div class="viewer-msg"><span class="muted">Loading ${file.format.toUpperCase()} model…</span></div>`;
       const isDark = document.documentElement.getAttribute("data-theme") === "dark";
       // Light: near-white bg, light-grey part, dark edges → grooves naturally darker via shading
       // Dark:  near-black bg, mid-grey part, medium edges
       const bg        = isDark ? new window.OV.RGBAColor(26, 29, 35, 255)    : new window.OV.RGBAColor(242, 244, 247, 255);
       const partColor = isDark ? new window.OV.RGBColor(180, 190, 200)       : new window.OV.RGBColor(210, 215, 222);
       const edgeColor = isDark ? new window.OV.RGBColor(90, 100, 115)        : new window.OV.RGBColor(80, 90, 105);
+      // Loading overlay — sits on top of the canvas until the model is ready, then removed.
+      const loadingEl = el("div", {
+        style: "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:1",
+      }, el("span", { class: "muted" }, `Loading ${file.format.toUpperCase()} model…`));
+      cadContainer.style.position = "relative";
+      cadContainer.appendChild(loadingEl);
       const viewer = new window.OV.EmbeddedViewer(cadContainer, {
         backgroundColor: bg,
         defaultColor: partColor,
         edgeSettings: new window.OV.EdgeSettings(true, edgeColor, 1),
+        onModelLoaded: () => loadingEl.remove(),
+        onModelLoadFailed: () => {
+          loadingEl.innerHTML = `<div class="viewer-msg"><p>Failed to load model.</p><a href="${file.download_url}" class="btn" download="${file.file_name || ""}">⬇ Download instead</a></div>`;
+          loadingEl.style.pointerEvents = "auto";
+        },
       });
       viewer.LoadModelFromUrlList([file.download_url]);
     });

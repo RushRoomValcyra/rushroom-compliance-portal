@@ -201,8 +201,11 @@ async function readSigned(token: string): Promise<any | null> {
 }
 const verifyLinkFor = async (uid: string) =>
   `${APP_BASE}/verify.html?token=${encodeURIComponent(await signData({ uid, purpose: "verify", exp: Math.floor(Date.now() / 1000) + 7 * 24 * 3600 }))}`;
-const resetLinkFor = async (uid: string) =>
-  `${APP_BASE}/reset.html?token=${encodeURIComponent(await signData({ uid, purpose: "setpw", exp: Math.floor(Date.now() / 1000) + 3600 }))}`;
+// `to` names the page the person belongs on afterwards: a supplier user lands
+// on supplier.html, everyone else on the portal.
+const resetLinkFor = async (uid: string, to: "supplier" | null = null) =>
+  `${APP_BASE}/reset.html?token=${encodeURIComponent(await signData({ uid, purpose: "setpw", exp: Math.floor(Date.now() / 1000) + 3600 }))}`
+  + (to === "supplier" ? "&to=supplier" : "");
 
 // Best-effort transactional email via Resend (optional — set RESEND_API_KEY).
 async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
@@ -774,11 +777,21 @@ async function generateDrawingNumber(tdb: any): Promise<string> {
  * drawing is its is_supplier_visible column, which needs no deploy.
  */
 const SUPPLIER_DRAWINGS_ENABLED = true;
-function supplierDrawingScope(q: any, role: string) {
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+/** Per-supplier selectivity landed (docs/SUPPLIER_PORTAL.md): a supplier
+ *  session sees the drawings of its assigned parts and nothing else, so the
+ *  caller passes the ids supplierScope resolved. No ids given = the old
+ *  per-drawing rule alone (is_supplier_visible, never a surgery template). */
+function supplierDrawingScope(q: any, role: string, drawingIds?: string[]) {
   if (role !== "supplier") return q;
-  if (!SUPPLIER_DRAWINGS_ENABLED) return q.eq("id", "00000000-0000-0000-0000-000000000000");
-  return q.eq("is_supplier_visible", true);
+  if (!SUPPLIER_DRAWINGS_ENABLED) return q.eq("id", NIL_UUID);
+  q = q.eq("is_supplier_visible", true).neq("drawing_type", "surgery_template");
+  if (drawingIds) q = drawingIds.length ? q.in("id", drawingIds) : q.eq("id", NIL_UUID);
+  return q;
 }
+/** The per-drawing half of the rule, for rows already loaded. */
+const supplierMaySeeDrawing = (d: any) =>
+  d.is_supplier_visible !== false && (d.drawing_type || "engineering") !== "surgery_template";
 
 /**
  * A → B → … → Z → AA → AB. Drawing revisions are letters, not v1/v2, which is
@@ -932,6 +945,206 @@ async function writeBomHistory(
     });
     return true;
   } catch { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// Supplier portal (docs/SUPPLIER_PORTAL.md). A supplier session carries sid,
+// the suppliers.id of the company. What it may see is the assignment set in
+// supplier_components, resolved once per request by supplierScope; every
+// supplier-facing read and the one file gate (issueSupplierFile) go through it.
+// ---------------------------------------------------------------------------
+type SupplierScope = {
+  sid: string;
+  /** component_id → access flags, every assigned part. */
+  parts: Map<string, { drawings: boolean; cad: boolean }>;
+  partIds: string[];
+  /** The drawings a supplier may see listed: linked (owner or drawing_components)
+   *  to an assigned part with drawings on, supplier-visible, not a surgery
+   *  template. Released-only is applied on the issues by every caller, as
+   *  everywhere a supplier reads drawings. */
+  drawingIds: string[];
+  drawingParts: Map<string, string[]>;
+};
+const supplierNotLinked = () =>
+  json({ error: "Your account is not linked to a supplier yet. Contact Rushroom." }, 403);
+async function supplierScope(tdb: any, session: any): Promise<SupplierScope | null> {
+  const sid = typeof session?.sid === "string" && session.sid ? session.sid : "";
+  if (!sid) return null;
+  // Liveness, per request (§6): the company must still be active and, for a
+  // person's session, the account still approved and still linked to this
+  // company. The admin's preview (imp: true) carries the admin's uid, so only
+  // the company is checked for it. Any miss is the same 403 as no sid.
+  const imp = session?.imp === true;
+  const uid = typeof session?.uid === "string" && session.uid ? session.uid : "";
+  if (!imp && !uid) return null;
+  const [{ data: supplierRow }, { data: userRow }] = await Promise.all([
+    tdb("suppliers").select("id, status").eq("id", sid).maybeSingle(),
+    imp ? Promise.resolve({ data: null }) : db.from("users").select("id, status, supplier_id").eq("id", uid).maybeSingle(),
+  ]);
+  if (!supplierRow || supplierRow.status !== "active") return null;
+  if (!imp && (!userRow || userRow.status !== "approved" || userRow.supplier_id !== sid)) return null;
+  const { data: rows } = await tdb("supplier_components").select("component_id, drawings, cad").eq("supplier_id", sid);
+  const parts = new Map<string, { drawings: boolean; cad: boolean }>();
+  for (const r of (rows || []) as any[]) parts.set(r.component_id, { drawings: r.drawings !== false, cad: r.cad === true });
+  const partIds = [...parts.keys()];
+  const drawingPartIds = partIds.filter((id) => parts.get(id)!.drawings);
+  const drawingParts = new Map<string, string[]>();
+  if (drawingPartIds.length) {
+    const [{ data: links }, { data: owned }] = await Promise.all([
+      tdb("drawing_components").select("drawing_id, component_id").in("component_id", drawingPartIds),
+      tdb("drawings").select("id, owner_component_id").in("owner_component_id", drawingPartIds),
+    ]);
+    const add = (drawingId: string, componentId: string) => {
+      const list = drawingParts.get(drawingId) || [];
+      if (!list.includes(componentId)) list.push(componentId);
+      drawingParts.set(drawingId, list);
+    };
+    for (const l of (links || []) as any[]) add(l.drawing_id, l.component_id);
+    for (const d of (owned || []) as any[]) add(d.id, d.owner_component_id);
+    const candidateIds = [...drawingParts.keys()];
+    if (candidateIds.length) {
+      const { data: drws } = await tdb("drawings").select("id, is_supplier_visible, drawing_type").in("id", candidateIds);
+      const visible = new Set(((drws || []) as any[]).filter(supplierMaySeeDrawing).map((d) => d.id));
+      for (const id of candidateIds) if (!visible.has(id)) drawingParts.delete(id);
+    }
+  }
+  return { sid, parts, partIds, drawingIds: [...drawingParts.keys()], drawingParts };
+}
+
+/**
+ * What a supplier could be shown for these parts: per part the released issue
+ * of every supplier-visible engineering drawing linked to it (one row per
+ * drawing, by drawing number) and the released CAD revision's STEP file. The
+ * access flags are applied by the caller — supplierHome honours them, the
+ * admin's getSupplier shows what each flag would open. Whole-set queries.
+ */
+async function supplierPartFiles(tdb: any, partIds: string[]) {
+  const drawingsByPart = new Map<string, any[]>();
+  const cadByPart = new Map<string, any>();
+  if (!partIds.length) return { drawingsByPart, cadByPart };
+  const [{ data: links }, { data: owned }, { data: models }] = await Promise.all([
+    tdb("drawing_components").select("drawing_id, component_id").in("component_id", partIds),
+    tdb("drawings").select("id, owner_component_id").in("owner_component_id", partIds),
+    tdb("cad_models").select("id, component_id").in("component_id", partIds),
+  ]);
+  const partsOfDrawing = new Map<string, Set<string>>();
+  const link = (drawingId: string, componentId: string) => {
+    if (!partsOfDrawing.has(drawingId)) partsOfDrawing.set(drawingId, new Set());
+    partsOfDrawing.get(drawingId)!.add(componentId);
+  };
+  for (const l of (links || []) as any[]) link(l.drawing_id, l.component_id);
+  for (const d of (owned || []) as any[]) link(d.id, d.owner_component_id);
+  const drawingIds = [...partsOfDrawing.keys()];
+  if (drawingIds.length) {
+    const [{ data: drws }, revsByDrawing] = await Promise.all([
+      tdb("drawings").select("id, drawing_number, title, supplier_drawing_number, is_supplier_visible, drawing_type").in("id", drawingIds),
+      loadDrawingRevisions(tdb, drawingIds),
+    ]);
+    for (const d of (drws || []) as any[]) {
+      if (!supplierMaySeeDrawing(d)) continue;
+      const released = deriveObject(revsByDrawing[d.id] || []).released;
+      if (!released) continue;
+      const row = {
+        drawing_id: d.id, drawing_number: d.drawing_number, title: d.title,
+        issue: released.revision, released_at: released.released_at ?? null,
+        file_name: released.file_name, drawing_revision_id: released.id,
+        supplier_drawing_number: d.supplier_drawing_number || "",
+      };
+      for (const c of partsOfDrawing.get(d.id)!) {
+        if (!drawingsByPart.has(c)) drawingsByPart.set(c, []);
+        drawingsByPart.get(c)!.push(row);
+      }
+    }
+    for (const list of drawingsByPart.values()) {
+      list.sort((a, b) => a.drawing_number.localeCompare(b.drawing_number, undefined, { numeric: true, sensitivity: "base" }));
+    }
+  }
+  const modelIds = ((models || []) as any[]).map((m) => m.id);
+  if (modelIds.length) {
+    const [{ data: revs }, { data: files }] = await Promise.all([
+      tdb("cad_model_revisions").select("id, cad_model_id, revision, status, released_at").in("cad_model_id", modelIds),
+      tdb("cad_model_files").select("id, cad_model_id, cad_model_revision_id, file_name, fusion_version, sha256, format, created_at")
+        .in("cad_model_id", modelIds).eq("format", "step").order("created_at", { ascending: true }),
+    ]);
+    const revsByModel = new Map<string, any[]>();
+    for (const r of (revs || []) as any[]) {
+      if (!revsByModel.has(r.cad_model_id)) revsByModel.set(r.cad_model_id, []);
+      revsByModel.get(r.cad_model_id)!.push(r);
+    }
+    const stepByRev = new Map<string, any>();
+    for (const f of (files || []) as any[]) if (!stepByRev.has(f.cad_model_revision_id)) stepByRev.set(f.cad_model_revision_id, f);
+    for (const m of (models || []) as any[]) {
+      if (!m.component_id) continue;
+      const released = deriveObject(revsByModel.get(m.id) || []).released;
+      const step = released ? stepByRev.get(released.id) : null;
+      if (!released || !step) continue;
+      cadByPart.set(m.component_id, {
+        cad_model_revision_id: released.id, revision: released.revision, released_at: released.released_at ?? null,
+        file_name: step.file_name, fusion_version: step.fusion_version ?? null,
+        sha8: String(step.sha256 || "").slice(0, 8), cad_file_id: step.id,
+      });
+    }
+  }
+  return { drawingsByPart, cadByPart };
+}
+
+/**
+ * The one gate between a supplier session and a file (SUPPLIER_PORTAL §6.1):
+ * the revision/file must belong to a part assigned to the supplier with the
+ * matching flag, be released, and (drawings) be supplier-visible and not a
+ * surgery template. Every check that fails answers 404 — never 403, which
+ * would confirm the file exists. A URL is issued only after one
+ * supplier_file_events row is written; the audit is not best-effort here.
+ */
+async function issueSupplierFile(
+  tdb: any, session: any, scope: SupplierScope, kind: string, id: string, opts: { inline?: boolean } = {},
+): Promise<{ url: string; file_name: string; expires_in: number } | { error: string; status: number }> {
+  const notFound = { error: "File not found", status: 404 };
+  if (!id) return notFound;
+  let storagePath = "", fileName = "";
+  const event: Record<string, unknown> = { supplier_id: scope.sid, user_id: session.uid ?? null, kind };
+  if (kind === "drawing") {
+    const { data: revs } = await tdb("drawing_revisions")
+      .select("id, drawing_id, storage_path, file_name, status").eq("id", id);
+    const rev = (revs || [])[0];
+    if (!rev) return notFound;
+    if (rev.status !== "released") return notFound;
+    // Assignment, drawings flag, is_supplier_visible and drawing type in one
+    // set: the drawings supplierScope resolved for this session.
+    if (!scope.drawingParts.has(rev.drawing_id)) return notFound;
+    // And the parent drawing re-read through the choke point, so the file is
+    // reached the way the listing is (tests/drawings: one rule, every read).
+    const { data: allowed } = await supplierDrawingScope(
+      tdb("drawings").select("id").eq("id", rev.drawing_id), "supplier", scope.drawingIds);
+    if (!(allowed || []).length) return notFound;
+    storagePath = rev.storage_path; fileName = rev.file_name; event.drawing_revision_id = rev.id;
+  } else if (kind === "cad") {
+    const { data: files } = await tdb("cad_model_files")
+      .select("id, cad_model_id, cad_model_revision_id, format, storage_path, file_name").eq("id", id);
+    const f = (files || [])[0];
+    if (!f) return notFound;
+    // The supplier is given the STEP, never the Fusion archive or the preview.
+    if (String(f.format || "").toLowerCase() !== "step") return notFound;
+    const { data: revs } = await tdb("cad_model_revisions").select("id, status").eq("id", f.cad_model_revision_id);
+    if ((revs || [])[0]?.status !== "released") return notFound;
+    const { data: models } = await tdb("cad_models").select("id, component_id").eq("id", f.cad_model_id);
+    const model = (models || [])[0];
+    if (!model?.component_id) return notFound;
+    if (!scope.parts.get(model.component_id)?.cad) return notFound;
+    storagePath = f.storage_path; fileName = f.file_name; event.cad_file_id = f.id;
+  } else {
+    return notFound;
+  }
+  if (!storagePath) return notFound;
+  event.file_name = fileName;
+  const { error: auditErr } = await tdb("supplier_file_events").insert(event);
+  if (auditErr) return { error: "The download could not be recorded. Try again.", status: 500 };
+  // A Download is served as an attachment (the download option sets
+  // Content-Disposition); the viewer asks for inline and gets the plain URL.
+  const { data: signed, error } = await db.storage.from(DOC_BUCKET)
+    .createSignedUrl(storagePath, 600, opts.inline ? undefined : { download: fileName });
+  if (error || !signed?.signedUrl) return notFound;
+  return { url: signed.signedUrl, file_name: fileName, expires_in: 600 };
 }
 
 // ---------------------------------------------------------------------------
@@ -1339,6 +1552,9 @@ Deno.serve(async (req) => {
   // --- login: password -> token -------------------------------------------
   if (action === "login") {
     const role = body.role === "rushroom" || body.role === "supplier" ? body.role : null;
+    // The shared supplier password is retired (docs/SUPPLIER_PORTAL.md §2): a
+    // supplier signs in with a personal account linked to its company.
+    if (role === "supplier") return json({ error: "Supplier access is by personal account." }, 403);
     const expected = role ? PW_HASH[role] : undefined;
     if (!role || !expected) return json({ error: "Unknown role" }, 400);
     const got = await sha256Hex(String(body.password ?? ""));
@@ -1384,16 +1600,32 @@ Deno.serve(async (req) => {
       const m = ms && ms[0];
       if (m && m.organization_id) { orgId = m.organization_id; mRole = m.role || mRole; orgName = (m as any).organizations?.name || ""; }
     } catch { /* memberships not set up yet → default org */ }
-    const token = await issueSession({ role: tier, admin, uid: u.id, email: u.email, urole: assigned, org: orgId, mrole: mRole });
-    return json({ token, role: tier, admin, urole: assigned, name: u.name, organization_id: orgId, organization_name: orgName });
+    // Supplier portal (docs/SUPPLIER_PORTAL.md §2): a supplier user belongs to a
+    // company, and the session carries it as sid. The company decides the
+    // tenant — its organization_id wins over the membership lookup above, so a
+    // supplier never lands in the wrong org through a missing membership.
+    let supplier: { id: string; name: string } | null = null;
+    if (assigned === "supplier") {
+      const sid = (u as any).supplier_id as string | null;
+      if (!sid) return supplierNotLinked();
+      const { data: s } = await db.from("suppliers").select("id, name, status, organization_id").eq("id", sid).maybeSingle();
+      if (!s) return supplierNotLinked();
+      if (s.status !== "active") return json({ error: "Your supplier account is inactive. Contact Rushroom." }, 403);
+      orgId = s.organization_id;
+      supplier = { id: s.id, name: s.name };
+    }
+    const payload: Record<string, unknown> = { role: tier, admin, uid: u.id, email: u.email, urole: assigned, org: orgId, mrole: mRole };
+    if (supplier) payload.sid = supplier.id;
+    const token = await issueSession(payload);
+    return json({ token, role: tier, admin, urole: assigned, name: u.name, organization_id: orgId, organization_name: orgName, supplier });
   }
 
   // --- public: request a password-reset / set-password link ---------------
   if (action === "requestPasswordReset") {
     const email = String(body.email ?? "").trim().toLowerCase();
     if (emailOk(email)) {
-      const { data: u } = await db.from("users").select("id,name,email").eq("email", email).maybeSingle();
-      if (u) { const url = await resetLinkFor(u.id); await sendPasswordEmail(u.email, u.name, url); }
+      const { data: u } = await db.from("users").select("id,name,email,role").eq("email", email).maybeSingle();
+      if (u) { const url = await resetLinkFor(u.id, (u as any).role === "supplier" ? "supplier" : null); await sendPasswordEmail(u.email, u.name, url); }
     }
     // Generic — never reveal whether the email is registered.
     return json({ ok: true, message: "If that email is registered, a password-reset link has been sent." });
@@ -1719,6 +1951,47 @@ Deno.serve(async (req) => {
   const orgPrefix = `${organizationId}/`;
   const mrole = (session.mrole as string) ?? "";
 
+  // --- Supplier tier: deny by default (docs/SUPPLIER_PORTAL.md §6) ----------
+  // A supplier session reaches the actions the supplier page and its
+  // Documents/Standards tabs call, and nothing else: an action that is not in
+  // this set is refused before its own gate is reached. The admin's preview
+  // (adminViewAsSupplier, imp: true) gets the reads only.
+  const SUPPLIER_ACTIONS = new Set([
+    "orgContext", "supplierHome", "supplierFileUrl", "listDrawings", "getDrawing", "drawingFileUrl",
+    "listSupplierComponents", "getSupplierBomRoots", "getBom", "getComponentDocuments",
+    "data", "standards", "uploads", "listRequirementLinksForDocumentVersions",
+    "setStatus", "uploadUrl", "recordUpload", "docUploadUrl", "addDocument",
+    "mfaStatus", "mfaEnrollStart", "mfaEnrollVerify", "mfaDisable",
+  ]);
+  // The writes and the account's own MFA: a person's, never the admin's preview.
+  const SUPPLIER_WRITES = new Set([
+    "setStatus", "uploadUrl", "recordUpload", "docUploadUrl", "addDocument",
+    "mfaStatus", "mfaEnrollStart", "mfaEnrollVerify", "mfaDisable",
+  ]);
+  if (role === "supplier" && (!SUPPLIER_ACTIONS.has(action) || (session.imp === true && SUPPLIER_WRITES.has(action)))) {
+    return json({ error: "Not available to supplier accounts" }, 403);
+  }
+  // A supplier session is only as good as the account and the company behind
+  // it, on every request: a removed user or an inactive supplier loses the
+  // documents, standards and uploads too, not only the parts (one query).
+  if (role === "supplier" && action !== "orgContext") {
+    const sid = session.sid ? String(session.sid) : "";
+    if (!sid) return json({ error: "Your account is not linked to a supplier yet. Contact Rushroom." }, 403);
+    const [{ data: sup }, userRow] = await Promise.all([
+      tdb("suppliers").select("id, status").eq("id", sid).maybeSingle(),
+      session.imp === true || !session.uid
+        ? Promise.resolve({ data: null })
+        : db.from("users").select("id, status, supplier_id").eq("id", session.uid).maybeSingle(),
+    ]);
+    if (!sup || sup.status !== "active") return json({ error: "Your supplier account is inactive. Contact Rushroom." }, 403);
+    if (session.imp !== true) {
+      const u = (userRow as any)?.data;
+      if (!u || u.status !== "approved" || u.supplier_id !== sid) {
+        return json({ error: "Your account is not linked to a supplier yet. Contact Rushroom." }, 403);
+      }
+    }
+  }
+
   // --- tenant context for the caller (Stage 1; read-only, session-derived) --
   if (action === "orgContext") {
     let organizationName = "";
@@ -1726,10 +1999,17 @@ Deno.serve(async (req) => {
       const { data: o } = await db.from("organizations").select("name").eq("id", organizationId).maybeSingle();
       organizationName = o?.name || "";
     } catch { /* organizations table not set up yet */ }
+    // The supplier page shows the company it signed in as (SUPPLIER_PORTAL §3).
+    let supplier: { id: string; name: string } | null = null;
+    if (role === "supplier" && typeof session.sid === "string" && session.sid) {
+      const { data: s } = await tdb("suppliers").select("id, name").eq("id", session.sid).maybeSingle();
+      if (s) supplier = { id: s.id, name: s.name };
+    }
     return json({
       organization_id: organizationId, organization_name: organizationName,
       role, urole: session.urole ?? null, admin: isAdmin, membership_role: session.mrole ?? null,
       platform_owner: isPlatformOwner, impersonating: session.imp === true,
+      supplier, actor: session.imp === true ? (session.actor ?? null) : null,
     });
   }
 
@@ -1859,11 +2139,304 @@ Deno.serve(async (req) => {
     if (!isPlatformOwner) return json({ error: "Admin only" }, 403);
     const id = String(body.id ?? "");
     if (!id) return json({ error: "id required" }, 400);
-    const { data: u } = await db.from("users").select("id,email,name").eq("id", id).maybeSingle();
+    const { data: u } = await db.from("users").select("id,email,name,role").eq("id", id).maybeSingle();
     if (!u) return json({ error: "User not found" }, 404);
-    const url = await resetLinkFor(u.id);
+    const url = await resetLinkFor(u.id, (u as any).role === "supplier" ? "supplier" : null);
     const emailed = await sendPasswordEmail(u.email, u.name, url);
     return json({ ok: true, resetUrl: url, emailed });
+  }
+
+  // ================= Supplier portal: the admin side ========================
+  // docs/SUPPLIER_PORTAL.md §3 (Rushroom role). Gate: isAdmin — the platform
+  // owner or a tenant's own org admin, each inside their own organization
+  // (tdb scopes every read and write). The users list on the Accounts tab is
+  // platform-owner-only because users are global; suppliers are tenant rows,
+  // so the broader Stage 3 org-admin gate is the right one here.
+  const SUPPLIER_FIELDS = "id, name, contact_name, contact_email, notes, status, created_at, created_by";
+  const supplierInOrg = async (id: string) => {
+    if (!id) return null;
+    const { data } = await tdb("suppliers").select(SUPPLIER_FIELDS).eq("id", id).maybeSingle();
+    return data || null;
+  };
+  const stripUser = ({ password: _pw, mfa_secret: _ms, mfa_pending_secret: _mp, ...u }: any) => u;
+
+  if (action === "listSuppliers") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const { data: rows, error } = await tdb("suppliers").select(SUPPLIER_FIELDS).order("name");
+    if (error) return json({ error: (/does not exist|schema cache|Could not find/i.test(error.message)) ? "The supplier tables aren't set up yet — apply migration 0065 first." : error.message }, 500);
+    const list = (rows || []) as any[];
+    const ids = list.map((s) => s.id);
+    let users: any[] = [], parts: any[] = [];
+    if (ids.length) {
+      const [u, p] = await Promise.all([
+        db.from("users").select("id, name, email, status, email_verified, supplier_id").in("supplier_id", ids).order("name"),
+        tdb("supplier_components").select("supplier_id").in("supplier_id", ids),
+      ]);
+      users = u.data || []; parts = p.data || [];
+    }
+    // Suppliers are few; one newest-event query per supplier is cheaper than
+    // scanning the whole audit to find each one's last row.
+    const lastActivity = await Promise.all(ids.map(async (sid) => {
+      const { data } = await tdb("supplier_file_events").select("at").eq("supplier_id", sid).order("at", { ascending: false }).limit(1);
+      return (data || [])[0]?.at ?? null;
+    }));
+    const partsCount: Record<string, number> = {};
+    for (const p of parts) partsCount[p.supplier_id] = (partsCount[p.supplier_id] || 0) + 1;
+    const suppliers = list.map((s, i) => ({
+      id: s.id, name: s.name, contact_name: s.contact_name, contact_email: s.contact_email, status: s.status,
+      users: users.filter((u) => u.supplier_id === s.id).map(({ supplier_id: _s, ...u }) => u),
+      parts_count: partsCount[s.id] || 0, last_activity_at: lastActivity[i], created_at: s.created_at,
+    }));
+    return json({ suppliers });
+  }
+
+  if (action === "saveSupplier") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const id = String(body.id ?? "").trim();
+    const name = String(body.name ?? "").trim().slice(0, 160);
+    if (!name) return json({ error: "Name required" }, 400);
+    const patch: Record<string, unknown> = { name };
+    if (body.contact_name !== undefined) patch.contact_name = String(body.contact_name ?? "").trim().slice(0, 160) || null;
+    if (body.contact_email !== undefined) {
+      const ce = String(body.contact_email ?? "").trim().toLowerCase().slice(0, 200);
+      if (ce && !emailOk(ce)) return json({ error: "Enter a valid contact email." }, 400);
+      patch.contact_email = ce || null;
+    }
+    if (body.notes !== undefined) patch.notes = String(body.notes ?? "").slice(0, 2000) || null;
+    if (body.status !== undefined) {
+      if (!["active", "inactive"].includes(String(body.status))) return json({ error: "Invalid status" }, 400);
+      patch.status = String(body.status);
+    }
+    const dup = (e: any) => /duplicate key|unique/i.test(e?.message || "");
+    if (id) {
+      if (!(await supplierInOrg(id))) return json({ error: "Supplier not found" }, 404);
+      const { data, error } = await tdb("suppliers").update(patch).eq("id", id).select(SUPPLIER_FIELDS).maybeSingle();
+      if (error) return json({ error: dup(error) ? `Supplier ${name} already exists` : error.message }, dup(error) ? 409 : 500);
+      return json({ supplier: data });
+    }
+    const { data, error } = await tdb("suppliers").insert({ ...patch, created_by: session.uid ?? null }).select(SUPPLIER_FIELDS).maybeSingle();
+    if (error) return json({ error: dup(error) ? `Supplier ${name} already exists` : error.message }, dup(error) ? 409 : 500);
+    return json({ supplier: data });
+  }
+
+  if (action === "setSupplierParts") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const supplier_id = String(body.supplier_id ?? "");
+    const supplier = await supplierInOrg(supplier_id);
+    if (!supplier) return json({ error: "Supplier not found" }, 404);
+    if (!Array.isArray(body.parts)) return json({ error: "parts required" }, 400);
+    // The wanted set, one entry per part (the last one wins on a duplicate).
+    const wanted = new Map<string, { drawings: boolean; cad: boolean }>();
+    for (const p of body.parts) {
+      const cid = String(p?.component_id ?? "");
+      if (cid) wanted.set(cid, { drawings: p.drawings !== false, cad: p.cad === true });
+    }
+    // Every part must be one of this organization's.
+    const wantedIds = [...wanted.keys()];
+    if (wantedIds.length) {
+      const { data: comps } = await tdb("bom_components").select("id").in("id", wantedIds);
+      const known = new Set(((comps || []) as any[]).map((c) => c.id));
+      const unknown = wantedIds.filter((id) => !known.has(id));
+      if (unknown.length) return json({ error: `${unknown.length} part(s) not found` }, 400);
+    }
+    const { data: existingRows, error: exErr } = await tdb("supplier_components")
+      .select("id, component_id, drawings, cad").eq("supplier_id", supplier_id);
+    if (exErr) return json({ error: exErr.message }, 500);
+    const existing = new Map<string, any>(((existingRows || []) as any[]).map((r) => [r.component_id, r]));
+    const flagsText = (f: { drawings: boolean; cad: boolean }) =>
+      [f.drawings ? "drawings" : "", f.cad ? "CAD" : ""].filter(Boolean).join(", ") || "none";
+    const toInsert: any[] = [], toUpdate: Array<{ id: string; flags: { drawings: boolean; cad: boolean } }> = [];
+    for (const [cid, flags] of wanted) {
+      const cur = existing.get(cid);
+      if (!cur) toInsert.push({ supplier_id, component_id: cid, drawings: flags.drawings, cad: flags.cad, created_by: session.uid ?? null });
+      else if ((cur.drawings !== false) !== flags.drawings || (cur.cad === true) !== flags.cad) toUpdate.push({ id: cur.id, flags });
+    }
+    const toDelete = [...existing.values()].filter((r) => !wanted.has(r.component_id));
+    if (toInsert.length) {
+      const { error } = await tdb("supplier_components").insert(toInsert);
+      if (error) return json({ error: error.message }, 500);
+    }
+    for (const u of toUpdate) {
+      const { error } = await tdb("supplier_components").update({ drawings: u.flags.drawings, cad: u.flags.cad }).eq("id", u.id);
+      if (error) return json({ error: error.message }, 500);
+    }
+    if (toDelete.length) {
+      const { error } = await tdb("supplier_components").delete().in("id", toDelete.map((r) => r.id));
+      if (error) return json({ error: error.message }, 500);
+    }
+    // The part's history carries who may build it (§3). A flag change is an
+    // access change too, so it is written as well — one line per part.
+    for (const r of toInsert) {
+      await writeBomHistory(tdb, session, r.component_id, "updated", `Supplier ${supplier.name} given access (${flagsText(r)})`);
+    }
+    for (const u of toUpdate) {
+      const cid = [...existing.values()].find((r) => r.id === u.id)?.component_id;
+      if (cid) await writeBomHistory(tdb, session, cid, "updated", `Supplier ${supplier.name} access changed (${flagsText(u.flags)})`);
+    }
+    for (const r of toDelete) {
+      await writeBomHistory(tdb, session, r.component_id, "updated", `Supplier ${supplier.name} access removed`);
+    }
+    return json({ ok: true, count: wanted.size, added: toInsert.length, changed: toUpdate.length, removed: toDelete.length });
+  }
+
+  if (action === "getSupplier") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const supplier = await supplierInOrg(String(body.supplier_id ?? ""));
+    if (!supplier) return json({ error: "Supplier not found" }, 404);
+    const [{ data: userRows }, { data: assignRows }, { data: eventRows }] = await Promise.all([
+      db.from("users").select("id, name, email, status, email_verified, created_at").eq("supplier_id", supplier.id).order("name"),
+      tdb("supplier_components").select("id, component_id, drawings, cad, notes, created_at").eq("supplier_id", supplier.id),
+      tdb("supplier_file_events").select("id, user_id, kind, drawing_revision_id, cad_file_id, file_name, at")
+        .eq("supplier_id", supplier.id).order("at", { ascending: false }).limit(100),
+    ]);
+    const assignments = (assignRows || []) as any[];
+    const partIds = assignments.map((a) => a.component_id);
+    const [{ data: comps }, files] = await Promise.all([
+      partIds.length ? tdb("bom_components").select("id, part_number, name, description").in("id", partIds) : Promise.resolve({ data: [] }),
+      supplierPartFiles(tdb, partIds),
+    ]);
+    const compById = new Map<string, any>(((comps || []) as any[]).map((c) => [c.id, c]));
+    const parts = assignments.map((a) => {
+      const c = compById.get(a.component_id) || {};
+      return {
+        component_id: a.component_id, part_number: c.part_number || "", name: c.name || "",
+        drawings: a.drawings !== false, cad: a.cad === true,
+        released_drawings: (files.drawingsByPart.get(a.component_id) || []).length,
+        released_cad: files.cadByPart.get(a.component_id)?.revision ?? null,
+      };
+    }).sort((a, b) => a.part_number.localeCompare(b.part_number, undefined, { numeric: true, sensitivity: "base" }));
+    // Name the people and the parts on the audit rows.
+    const events = (eventRows || []) as any[];
+    const userIds = [...new Set(events.map((e) => e.user_id).filter(Boolean))];
+    const revIds = [...new Set(events.map((e) => e.drawing_revision_id).filter(Boolean))];
+    const fileIds = [...new Set(events.map((e) => e.cad_file_id).filter(Boolean))];
+    const [{ data: eventUsers }, { data: eventRevs }, { data: eventFiles }] = await Promise.all([
+      userIds.length ? db.from("users").select("id, name, email").in("id", userIds) : Promise.resolve({ data: [] }),
+      revIds.length ? tdb("drawing_revisions").select("id, drawing_id, revision").in("id", revIds) : Promise.resolve({ data: [] }),
+      // The letter lives on the revision (0064 dropped cad_model_files.revision).
+      fileIds.length ? tdb("cad_model_files").select("id, cad_model_id, cad_model_revision_id").in("id", fileIds) : Promise.resolve({ data: [] }),
+    ]);
+    const drawingIds = [...new Set(((eventRevs || []) as any[]).map((r) => r.drawing_id))];
+    const modelIds = [...new Set(((eventFiles || []) as any[]).map((f) => f.cad_model_id))];
+    const cadRevIds = [...new Set(((eventFiles || []) as any[]).map((f) => f.cad_model_revision_id).filter(Boolean))];
+    const [{ data: eventDrawings }, { data: eventModels }, { data: eventCadRevs }, { data: eventLinks }] = await Promise.all([
+      drawingIds.length ? tdb("drawings").select("id, drawing_number, owner_component_id").in("id", drawingIds) : Promise.resolve({ data: [] }),
+      modelIds.length ? tdb("cad_models").select("id, component_id").in("id", modelIds) : Promise.resolve({ data: [] }),
+      cadRevIds.length ? tdb("cad_model_revisions").select("id, revision").in("id", cadRevIds) : Promise.resolve({ data: [] }),
+      drawingIds.length ? tdb("drawing_components").select("drawing_id, component_id, linked_at").in("drawing_id", drawingIds).order("linked_at", { ascending: true }) : Promise.resolve({ data: [] }),
+    ]);
+    const userById = new Map(((eventUsers || []) as any[]).map((u) => [u.id, u]));
+    const revById = new Map(((eventRevs || []) as any[]).map((r) => [r.id, r]));
+    const cadLetter = new Map(((eventCadRevs || []) as any[]).map((r) => [r.id, r.revision]));
+    const fileById = new Map(((eventFiles || []) as any[]).map((f) => [f.id, { ...f, revision: cadLetter.get(f.cad_model_revision_id) ?? "" }]));
+    const drawingById = new Map(((eventDrawings || []) as any[]).map((d) => [d.id, d]));
+    const modelById = new Map(((eventModels || []) as any[]).map((m) => [m.id, m]));
+    // A drawing without an owner is named by the first assigned part linked to it.
+    const linkedPart = new Map<string, string>();
+    for (const l of (eventLinks || []) as any[]) {
+      if (compById.has(l.component_id) && !linkedPart.has(l.drawing_id)) linkedPart.set(l.drawing_id, l.component_id);
+    }
+    const partLabel = (cid: string | null) => {
+      const c = cid ? compById.get(cid) : null;
+      return c ? `${c.part_number} ${c.name}`.trim() : "";
+    };
+    const eventsOut = events.map((e) => {
+      const u = userById.get(e.user_id);
+      let part = "", object = "";
+      if (e.kind === "drawing") {
+        const r = revById.get(e.drawing_revision_id); const d = r ? drawingById.get(r.drawing_id) : null;
+        object = d ? `${d.drawing_number} Issue ${r.revision}` : "";
+        part = d ? (partLabel(d.owner_component_id ?? null) || partLabel(linkedPart.get(d.id) ?? null)) : "";
+      } else {
+        const f = fileById.get(e.cad_file_id); const m = f ? modelById.get(f.cad_model_id) : null;
+        object = f ? `STEP Rev ${f.revision}` : ""; part = partLabel(m?.component_id ?? null);
+      }
+      return {
+        id: e.id, at: e.at, kind: e.kind, file_name: e.file_name, object, part,
+        user_id: e.user_id, user_name: u?.name || "", user_email: u?.email || "",
+        drawing_revision_id: e.drawing_revision_id, cad_file_id: e.cad_file_id,
+      };
+    });
+    return json({ supplier, users: userRows || [], parts, events: eventsOut });
+  }
+
+  if (action === "addSupplierUser") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const supplier = await supplierInOrg(String(body.supplier_id ?? ""));
+    if (!supplier) return json({ error: "Supplier not found" }, 404);
+    const email = String(body.email ?? "").trim().toLowerCase().slice(0, 200);
+    const name = String(body.name ?? "").trim().slice(0, 120);
+    if (!emailOk(email)) return json({ error: "Enter a valid email address." }, 400);
+    const { data: existing } = await db.from("users").select("*").eq("email", email).maybeSingle();
+    let user: any;
+    if (existing) {
+      const assigned = String(existing.role || existing.requested_role || "");
+      if (assigned !== "supplier") return json({ error: "That email belongs to an account with another role." }, 409);
+      if (existing.supplier_id && existing.supplier_id !== supplier.id) return json({ error: "That account is already linked to another supplier." }, 409);
+      const patch: Record<string, unknown> = {
+        supplier_id: supplier.id, role: "supplier", status: "approved", updated_at: new Date().toISOString(),
+      };
+      if (name) patch.name = name;
+      const { data, error } = await db.from("users").update(patch).eq("id", existing.id).select("*").maybeSingle();
+      if (error) return json({ error: error.message }, 500);
+      user = data;
+    } else {
+      if (!name) return json({ error: "Enter the person's name." }, 400);
+      // The admin's invitation is the approval and the address is theirs to
+      // prove through the set-password link, which also confirms the email.
+      const { data, error } = await db.from("users").insert({
+        name, email, requested_role: "supplier", role: "supplier", status: "approved",
+        email_verified: true, supplier_id: supplier.id,
+      }).select("*").maybeSingle();
+      if (error) return json({ error: error.message }, 500);
+      user = data;
+    }
+    // A membership in this organization, so seats and the org members list
+    // know the account. The session's tenant itself comes from the supplier.
+    const mem = await db.from("memberships").upsert(
+      { organization_id: organizationId, user_id: user.id, role: membershipRoleFor("supplier"), status: "active", updated_at: new Date().toISOString() },
+      { onConflict: "organization_id,user_id" });
+    if (mem.error) return json({ error: mem.error.message }, 500);
+    const set_password_url = await resetLinkFor(user.id, "supplier");
+    const emailed = await sendPasswordEmail(user.email, user.name, set_password_url);
+    return json({ user: stripUser(user), emailed, set_password_url });
+  }
+
+  if (action === "removeSupplierUser") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const user_id = String(body.user_id ?? "");
+    if (!user_id) return json({ error: "user_id required" }, 400);
+    const { data: u } = await db.from("users").select("id, supplier_id").eq("id", user_id).maybeSingle();
+    // The user must belong to a supplier of THIS organization; anything else is
+    // "not found", so one tenant's admin learns nothing about another's accounts.
+    if (!u || !u.supplier_id || !(await supplierInOrg(u.supplier_id))) return json({ error: "User not found" }, 404);
+    const { error } = await db.from("users").update({ supplier_id: null, status: "disabled", updated_at: new Date().toISOString() }).eq("id", user_id);
+    if (error) return json({ error: error.message }, 500);
+    // The seat goes too: the membership is suspended the way orgUpdateMember does it.
+    const mem = await db.from("memberships").update({ status: "suspended", updated_at: new Date().toISOString() })
+      .eq("user_id", user_id).eq("organization_id", organizationId);
+    if (mem.error) return json({ error: mem.error.message }, 500);
+    return json({ ok: true });
+  }
+
+  if (action === "adminViewAsSupplier") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const supplier = await supplierInOrg(String(body.supplier_id ?? ""));
+    if (!supplier) return json({ error: "Supplier not found" }, 404);
+    // The platformImpersonate pattern: time-boxed, least privilege (role
+    // supplier, no admin), the actor on the token. uid stays the admin's so
+    // the file events this session causes carry the admin's user_id.
+    const IMP_TTL = 30 * 60;
+    const expIso = new Date((Math.floor(Date.now() / 1000) + IMP_TTL) * 1000).toISOString();
+    const token = await issueSession({
+      role: "supplier", admin: false, org: organizationId, sid: supplier.id, imp: true,
+      actor: session.email ?? session.uid ?? "admin", uid: session.uid ?? null, email: session.email ?? null,
+      urole: "supplier", mrole: membershipRoleFor("supplier"),
+    }, IMP_TTL);
+    try {
+      await db.from("platform_audit").insert({ actor_user_id: session.uid ?? null, actor_email: session.email ?? null, action: "supplier_view_as", target_organization_id: organizationId, detail: { supplier_id: supplier.id, supplier_name: supplier.name, expires_at: expIso } });
+    } catch { /* the audit of the preview is best-effort; the file events are not */ }
+    return json({ token, supplier: { id: supplier.id, name: supplier.name }, expires_at: expIso });
   }
 
   // ================= Stage 3: Organization management ====================
@@ -4353,24 +4926,32 @@ Deno.serve(async (req) => {
       : { changelog });
   }
 
-  // --- BOM: full component list for the supplier portal (no cost / sourcing) --
-  // Returns all active components plus their supplier-visible drawings in one
-  // round trip, so the supplier parts list can show drawings inline.
+  // --- BOM: component list for the supplier portal (no cost / sourcing) ------
+  // Returns the active components plus their supplier-visible drawings in one
+  // round trip. A supplier session gets its assigned parts only
+  // (docs/SUPPLIER_PORTAL.md §3); a Rushroom session the whole register.
   if (action === "listSupplierComponents") {
+    if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
+    const scope = role === "supplier" ? await supplierScope(tdb, session) : null;
+    if (role === "supplier" && !scope) return supplierNotLinked();
+    let compQ = tdb("bom_components")
+      .select("id, part_number, name, type, lifecycle_status, category_id, unit_of_measure, description")
+      .not("lifecycle_status", "in", '("replaced","inactive")')
+      .order("name");
+    if (scope) compQ = scope.partIds.length ? compQ.in("id", scope.partIds) : compQ.eq("id", NIL_UUID);
+    let drawQ = tdb("drawings")
+      .select("id, drawing_number, title, current_revision_id, owner_component_id, supplier_drawing_number, drawing_type")
+      .eq("is_supplier_visible", true)
+      .neq("drawing_type", "surgery_template");
+    if (scope) drawQ = scope.drawingIds.length ? drawQ.in("id", scope.drawingIds) : drawQ.eq("id", NIL_UUID);
     const [
       { data: comps, error: ce },
       { data: drawingRows },
       { data: cadRows },
       { data: catRows },
     ] = await Promise.all([
-      tdb("bom_components")
-        .select("id, part_number, name, type, lifecycle_status, category_id, unit_of_measure, description")
-        .not("lifecycle_status", "in", '("replaced","inactive")')
-        .order("name"),
-      tdb("drawings")
-        .select("id, drawing_number, title, current_revision_id, owner_component_id, supplier_drawing_number, drawing_type")
-        .eq("is_supplier_visible", true)
-        .neq("drawing_type", "surgery_template"),
+      compQ,
+      drawQ,
       tdb("cad_models").select("component_id").not("component_id", "is", null),
       tdb("part_categories").select("id, name").order("sort_order").order("name"),
     ]);
@@ -4410,16 +4991,71 @@ Deno.serve(async (req) => {
     return json({ components, categories: catRows || [] });
   }
 
+  // --- Supplier portal: the whole page in one call (docs/SUPPLIER_PORTAL.md §3)
+  if (action === "supplierHome") {
+    if (role !== "supplier") return json({ error: "Supplier only" }, 403);
+    const scope = await supplierScope(tdb, session);
+    if (!scope) return supplierNotLinked();
+    const { data: supplier } = await tdb("suppliers").select("id, name, contact_name, contact_email, status").eq("id", scope.sid).maybeSingle();
+    if (!supplier) return supplierNotLinked();
+    if (supplier.status !== "active") return json({ error: "Your supplier account is inactive. Contact Rushroom." }, 403);
+    const [{ data: userRow }, { data: comps }, files, { count: documents_count }] = await Promise.all([
+      session.uid ? db.from("users").select("name, email").eq("id", session.uid).maybeSingle() : Promise.resolve({ data: null }),
+      scope.partIds.length
+        ? tdb("bom_components").select("id, part_number, name, description").in("id", scope.partIds)
+        : Promise.resolve({ data: [] }),
+      supplierPartFiles(tdb, scope.partIds),
+      tdb("documents").select("id", { count: "exact", head: true }).contains("audience", ["supplier"]),
+    ]);
+    let newest: string | null = null;
+    const later = (a: string | null, b: string | null) => (!a ? b : !b ? a : (a > b ? a : b));
+    const parts = ((comps || []) as any[]).map((c) => {
+      const flags = scope.parts.get(c.id)!;
+      const drawings = flags.drawings ? (files.drawingsByPart.get(c.id) || []) : [];
+      const cad = flags.cad ? (files.cadByPart.get(c.id) ?? null) : null;
+      let updated_at: string | null = null;
+      for (const d of drawings) updated_at = later(updated_at, d.released_at);
+      if (cad) updated_at = later(updated_at, cad.released_at);
+      newest = later(newest, updated_at);
+      return { component_id: c.id, part_number: c.part_number, name: c.name, description: c.description || "", drawings, cad, updated_at };
+    }).sort((a, b) => String(a.part_number).localeCompare(String(b.part_number), undefined, { numeric: true, sensitivity: "base" }));
+    return json({
+      supplier: { id: supplier.id, name: supplier.name, contact_name: supplier.contact_name, contact_email: supplier.contact_email },
+      user: { name: userRow?.name || "", email: userRow?.email || session.email || "" },
+      parts, documents_count: documents_count ?? 0, updated_at: newest,
+      viewing_as: session.imp === true ? (session.actor ?? null) : null,
+    });
+  }
+
+  // --- Supplier portal: a signed URL for one file, through the one gate ------
+  if (action === "supplierFileUrl") {
+    if (role !== "supplier") return json({ error: "Supplier only" }, 403);
+    const scope = await supplierScope(tdb, session);
+    if (!scope) return supplierNotLinked();
+    const kind = String(body.kind ?? "");
+    const id = String(body.id ?? "");
+    const inline = body.inline === true;   // Open/Preview; a Download leaves it unset
+    const r = await issueSupplierFile(tdb, session, scope, kind, id, { inline });
+    if ("error" in r) return json({ error: r.error }, r.status);
+    return json(r);
+  }
+
   // --- BOM: roots visible to suppliers (product_family / sub_assembly not yet
   //     a child of anything else in this org). No cost or sourcing data returned.
+  //     A supplier session gets its assigned parts only.
   if (action === "getSupplierBomRoots") {
+    if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
+    const scope = role === "supplier" ? await supplierScope(tdb, session) : null;
+    if (role === "supplier" && !scope) return supplierNotLinked();
     const { data: childRows } = await tdb("bom_edges")
       .select("child_id").is("effective_to", null).eq("is_reference", false);
     const childSet = new Set((childRows || []).map((r: any) => r.child_id));
-    const { data: comps, error } = await tdb("bom_components")
+    let q = tdb("bom_components")
       .select("id, part_number, name, type, description, lifecycle_status, unit_of_measure")
       .in("type", ["product_family", "sub_assembly", "phantom_assembly"])
       .order("name");
+    if (scope) q = scope.partIds.length ? q.in("id", scope.partIds) : q.eq("id", NIL_UUID);
+    const { data: comps, error } = await q;
     if (error) return json({ error: error.message }, 400);
     const roots = (comps || []).filter((c: any) => !childSet.has(c.id));
     return json({ roots });
@@ -4430,6 +5066,12 @@ Deno.serve(async (req) => {
     const { root_component_id, max_depth, scenario_id } = body;
     if (!root_component_id) return json({ error: "root_component_id required" }, 400);
     const depthLimit = Math.min(Number(max_depth) || 4, 10);
+    // A supplier walks its assigned parts only, never the structure above them
+    // (docs/SUPPLIER_PORTAL.md §3): the root must be assigned, and every node
+    // and edge outside the assignment is dropped from the answer.
+    const scope = role === "supplier" ? await supplierScope(tdb, session) : null;
+    if (role === "supplier" && !scope) return supplierNotLinked();
+    if (scope && !scope.parts.has(String(root_component_id))) return json({ error: "Component not found" }, 404);
     // BFS: fetch children level by level
     const nodeMap: Record<string, any> = {};
     const edges: Array<{ parent_id: string; child_id: string; quantity: number; reference_designator: string | null; sort_order?: number; fitting_stage?: string | null; is_reference?: boolean }> = [];
@@ -4452,11 +5094,13 @@ Deno.serve(async (req) => {
         .in("parent_id", ids).is("effective_to", null).eq("organization_id", organizationId)
         .order("sort_order", { ascending: true }).order("id", { ascending: true });
       (childEdges || []).forEach((e: any) => {
+        if (scope && !scope.parts.has(e.child_id)) return;   // outside the assignment
         edges.push(e);
         if (!visited.has(e.child_id)) queue.push({ id: e.child_id, depth: currentDepth + 1 });
       });
     }
-    return json({ nodes: Object.values(nodeMap), edges });
+    const nodes = Object.values(nodeMap).filter((n: any) => !scope || scope.parts.has(n.id));
+    return json({ nodes, edges });
   }
 
   // --- BOM: add an edge (child under parent) --------------------------------
@@ -4895,6 +5539,13 @@ Deno.serve(async (req) => {
   if (action === "getComponentDocuments") {
     const { component_id } = body;
     if (!component_id) return json({ error: "component_id required" }, 400);
+    // A supplier reads the documents of its assigned parts only; an unassigned
+    // part is "not found" (docs/SUPPLIER_PORTAL.md §6.2).
+    if (role === "supplier") {
+      const scope = await supplierScope(tdb, session);
+      if (!scope) return supplierNotLinked();
+      if (!scope.parts.has(String(component_id))) return json({ error: "Component not found" }, 404);
+    }
     let q = tdb("component_documents").select("id, category, label, is_supplier_visible, uploaded_at, document_version_id")
       .eq("component_id", component_id).order("uploaded_at", { ascending: false });
     if (role === "supplier") q = q.eq("is_supplier_visible", true);
@@ -5276,10 +5927,13 @@ Deno.serve(async (req) => {
 
   if (action === "listDrawings") {
     if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
+    // A supplier lists the drawings of its assigned parts (SUPPLIER_PORTAL §3).
+    const scope = role === "supplier" ? await supplierScope(tdb, session) : null;
+    if (role === "supplier" && !scope) return supplierNotLinked();
     let q = tdb("drawings").select(
       "id, drawing_number, title, current_revision_id, is_supplier_visible, created_at, "
       + "owner_component_id, node_sequence, supplier_drawing_number, drawing_type");
-    q = supplierDrawingScope(q, role);
+    q = supplierDrawingScope(q, role, scope?.drawingIds);
     if (body.drawing_type) q = q.eq("drawing_type", String(body.drawing_type));
     const { data: rows, error } = await q;
     if (error) return json({ error: error.message }, 400);
@@ -5325,6 +5979,8 @@ Deno.serve(async (req) => {
     const result = drawings.map((d: any) => {
       const derived = derivedOf(d);
       const shown = role === "supplier" ? derived.released : derived.current;
+      // A supplier is told the owner only when the owner is one of its parts (§6.2).
+      const ownerShown = !!d.owner_component_id && (!scope || scope.parts.has(d.owner_component_id));
       return {
       id: d.id, drawing_number: d.drawing_number, title: d.title, status: shown?.status ?? derived.status,
       revision: shown?.revision ?? "",
@@ -5332,9 +5988,9 @@ Deno.serve(async (req) => {
       is_supplier_visible: d.is_supplier_visible,
       drawing_type: d.drawing_type || "engineering",
       parts_count: partsCount[d.id] || 0,
-      owner_component_id: d.owner_component_id || null,
-      owner_name: d.owner_component_id ? (ownerMap[d.owner_component_id]?.name || "") : "",
-      owner_part_number: d.owner_component_id ? (ownerMap[d.owner_component_id]?.part_number || "") : "",
+      owner_component_id: ownerShown ? d.owner_component_id : null,
+      owner_name: ownerShown ? (ownerMap[d.owner_component_id]?.name || "") : "",
+      owner_part_number: ownerShown ? (ownerMap[d.owner_component_id]?.part_number || "") : "",
       node_sequence: d.node_sequence || null,
       supplier_drawing_number: d.supplier_drawing_number || "",
       is_free: !d.owner_component_id,
@@ -5352,8 +6008,10 @@ Deno.serve(async (req) => {
     const drawing_id = String(body.drawing_id ?? "");
     if (!drawing_id) return json({ error: "drawing_id required" }, 400);
 
+    const scope = role === "supplier" ? await supplierScope(tdb, session) : null;
+    if (role === "supplier" && !scope) return supplierNotLinked();
     let q = tdb("drawings").select(DRAWING_FIELDS).eq("id", drawing_id);
-    q = supplierDrawingScope(q, role);
+    q = supplierDrawingScope(q, role, scope?.drawingIds);
     const { data: rows, error } = await q;
     if (error) return json({ error: error.message }, 400);
     const drawing = (rows || [])[0];
@@ -5379,17 +6037,19 @@ Deno.serve(async (req) => {
       drawing.current_revision_id = derived.released.id;
     }
 
-    const { data: links, error: linkErr } = await tdb("drawing_components")
+    const { data: linkRows, error: linkErr } = await tdb("drawing_components")
       .select("id, component_id, role, linked_at").eq("drawing_id", drawing_id);
+    // A supplier is told of its own parts on the drawing, no other (§6.2).
+    const links = scope ? (linkRows || []).filter((l: any) => scope.parts.has(l.component_id)) : (linkRows || []);
 
     // Name the parts, so the panel can say which BOM nodes a revision affects.
     let components: any[] = [];
-    if ((links || []).length) {
+    if (links.length) {
       const { data: comps } = await tdb("bom_components")
-        .select("id, name, part_number").in("id", (links || []).map((l: any) => l.component_id));
+        .select("id, name, part_number").in("id", links.map((l: any) => l.component_id));
       const byId: Record<string, any> = {};
       (comps || []).forEach((c: any) => { byId[c.id] = c; });
-      components = (links || []).map((l: any) => ({
+      components = links.map((l: any) => ({
         link_id: l.id, component_id: l.component_id, role: l.role,
         name: byId[l.component_id]?.name || "", part_number: byId[l.component_id]?.part_number || "",
       }));
@@ -5444,7 +6104,17 @@ Deno.serve(async (req) => {
     const failed: string[] = [];
     if (revErr) failed.push("revisions");
     if (linkErr) failed.push("components");
-    const payload: any = { drawing, revisions: shownRevisions, components };
+    // A supplier gets the drawing's identity, never the row: no owner outside
+    // the assignment, no created_by, no render spec, no organization.
+    const drawingOut = role === "supplier"
+      ? {
+          id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title,
+          drawing_type: drawing.drawing_type || "engineering", current_revision_id: drawing.current_revision_id,
+          supplier_drawing_number: drawing.supplier_drawing_number ?? null,
+          owner_component_id: scope && drawing.owner_component_id && scope.parts.has(drawing.owner_component_id) ? drawing.owner_component_id : null,
+        }
+      : drawing;
+    const payload: any = { drawing: drawingOut, revisions: shownRevisions, components };
     if (failed.length) { payload.partial = true; payload.sources_failed = failed; }
     return json(payload);
   }
@@ -5610,22 +6280,23 @@ Deno.serve(async (req) => {
     if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
     const revision_id = String(body.drawing_revision_id ?? "");
     if (!revision_id) return json({ error: "drawing_revision_id required" }, 400);
+    // A supplier goes through the one file gate (SUPPLIER_PORTAL §6.1): the
+    // assignment, the drawings flag, released, supplier-visible — 404 on any
+    // miss — and the download is logged, exactly as supplierFileUrl does.
+    if (role === "supplier") {
+      const scope = await supplierScope(tdb, session);
+      if (!scope) return supplierNotLinked();
+      const r = await issueSupplierFile(tdb, session, scope, "drawing", revision_id, { inline: true });
+      if ("error" in r) return json({ error: r.error }, r.status);
+      return json(r);
+    }
     const { data: revs } = await tdb("drawing_revisions")
-      .select("id, drawing_id, storage_path, status").eq("id", revision_id);
+      .select("id, drawing_id, storage_path, file_name, status").eq("id", revision_id);
     const rev = (revs || [])[0];
     if (!rev) return json({ error: "Revision not found" }, 404);
-    // A supplier gets the bytes of a released issue only (§6).
-    if (role === "supplier" && rev.status !== "released") return json({ error: "Revision not found" }, 404);
-    // The file is reached through the drawing, so the same visibility rule that
-    // hides a drawing from a supplier also withholds its file. Checking only the
-    // revision row would leak the bytes of a drawing they cannot see listed.
-    let dq = tdb("drawings").select("id").eq("id", rev.drawing_id);
-    dq = supplierDrawingScope(dq, role);
-    const { data: allowed } = await dq;
-    if (!(allowed || []).length) return json({ error: "Revision not found" }, 404);
     const { data: signed, error } = await db.storage.from(DOC_BUCKET).createSignedUrl(rev.storage_path, 60 * 60);
     if (error) return json({ error: error.message }, 500);
-    return json({ url: signed?.signedUrl });
+    return json({ url: signed?.signedUrl, file_name: rev.file_name, expires_in: 60 * 60 });
   }
 
 

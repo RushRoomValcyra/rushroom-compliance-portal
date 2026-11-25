@@ -1916,20 +1916,31 @@
           loadingEl.remove();
           // Fusion STEP exports embed appearance colors that override defaultColor.
           // Walk the Three.js scene and force every mesh material to our target colour.
-          const inner = viewer.GetViewer();
-          if (inner && inner.mainModel) {
+          // online-3d-viewer 0.18: mainModel is an OV ViewerModel, not a THREE
+          // object, so walk whichever traversal it offers; a failure only
+          // leaves the embedded colours in place — the model still renders.
+          try {
+            const inner = viewer.GetViewer();
+            const m = inner && inner.mainModel;
             const cr = partColor.r / 255;
             const cg = partColor.g / 255;
             const cb = partColor.b / 255;
-            inner.mainModel.traverse((obj) => {
-              if (!obj.isMesh) return;
+            const fn = (obj) => {
+              if (!obj || !obj.isMesh) return;
               const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-              mats.forEach((m) => {
-                if (m && m.color) { m.color.setRGB(cr, cg, cb); m.needsUpdate = true; }
+              mats.forEach((mat) => {
+                if (mat && mat.color) { mat.color.setRGB(cr, cg, cb); mat.needsUpdate = true; }
               });
-            });
-            inner.Render();
-          }
+            };
+            const walk = (o) => {
+              if (!o) return;
+              if (typeof o.traverse === "function") o.traverse(fn);
+              else if (typeof o.EnumerateMeshes === "function") o.EnumerateMeshes(fn);
+              else if (o.rootObject && typeof o.rootObject.traverse === "function") o.rootObject.traverse(fn);
+            };
+            walk(m);
+            if (inner && typeof inner.Render === "function") inner.Render();
+          } catch { /* colour pass is cosmetic */ }
         },
         onModelLoadFailed: () => {
           loadingEl.innerHTML = `<div class="viewer-msg"><p>Failed to load model.</p><a href="${file.download_url}" class="btn" download="${file.file_name || ""}">⬇ Download instead</a></div>`;
@@ -2520,6 +2531,7 @@
       { id: "org", label: "Organization", icon: "tag", build: () => orgSettingsView(ctx) },
       { id: "billing", label: "Billing & plan", icon: "sparkles", build: () => lazy(billingView) },
       { id: "security", label: "Security", icon: "tag", build: () => lazy(securityView) },
+      { id: "suppliers", label: "Suppliers", icon: "layers", build: () => lazy(suppliersView) },
     ];
     if (isPlatform) {
       tabs.push({ id: "users", label: "All users", icon: "eye", build: () => lazy(() => usersAdminView(role)) });
@@ -2659,6 +2671,327 @@
     ]));
     render();
     return mount;
+  }
+
+  /* ---------------- suppliers (docs/SUPPLIER_PORTAL.md §5) ---------------- */
+  // Every Rushroom admin (platform owner or org admin — the Accounts gate) sees
+  // the Suppliers sub-tab; it sits before "All users" so the supplier list is
+  // above the users list. API errors land in a red line, never an alert().
+  const SUPPLIER_PREVIEW_KEY = "pim_supplier_preview";
+  const supplierErrLine = () => el("div", { class: "up-status err", style: "margin:0.4rem 0 0", role: "alert" }, "");
+  const monoCell = (text) => el("span", { style: "font-family:var(--mono, monospace);font-size:0.8125rem" }, text || "—");
+  const supplierStatusChip = (status) => el("span", { class: "rl-status " + (status === "inactive" ? "rl-s-suspended" : "rl-s-accepted") }, status === "inactive" ? "Inactive" : "Active");
+
+  async function suppliersView() {
+    const token = API.getToken();
+    const wrap = el("div");
+    const err = supplierErrLine();
+    const box = el("div", { class: "loading" }, "Loading suppliers…");
+    const eventsBox = el("div", { style: "margin-top:1rem" });
+    let suppliers = [];
+    let selectedId = null;
+
+    const fail = (ex) => { err.textContent = ex.message || String(ex); };
+    const clearErr = () => { err.textContent = ""; };
+
+    const showEvents = async (s) => {
+      selectedId = s.id;
+      paint();
+      eventsBox.replaceChildren(el("div", { class: "form-label" }, `File events · ${s.name}`), el("div", { class: "loading" }, "Loading…"));
+      try {
+        const r = await API.post(token, "getSupplier", { supplier_id: s.id });
+        if (selectedId !== s.id) return;
+        const events = r.events || [];
+        eventsBox.replaceChildren(
+          el("div", { class: "form-label", style: "margin-bottom:0.4rem" }, `File events · ${s.name}`),
+          events.length
+            ? el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
+                el("thead", {}, el("tr", {}, ["When", "User", "Part", "File"].map((h) => el("th", {}, h)))),
+                el("tbody", {}, events.map((e) => el("tr", {}, [
+                  el("td", { style: "white-space:nowrap" }, fmtDateTime(e.at)),
+                  el("td", {}, e.user_name || e.user_email || e.user || "—"),
+                  el("td", {}, monoCell(e.part_number || e.part || e.component_name || "")),
+                  el("td", {}, [e.kind ? el("span", { class: "rl-status", style: "margin-right:0.4rem" }, e.kind === "cad" ? "CAD" : "Drawing") : null, e.file_name || "—"]),
+                ]))),
+              ]))
+            : el("div", { class: "empty" }, "No file events yet."),
+        );
+      } catch (ex) { if (selectedId === s.id) eventsBox.replaceChildren(el("div", { class: "form-label" }, `File events · ${s.name}`), el("div", { class: "up-status err", style: "margin:0.4rem 0 0" }, ex.message)); }
+    };
+
+    const viewAs = async (s, note) => {
+      clearErr();
+      // Opened before the await so Safari's popup rule (no window.open after an
+      // async gap) cannot swallow the tab; the token lands in the new tab's
+      // sessionStorage directly, with the opener's copy as the fallback.
+      const w = window.open("about:blank", "_blank");
+      try {
+        const r = await API.post(token, "adminViewAsSupplier", { supplier_id: s.id });
+        if (!w) { if (note) note.textContent = ""; err.textContent = "Popup blocked"; return; }
+        // The token belongs to the new tab only. If its storage is unreachable,
+        // the opener holds it just long enough for supplier.html to pick it up.
+        try {
+          w.sessionStorage.setItem(SUPPLIER_PREVIEW_KEY, r.token);
+        } catch {
+          sessionStorage.setItem(SUPPLIER_PREVIEW_KEY, r.token);
+          setTimeout(() => sessionStorage.removeItem(SUPPLIER_PREVIEW_KEY), 15000);
+        }
+        w.location.href = "./supplier.html";
+        if (note) { note.className = "up-status ok"; note.textContent = "Opened."; setTimeout(() => { note.textContent = ""; }, 1500); }
+      } catch (ex) { if (w) w.close(); fail(ex); }
+    };
+
+    const row = (s) => {
+      const note = el("span", { class: "up-status", style: "margin:0" }, "");
+      const tr = el("tr", {
+        style: "cursor:pointer" + (selectedId === s.id ? ";background:var(--panel-2)" : ""),
+        onclick: (ev) => { if (ev.target.closest("button, a, input, select")) return; showEvents(s); },
+      }, [
+        el("td", {}, [el("strong", {}, s.name), " ", supplierStatusChip(s.status)]),
+        el("td", {}, [s.contact_name || "—", s.contact_email ? el("div", { class: "muted", style: "font-size:0.8125rem" }, s.contact_email) : null]),
+        el("td", {}, String((s.users || []).length)),
+        el("td", {}, String(s.parts_count ?? 0)),
+        el("td", { style: "white-space:nowrap" }, s.last_activity_at ? fmtDateTime(s.last_activity_at) : "—"),
+        el("td", { style: "white-space:nowrap" }, el("div", { style: "display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap" }, [
+          el("button", { class: "btn btn-xs", type: "button", onclick: () => supplierPartsModal(s, reload) }, "Parts"),
+          el("button", { class: "btn btn-xs", type: "button", onclick: () => supplierUsersModal(s, reload) }, "Users"),
+          el("button", { class: "btn btn-xs", type: "button", onclick: () => viewAs(s, note) }, "View as supplier"),
+          el("button", { class: "btn btn-xs", type: "button", onclick: () => supplierFormModal(s, reload) }, "Edit"),
+          note,
+        ])),
+      ]);
+      return tr;
+    };
+
+    const paint = () => {
+      if (!suppliers.length) { box.replaceChildren(el("div", { class: "empty" }, "No suppliers yet.")); return; }
+      box.className = "";
+      box.replaceChildren(el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
+        el("thead", {}, el("tr", {}, ["Name", "Contact", "Users", "Parts", "Last activity", ""].map((h) => el("th", {}, h)))),
+        el("tbody", {}, suppliers.map(row)),
+      ])));
+    };
+
+    const reload = async () => {
+      clearErr();
+      try {
+        const r = await API.post(token, "listSuppliers", {});
+        suppliers = (r.suppliers || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        box.className = "";
+        paint();
+        if (selectedId) { const s = suppliers.find((x) => x.id === selectedId); if (s) showEvents(s); else { selectedId = null; eventsBox.replaceChildren(); } }
+      } catch (ex) { box.className = ""; box.replaceChildren(); fail(ex); }
+    };
+
+    wrap.append(
+      el("div", { class: "rl-controls" }, [
+        el("span", { class: "form-label" }, "Suppliers"),
+        el("span", { class: "spacer" }),
+        actionBtn("New supplier", "plus", { primary: true, onClick: () => supplierFormModal(null, reload) }),
+      ]),
+      err,
+      box,
+      eventsBox,
+    );
+    await reload();
+    return wrap;
+  }
+
+  // New / Edit supplier — one row: Name · Contact name · Contact email · Save.
+  function supplierFormModal(supplier, onDone) {
+    const token = API.getToken();
+    const err = supplierErrLine();
+    const name = el("input", { class: "up-text", type: "text", value: supplier?.name || "", style: "min-width:200px" });
+    const contactName = el("input", { class: "up-text", type: "text", value: supplier?.contact_name || "", style: "min-width:180px" });
+    const contactEmail = el("input", { class: "up-text", type: "email", value: supplier?.contact_email || "", style: "min-width:220px" });
+    const status = supplier ? el("select", { class: "up-text" }, ["active", "inactive"].map((v) => el("option", { value: v, selected: (supplier.status || "active") === v ? "selected" : null }, v === "active" ? "Active" : "Inactive"))) : null;
+    const box = el("div");
+    const close = openModal(supplier ? "Edit supplier" : "New supplier", box);
+    const save = actionBtn("Save", "edit", { primary: true, onClick: async () => {
+      err.textContent = "";
+      const n = name.value.trim();
+      if (!n) { err.textContent = "Name is required."; name.focus(); return; }
+      save.disabled = true;
+      try {
+        const body = { name: n, contact_name: contactName.value.trim() || null, contact_email: contactEmail.value.trim() || null };
+        if (supplier) { body.id = supplier.id; body.status = status.value; }
+        await API.post(token, "saveSupplier", body);
+        close();
+        if (onDone) onDone();
+      } catch (ex) { save.disabled = false; err.textContent = ex.message; }
+    } });
+    const field = (label, input) => el("div", { class: "form-row" }, [el("span", { class: "form-label" }, label), input]);
+    box.append(
+      el("div", { style: "display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap" }, [
+        field("Name", name), field("Contact name", contactName), field("Contact email", contactEmail),
+        status ? field("Status", status) : null, save,
+      ]),
+      err,
+    );
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
+    contactEmail.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
+    setTimeout(() => name.focus(), 0);
+  }
+
+  // Parts a supplier may see — the full set is sent on Save (setSupplierParts
+  // replaces the assignment). "Assigned" = drawings access; CAD is the second
+  // gate and only means something once the part is assigned.
+  function supplierPartsModal(supplier, onDone) {
+    const token = API.getToken();
+    const box = el("div", { style: "display:flex;flex-direction:column;min-height:0" });
+    const close = openModal(`Parts · ${supplier.name}`, box);
+    box.replaceChildren(el("div", { class: "loading" }, "Loading parts…"));
+    const SUPPLIER_PART_TYPES = new Set(["part", "raw_material", "sub_assembly", "finished_good", "spare_part"]);
+    Promise.all([
+      API.post(token, "listComponents", {}),
+      API.post(token, "getSupplier", { supplier_id: supplier.id }),
+      API.post(token, "listDrawings", {}).catch(() => ({ drawings: [] })),
+      API.post(token, "listCadModels", {}).catch(() => ({ cad_models: [] })),
+    ]).then(([c, g, dr, cm]) => {
+      const assigned = new Map((g.parts || []).map((p) => [p.component_id, p]));
+      // Released drawing issues and released CAD letter per component, so every
+      // row shows them — not only the parts already assigned.
+      const releasedDrawings = new Map();
+      for (const d of dr.drawings || []) {
+        if (!d.owner_component_id || !d.released_revision) continue;
+        releasedDrawings.set(d.owner_component_id, (releasedDrawings.get(d.owner_component_id) || 0) + 1);
+      }
+      const releasedCad = new Map();
+      for (const m of cm.cad_models || []) {
+        if (m.component_id && m.released_revision) releasedCad.set(m.component_id, m.released_revision);
+      }
+      const parts = (c.components || [])
+        .filter((p) => SUPPLIER_PART_TYPES.has(p.type) && p.lifecycle_status !== "replaced" && p.lifecycle_status !== "inactive")
+        .sort((a, b) => (a.part_number || "").localeCompare(b.part_number || "") || (a.name || "").localeCompare(b.name || ""));
+      // state: component_id -> { on, cad }
+      const state = new Map(parts.map((p) => { const a = assigned.get(p.id); return [p.id, { on: !!a, cad: !!(a && a.cad) }]; }));
+      const err = supplierErrLine();
+      const search = el("input", { class: "up-text", type: "search", placeholder: "Search parts…", style: "width:100%" });
+      const count = el("span", { class: "muted", style: "font-size:0.8125rem;white-space:nowrap" }, "");
+      const list = el("div", { style: "max-height:min(56vh,640px);overflow-y:auto;border:1px solid var(--border);border-radius:6px" });
+      const updateCount = () => { const n = [...state.values()].filter((v) => v.on).length; count.textContent = `${n} assigned`; };
+      const paint = () => {
+        const q = search.value.trim().toLowerCase();
+        const shown = parts.filter((p) => !q || `${p.part_number || ""} ${p.name || ""}`.toLowerCase().includes(q));
+        const rows = shown.map((p) => {
+          const st = state.get(p.id);
+          const nDwg = releasedDrawings.get(p.id) || 0;
+          const cadRev = releasedCad.get(p.id) || null;
+          const onBox = el("input", { type: "checkbox", checked: st.on, "aria-label": `Assign ${p.part_number || p.name}` });
+          const cadBox = el("input", { type: "checkbox", checked: st.cad, disabled: !st.on, "aria-label": `CAD for ${p.part_number || p.name}` });
+          onBox.addEventListener("change", () => { st.on = onBox.checked; if (!st.on) { st.cad = false; cadBox.checked = false; } cadBox.disabled = !st.on; updateCount(); });
+          cadBox.addEventListener("change", () => { st.cad = cadBox.checked; });
+          return el("tr", {}, [
+            el("td", { style: "width:2rem" }, onBox),
+            el("td", { style: "white-space:nowrap" }, monoCell(p.part_number)),
+            el("td", {}, p.name || ""),
+            el("td", { style: "white-space:nowrap" }, nDwg ? `${nDwg} released` : el("span", { class: "muted" }, "—")),
+            el("td", { style: "white-space:nowrap" }, cadRev ? `Rev ${cadRev}` : el("span", { class: "muted" }, "—")),
+            el("td", { style: "width:2rem" }, cadBox),
+          ]);
+        });
+        list.replaceChildren(el("table", { class: "data-table" }, [
+          el("thead", {}, el("tr", {}, ["", "Part no.", "Part", "Drawings", "CAD rev.", "CAD"].map((h) => el("th", {}, h)))),
+          el("tbody", {}, rows.length ? rows : el("tr", {}, el("td", { colspan: "6", class: "muted" }, "No parts match."))),
+        ]));
+      };
+      search.oninput = paint;
+      const save = actionBtn("Save", "edit", { primary: true, onClick: async () => {
+        err.textContent = ""; save.disabled = true;
+        try {
+          const full = [...state.entries()].filter(([, v]) => v.on).map(([component_id, v]) => ({ component_id, drawings: true, cad: v.cad }));
+          await API.post(token, "setSupplierParts", { supplier_id: supplier.id, parts: full });
+          close();
+          if (onDone) onDone();
+        } catch (ex) { save.disabled = false; err.textContent = ex.message; }
+      } });
+      box.replaceChildren(
+        el("div", { style: "display:flex;gap:0.6rem;align-items:center;margin-bottom:0.5rem" }, [el("span", { class: "form-label" }, "Search"), search, count]),
+        list,
+        err,
+        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.9rem" }, [
+          el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Cancel"), save,
+        ]),
+      );
+      paint(); updateCount();
+      setTimeout(() => search.focus(), 0);
+    }).catch((ex) => box.replaceChildren(el("div", { class: "up-status err", style: "margin:0" }, ex.message)));
+  }
+
+  // The supplier's user accounts — Remove per row, one-row Add form, and the
+  // set-password link with a copy button when mail did not go out.
+  function supplierUsersModal(supplier, onDone) {
+    const token = API.getToken();
+    const box = el("div");
+    const close = openModal(`Users · ${supplier.name}`, box);
+    const err = supplierErrLine();
+    const listBox = el("div", { class: "loading" }, "Loading users…");
+    const linkBox = el("div");
+    const changed = () => { if (onDone) onDone(); };
+
+    const load = async () => {
+      try {
+        const r = await API.post(token, "getSupplier", { supplier_id: supplier.id });
+        const users = r.users || [];
+        listBox.className = "";
+        listBox.replaceChildren(users.length
+          ? el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
+              el("thead", {}, el("tr", {}, ["Name", "Email", "Status", "Verified", ""].map((h) => el("th", {}, h)))),
+              el("tbody", {}, users.map((u) => el("tr", {}, [
+                el("td", {}, u.name || "—"),
+                el("td", {}, u.email),
+                el("td", {}, el("span", { class: "rl-status " + (u.status === "approved" ? "rl-s-accepted" : u.status === "disabled" ? "rl-s-suspended" : "rl-s-proposed") }, u.status || "—")),
+                el("td", {}, u.email_verified ? "Yes" : "No"),
+                el("td", { style: "text-align:right" }, el("button", { class: "btn btn-xs doc-del", type: "button", onclick: async () => {
+                  err.textContent = "";
+                  try { await API.post(token, "removeSupplierUser", { user_id: u.id }); changed(); await load(); }
+                  catch (ex) { err.textContent = ex.message; }
+                } }, "Remove")),
+              ]))),
+            ]))
+          : el("div", { class: "empty" }, "No users yet."));
+      } catch (ex) { listBox.className = ""; listBox.replaceChildren(); err.textContent = ex.message; }
+    };
+
+    const email = el("input", { class: "up-text", type: "email", placeholder: "name@supplier.com", style: "min-width:240px" });
+    const name = el("input", { class: "up-text", type: "text", style: "min-width:200px" });
+    const add = actionBtn("Add", "plus", { primary: true, onClick: async () => {
+      err.textContent = ""; linkBox.replaceChildren();
+      const e = email.value.trim(), n = name.value.trim();
+      if (!e) { err.textContent = "Email is required."; email.focus(); return; }
+      if (!n) { err.textContent = "Name is required."; name.focus(); return; }
+      add.disabled = true;
+      try {
+        const r = await API.post(token, "addSupplierUser", { supplier_id: supplier.id, email: e, name: n });
+        changed();
+        email.value = ""; name.value = "";
+        if (r.set_password_url && !r.emailed) {
+          const urlInput = el("input", { class: "up-text", type: "text", readonly: true, value: r.set_password_url, style: "flex:1;min-width:260px;font-family:var(--mono, monospace);font-size:0.8125rem" });
+          const copy = el("button", { class: "btn btn-xs", type: "button" }, "Copy");
+          copy.addEventListener("click", async () => {
+            try { await navigator.clipboard.writeText(r.set_password_url); copy.textContent = "Copied ✓"; setTimeout(() => { copy.textContent = "Copy"; }, 1500); }
+            catch { urlInput.select(); }
+          });
+          linkBox.replaceChildren(el("div", { class: "form-row", style: "margin-top:0.6rem" }, [
+            el("span", { class: "form-label" }, `Set-password link · ${e}`),
+            el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [urlInput, copy]),
+          ]));
+        } else if (r.emailed) {
+          linkBox.replaceChildren(el("div", { class: "up-status ok", style: "margin:0.4rem 0 0" }, `Set-password email sent to ${e}.`));
+        }
+        await load();
+      } catch (ex) { err.textContent = ex.message; }
+      add.disabled = false;
+    } });
+    const field = (label, input) => el("div", { class: "form-row" }, [el("span", { class: "form-label" }, label), input]);
+    box.append(
+      listBox,
+      el("div", { style: "display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;margin-top:0.9rem" }, [field("Email", email), field("Name", name), add]),
+      linkBox,
+      err,
+      el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.9rem" }, el("button", { class: "btn btn-sm", type: "button", onclick: close }, "Done")),
+    );
+    load();
   }
 
   const FEATURE_LABELS = { core: "Core", deviation: "Deviation scan", level2: "Clauses & DPP", links: "Requirement links", classification: "Classification", cellar: "Directive analyser" };
@@ -14752,8 +15085,6 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const kids = [];
     if (s.admin) {
       kids.push(el("span", { class: "superadmin-badge", title: s.urole ? "Signed in as an administrator" : "Signed in with the shared super-admin password" }, s.urole ? "● Admin" : "● Super admin"));
-      // Supplier view is an admin/super-admin capability (preview the supplier portal).
-      kids.push(el("a", { class: "btn btn-sm btn-admin-link", href: "./supplier.html", title: "Open the supplier portal (admin)" }, "Supplier view →"));
     }
     kids.push(el("button", { class: "btn btn-sm", type: "button", onclick: () => { API.clearToken(); location.reload(); } }, "Sign out"));
     nav.replaceChildren(...kids);
@@ -14765,6 +15096,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const gate = $("#gate"), appEl = $("#portal-app");
     const reveal = () => {
       const s = API.session() || {};
+      if (s.role === "supplier") { window.location.replace("./supplier.html"); return; }
       applyAccess(s.role, s.admin);
       gate.hidden = true; appEl.hidden = false;
       renderSessionActions();
@@ -14834,7 +15166,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     CFG, $, $$, el, portalHash, setupGate, loadSteps, norm,
     summaryTiles, phaseOverview, phaseToolbar, blockersPanel, phaseSections, stepsTable, documentLibrary,
     sourceNotice, wireTabs, statusBadge,
-    apiEnabled, setupApiGate, renderApi,
+    apiEnabled, setupApiGate, renderApi, openCadViewer,
   };
 
   /* ---------------- full-portal page init ---------------- */

@@ -214,11 +214,15 @@ test("drawings are no longer offered as a component-document category", () => {
 });
 
 test("the drawings tab exists on both the portal and the supplier page", () => {
-  for (const page of ["index.html", "supplier.html"]) {
+  for (const page of ["index.html"]) {
     const src = read(page);
     assert.ok(src.includes('id="tab-drawings"'), `${page} has no Drawings tab`);
     assert.ok(src.includes('id="drawings-panel"'), `${page} has no Drawings panel`);
   }
+  // The supplier page has its own Parts panel (docs/SUPPLIER_PORTAL.md) and no Drawings tab.
+  const supplier = read("supplier.html");
+  assert.ok(supplier.includes('id="parts-panel"'), "supplier.html has no Parts panel");
+  assert.ok(!supplier.includes('id="tab-drawings"'), "supplier.html must not carry the Drawings tab");
 });
 
 // --- PROP-046: node-first creation, system-owned identity -------------------

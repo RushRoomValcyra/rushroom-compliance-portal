@@ -23,7 +23,7 @@
         <h1>Engineering &amp; Compliance Platform</h1>
         <p class="tagline">Set your password</p>
       </div>
-      <nav aria-label="Views"><a class="btn btn-sm" href="./index.html">Back to portal →</a></nav>
+      <nav aria-label="Views"><a id="r-back" class="btn btn-sm" href="./index.html">Back to portal →</a></nav>
     </div>
   </header>
 
@@ -59,13 +59,17 @@
       var title = document.getElementById("r-title");
       var actions = document.getElementById("r-actions");
       var submit = document.getElementById("r-submit");
-      var token = new URLSearchParams(location.search).get("token");
+      var params = new URLSearchParams(location.search);
+      var token = params.get("token");
+      // Supplier users were sent here with &to=supplier: every way back leads to supplier.html.
+      var home = params.get("to") === "supplier" ? "./supplier.html" : "./index.html";
+      document.getElementById("r-back").setAttribute("href", home);
 
       function fail(text) {
         form.hidden = true;
         title.textContent = "Link problem";
         msg.className = "form-error"; msg.textContent = text;
-        actions.innerHTML = '<a class="btn btn-primary" href="./index.html">Go to the portal</a>';
+        actions.innerHTML = '<a class="btn btn-primary" href="' + home + '">Go to the portal</a>';
       }
       if (!token) { fail("This link is missing its token."); return; }
       if (!window.PortalAPI || !window.PortalAPI.configured()) { fail("The portal backend isn't configured."); return; }
@@ -80,7 +84,7 @@
             form.hidden = true;
             title.textContent = "Password set ✓";
             msg.className = "ok"; msg.textContent = "Your password is set and your email is confirmed. You can now sign in.";
-            actions.innerHTML = '<a class="btn btn-primary" href="./index.html">Go to sign in</a>';
+            actions.innerHTML = '<a class="btn btn-primary" href="' + home + '">Go to sign in</a>';
           })
           .catch(function (ex) { submit.disabled = false; err.textContent = ex.message || "This link is invalid or has expired."; });
       });

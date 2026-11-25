@@ -150,6 +150,17 @@ serve({
   handle: async (ctx: Ctx): Promise<Response | null> => {
     const { body, action, session, role, organizationId, tdb, timer } = ctx;
 
+    // Supplier tier: deny by default (docs/SUPPLIER_PORTAL.md §6), as in
+    // portal-api. A supplier upload may be auto-described, nothing else; the
+    // admin's preview (imp: true) gets no AI action at all.
+    // No AI action serves a supplier today: suggestFileMetadata reads any
+    // storage path it is handed, so it stays Rushroom-only until it scopes
+    // the path to the caller's own uploads.
+    const SUPPLIER_ACTIONS = new Set<string>([]);
+    if (role === "supplier" && (session?.imp === true || !SUPPLIER_ACTIONS.has(action))) {
+      return json({ error: "Not available to supplier accounts" }, 403);
+    }
+
     // Per-request AI usage ledger, mirroring portal-api's meterAi.
     const meterAi = async (aj: any) => {
       try {

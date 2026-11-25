@@ -111,7 +111,7 @@ test("getDrawing emits source_cad per revision, by file id then by sha256", () =
   // Unresolved → null, never a half object.
   assert.ok(/if \(!f\) return null;/.test(block));
   // The payload shape is unchanged.
-  assert.ok(block.includes("const payload: any = { drawing, revisions: shownRevisions, components };"));
+  assert.ok(block.includes("const payload: any = { drawing: drawingOut, revisions: shownRevisions, components };"));
 });
 
 test("listCadModels answers the §10 fields on the deployed function", async (t) => {

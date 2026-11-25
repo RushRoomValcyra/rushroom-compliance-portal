@@ -5,8 +5,8 @@
   <!-- The portal moved to Netlify (2026-10-27): old github.io links, bookmarks and emails forward there. -->
   <script>if (location.hostname.endsWith("github.io")) location.replace("https://engineeringcompliance.netlify.app" + location.pathname.replace(/^\/rushroom-compliance-portal/, "") + location.search + location.hash);</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Supplier View · Rushroom Engineering &amp; Compliance Platform</title>
-  <meta name="description" content="Supplier view: supplier documents and the status of supplier compliance actions for Rushroom AB." />
+  <title>Supplier portal · Rushroom Engineering &amp; Compliance Platform</title>
+  <meta name="description" content="Supplier portal: released drawings and CAD for the parts a supplier makes for Rushroom AB, supplier documents and standards." />
   <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=67" />
   <meta name="theme-color" content="#12161e" media="(prefers-color-scheme: dark)" />
   <meta name="theme-color" content="#2fa564" media="(prefers-color-scheme: light)" />
@@ -14,6 +14,8 @@
     (function () { try { var t = localStorage.getItem("rushroom_theme"); if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; document.documentElement.setAttribute("data-theme", t); } catch (e) {} })();
   </script>
   <link rel="stylesheet" href="./assets/styles.css?v=310" />
+  <!-- Online3DViewer: in-browser STEP + GLB preview (CAD Models tab) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/online-3d-viewer@0.18.0/build/engine/o3dv.min.css" />
 </head>
 <body data-page="supplier">
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -27,16 +29,14 @@
           </svg>
         </span>
         <div class="brand-text">
-          <span class="badge">Rushroom AB · Suppliers</span>
-          <h1>Supplier View</h1>
-          <p class="tagline">Your documents and the status of supplier compliance actions</p>
+          <span class="badge">Rushroom AB · Supplier portal</span>
+          <h1 id="supplier-name">Supplier portal</h1>
+          <p class="tagline" id="supplier-user"></p>
         </div>
       </div>
       <div class="header-tools">
         <button id="theme-toggle" class="icon-btn" type="button" aria-label="Switch theme"></button>
-        <nav aria-label="Views">
-          <a class="btn btn-sm" href="./index.html">Full portal →</a>
-        </nav>
+        <nav aria-label="Session" id="session-actions" class="session-actions"></nav>
       </div>
     </div>
   </header>
@@ -44,65 +44,69 @@
   <main id="main" class="wrap">
     <section id="gate" class="gate" aria-labelledby="gate-title">
       <div class="gate-card">
-        <h2 id="gate-title">Restricted access</h2>
-        <p>Enter the shared password provided by Rushroom to continue.</p>
+        <h2 id="gate-title" style="margin-bottom:1.25rem">Supplier sign-in</h2>
         <form id="gate-form" novalidate>
           <div class="field">
-            <label for="portal-password">Password</label>
-            <input id="portal-password" name="password" type="password"
-                   autocomplete="current-password" aria-invalid="false"
-                   aria-describedby="gate-error" required />
-            <p id="gate-error" class="form-error" role="alert" aria-live="assertive"></p>
+            <label for="login-email">Email</label>
+            <input id="login-email" name="email" type="email" autocomplete="username"
+                   aria-invalid="false" required />
           </div>
-          <button class="btn btn-primary" type="submit">Unlock</button>
+          <div class="field">
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password"
+                   aria-invalid="false" aria-describedby="gate-error" required />
+          </div>
+          <div class="field" id="login-mfa-field" hidden>
+            <label for="login-mfa">Authenticator code</label>
+            <input id="login-mfa" name="mfa" type="text" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="6" aria-invalid="false" />
+          </div>
+          <p id="gate-error" class="form-error" role="alert" aria-live="assertive"></p>
+          <button class="btn btn-primary" type="submit">Sign in</button>
         </form>
+        <div class="gate-links">
+          <button class="linklike" id="forgot-password" type="button">Forgot password?</button>
+          <span id="gate-note" class="muted" style="margin-left:0.6rem"></span>
+        </div>
       </div>
     </section>
 
     <div id="portal-app" hidden>
       <div class="tabs" id="tablist" role="tablist" aria-label="Supplier sections">
-        <button class="tab" id="tab-documents" role="tab" aria-selected="true"
-                aria-controls="documents-panel" tabindex="0">Supplier Documents</button>
-        <button class="tab" id="tab-drawings" role="tab" aria-selected="false"
-                aria-controls="drawings-panel" tabindex="-1">Drawings</button>
+        <button class="tab" id="tab-parts" role="tab" aria-selected="true"
+                aria-controls="parts-panel" tabindex="0">Parts &amp; files</button>
+        <button class="tab" id="tab-documents" role="tab" aria-selected="false"
+                aria-controls="documents-panel" tabindex="-1">Supplier Documents</button>
         <button class="tab" id="tab-standards" role="tab" aria-selected="false"
                 aria-controls="standards-panel" tabindex="-1">Standards &amp; Regulations</button>
-        <button class="tab" id="tab-bom" role="tab" aria-selected="false"
-                aria-controls="bom-panel" tabindex="-1">Product BOM</button>
       </div>
 
       <section id="steps-panel" hidden aria-hidden="true"></section>
 
-      <section id="documents-panel" role="tabpanel" aria-labelledby="tab-documents" tabindex="0">
-        <div class="loading">Loading documents…</div>
+      <section id="parts-panel" role="tabpanel" aria-labelledby="tab-parts" tabindex="0">
+        <div class="loading">Loading parts…</div>
       </section>
 
-      <section id="drawings-panel" role="tabpanel" aria-labelledby="tab-drawings" tabindex="0" hidden>
-        <div class="loading">Loading drawings…</div>
+      <section id="documents-panel" role="tabpanel" aria-labelledby="tab-documents" tabindex="0" hidden>
+        <div class="loading">Loading documents…</div>
       </section>
 
       <section id="standards-panel" role="tabpanel" aria-labelledby="tab-standards" tabindex="0" hidden>
         <div class="loading">Loading standards…</div>
       </section>
-
-      <section id="bom-panel" role="tabpanel" aria-labelledby="tab-bom" tabindex="0" hidden>
-        <div class="loading">Loading product BOM…</div>
-      </section>
     </div>
   </main>
 
   <footer class="site-footer">
-    <div class="wrap">
-      Rushroom AB supplier portal · Not legal advice.
-      Document access is governed by Google Drive sharing.
-    </div>
+    <div class="wrap">Rushroom AB · Supplier portal</div>
   </footer>
 
   <script src="./assets/config.js?v=310"></script>
   <script src="./assets/api.js?v=432"></script>
   <script src="./assets/viewer.js?v=310"></script>
   <script src="./assets/bom-structure.js?v=310"></script>
-  <script src="./assets/app.js?v=459"></script>
-  <script src="./assets/supplier.js?v=310"></script>
+  <script src="https://cdn.jsdelivr.net/npm/online-3d-viewer@0.18.0/build/engine/o3dv.min.js"></script>
+  <script src="./assets/app.js?v=460"></script>
+  <script src="./assets/supplier.js?v=460"></script>
 </body>
 </html>

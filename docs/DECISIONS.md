@@ -1541,3 +1541,17 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `supabase/migrations/0063_release_legacy_columns.sql`, `supabase/migrations/0064_drop_legacy_columns.sql`, `supabase/functions/portal-api/index.ts`, `supabase/functions/_shared/test-agent-core.mjs`, `tests/*.test.mjs`, `docs/STATUS_MODEL.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`.
 
 ---
+
+---
+
+## 2026-11-25 — A supplier is a company with personal accounts, and sees exactly the parts assigned to it
+
+**Decision:** Suppliers are companies (`suppliers`) with personal user accounts (`users.supplier_id`); access is assigned per part (`supplier_components`, drawings on by default, CAD opt-in); every file a supplier fetches is logged (`supplier_file_events`); the shared supplier password is retired; an admin can view the portal as any supplier through a 30-minute impersonation session; and the supplier tier is deny-by-default in portal-api: an explicit allowlist of actions, everything else 403. The supplier page becomes one Parts & files table of released drawing issues and, where allowed, the released STEP with the same 3D preview the engineer has. First supplier: Postęp sp. z o.o., all 51 parts, CAD on.
+
+**Why:** Until today a supplier was a shared password and one global per-drawing flag: every supplier saw every supplier-visible drawing of every part, nothing recorded what was fetched, the admin preview showed the admin's data in supplier clothing, and a supplier token could reach a number of ungated actions. A manufacturing partner must get exactly the files Rushroom intends, provably, with a trail; and the engineer must be able to see what the partner sees.
+
+**Consequences:** Migration 0065; `supplierHome`, `supplierFileUrl`, scoped `listDrawings` / `getDrawing` / `drawingFileUrl` / `listSupplierComponents` / `getBom`; admin actions `listSuppliers`, `saveSupplier`, `setSupplierParts`, `getSupplier`, `addSupplierUser`, `removeSupplierUser`, `adminViewAsSupplier`; `login` refuses the supplier role; `loginUser` carries `sid`. The `is_supplier_visible` flag stays as a second gate. Design: `docs/SUPPLIER_PORTAL.md`.
+
+**Files changed:** `docs/SUPPLIER_PORTAL.md`, `supabase/migrations/0065_suppliers.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/portal-api/index.ts`, `supabase/functions/portal-ai/index.ts`, `supplier.html`, `assets/supplier.js`, `assets/app.js`, `index.html`, `tests/supplier-portal.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
+
+---

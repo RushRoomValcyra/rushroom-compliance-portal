@@ -36,18 +36,13 @@ const file = (id, fusion_version, sha256, file_name = `${DOC}.step`) =>
   ({ id, format: "step", file_name, fusion_version, sha256 });
 
 /** A snapshot of the part. revisions: [{ id, revision, status, files }]. */
-function snap({ revisions, history_count = 12, drawings = [], fusion_document_name = DOC, model_status, at = T0 }) {
-  const s = buildSnapshot({
+function snap({ revisions, history_count = 12, drawings = [], fusion_document_name = DOC, at = T0 }) {
+  return buildSnapshot({
     at,
     component: { part_number: PART, name: "Drawer Front M" },
-    model: { fusion_document_id: "urn:adsk.wipprod:dm.lineage:x", fusion_document_name, status: model_status ?? null },
+    model: { fusion_document_id: "urn:adsk.wipprod:dm.lineage:x", fusion_document_name },
     revisions, drawings, historyCount: history_count, warnings: [],
   });
-  if (model_status === undefined) {
-    // Default to a coherent dual-write: the model reports its current revision.
-    s.model_status = s.current ? s.current.status : "draft";
-  }
-  return s;
 }
 
 const REL_A = { id: "rev-a", revision: "A", status: "released", files: [file("f-a", 5, "aaaa")] };
@@ -151,7 +146,9 @@ test("the snapshot carries what verifyRun needs", () => {
   assert.deepEqual(s.current, { id: "rev-b", revision: "B", status: "draft", fusion_version: 7 });
   assert.deepEqual(s.released, { id: "rev-a", revision: "A", status: "released", fusion_version: 5 });
   assert.equal(s.history_count, 12);
-  assert.equal(s.model_status, "draft");
+  // One status column since 0064: the snapshot carries no model-level copy to
+  // compare against, so there is no model_status.
+  assert.ok(!("model_status" in s), "the snapshot still carries a model_status");
   assert.deepEqual(s.revisions.map((r) => r.revision), ["A", "B"]);
   for (const r of s.revisions) for (const f of r.files) {
     for (const k of ["id", "format", "file_name", "fusion_version", "sha256"]) assert.ok(k in f, `file lacks ${k}`);
@@ -326,11 +323,14 @@ test("status fails when a released revision changed", () => {
   assert.match(v.byKey.status.detail, /expected draft/);
 });
 
-test("status fails when the dual-written model status disagrees with the current revision", () => {
+test("a stray model_status on an old snapshot is ignored: there is one status column now", () => {
+  // Runs recorded before 0064 carry model_status in their snapshots; verifyRun
+  // must neither compare it nor fail on it.
   const after = { ...afterReplace, model_status: "released" };
   const v = verdict({ before: beforeReplace, after, expected: expectedOutcome(beforeReplace), send: sendReplace });
-  assert.equal(v.byKey.status.status, "failed");
-  assert.match(v.byKey.status.detail, /cad_models\.status "released" disagrees/);
+  assert.equal(v.byKey.status.status, "passed", v.byKey.status.detail);
+  assert.ok(!/model_status|cad_models\.status/.test(read("supabase/functions/_shared/test-agent-core.mjs").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")),
+    "test-agent-core still reads the dual-written model status");
 });
 
 test("supplier fails when the supplier view changed", () => {

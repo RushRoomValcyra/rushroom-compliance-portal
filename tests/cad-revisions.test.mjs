@@ -18,7 +18,7 @@ const read = (p) => readFileSync(join(root, p), "utf8");
 const notDeployed = (r) => /unknown action/i.test(r.json?.error ?? "");
 
 const WRITES = ["linkCadDocument", "cadUploadUrl", "registerCadRevision",
-                "releaseCadRevision", "setCadRevisionStatus", "releaseCadModel"];
+                "releaseCadRevision", "setCadRevisionStatus"];
 const READS = ["getComponentCad", "listCadModels"];
 
 for (const action of [...WRITES, ...READS]) {
@@ -58,7 +58,7 @@ test("listCadModels reports the derived facts per model", async (t) => {
     for (const key of ["current_revision", "status", "released_revision", "formats", "preview_file", "revision_count"]) {
       assert.ok(key in m, `model ${m.id} lacks ${key}`);
     }
-    // The enum keeps five words until 0063; a live row should carry one of the three lifecycle states.
+    // Three lifecycle states; 0064 makes the enum exactly these.
     assert.ok(["draft", "released", "superseded"].includes(m.status), `model ${m.id} carries a retired status ${m.status}`);
     // The object only reports: no revisions means draft and no letters.
     if (m.revision_count === 0) {
@@ -161,26 +161,58 @@ test("portal-api derives status from the shared status core", () => {
   // The portal assigns the letter (next letter per send); the RevX label in a
   // Fusion document name is metadata and must never decide a letter.
   assert.ok(!/\bparseRevisionLabel\(/.test(src), "portal-api derives a letter from the document label");
-  // Every status / transition action is implemented, aliases included.
-  for (const a of ["registerCadRevision", "releaseCadRevision", "setCadRevisionStatus", "releaseCadModel",
-                   "getComponentCad", "listCadModels", "setDrawingRevisionStatus", "setDrawingStatus"]) {
+  // Every status / transition action is implemented on the revision …
+  for (const a of ["registerCadRevision", "releaseCadRevision", "setCadRevisionStatus",
+                   "getComponentCad", "listCadModels", "setDrawingRevisionStatus"]) {
     assert.ok(src.includes(`action === "${a}"`), `portal-api does not implement ${a}`);
+  }
+  // … and the object-level aliases are gone (0063/0064 clean-up): an unknown
+  // action answers "unknown action", so nothing else is needed for them.
+  for (const a of ["releaseCadModel", "setDrawingStatus"]) {
+    assert.ok(!src.includes(`action === "${a}"`), `portal-api still dispatches the alias ${a}`);
   }
 });
 
 test("the API no longer reads the object-level status columns", () => {
   const src = read("supabase/functions/portal-api/index.ts")
     .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  // Reads of cad_models must not ask for the columns 0063 drops …
+  // The named column lists that replaced select("*") (0063/0064 clean-up).
+  const constOf = (name) => {
+    const m = src.match(new RegExp(`const ${name} =\\s*((?:"[^"]*"\\s*\\+?\\s*)+);`));
+    assert.ok(m, `${name} is not defined`);
+    return m[1].replace(/"\s*\+\s*"/g, "").replace(/"/g, "").split(",").map((c) => c.trim());
+  };
+  const cadModelCols = constOf("CAD_MODEL_FIELDS");
+  assert.ok(!cadModelCols.includes("status") && !cadModelCols.includes("current_revision"),
+    "CAD_MODEL_FIELDS still names the dropped status/current_revision");
+  assert.ok(["id", "component_id", "fusion_document_id", "fusion_document_name", "current_revision_id"].every((c) => cadModelCols.includes(c)),
+    "CAD_MODEL_FIELDS lacks a column the code reads");
+  const drawingCols = constOf("DRAWING_FIELDS");
+  for (const c of ["status", "projection_angle", "sheet_size", "scale"]) {
+    assert.ok(!drawingCols.includes(c), `DRAWING_FIELDS still names the dropped ${c}`);
+  }
+  // No read of either table asks for everything any more: "*" would carry a
+  // dropped column until 0064 and hide what an action answers with.
+  assert.ok(!/tdb\("cad_models"\)\s*\.select\("\*"\)/.test(src), "a cad_models read still selects *");
+  assert.ok(!/tdb\("drawings"\)\s*\.select\("\*"\)/.test(src), "a drawings read still selects *");
+  // Reads of cad_models must not ask for the columns 0064 drops …
   for (const m of src.matchAll(/tdb\("cad_models"\)\s*\.select\("([^"]*)"\)/g)) {
     const cols = m[1].split(",").map((c) => c.trim());
     assert.ok(!cols.includes("status") && !cols.includes("current_revision"),
       `a cad_models read still selects the dropped status/current_revision: "${m[1]}"`);
   }
-  // … nor must drawings reads ask for status (the derived one replaces it).
-  for (const m of src.matchAll(/tdb\("drawings"\)\s*\.select\(\s*"([^"]*)"/g)) {
-    const cols = m[1].split(",").map((c) => c.trim());
-    assert.ok(!cols.includes("status"), `a drawings read still selects status: "${m[1]}"`);
+  // … nor must drawings reads ask for status or the three retired drawing
+  // fields (the derived status replaces the column; the fields are gone).
+  for (const m of src.matchAll(/tdb\("drawings"\)\s*\.select\(\s*"([^"]*)"(?:\s*\+\s*"([^"]*)")?/g)) {
+    const cols = ((m[1] || "") + (m[2] || "")).split(",").map((c) => c.trim());
+    for (const c of ["status", "projection_angle", "sheet_size", "scale"]) {
+      assert.ok(!cols.includes(c), `a drawings read still selects ${c}: "${m[1]}"`);
+    }
+  }
+  // … and no write to drawings or cad_models names the dropped columns.
+  for (const m of src.matchAll(/tdb\("(?:drawings|cad_models)"\)\s*\.(?:update|insert)\(\{([^}]*)\}/g)) {
+    assert.ok(!/(?:^|[\s,{])status\s*:/.test(m[1]), `a drawings/cad_models write still sets status: {${m[1].trim()}}`);
+    assert.ok(!/(?:^|[\s,{])current_revision\s*:/.test(m[1]), `a cad_models write still sets current_revision: {${m[1].trim()}}`);
   }
   // … nor cad_model_files its letter or release stamp.
   for (const m of src.matchAll(/tdb\("cad_model_files"\)\s*\.select\("([^"]*)"\)/g)) {
@@ -205,14 +237,30 @@ test("release is one rule on both sides and only the current revision qualifies"
   assert.ok(/releaseRevisionRow\(tdb, session, "cad_model_revisions", "cad"/.test(src), "CAD bypasses the release helper");
 });
 
-test("the dual-write keeps the old columns alive until 0063", () => {
-  const src = read("supabase/functions/portal-api/index.ts");
+test("nothing writes or reads the legacy columns (0063/0064 clean-up)", () => {
+  const src = read("supabase/functions/portal-api/index.ts")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  // syncCadModel keeps only the pointer.
   const sync = src.slice(src.indexOf("async function syncCadModel("), src.indexOf("function transitionStamp("));
-  assert.ok(/status: derived\.status/.test(sync) && /current_revision: derived\.current\?\.revision/.test(sync),
-    "syncCadModel no longer mirrors cad_models.status / current_revision");
+  assert.ok(/tdb\("cad_models"\)\.update\(\{ current_revision_id: derived\.current\?\.id \?\? null \}\)/.test(sync),
+    "syncCadModel does not write current_revision_id alone");
+  assert.ok(!/status:/.test(sync) && !/current_revision:/.test(sync), "syncCadModel still mirrors cad_models.status / current_revision");
+  // syncDrawingStatus keeps only the pointer.
   const dsync = src.slice(src.indexOf("async function syncDrawingStatus("), src.indexOf("async function loadCadRevisions("));
-  assert.ok(/status: derived\.status/.test(dsync), "syncDrawingStatus no longer mirrors drawings.status");
-  assert.ok(/released_at: stamp\.released_at/.test(src), "a CAD release no longer stamps released_at on the files");
+  assert.ok(/tdb\("drawings"\)\.update\(\{ current_revision_id: derived\.current\.id \}\)/.test(dsync),
+    "syncDrawingStatus does not write current_revision_id alone");
+  assert.ok(!/status:/.test(dsync), "syncDrawingStatus still mirrors drawings.status");
+  // A CAD release stamps the revision only: no released_at write on the files.
+  const rel = src.slice(src.indexOf("async function releaseRevisionRow("), src.indexOf("async function writeBomHistory("));
+  assert.ok(!/tdb\("cad_model_files"\)/.test(rel), "releaseRevisionRow still touches cad_model_files");
+  assert.ok(!/tdb\("cad_model_files"\)[^;]*released_at/.test(src), "a cad_model_files write or filter still names released_at");
+  // registerCadRevision inserts the file without the letter or a release stamp.
   const reg = src.slice(src.indexOf('action === "registerCadRevision"'), src.indexOf('action === "getComponentCad"'));
-  assert.ok(/revision,\s*\/\/ dual-write/.test(reg), "registerCadRevision no longer writes cad_model_files.revision");
+  const ins = reg.slice(reg.indexOf('tdb("cad_model_files").insert({'), reg.indexOf("}).select", reg.indexOf('tdb("cad_model_files").insert({')));
+  assert.ok(ins.length > 0, "registerCadRevision has no cad_model_files insert");
+  assert.ok(!/(?:^|[\s,{])revision\s*[,:]/.test(ins), "registerCadRevision still writes cad_model_files.revision");
+  assert.ok(!/released_at/.test(ins), "registerCadRevision still writes cad_model_files.released_at");
+  // The object-level aliases do not exist.
+  assert.ok(!src.includes('action === "releaseCadModel"'), "releaseCadModel is still dispatched");
+  assert.ok(!src.includes('action === "setDrawingStatus"'), "setDrawingStatus is still dispatched");
 });

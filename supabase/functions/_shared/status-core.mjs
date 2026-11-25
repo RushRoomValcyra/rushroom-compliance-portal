@@ -15,17 +15,18 @@
  * "Fusion v12" for Fusion's own save counter (never a revision).
  */
 
-// The enum drawing_status keeps its five values until the 0063 clean-up, and
-// STATUSES keeps them so an old row carrying "checked" or "approved" still
-// renders a word. The lifecycle itself has three: draft, released, superseded
+// The three words a revision can carry: draft, released, superseded
 // (docs/STATUS_MODEL.md §5.1, changed 2026-11-25; DRAWINGS_TAB_UX.md §12).
-export const STATUSES = ["draft", "checked", "approved", "released", "superseded"];
+// Migration 0064 recreates the enum drawing_status with exactly these, so the
+// retired "checked" / "approved" are no longer values anything can store; the
+// transition table below never had an entry for them.
+export const STATUSES = ["draft", "released", "superseded"];
 
 // Hand transitions only, the same table for drawings and CAD: draft → released
 // is the one hand move. released → superseded is automatic — it happens when a
-// later revision is released — and is never offered or accepted by hand.
-// checked and approved have no entry and no exit: nothing reaches them, and a
-// row that still carries one of the words (none does today) cannot move.
+// later revision is released — and is never offered or accepted by hand. The
+// retired words checked and approved have no entry and no exit, so a word the
+// table does not know is refused like any other unknown status.
 export const TRANSITIONS = {
   drawing: { draft: ["released"], released: [], superseded: [] },
   cad:     { draft: ["released"], released: [], superseded: [] },

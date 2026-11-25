@@ -288,9 +288,10 @@ test("the render-job core is pure: no Deno, Node or network APIs", () => {
   assert.ok(!/\bDeno\b|\bprocess\.|\brequire\(|\bfetch\(|from "node:/.test(src), "render-job-core reaches outside pure JS");
 });
 
-test("the STATUS_MODEL drop migration is 0063 now that 0062 is the render jobs", () => {
+test("the STATUS_MODEL clean-up is 0063 + 0064 now that 0062 is the render jobs", () => {
   const sm = read("docs/STATUS_MODEL.md");
-  assert.ok(/\*\*0063 — drop\*\*/.test(sm), "STATUS_MODEL.md still numbers the drop migration 0062");
+  assert.ok(/\*\*0063 \+ 0064 — the clean-up, in two steps\*\*/.test(sm), "STATUS_MODEL.md does not name the two-step clean-up");
+  assert.ok(/\*\*0064 — drop\*\*/.test(sm), "STATUS_MODEL.md does not number the drop migration 0064");
   assert.ok(!/\*\*dropped\*\* \((migration )?0062/.test(sm), "STATUS_MODEL.md still says a column is dropped in 0062");
   const m60 = read("supabase/migrations/0060_revision_status.sql");
   assert.ok(!/until 0062\b/.test(m60), "0060 still says the old columns stay until 0062");

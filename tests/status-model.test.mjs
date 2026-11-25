@@ -15,13 +15,15 @@ const { STATUSES, TRANSITIONS, canTransition, compareRevision, nextRevisionLette
 // ---------------------------------------------------------------------------
 // Transition table — every from/to pair, both kinds
 // ---------------------------------------------------------------------------
-// STATUSES keeps the five enum words so an old row still renders; the lifecycle
-// (the transition table) has three states since 2026-11-25 (STATUS_MODEL §5.1,
-// DRAWINGS_TAB_UX §12).
+// STATUSES are the three lifecycle words since 2026-11-25 (STATUS_MODEL §5.1,
+// DRAWINGS_TAB_UX §12); migration 0064 makes the enum exactly these. The matrix
+// below still runs over the two retired words so they stay refused.
 const LIFECYCLE = ["draft", "released", "superseded"];
+const RETIRED = ["checked", "approved"];
+const ALL_WORDS = [...LIFECYCLE, ...RETIRED];
 
-test("STATUSES are the five enum values; the transition table has the three lifecycle states, both kinds", () => {
-  assert.deepEqual(STATUSES, ["draft", "checked", "approved", "released", "superseded"]);
+test("STATUSES are the three lifecycle words; the transition table has the same three states, both kinds", () => {
+  assert.deepEqual(STATUSES, LIFECYCLE);
   for (const kind of ["drawing", "cad"]) {
     assert.deepEqual(Object.keys(TRANSITIONS[kind]).sort(), [...LIFECYCLE].sort(), `${kind} table is the three states`);
     assert.ok(!("checked" in TRANSITIONS[kind]) && !("approved" in TRANSITIONS[kind]), `${kind} table still names a retired state`);
@@ -38,8 +40,8 @@ const ALLOWED = {
 
 for (const kind of ["drawing", "cad"]) {
   test(`${kind}: every from → to pair matches the design table`, () => {
-    for (const from of STATUSES) {
-      for (const to of STATUSES) {
+    for (const from of ALL_WORDS) {
+      for (const to of ALL_WORDS) {
         const expected = ALLOWED[kind][from].includes(to);
         assert.equal(canTransition(kind, from, to), expected, `${kind} ${from} → ${to} should be ${expected ? "allowed" : "refused"}`);
       }
@@ -69,7 +71,7 @@ test("draft → released is the one hand move, on both sides; the retired words 
 
 test("superseded is terminal; nothing moves to superseded or out of it by hand", () => {
   for (const kind of ["drawing", "cad"]) {
-    for (const s of STATUSES) {
+    for (const s of ALL_WORDS) {
       assert.equal(canTransition(kind, "superseded", s), false);
       assert.equal(canTransition(kind, s, "superseded"), false);
     }

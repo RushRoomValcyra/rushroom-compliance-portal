@@ -175,7 +175,7 @@ const revisionOut = (r) => ({
 
 /** Build a before/after snapshot from loaded rows. Pure: the caller loads.
  *  component:   { part_number, name }
- *  model:       { fusion_document_id, fusion_document_name, status } | null
+ *  model:       { fusion_document_id, fusion_document_name } | null
  *  revisions:   loadCadRevisions() output (letter-sorted, each with files[])
  *  drawings:    [{ id, drawing_number, role, is_supplier_visible, revisions }]
  *  historyCount: bom_component_history rows for the part
@@ -196,9 +196,6 @@ export function buildSnapshot({ at, component, model, revisions, drawings, histo
     current: brief(derived.current),
     released: brief(derived.released),
     revisions: revs.map(revisionOut),
-    // cad_models.status as dual-written by the API; compared with current.status
-    // in the status step. null when the model has no status column any more.
-    model_status: model && model.status != null ? model.status : null,
     history_count: Number.isFinite(Number(historyCount)) ? Number(historyCount) : 0,
     supplier_view: snapshotSupplierView({ cadRevisions: revs, drawings }),
     warnings: Array.isArray(warnings) ? warnings : [],
@@ -376,9 +373,6 @@ export function verifyRun({ before, after, expected, send, steps: reported, hist
     if (bRel !== aRel) f.push(`released revision changed: ${before.released ? "Rev " + before.released.revision : "none"} → ${after.released ? "Rev " + after.released.revision : "none"}`);
     const releasedCount = (after.revisions || []).filter((r) => r.status === "released").length;
     if (releasedCount > 1) f.push(`${releasedCount} revisions are released at once`);
-    if (after.model_status != null && after.current && after.model_status !== after.current.status) {
-      f.push(`cad_models.status "${after.model_status}" disagrees with the current revision "${after.current.status}"`);
-    }
     steps.push(result("status", f, after.current ? `Rev ${after.current.revision} ${after.current.status}` + (after.released ? ` · Rev ${after.released.revision} released` : "") : null));
   }
 

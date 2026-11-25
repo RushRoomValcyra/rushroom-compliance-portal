@@ -794,17 +794,28 @@ function nextRevisionLetter(existing: string[]): string {
 // ---------------------------------------------------------------------------
 // Status model (docs/STATUS_MODEL.md): the revision is the controlled object,
 // the drawing / CAD model only REPORTS what its revisions say. Every status an
-// object shows is derived here; nothing below reads drawings.status,
-// cad_models.status, cad_models.current_revision, cad_model_files.revision or
-// cad_model_files.released_at. Those columns are still WRITTEN (dual-write)
-// until migration 0063 drops them, so a rolled-back function keeps working.
+// object shows is derived here. The object-level columns that once carried a
+// copy — drawings.status, cad_models.status, cad_models.current_revision,
+// cad_model_files.revision, cad_model_files.released_at — and the retired
+// checked_* / approved_* stamps are gone (0063 released them, 0064 drops them):
+// nothing in this function reads or writes them, and tests/legacy-cleanup
+// guards that. The one pointer an object keeps is current_revision_id.
 // ---------------------------------------------------------------------------
 
 // storage_path is selected so the release rule can refuse an issue without a
 // file (DRAWINGS_TAB_UX §11); getDrawing strips it again before answering.
 const DRAWING_REV_FIELDS =
-  "id, drawing_id, revision, status, file_name, storage_path, notes, released_at, released_by, checked_at, checked_by, "
-  + "approved_at, approved_by, source_cad_file_id, source_sha256, supplier_revision, created_at";
+  "id, drawing_id, revision, status, file_name, storage_path, notes, released_at, released_by, "
+  + "source_cad_file_id, source_sha256, supplier_revision, created_at";
+
+// Named columns instead of select("*"), so a read never asks for a column
+// 0064 drops and what an action answers with is what it names here.
+const DRAWING_FIELDS =
+  "id, organization_id, drawing_number, title, current_revision_id, is_supplier_visible, created_at, created_by, "
+  + "owner_component_id, node_sequence, supplier_drawing_number, drawing_type, render_spec";
+const CAD_MODEL_FIELDS =
+  "id, component_id, fusion_document_id, fusion_document_name, fusion_project_id, notes, current_revision_id, "
+  + "created_at, created_by";
 
 /** Revisions of many drawings in one query, grouped and letter-sorted. */
 async function loadDrawingRevisions(tdb: any, drawingIds: string[]): Promise<Record<string, any[]>> {
@@ -818,13 +829,16 @@ async function loadDrawingRevisions(tdb: any, drawingIds: string[]): Promise<Rec
   return byDrawing;
 }
 
-/** Dual-write: drawings.status mirrors the derived status until 0063 drops it. */
+/** Points drawings.current_revision_id at the current (highest) issue and
+ *  returns the derived facts. The name is historical: it once mirrored the
+ *  derived status into drawings.status as well; that column is gone (0064), so
+ *  the pointer is the only thing a drawing row remembers about its issues. */
 async function syncDrawingStatus(tdb: any, drawingId: string, revisions?: any[]): Promise<any> {
   const revs = revisions ?? (await loadDrawingRevisions(tdb, [drawingId]))[drawingId] ?? [];
   const derived = deriveObject(revs);
-  const patch: Record<string, unknown> = { status: derived.status };
-  if (derived.current?.id) patch.current_revision_id = derived.current.id;
-  await tdb("drawings").update(patch).eq("id", drawingId);
+  if (derived.current?.id) {
+    await tdb("drawings").update({ current_revision_id: derived.current.id }).eq("id", drawingId);
+  }
   return derived;
 }
 
@@ -843,22 +857,20 @@ async function loadCadRevisions(tdb: any, cadModelId: string): Promise<any[]> {
     .sort((a, b) => compareRevision(a.revision, b.revision));
 }
 
-/** Dual-write: cad_models.status / current_revision mirror the derived facts;
- *  current_revision_id is the new pointer (0060). */
+/** Points cad_models.current_revision_id at the current (highest) revision
+ *  and returns the derived facts. The name is historical: it once mirrored the
+ *  derived status and letter into cad_models.status / current_revision as
+ *  well; those columns are gone (0064). */
 async function syncCadModel(tdb: any, cadModelId: string, revisions?: any[]): Promise<any> {
   const revs = revisions ?? await loadCadRevisions(tdb, cadModelId);
   const derived = deriveObject(revs);
-  await tdb("cad_models").update({
-    status: derived.status,
-    current_revision: derived.current?.revision ?? null,
-    current_revision_id: derived.current?.id ?? null,
-  }).eq("id", cadModelId);
+  await tdb("cad_models").update({ current_revision_id: derived.current?.id ?? null }).eq("id", cadModelId);
   return derived;
 }
 
 /** The who/when a transition stamps on the revision row (§5.1, three states
  *  since 2026-11-25): released carries released_at/by; nothing else is stamped.
- *  checked_* / approved_* stay on the tables, unwritten, until the 0063 clean-up. */
+ *  The retired checked_* / approved_* columns are dropped by 0064. */
 function transitionStamp(to: string, session: any): Record<string, unknown> {
   if (to === "released") return { status: to, released_at: new Date().toISOString(), released_by: session?.uid || null };
   return { status: to };
@@ -888,11 +900,6 @@ async function releaseRevisionRow(
   const stamp = transitionStamp("released", session);
   const { error } = await tdb(table).update(stamp).eq("id", rev.id);
   if (error) return { error: error.message, status: 400 };
-  if (table === "cad_model_revisions") {
-    // Dual-write: the old API reads released_at off the files.
-    await tdb("cad_model_files").update({ released_at: stamp.released_at })
-      .eq("cad_model_revision_id", rev.id).is("released_at", null);
-  }
   // Reflect the change in the in-memory list so callers can derive from it.
   for (const r of revisions) {
     if (r.id === rev.id) Object.assign(r, stamp);
@@ -962,9 +969,7 @@ async function cadTestSnapshot(tdb: any, componentId: string): Promise<{ snapsho
     }));
   }
 
-  // select("*"): the dual-written cad_models.status is wanted here precisely to
-  // check it against the current revision (status step), never to display it.
-  const { data: modelRows } = await tdb("cad_models").select("*").eq("component_id", componentId);
+  const { data: modelRows } = await tdb("cad_models").select(CAD_MODEL_FIELDS).eq("component_id", componentId);
   const model = (modelRows || [])[0] || null;
   const revisions = model ? await loadCadRevisions(tdb, model.id) : [];
 
@@ -1036,7 +1041,7 @@ async function withCadTestContext(tdb: any, runs: any[]): Promise<any[]> {
 // One rule for "a new issue on a drawing" (the releaseRevisionRow pattern):
 // addDrawingRevision (the upload modal) and finishDrawingRender (the worker)
 // both go through here, so the letter check, the source-CAD facts, the
-// current-revision pointer, the dual-written status and the audit fan-out
+// current-revision pointer and the audit fan-out
 // cannot drift between a hand upload and a rendered issue.
 // ---------------------------------------------------------------------------
 
@@ -5272,7 +5277,7 @@ Deno.serve(async (req) => {
   if (action === "listDrawings") {
     if (role !== "rushroom" && role !== "supplier") return json({ error: "Not authorised" }, 403);
     let q = tdb("drawings").select(
-      "id, drawing_number, title, current_revision_id, projection_angle, sheet_size, scale, is_supplier_visible, created_at, "
+      "id, drawing_number, title, current_revision_id, is_supplier_visible, created_at, "
       + "owner_component_id, node_sequence, supplier_drawing_number, drawing_type");
     q = supplierDrawingScope(q, role);
     if (body.drawing_type) q = q.eq("drawing_type", String(body.drawing_type));
@@ -5324,7 +5329,6 @@ Deno.serve(async (req) => {
       id: d.id, drawing_number: d.drawing_number, title: d.title, status: shown?.status ?? derived.status,
       revision: shown?.revision ?? "",
       released_revision: derived.released?.revision ?? null,
-      projection_angle: d.projection_angle, sheet_size: d.sheet_size, scale: d.scale,
       is_supplier_visible: d.is_supplier_visible,
       drawing_type: d.drawing_type || "engineering",
       parts_count: partsCount[d.id] || 0,
@@ -5348,7 +5352,7 @@ Deno.serve(async (req) => {
     const drawing_id = String(body.drawing_id ?? "");
     if (!drawing_id) return json({ error: "drawing_id required" }, 400);
 
-    let q = tdb("drawings").select("*").eq("id", drawing_id);
+    let q = tdb("drawings").select(DRAWING_FIELDS).eq("id", drawing_id);
     q = supplierDrawingScope(q, role);
     const { data: rows, error } = await q;
     if (error) return json({ error: error.message }, 400);
@@ -5454,7 +5458,7 @@ Deno.serve(async (req) => {
     const { data, error } = await tdb("drawings").insert({
       drawing_number: drawing_number.slice(0, 80), title: title.slice(0, 200),
       // projection_angle, sheet_size and scale are no longer taken from the body
-      // (DRAWINGS_TAB_UX.md §12, step E); the columns stay, unwritten, until 0063.
+      // (DRAWINGS_TAB_UX.md §12, step E); the columns are dropped by 0064.
       is_supplier_visible: body.is_supplier_visible === false ? false : true,
       created_by: session.uid || null,
     }).select("id").maybeSingle();
@@ -5483,8 +5487,8 @@ Deno.serve(async (req) => {
     // The whole rule lives in insertDrawingRevision, shared with
     // finishDrawingRender (a rendered issue follows the same rule): a letter
     // that "is below the current" issue is refused, the new issue becomes
-    // current, the dual-written status is re-derived with
-    // syncDrawingStatus(tdb, drawing_id), source_cad_file_id / source_sha256
+    // current (the drawing's pointer is moved with
+    // syncDrawingStatus(tdb, drawing_id)), source_cad_file_id / source_sha256
     // are recorded, and the change fans out to every part the drawing depicts.
     const r = await insertDrawingRevision(tdb, session, drawing, {
       revision: body.revision, storage_path, file_name,
@@ -5536,22 +5540,19 @@ Deno.serve(async (req) => {
     return json({ ok: true });
   }
 
-  // Status is a property of the revision (docs/STATUS_MODEL.md §5.1). Both
-  // actions below share one body: setDrawingRevisionStatus names the revision;
-  // setDrawingStatus is the one-release alias that acts on the current issue.
-  if (action === "setDrawingRevisionStatus" || action === "setDrawingStatus") {
+  // Status is a property of the revision (docs/STATUS_MODEL.md §5.1): the body
+  // names the revision. The drawing-level alias setDrawingStatus is gone with
+  // the 0063/0064 clean-up — no client called it, and an unknown action
+  // already answers "unknown action".
+  if (action === "setDrawingRevisionStatus") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const status = String(body.status ?? "");
-    let rev: any = null;
-    if (action === "setDrawingRevisionStatus") {
-      const revision_id = String(body.drawing_revision_id ?? "");
-      if (!revision_id || !status) return json({ error: "drawing_revision_id and status required" }, 400);
-      const { data: revRows } = await tdb("drawing_revisions").select("id, drawing_id").eq("id", revision_id);
-      rev = (revRows || [])[0];
-      if (!rev) return json({ error: "Revision not found" }, 404);
-    }
-    const drawing_id = String(rev ? rev.drawing_id : body.drawing_id ?? "");
-    if (!drawing_id || !status) return json({ error: "drawing_id and status required" }, 400);
+    const revision_id = String(body.drawing_revision_id ?? "");
+    if (!revision_id || !status) return json({ error: "drawing_revision_id and status required" }, 400);
+    const { data: revRows } = await tdb("drawing_revisions").select("id, drawing_id").eq("id", revision_id);
+    const found = (revRows || [])[0];
+    if (!found) return json({ error: "Revision not found" }, 404);
+    const drawing_id = String(found.drawing_id);
 
     const { data: drawRows } = await tdb("drawings")
       .select("id, drawing_number, title, current_revision_id").eq("id", drawing_id);
@@ -5559,9 +5560,7 @@ Deno.serve(async (req) => {
     if (!drawing) return json({ error: "Drawing not found" }, 404);
 
     const revisions = (await loadDrawingRevisions(tdb, [drawing_id]))[drawing_id] || [];
-    const derived = deriveObject(revisions);
-    // The alias acts on the current issue; a drawing without one has nothing to move.
-    rev = rev ? revisions.find((r: any) => r.id === rev.id) : derived.current;
+    const rev = revisions.find((r: any) => r.id === found.id);
     if (!rev) return json({ error: "This drawing has no revision to set a status on" }, 400);
 
     let superseded = 0;
@@ -5586,7 +5585,7 @@ Deno.serve(async (req) => {
       if (error) return json({ error: error.message }, 400);
       Object.assign(rev, stamp);
     }
-    // Dual-write: drawings.status follows the current issue until 0063.
+    // The drawing's current_revision_id follows its issues.
     await syncDrawingStatus(tdb, drawing_id, revisions);
 
     const audit = status === "released"
@@ -5680,7 +5679,7 @@ Deno.serve(async (req) => {
       owner_component_id: ownerId, node_sequence,
       supplier_drawing_number: body.supplier_drawing_number ? String(body.supplier_drawing_number).slice(0, 120) : null,
       // projection_angle, sheet_size and scale are no longer taken from the body
-      // (DRAWINGS_TAB_UX.md §12, step E); the columns stay, unwritten, until 0063.
+      // (DRAWINGS_TAB_UX.md §12, step E); the columns are dropped by 0064.
       // Surgery template drawings are internal — never share jig geometry with suppliers.
       is_supplier_visible: drawingType === "surgery_template" ? false : (body.is_supplier_visible === false ? false : true),
       created_by: session.uid || null,
@@ -5917,8 +5916,6 @@ Deno.serve(async (req) => {
     } else {
       const { data: inserted, error } = await tdb("cad_model_files").insert({
         ...fileRow, cad_model_id, cad_model_revision_id: rev.id, format,
-        revision,              // dual-write until 0063 drops the column
-        released_at: null,
         created_by: session.uid || null,
       }).select("id").maybeSingle();
       if (error) {
@@ -5931,7 +5928,7 @@ Deno.serve(async (req) => {
       rev.files.push({ id: fileId, format, ...fileRow });
     }
 
-    // Dual-write: cad_models.status / current_revision follow the revisions.
+    // The model's current_revision_id follows the revisions.
     await syncCadModel(tdb, cad_model_id, revisions);
 
     if (model.component_id) {
@@ -5989,7 +5986,7 @@ Deno.serve(async (req) => {
       }));
     }
 
-    const { data: modelRows } = await tdb("cad_models").select("*").eq("component_id", component_id);
+    const { data: modelRows } = await tdb("cad_models").select(CAD_MODEL_FIELDS).eq("component_id", component_id);
     const model = (modelRows || [])[0] || null;
     if (!model) {
       return json({ cad_model: null, revisions: [], files: [],
@@ -6008,8 +6005,6 @@ Deno.serve(async (req) => {
       id: r.id, revision: r.revision, status: r.status,
       fusion_revision_label: r.fusion_revision_label ?? null, fusion_version: r.fusion_version ?? null,
       released_at: r.released_at ?? null, released_by: r.released_by ?? null,
-      checked_at: r.checked_at ?? null, checked_by: r.checked_by ?? null,
-      approved_at: r.approved_at ?? null, approved_by: r.approved_by ?? null,
       created_at: r.created_at, notes: r.notes ?? null,
       files: await Promise.all(r.files.map(async (f: any) => ({
         id: f.id, format: f.format, file_name: f.file_name, fusion_version: f.fusion_version ?? null,
@@ -6097,9 +6092,7 @@ Deno.serve(async (req) => {
       return hit ? { cad_revision: hit.rev.revision, sha8: sha8(hit.file.sha256) } : null;
     };
     const revisionOut = (r: any, files: any[]) => ({
-      id: r.id, revision: r.revision, status: r.status, created_at: r.created_at ?? null,
-      checked_at: r.checked_at ?? null, checked_by: r.checked_by ?? null,
-      approved_at: r.approved_at ?? null, approved_by: r.approved_by ?? null, files,
+      id: r.id, revision: r.revision, status: r.status, created_at: r.created_at ?? null, files,
     });
     // The released revision this one would supersede (the one releaseRevisionRow names).
     const supersedesOf = (revisions: any[], rev: any) => {
@@ -6217,31 +6210,24 @@ Deno.serve(async (req) => {
   }
 
   // Release and the other transitions — on the revision, never on the model.
-  // releaseCadModel is kept for one release as an alias: it releases the
-  // current revision, which is the only one that may be released anyway.
-  if (action === "releaseCadRevision" || action === "setCadRevisionStatus" || action === "releaseCadModel") {
+  // The model-level alias releaseCadModel is gone with the 0063/0064 clean-up —
+  // no client called it, and an unknown action already answers "unknown action".
+  if (action === "releaseCadRevision" || action === "setCadRevisionStatus") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const status = action === "setCadRevisionStatus" ? String(body.status ?? "") : "released";
     if (!status) return json({ error: "cad_model_revision_id and status required" }, 400);
 
-    let cad_model_id = "";
-    let revision_id = "";
-    if (action === "releaseCadModel") {
-      cad_model_id = String(body.cad_model_id ?? "");
-      if (!cad_model_id) return json({ error: "cad_model_id required" }, 400);
-    } else {
-      revision_id = String(body.cad_model_revision_id ?? "");
-      if (!revision_id) return json({ error: "cad_model_revision_id required" }, 400);
-      const { data: rr } = await tdb("cad_model_revisions").select("id, cad_model_id").eq("id", revision_id);
-      if (!(rr || []).length) return json({ error: "CAD revision not found" }, 404);
-      cad_model_id = (rr as any[])[0].cad_model_id;
-    }
+    const revision_id = String(body.cad_model_revision_id ?? "");
+    if (!revision_id) return json({ error: "cad_model_revision_id required" }, 400);
+    const { data: rr } = await tdb("cad_model_revisions").select("id, cad_model_id").eq("id", revision_id);
+    if (!(rr || []).length) return json({ error: "CAD revision not found" }, 404);
+    const cad_model_id = (rr as any[])[0].cad_model_id as string;
     const { data: modelRows } = await tdb("cad_models").select("id, component_id").eq("id", cad_model_id);
     const model = (modelRows || [])[0];
     if (!model) return json({ error: "CAD model not found" }, 404);
 
     const revisions = await loadCadRevisions(tdb, cad_model_id);
-    const rev = revision_id ? revisions.find((r) => r.id === revision_id) : deriveObject(revisions).current;
+    const rev = revisions.find((r) => r.id === revision_id);
     if (!rev) return json({ error: "This CAD model has no revision to release" }, 400);
 
     let superseded = 0;

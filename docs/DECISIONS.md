@@ -1527,3 +1527,17 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/DRAWINGS_TAB_UX.md`, `docs/STATUS_MODEL.md`, `supabase/functions/_shared/status-core.mjs`, `supabase/functions/portal-api/index.ts`, `supabase/functions/portal-ai/index.ts`, `assets/app.js`, `index.html`, `supplier.html`, `tests/*.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
 
 ---
+
+---
+
+## 2026-11-25 — One source of truth for status and letter: the legacy columns are dropped
+
+**Decision:** The dual-written columns kept since 0060 are removed: `drawings.status`, `cad_models.status`, `cad_models.current_revision`, `cad_model_files.revision`, `cad_model_files.released_at`, plus the retired `checked_*` / `approved_*` stamps, `projection_angle` / `sheet_size` / `scale` on drawings, and the enum words `checked` / `approved`. The revision row is the only place a status or a letter lives. It is done in two migrations around one function deploy, because a function cannot stop writing a NOT NULL column that still exists.
+
+**Why:** Dual-writes were a rollback insurance for one release; every day they stay they are a second place a status can be read from and a trap for the next reader (the test agent compared the two for a day). The three-state decision of the same day made the stamps and the two enum words dead weight. The release discipline work showed the derived facts are what every screen reads.
+
+**Consequences:** `syncDrawingStatus` / `syncCadModel` only maintain `current_revision_id`; `registerCadRevision` writes no letter on the file row; the alias actions `releaseCadModel` and `setDrawingStatus` are gone (no client called them); the test agent's snapshot has no `model_status`. After 0064 the previous function cannot be redeployed.
+
+**Files changed:** `supabase/migrations/0063_release_legacy_columns.sql`, `supabase/migrations/0064_drop_legacy_columns.sql`, `supabase/functions/portal-api/index.ts`, `supabase/functions/_shared/test-agent-core.mjs`, `tests/*.test.mjs`, `docs/STATUS_MODEL.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`.
+
+---

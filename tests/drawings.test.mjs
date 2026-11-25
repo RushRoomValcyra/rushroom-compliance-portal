@@ -16,7 +16,7 @@ const read = (p) => readFileSync(join(root, p), "utf8");
 const notDeployed = (r) => /unknown action/i.test(r.json?.error ?? "");
 
 const WRITES = ["createDrawing", "addDrawingRevision", "linkDrawingToComponent",
-                "unlinkDrawingFromComponent", "setDrawingStatus", "setDrawingRevisionStatus",
+                "unlinkDrawingFromComponent", "setDrawingRevisionStatus",
                 "setDrawingSupplierVisibility"];
 const READS = ["listDrawings", "getDrawing", "drawingFileUrl"];
 
@@ -59,7 +59,7 @@ test("createDrawing rejects a blank number and a blank title", async (t) => {
 // Status lives on the revision (docs/STATUS_MODEL.md). A drawing's `status` is
 // its current issue's; `released_revision` is the issue a supplier may build
 // from. The two are different facts and the API reports both.
-test("setDrawingStatus refuses an illegal transition on the current issue", async (t) => {
+test("setDrawingRevisionStatus refuses an illegal transition on the current issue", async (t) => {
   if (!CREDS.rushroomPassword) return t.skip("TEST_RUSHROOM_PASSWORD not set");
   const token = await loginShared("rushroom", CREDS.rushroomPassword);
   const list = await call("listDrawings", { token });
@@ -77,13 +77,12 @@ test("setDrawingStatus refuses an illegal transition on the current issue", asyn
   const probe = await call("previewRelease", { token, kind: "drawing", revision_id: current.id });
   if (notDeployed(probe)) return t.skip("previewRelease not deployed yet");
   if (/cannot go from draft to released/i.test(probe.json?.refusal ?? "")) return t.skip("the deployed copy predates three states");
-  const r = await call("setDrawingStatus", { token, drawing_id: draft.id, status: "checked" });
+  const r = await call("setDrawingRevisionStatus", { token, drawing_revision_id: current.id, status: "checked" });
+  if (notDeployed(r)) return t.skip("setDrawingRevisionStatus not deployed yet");
   assert.equal(r.status, 400, "draft → checked should be rejected");
   assert.match(r.json?.error ?? "", /cannot go from draft to checked/i);
-  // The same refusal when the revision is named directly.
   const r2 = await call("setDrawingRevisionStatus", { token, drawing_revision_id: current.id, status: "approved" });
-  if (notDeployed(r2)) return t.skip("setDrawingRevisionStatus not deployed yet");
-  assert.equal(r2.status, 400, "draft → approved should be rejected on the revision too");
+  assert.equal(r2.status, 400, "draft → approved should be rejected too");
   assert.match(r2.json?.error ?? "", /cannot go from draft to approved/i);
 });
 
@@ -129,12 +128,14 @@ test("addDrawingRevision is the only way a drawing goes back to draft", () => {
   assert.ok(/source_cad_file_id/.test(block) && /source_sha256/.test(block), "the STEP a drawing was made from is not recorded");
   // Out-of-order letters are refused, not reshuffled.
   assert.ok(/is below the current/.test(block), "an out-of-order issue letter is not refused");
-  // setDrawingStatus never writes drawings.status by hand any more; the alias
-  // acts on the current revision through the same code as the new action.
-  const st = src.slice(src.indexOf('action === "setDrawingRevisionStatus" || action === "setDrawingStatus"'),
+  // Nothing writes drawings.status by hand (the column is gone, 0064); the
+  // revision is the only thing a status is set on, and the drawing-level alias
+  // setDrawingStatus no longer exists.
+  const st = src.slice(src.indexOf('if (action === "setDrawingRevisionStatus")'),
                        src.indexOf('action === "setDrawingSupplierVisibility"'));
-  assert.ok(st.length > 0, "setDrawingStatus is not an alias of setDrawingRevisionStatus");
-  assert.ok(!/tdb\("drawings"\)\.update\(\{ status/.test(st), "setDrawingStatus still writes drawings.status directly");
+  assert.ok(st.length > 0, "setDrawingRevisionStatus is not dispatched on its own");
+  assert.ok(!src.includes('action === "setDrawingStatus"'), "the alias setDrawingStatus is still dispatched");
+  assert.ok(!/tdb\("drawings"\)\.update\(\{ status/.test(st), "setDrawingRevisionStatus still writes drawings.status directly");
   assert.ok(/canTransition\("drawing"/.test(st), "drawing transitions do not use the shared table");
   // Three states: the block no longer stamps a checker or an approver.
   assert.ok(!/checked_at|approved_at/.test(st), "setDrawingRevisionStatus still stamps a retired state");
@@ -154,7 +155,7 @@ test("createDrawingWithRevision takes no projection angle, sheet size or scale",
   const block = src.slice(start, src.indexOf('\n  if (action === "', start + 10));
   assert.ok(block.length > 0);
   assert.ok(!/body\.(?:projection_angle|sheet_size|scale)\b/.test(block), "a retired field is still read from the body");
-  // The columns stay on drawings until 0063; the read actions may still return them for old rows.
+  // The columns are dropped by 0064; listDrawings and getDrawing no longer name them (tests/legacy-cleanup).
 });
 
 test("a supplier cannot write to the drawings domain", async (t) => {

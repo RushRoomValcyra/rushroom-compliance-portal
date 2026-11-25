@@ -123,9 +123,11 @@ test("every release path goes through releaseRevisionRow (so all get the zero-fi
   for (const name of ["setDrawingRevisionStatus", "registerCadRevision", "releaseCadRevision"]) {
     assert.ok(actionBlock(name).includes("await releaseRevisionRow("), `${name} does not release through releaseRevisionRow`);
   }
-  // The aliases share those blocks.
-  assert.ok(src.includes('if (action === "setDrawingRevisionStatus" || action === "setDrawingStatus")'));
-  assert.ok(src.includes('if (action === "releaseCadRevision" || action === "setCadRevisionStatus" || action === "releaseCadModel")'));
+  // The old object-level aliases are gone (0063/0064 clean-up): the revision is the only thing released.
+  assert.ok(src.includes('if (action === "setDrawingRevisionStatus")'));
+  assert.ok(src.includes('if (action === "releaseCadRevision" || action === "setCadRevisionStatus")'));
+  assert.ok(!src.includes('action === "setDrawingStatus"'), "the alias setDrawingStatus is still dispatched");
+  assert.ok(!src.includes('action === "releaseCadModel"'), "the alias releaseCadModel is still dispatched");
   // No other caller writes status: "released" on a revision table by hand.
   const hand = src.match(/tdb\("(?:drawing_revisions|cad_model_revisions)"\)\.update\(\{[^}]*status: "released"/g) || [];
   assert.deepEqual(hand, [], "a hand-written release outside releaseRevisionRow");

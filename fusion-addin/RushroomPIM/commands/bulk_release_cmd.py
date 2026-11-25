@@ -246,7 +246,7 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     raise RuntimeError("No formats selected")
 
                 # 3. Export.
-                exported, tmpdir = export_formats(fc, fmts)
+                exported, tmpdir = export_formats(fc, fmts, file_stem=fc.name)
                 if not exported:
                     raise RuntimeError("No formats exported — ensure the document is saved and has geometry")
 

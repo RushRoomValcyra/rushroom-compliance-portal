@@ -188,7 +188,15 @@ def set_stamp(component: adsk.fusion.Component, pim_component_id: str, pim_part_
     attrs.add(ATTR_GROUP, ATTR_PART_NUMBER, pim_part_number)
 
 
-def export_formats(component: adsk.fusion.Component, formats: list[str]) -> tuple[dict, str]:
+def safe_file_stem(name: str, limit: int = 120) -> str:
+    """A file-system safe stem: letters, digits, "-_. " kept, the rest "_"; a
+    long name is cut at `limit` characters, never inside the part number."""
+    stem = "".join(c if c.isalnum() or c in "-_. " else "_" for c in (name or "")).strip()
+    return stem[:limit].strip() or "export"
+
+
+def export_formats(component: adsk.fusion.Component, formats: list[str],
+                   file_stem: str | None = None) -> tuple[dict, str]:
     """
     Export the component in the requested formats to a temp directory.
     formats: subset of ["f3z", "step", "glb"]
@@ -198,11 +206,14 @@ def export_formats(component: adsk.fusion.Component, formats: list[str]) -> tupl
             the whole doc is archived because .f3z is a document-level format)
     step — STEP AP214 of the component (or the root if component is root)
     glb  — binary glTF 2.0 of the component (requires Fusion 360 ≥ 2.0.17000)
+
+    file_stem names the files. Callers pass the hub document name ("<part number>
+    <name>"): the root component's embedded name can lag behind a rename of the
+    document, so it is only the fallback for an unsaved document.
     """
     design = get_design()
     em = design.exportManager
-    # Sanitise the component name for use as a filename.
-    safe_name = "".join(c if c.isalnum() or c in "-_. " else "_" for c in component.name)[:50].strip()
+    safe_name = safe_file_stem(file_stem or component.name)
     tmpdir = tempfile.mkdtemp(prefix="rushroom_pim_")
     result: dict[str, str] = {}
 

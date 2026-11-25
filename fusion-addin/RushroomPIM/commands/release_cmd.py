@@ -269,7 +269,7 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
             pd.show("Rushroom PIM", "Exporting…", 0, len(formats) + 1, 0)
             pd.message = "Exporting formats from Fusion…"
 
-            exported, tmpdir = export_formats(comp, formats)
+            exported, tmpdir = export_formats(comp, formats, file_stem=get_doc_name())
             if not exported:
                 pd.hide()
                 raise RuntimeError(

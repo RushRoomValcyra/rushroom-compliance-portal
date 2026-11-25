@@ -157,7 +157,9 @@ def import_file(df, part_number: str, formats=DEFAULT_FORMATS, release: bool = F
             return res
 
         # 3. export + send, one letter for every format
-        exported, tmpdir = export_formats(root, list(formats))
+        # Files are named from the hub document name (part number + name), not the
+        # root component's embedded name, which Fusion does not always refresh on rename.
+        exported, tmpdir = export_formats(root, list(formats), file_stem=df.name)
         # The Fusion archive (.f3z) export returns before the file exists — it is
         # written asynchronously. Wait for every exported file to land; a format
         # that never appears is dropped and reported, not uploaded half-written.

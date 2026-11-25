@@ -7027,6 +7027,19 @@
   const DRAWING_STATUSES = ["draft", "checked", "approved", "released", "superseded"];
   const DRAWING_ROLES = ["depicts", "installation", "wiring"];
 
+  // Hand transitions, STATUS_MODEL §5.1 — a mirror of TRANSITIONS in
+  // _shared/status-core.mjs (app.js is not a module). released → superseded is
+  // automatic and never offered; CAD may go draft → released (no checker in the
+  // Fusion flow), a drawing passes checked and approved.
+  const REVISION_TRANSITIONS = {
+    drawing: { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] },
+    cad:     { draft: ["checked", "released"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] },
+  };
+  const canTransition = (kind, from, to) => {
+    const allowed = (REVISION_TRANSITIONS[kind] || {})[from];
+    return Array.isArray(allowed) && allowed.includes(to);
+  };
+
   // The enum values are lowercase in the database and must stay that way; this
   // is the display spelling, used everywhere a status stands on its own as a
   // label. Mid-sentence uses ("Mark checked") keep the lowercase form.
@@ -12530,33 +12543,6 @@
       const dash = () => el("span", { class: "muted" }, "—");
       const mono = (txt) => el("span", { style: "font-family:monospace;font-size:0.8125rem" }, txt);
 
-      // Release the current revision of a model (§5.1: only the current one may
-      // be released; the previously released letter becomes superseded).
-      // listCadModels carries current_revision_id; older rows fall back to
-      // getComponentCad for the id.
-      async function releaseCurrentRevision(m, btn, revisionId) {
-        const supersedes = m.released_revision && m.released_revision !== m.current_revision
-          ? ` Rev ${m.released_revision} becomes superseded.`
-          : "";
-        if (!confirm(`Release Rev ${m.current_revision} of ${m.component_name || m.part_number || "this part"}?${supersedes}`)) return;
-        if (btn) btn.disabled = true;
-        try {
-          let id = revisionId || m.current_revision_id || null;
-          if (!id) {
-            if (!m.component_id) throw new Error("No component linked to this model");
-            const r = await API.post(token, "getComponentCad", { component_id: m.component_id });
-            const cur = (r.revisions || []).find((rv) => rv.revision === (r.cad_model?.current_revision || m.current_revision));
-            if (!cur) throw new Error(`Rev ${m.current_revision} was not found on the portal`);
-            id = cur.id;
-          }
-          await API.post(token, "releaseCadRevision", { cad_model_revision_id: id });
-          await reloadCadModels();
-        } catch (ex) {
-          alert(ex.message);
-          if (btn) btn.disabled = false;
-        }
-      }
-
       const tbody = el("tbody", {});
       const COLS = 8; // ▶ | Part no. | Part | Rev | Drawings | Supplier sees | Updated | actions
       const head = (label, key) => el("th", {
@@ -12630,7 +12616,11 @@
               const groupEls = groups.map((rev) => {
                 const isCurrent = rev.revision === currentLetter;
                 const files = (rev.files || []).slice().sort((a, b) => a.format.localeCompare(b.format));
-                const canRelease = isCurrent && !["released", "superseded"].includes(rev.status);
+                // Release lives here, beside the letter, chip, files and stamps
+                // (§11): only the current revision, only where §5.1 allows it,
+                // through the release modal. A released or superseded revision
+                // shows no button.
+                const canRelease = isCurrent && rev.id && canTransition("cad", rev.status || "draft", "released");
                 const jobSlot = el("div", {});
                 const fromCadBtn = rev.id && m.component_id && files.some((f) => f.format === "step")
                   ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
@@ -12641,8 +12631,8 @@
                       `Drawing from Rev ${rev.revision}`)
                   : null;
                 const releaseRevBtn = canRelease
-                  ? el("button", { type: "button", class: "btn btn-xs btn-primary", style: "flex-shrink:0",
-                      onclick: (ev) => releaseCurrentRevision({ ...m, current_revision: rev.revision }, ev.target, rev.id) }, "Release")
+                  ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
+                      onclick: () => releaseModal("cad", rev.id, { onDone: () => reloadCadModels({ silent: true }) }) }, "Release")
                   : null;
                 const head = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.45rem 0 0.2rem" }, [
                   el("span", { style: "font-weight:700;white-space:nowrap" }, `Rev ${rev.revision}`),
@@ -12688,12 +12678,8 @@
           ? el("button", { type: "button", class: "btn btn-xs", onclick: () => openCadViewer(m.preview_file, m.component_name || m.part_number) }, "👁 Preview")
           : null;
 
-        // Release on the row = release the current draft revision (§7). Nothing
-        // to release when there is no revision or the current one is already
-        // released / superseded.
-        const releaseBtn = m.current_revision && !["released", "superseded"].includes(m.status || "draft")
-          ? el("button", { type: "button", class: "btn btn-xs btn-primary", onclick: (ev) => releaseCurrentRevision(m, ev.target) }, "Release")
-          : null;
+        // Release is not on the row (§11): it sits in the expanded revision
+        // group, where the letter, chip, files and stamps are in view.
 
         // Drawings cell: one line per depicting drawing — number, then the
         // issue facts as the Rev column shows them ("F Released · G Draft",
@@ -12725,7 +12711,6 @@
             : dash()),
           el("td", {}, el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" }, [
             previewBtn,
-            releaseBtn,
             fusionHref ? el("a", { href: fusionHref, target: "_blank", rel: "noopener", class: "btn btn-xs" }, "Fusion ↗") : null,
           ].filter(Boolean))),
         ]);
@@ -12789,6 +12774,10 @@
     // rest (§10.A). A supplier sees released issues only (the server decides)
     // with the reduced columns and no filter chips (§4).
     const state = { q: "", status: "", freeOnly: false, sort: "drawing_number", dir: 1 };
+    // Drawing rows kept expanded across redraws (a release reloads the register
+    // silently; its revision group must still be open) — the CAD register's
+    // _cadExpanded, by drawing id.
+    const _dwgExpanded = new Set();
 
     // Surgery template data — loaded lazily on first visit to that register.
     let tplCache = null; // { templates: [], rules: [], rulesWarning: "" }
@@ -12854,9 +12843,116 @@
       const haystack = (d) => [d.drawing_number, d.title, d.owner_name, d.owner_part_number, d.supplier_drawing_number]
         .filter(Boolean).join(" ").toLowerCase();
       const cols = [
+        isRushroom ? el("th", {}, "") : null,
         head("Number", "drawing_number"), head("Title", "title"), head("Issue", "revision"), head("Part", "owner_name"),
         isRushroom ? head("Supplier sees", "supplier_sees") : head("Supplier drawing no.", "supplier_drawing_number"),
-      ];
+      ].filter(Boolean);
+      const COLS = cols.length;
+
+      // The surface, opened from a row or a revision line; the register reloads
+      // silently behind it so the row it came from stays where it was.
+      const openSurface = (d, revisionId) =>
+        openDrawingSurface(d.id, role, { onChange: () => load({ silent: true }), revisionId: revisionId || null });
+
+      // The expanded revision group (§11, Rushroom only): one line per issue —
+      // letter, chip, who/when, file name, Open — and on the current issue its
+      // §5.1 transitions; Release goes through the release modal. Loaded with
+      // getDrawing on first expand; the CAD register's expander, for drawings.
+      function revisionGroup(d, detailTd) {
+        const errLine = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;padding:0.2rem 0" });
+        const fail = (msg) => { errLine.textContent = msg || ""; errLine.style.display = msg ? "" : "none"; };
+        const move = async (rev, to, btn) => {
+          fail("");
+          btn.disabled = true;
+          try { await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: rev.id, status: to }); await load({ silent: true }); }
+          catch (ex) { fail(ex.message); btn.disabled = false; }
+        };
+        return (async () => {
+          detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "Loading issues…"));
+          let r;
+          try { r = await API.post(token, "getDrawing", { drawing_id: d.id }); }
+          catch (ex) {
+            detailTd.replaceChildren(el("span", { style: "color:var(--danger,#e05454);font-size:0.8125rem" }, `Couldn't load issues: ${ex.message}`));
+            return;
+          }
+          const drawing = r.drawing || {};
+          const revisions = (r.revisions || []).slice()
+            .sort((a, b) => (String(a.revision).length - String(b.revision).length) || String(a.revision).localeCompare(String(b.revision))).reverse();
+          if (!revisions.length) {
+            detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No revisions."));
+            return;
+          }
+          const currentId = drawing.current_revision_id || (revisions[0] && revisions[0].id) || null;
+          const lines = revisions.map((rev) => {
+            const isCurrent = rev.id === currentId;
+            const actions = isCurrent ? (REVISION_TRANSITIONS.drawing[rev.status || "draft"] || []).map((to) => {
+              if (to === "released") {
+                return el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
+                  onclick: () => releaseModal("drawing", rev.id, { onDone: () => load({ silent: true }) }) }, "Release");
+              }
+              const label = to === "draft" ? "Back to draft" : `Mark ${to}`;
+              return el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
+                onclick: (ev) => move(rev, to, ev.currentTarget) }, label);
+            }) : [];
+            return el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.35rem 0;border-bottom:1px solid var(--border,#e2e8f0)" }, [
+              el("span", { style: "font-weight:700;white-space:nowrap" }, `Issue ${rev.revision}`),
+              drawingStatusChip(rev.status || "draft"),
+              isCurrent ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, "current") : null,
+              rev.supplier_revision ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap", title: "Supplier issue" }, rev.supplier_revision) : null,
+              revisionStamp("Released", rev.released_at, rev.released_by),
+              revisionStamp("Approved", rev.approved_at, rev.approved_by),
+              revisionStamp("Checked", rev.checked_at, rev.checked_by),
+              el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, rev.file_name || ""),
+              ...actions,
+              el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
+                onclick: () => openSurface(d, rev.id) }, `Open Issue ${rev.revision}`),
+            ].filter(Boolean));
+          });
+          detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0" }, [...lines, errLine]));
+        })();
+      }
+
+      function rowsFor(d) {
+        const mainTr = el("tr", { style: "cursor:pointer", onclick: () => openSurface(d) }, [
+          el("td", {}, el("strong", {}, d.drawing_number)),
+          el("td", {}, d.title),
+          // Issue: letter + chip; "F Released · G Draft" when a newer issue is
+          // in work (STATUS_MODEL §7). The word is in the header.
+          el("td", {}, revisionLetterFacts(d.revision || null, d.status, d.released_revision || null)),
+          el("td", {}, partCell(d)),
+          isRushroom
+            ? el("td", {}, d.supplier_sees ? `Issue ${d.supplier_sees}` : dash())
+            : el("td", {}, d.supplier_drawing_number || dash()),
+        ]);
+        if (!isRushroom) return [mainTr];
+
+        const detailTr = el("tr", { style: "display:none" });
+        const detailTd = el("td", { colspan: COLS, style: "padding:0 0.75rem 0.6rem 2.5rem;background:var(--bg-subtle,#f8fafc)" });
+        detailTr.append(detailTd);
+        let detailLoaded = false;
+        let detailBusy = false;
+        const expandBtn = el("button", {
+          type: "button",
+          style: "background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--muted,#8b93a1);padding:0 2px;transition:transform 0.15s",
+          title: "Show every issue",
+        }, "▶");
+        expandBtn.onclick = async (ev) => {
+          if (ev) ev.stopPropagation();   // the row itself opens the surface
+          const open = detailTr.style.display !== "none";
+          if (open) { detailTr.style.display = "none"; expandBtn.style.transform = ""; _dwgExpanded.delete(d.id); return; }
+          detailTr.style.display = "";
+          expandBtn.style.transform = "rotate(90deg)";
+          _dwgExpanded.add(d.id);
+          if (detailLoaded || detailBusy) return;
+          detailBusy = true;
+          try { await revisionGroup(d, detailTd); detailLoaded = true; }
+          finally { detailBusy = false; }
+        };
+        mainTr.prepend(el("td", { style: "width:1.5rem;padding-right:0" }, expandBtn));
+        // A row that was open before this redraw opens again (after the row is in the table).
+        if (_dwgExpanded.has(d.id)) queueMicrotask(() => { if (detailTr.style.display === "none") expandBtn.onclick(); });
+        return [mainTr, detailTr];
+      }
 
       function repaint() {
         const q = state.q.trim().toLowerCase();
@@ -12864,19 +12960,10 @@
           .filter((d) => !state.freeOnly || d.is_free)
           .filter((d) => !state.status || d.status === state.status)
           .filter((d) => !q || haystack(d).includes(q))
-          .sort((a, b) => sortValue(a[state.sort], b[state.sort], state.sort) * state.dir);
-        tbody.replaceChildren(...(rows.length ? rows.map((d) =>
-          el("tr", { style: "cursor:pointer", onclick: () => openDrawingSurface(d.id, role, { onChange: load }) }, [
-            el("td", {}, el("strong", {}, d.drawing_number)),
-            el("td", {}, d.title),
-            // Issue: letter + chip; "F Released · G Draft" when a newer issue is
-            // in work (STATUS_MODEL §7). The word is in the header.
-            el("td", {}, revisionLetterFacts(d.revision || null, d.status, d.released_revision || null)),
-            el("td", {}, partCell(d)),
-            isRushroom
-              ? el("td", {}, d.supplier_sees ? `Issue ${d.supplier_sees}` : dash())
-              : el("td", {}, d.supplier_drawing_number || dash()),
-          ])) : [el("tr", {}, el("td", { colspan: cols.length, class: "muted", style: "padding:1rem" }, "No drawings."))]));
+          .sort((a, b) => sortValue(a[state.sort], b[state.sort], state.sort) * state.dir)
+          .flatMap(rowsFor);
+        tbody.replaceChildren(...(rows.length ? rows
+          : [el("tr", {}, el("td", { colspan: COLS, class: "muted", style: "padding:1rem" }, "No drawings."))]));
       }
 
       drawingsContentEl.replaceChildren(
@@ -14106,6 +14193,189 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     };
   }
 
+  // Step D (docs/DRAWINGS_TAB_UX.md §11): every release, CAD or drawing, goes
+  // through this one modal. The facts come from previewRelease, computed with
+  // the rules the release itself applies, so what the modal shows is what will
+  // happen; a refusal stands where the Release button would be. `kind` is
+  // "cad" | "drawing", `revisionId` the revision row to release. A field the
+  // server did not send renders "—".
+  function releaseModal(kind, revisionId, opts = {}) {
+    const token = API.getToken("rushroom");
+    const FMT_COLOR = { f3z: "#4a9eed", step: "#8b93a1", glb: "#a855f7", dxf: "#f59e0b" };
+    const word = kind === "cad" ? "Rev" : "Issue";
+    const dash = () => el("span", { class: "muted" }, "—");
+    const none = (txt) => el("span", { class: "muted" }, txt);
+    const mono = (txt, title) => el("span", { style: "font-family:var(--mono,monospace);font-size:0.6875rem;color:var(--muted,#8b93a1);white-space:nowrap", title: title || "" }, txt);
+    const date = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB") : null);
+    const fmtBadge = (format) => {
+      const f = String(format || "").toLowerCase();
+      const fc = FMT_COLOR[f] || "#888";
+      return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap;flex-shrink:0` }, f ? f.toUpperCase() : "FILE");
+    };
+    const line = (kids) => el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap" }, kids.filter(Boolean));
+    const lines = (items) => el("div", { style: "display:flex;flex-direction:column;gap:0.25rem" }, items);
+    const errEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.5rem" });
+    const error = (msg) => { errEl.textContent = msg || ""; errEl.style.display = msg ? "" : "none"; };
+
+    const body = el("div", { style: "min-width:min(640px,88vw)" }, el("div", { class: "loading" }, "Loading…"));
+    const close = openModal(`Release ${word}`, body);
+    const setTitle = (txt) => {
+      const t = body.closest(".viewer-dialog")?.querySelector(".viewer-title");
+      if (t) t.textContent = txt;
+    };
+
+    // What a supplier may build from: "Rev C · <drawing number> Issue B", or "nothing".
+    const supplierText = (s) => {
+      if (!s) return null;
+      const parts = [];
+      if (s.cad_released_revision) parts.push(`Rev ${s.cad_released_revision}`);
+      for (const d of s.drawings || []) if (d && d.released_revision) parts.push(`${d.drawing_number || "—"} Issue ${d.released_revision}`);
+      return parts.length ? parts.join(" · ") : "nothing";
+    };
+
+    function render(p) {
+      const rev = p.revision || {};
+      const obj = p.object || {};
+      const letter = rev.revision || "—";
+      const subject = kind === "cad"
+        ? [obj.part_number, obj.component_name].filter(Boolean).join(" ")
+        : [obj.drawing_number, obj.title].filter(Boolean).join(" ");
+      setTitle(`Release ${word} ${letter}${subject ? ` · ${subject}` : ""}`);
+
+      // Revision: letter, chip, the stamps it already carries.
+      const revisionCell = line([
+        el("span", { style: "font-weight:700;white-space:nowrap" }, `${word} ${letter}`),
+        drawingStatusChip(rev.status || "draft"),
+        revisionStamp("Checked", rev.checked_at, rev.checked_by),
+        revisionStamp("Approved", rev.approved_at, rev.approved_by),
+      ]);
+
+      // Files: badge · name · sha8 (· Fusion vN), or "none".
+      const files = Array.isArray(rev.files) ? rev.files : [];
+      const filesCell = files.length
+        ? lines(files.map((f) => line([
+            fmtBadge(f.format),
+            el("span", { style: "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, f.file_name || "—"),
+            f.sha8 ? mono(f.sha8) : null,
+            f.fusion_version ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, `Fusion v${f.fusion_version}`) : null,
+          ])))
+        : none("none");
+
+      // Supersedes: the released letter that becomes superseded, with its date.
+      const sup = p.supersedes || null;
+      const supersedesCell = sup && sup.revision
+        ? line([
+            el("span", { style: "font-weight:600;white-space:nowrap" }, `${word} ${sup.revision}`),
+            drawingStatusChip("released"),
+            date(sup.released_at) ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, date(sup.released_at)) : null,
+          ])
+        : dash();
+
+      // Related: the part's drawings (CAD) or the part's CAD (drawing).
+      const rel = p.related || {};
+      let relatedLabel, relatedCell;
+      if (kind === "cad") {
+        relatedLabel = "Drawings of this part";
+        const ds = Array.isArray(rel.drawings) ? rel.drawings : [];
+        relatedCell = ds.length
+          ? lines(ds.map((d) => line([
+              el("span", { style: "font-weight:600;white-space:nowrap" }, d.drawing_number || "—"),
+              d.title ? el("span", { class: "muted", style: "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, d.title) : null,
+              d.released_revision
+                ? el("span", { style: "white-space:nowrap" }, [`Issue ${d.released_revision} `, drawingStatusChip("released")])
+                : dash(),
+              d.made_from && d.made_from.cad_revision
+                ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, [`made from Rev ${d.made_from.cad_revision}`, d.made_from.sha8 ? " · " : "", d.made_from.sha8 ? mono(d.made_from.sha8) : null])
+                : null,
+            ])))
+          : none("none");
+      } else {
+        relatedLabel = "CAD of this part";
+        const cad = rel.cad || null;
+        const made = cad && cad.this_issue_made_from;
+        relatedCell = cad
+          ? lines([
+              cad.released_revision
+                ? line([el("span", { style: "font-weight:600;white-space:nowrap" }, `Rev ${cad.released_revision}`), drawingStatusChip("released")])
+                : (cad.current_revision
+                    ? line([el("span", { style: "font-weight:600;white-space:nowrap" }, `Rev ${cad.current_revision}`), drawingStatusChip(cad.current_status || "draft")])
+                    : dash()),
+              made && made.cad_revision
+                ? el("span", { class: "muted", style: "font-size:0.75rem" }, [
+                    `this issue made from Rev ${made.cad_revision}`,
+                    made.sha8 ? " · " : "", made.sha8 ? mono(made.sha8) : null,
+                    cad.released_revision && cad.released_revision !== made.cad_revision ? ` · the released CAD is Rev ${cad.released_revision}` : "",
+                  ])
+                : null,
+            ].filter(Boolean))
+          : dash();
+      }
+
+      // Warnings after the release (§5.4), "none" when the release leaves the part coherent.
+      const warn = Array.isArray(p.warnings_after) ? p.warnings_after : [];
+      const warningsCell = warn.length
+        ? el("div", { style: "display:flex;gap:0.3rem;flex-wrap:wrap" }, warn.map(statusWarningChip))
+        : none("none");
+
+      // Supplier will see: now → after; one value when nothing changes.
+      const now = supplierText(p.supplier_now);
+      const after = supplierText(p.supplier_after);
+      const supplierCell = now === null && after === null
+        ? dash()
+        : (now !== null && after !== null && now !== after
+            ? line([el("span", { class: "muted" }, now), el("span", { class: "muted" }, "→"), el("span", {}, after)])
+            : el("span", {}, after !== null ? after : now));
+
+      const dl = el("dl", { class: "drawing-meta" }, [
+        el("dt", {}, "Revision"), el("dd", {}, revisionCell),
+        el("dt", {}, "Files"), el("dd", {}, filesCell),
+        el("dt", {}, "Supersedes"), el("dd", {}, supersedesCell),
+        el("dt", {}, relatedLabel), el("dd", {}, relatedCell),
+        el("dt", {}, "Warnings"), el("dd", {}, warningsCell),
+        el("dt", {}, "Supplier will see"), el("dd", {}, supplierCell),
+      ]);
+
+      const canRelease = p.can_release === true;
+      const releaseBtn = el("button", { type: "button", class: "btn btn-sm btn-primary" }, "Release");
+      const cancelBtn = el("button", { type: "button", class: "btn btn-sm", onclick: () => close() }, "Cancel");
+      const refusal = !canRelease
+        ? el("span", { style: "font-size:0.8125rem;color:#b45309;font-weight:600" }, p.refusal || "Cannot be released")
+        : null;
+      const buttons = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:1rem" }, [
+        refusal, el("span", { style: "flex:1" }), cancelBtn, canRelease ? releaseBtn : null,
+      ].filter(Boolean));
+
+      releaseBtn.onclick = async () => {
+        error("");
+        releaseBtn.disabled = true;
+        cancelBtn.disabled = true;
+        try {
+          if (kind === "cad") await API.post(token, "releaseCadRevision", { cad_model_revision_id: revisionId });
+          else await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: revisionId, status: "released" });
+          close();
+          if (opts.onDone) await opts.onDone();
+        } catch (ex) {
+          error(ex.message);
+          releaseBtn.disabled = false;
+          cancelBtn.disabled = false;
+        }
+      };
+
+      body.replaceChildren(dl, errEl, buttons);
+    }
+
+    (async () => {
+      let p;
+      try { p = await API.post(token, "previewRelease", { kind, revision_id: revisionId }); }
+      catch (ex) {
+        body.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
+        return;
+      }
+      render(p || {});
+    })();
+    return close;
+  }
+
   /** Upload a new revision. Shared by the register and the part panel, so the
    *  consequence is stated identically wherever the user happens to be. */
   function addDrawingRevisionModal(drawing, role, onDone) {
@@ -14309,17 +14579,14 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       // act on the *current* (newest) issue, whichever one is being viewed, and
       // go through setDrawingRevisionStatus with that revision's id. released →
       // superseded is automatic on the next release, never a button.
-      const NEXT = { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] };
+      // Release goes through the release modal (§11), which lays out the facts
+      // and names the issue that will be superseded; the other transitions are direct.
+      const NEXT = REVISION_TRANSITIONS.drawing;
       const currentRev = revisions.find((r) => r.id === drawing.current_revision_id) || revisions[0] || null;
       const releasedRev = revisions.find((r) => r.status === "released") || null;
       const statusActions = role === "rushroom" && currentRev ? (NEXT[currentRev.status] || []).map((s) =>
         el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
-          if (s === "released") {
-            const supersedes = releasedRev && releasedRev.id !== currentRev.id
-              ? ` Issue ${releasedRev.revision} becomes superseded.`
-              : "";
-            if (!confirm(`Release ${drawing.drawing_number} Issue ${currentRev.revision}?${supersedes} This is recorded on every linked part.`)) return;
-          }
+          if (s === "released") { releaseModal("drawing", currentRev.id, { onDone: reload }); return; }
           try { await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: currentRev.id, status: s }); await reload(); }
           catch (ex) { alert(ex.message); }
         } }, `Mark ${s}`)) : [];
@@ -14489,7 +14756,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       if (current) showRevision(current);
     }
 
-    await paint();
+    // opts.revisionId opens the surface at that issue (a register's revision
+    // group); otherwise the current one. Reloads return to the current issue.
+    await paint(opts.revisionId || undefined);
     return () => { disposeCurrent(); close(); };
   }
 

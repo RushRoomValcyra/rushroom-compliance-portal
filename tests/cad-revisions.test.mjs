@@ -177,8 +177,12 @@ test("the API no longer reads the object-level status columns", () => {
 test("release is one rule on both sides and only the current revision qualifies", () => {
   const src = read("supabase/functions/portal-api/index.ts");
   assert.ok(src.includes("async function releaseRevisionRow("), "the shared release helper is missing");
-  assert.match(src, /is not the current revision; \$\{derived\.current\.revision\} is/,
+  // The rule itself is pure and lives in the status core (releaseCheck), where
+  // previewRelease reads it too; the helper must consult it before writing.
+  const core = read("supabase/functions/_shared/status-core.mjs");
+  assert.match(core, /is not the current revision; \$\{derived\.current\.revision\} is/,
     "releasing a non-current revision is not refused with the agreed message");
+  assert.ok(src.includes("releaseCheck(kind, revisions, rev)"), "releaseRevisionRow does not consult releaseCheck");
   // Both tables go through the one helper — a second release path is where the
   // "released but not really" fault of §1 comes back.
   assert.ok(/releaseRevisionRow\(tdb, session, "drawing_revisions", "drawing"/.test(src), "drawings bypass the release helper");

@@ -401,3 +401,94 @@ test("statusSummary: two released letters on the CAD (pre-0060 data) → the hig
   assert.equal(s.cad.released.revision, "G");
   assert.deepEqual(codes(s), [], "issue F on CAD Rev G is not a warning: the letters are separate sequences");
 });
+
+// ---------------------------------------------------------------------------
+// Release discipline (docs/DRAWINGS_TAB_UX.md §11) — releaseCheck, hasReleaseFile, releasedView
+// ---------------------------------------------------------------------------
+const { releaseCheck, hasReleaseFile, releasedView } = M;
+const cadFile = (id, sha256 = `sha-${id}`) => ({ id, format: "step", sha256 });
+
+test("hasReleaseFile: cad counts file rows, drawing counts storage_path", () => {
+  assert.equal(hasReleaseFile("cad", { files: [cadFile("f1")] }), true);
+  assert.equal(hasReleaseFile("cad", { files: [] }), false);
+  assert.equal(hasReleaseFile("cad", {}), false, "no files array at all");
+  assert.equal(hasReleaseFile("drawing", { storage_path: "org/drawings/x.pdf" }), true);
+  assert.equal(hasReleaseFile("drawing", { storage_path: "" }), false);
+  assert.equal(hasReleaseFile("drawing", { files: [cadFile("f1")] }), false, "a drawing's file is its storage_path, not file rows");
+  assert.equal(hasReleaseFile("cad", null), false);
+});
+
+test("releaseCheck: the current CAD draft with a file may be released", () => {
+  const a = rev("A", "released", { files: [cadFile("fa")] }), b = rev("B", "draft", { files: [cadFile("fb")] });
+  assert.deepEqual(releaseCheck("cad", [a, b], b), { ok: true });
+});
+
+test("releaseCheck: not the current revision — exact text, Rev for CAD, Issue for drawings", () => {
+  const e = rev("E", "approved", { files: [cadFile("fe")] }), g = rev("G", "draft", { files: [cadFile("fg")] });
+  assert.deepEqual(releaseCheck("cad", [e, g], e), { error: "Rev E is not the current revision; G is" });
+  const b = rev("B", "approved", { storage_path: "p/b.pdf" }), c = rev("C", "draft", { storage_path: "p/c.pdf" });
+  assert.deepEqual(releaseCheck("drawing", [b, c], b), { error: "Issue B is not the current revision; C is" });
+});
+
+test("releaseCheck: a transition the §5.1 table refuses — a drawing draft cannot be released", () => {
+  const b = rev("B", "draft", { storage_path: "p/b.pdf" });
+  assert.deepEqual(releaseCheck("drawing", [b], b), { error: "Cannot go from draft to released" });
+  const c = rev("C", "checked", { files: [cadFile("fc")] });
+  assert.deepEqual(releaseCheck("cad", [c], c), { error: "Cannot go from checked to released" });
+});
+
+test("releaseCheck: no file — refused after the transition check, before any write", () => {
+  const b = rev("B", "draft", { files: [] });
+  assert.deepEqual(releaseCheck("cad", [b], b), { error: "Rev B has no file" });
+  const d = rev("D", "approved", { storage_path: null });
+  assert.deepEqual(releaseCheck("drawing", [d], d), { error: "Issue D has no file" });
+  // The transition refusal wins over the missing file: a drawing draft without a file says "Cannot go".
+  const draft = rev("E", "draft", {});
+  assert.deepEqual(releaseCheck("drawing", [draft], draft), { error: "Cannot go from draft to released" });
+});
+
+test("releaseCheck: an already released revision is a no-op, not a refusal; null is 'no revision'", () => {
+  const a = rev("A", "released", { files: [cadFile("fa")] });
+  assert.deepEqual(releaseCheck("cad", [a], a), { ok: true, already: true });
+  assert.deepEqual(releaseCheck("cad", [a], null), { error: "no revision to release" });
+});
+
+test("releaseCheck: order — 'not current' is answered before the transition and the file", () => {
+  // B is a checked draft with no file and not current: the first rule in the chain speaks.
+  const b = rev("B", "checked", { files: [] }), c = rev("C", "draft", { files: [] });
+  assert.deepEqual(releaseCheck("cad", [b, c], b), { error: "Rev B is not the current revision; C is" });
+});
+
+test("releasedView: this one released, the previously released one superseded, the rest untouched", () => {
+  const e = rev("E", "superseded"), f = rev("F", "released"), g = rev("G", "draft", { files: [cadFile("fg")] });
+  const after = releasedView([e, f, g], "rev-G");
+  assert.deepEqual(after.map((r) => [r.revision, r.status]), [["E", "superseded"], ["F", "superseded"], ["G", "released"]]);
+  assert.equal(after[2].files, g.files, "shallow copies: nested files are shared");
+  // The input is not mutated.
+  assert.equal(f.status, "released");
+  assert.equal(g.status, "draft");
+  assert.notEqual(after[2], g);
+});
+
+test("releasedView feeds statusSummary and deriveObject without a write", () => {
+  const f = rev("F", "released"), g = rev("G", "draft");
+  const d = deriveObject(releasedView([f, g], "rev-G"));
+  assert.equal(d.released.revision, "G");
+  assert.equal(d.status, "released");
+  // Releasing CAD Rev G while the drawing was made from Rev F's STEP: the warning appears only "after".
+  const cad = { revisions: [
+    { id: "cF", revision: "F", status: "released", files: [{ id: "file-F", format: "step", sha256: "sha-F" }] },
+    { id: "cG", revision: "G", status: "draft",    files: [{ id: "file-G", format: "step", sha256: "sha-G" }] },
+  ] };
+  const drawings = [drawing("RR-100", "depicts", [rev("A", "released", { source_cad_file_id: "file-F" })])];
+  assert.deepEqual(codes(statusSummary({ drawings, cad })), []);
+  assert.deepEqual(codes(statusSummary({ drawings, cad: { revisions: releasedView(cad.revisions, "cG") } })), ["drawing_from_other_cad"]);
+});
+
+test("releasedView: unknown id or empty input gives copies unchanged", () => {
+  const f = rev("F", "released");
+  assert.deepEqual(releasedView([f], "nope"), [f]);
+  assert.notEqual(releasedView([f], "nope")[0], f);
+  assert.deepEqual(releasedView([], "x"), []);
+  assert.deepEqual(releasedView(undefined, "x"), []);
+});

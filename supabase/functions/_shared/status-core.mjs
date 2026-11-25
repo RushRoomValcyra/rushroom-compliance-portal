@@ -148,3 +148,58 @@ export function statusSummary({ drawings, cad } = {}) {
 
   return { cad: cadOut, drawings: drawingsOut, warnings };
 }
+
+// ---------------------------------------------------------------------------
+// Release discipline (docs/DRAWINGS_TAB_UX.md §11) — the release rule as a pure
+// check, and the revision list as it would read after a release. portal-api's
+// releaseRevisionRow refuses with exactly these texts; previewRelease shows the
+// same text in place of the Release button, so the two can never disagree.
+// ---------------------------------------------------------------------------
+
+/** Does the revision carry the file a supplier would build from?
+ *  cad: at least one cad_model_files row (rev.files, as loadCadRevisions
+ *  attaches them); drawing: a storage_path on the revision row. */
+export function hasReleaseFile(kind, rev) {
+  if (!rev) return false;
+  if (kind === "cad") return Array.isArray(rev.files) && rev.files.length > 0;
+  return Boolean(rev.storage_path);
+}
+
+/** The release rule, in the order releaseRevisionRow applies it:
+ *    already released              → { ok: true, already: true }  (a no-op, not a refusal)
+ *    not the current revision      → { error: "Rev E is not the current revision; G is" }
+ *    transition not allowed (§5.1) → { error: "Cannot go from draft to released" }
+ *    no file                       → { error: "Rev B has no file" }
+ *    otherwise                     → { ok: true }
+ *  revisions: every revision of the object (the shape loadCadRevisions /
+ *  loadDrawingRevisions return); rev: the one to release, or null. */
+export function releaseCheck(kind, revisions, rev) {
+  const word = kind === "cad" ? "Rev" : "Issue";
+  if (!rev) return { error: "no revision to release" };
+  if (rev.status === "released") return { ok: true, already: true };
+  const derived = deriveObject(revisions);
+  if (derived.current && derived.current.id !== rev.id) {
+    return { error: `${word} ${rev.revision} is not the current revision; ${derived.current.revision} is` };
+  }
+  if (!canTransition(kind, rev.status, "released")) {
+    return { error: `Cannot go from ${rev.status} to released` };
+  }
+  if (!hasReleaseFile(kind, rev)) return { error: `${word} ${rev.revision} has no file` };
+  return { ok: true };
+}
+
+/** The revisions as they would read after releasing revId: that one released,
+ *  every other released one superseded. New array of shallow copies; the input
+ *  is not touched (nested files arrays are shared). An unknown revId gives the
+ *  copies unchanged. Feed the result to statusSummary / the supplier view for a
+ *  "warnings_after" / "supplier_after" that writes nothing. */
+export function releasedView(revisions, revId) {
+  const list = revisions || [];
+  const found = list.some((r) => r && r.id === revId);
+  return list.map((r) => {
+    if (!r || !found) return r ? { ...r } : r;
+    if (r.id === revId) return { ...r, status: "released" };
+    if (r.status === "released") return { ...r, status: "superseded" };
+    return { ...r };
+  });
+}

@@ -220,3 +220,79 @@ is labelled "Supplier", label outside the box. Drawing surface rail gains
 "Made from" → "CAD Rev B · 1a2b3c4d" when `source_cad` is set, nothing
 otherwise. Capitalise statuses in the test-agent select. Letters bare in
 cells, the word in the header.
+
+## 11 Step D — release discipline (contract, 2026-11-25)
+
+Decided by ziirvass: build D. CAD keeps the draft → released shortcut
+(STATUS_MODEL §5.1: the Fusion flow has no checker); the UI stops making it
+the primary action on the register, and every release, CAD or drawing, goes
+through one modal that lays out the facts.
+
+### API additions (portal-api), Rushroom only
+
+**`previewRelease`** `{ kind: "cad" | "drawing", revision_id }` → the facts
+the modal shows, computed with the same rules the release uses:
+
+```
+{
+  kind, word: "Rev" | "Issue",
+  object: { id, part_number, component_name, drawing_number?, title? },
+  revision: { id, revision, status, created_at, checked_at, checked_by, approved_at, approved_by,
+              files: [{ format, file_name, sha8, fusion_version }] },   // a drawing has one file
+  can_release: boolean, refusal: string | null,   // "Issue B is not the current revision; C is",
+                                                  // "Cannot go from draft to released", "Rev B has no file"
+  supersedes: { id, revision, released_at } | null,
+  related: kind == "cad"
+    ? { drawings: [{ id, drawing_number, title, role, current_revision, current_status, released_revision,
+                     made_from: { cad_revision, sha8 } | null }] }   // of the part; made_from = the released issue's source
+    : { cad: { current_revision, current_status, released_revision, this_issue_made_from: { cad_revision, sha8 } | null } | null },
+  warnings_now: [{ code, text, drawing_id? }],      // statusSummary today
+  warnings_after: [{ code, text, drawing_id? }],    // statusSummary with this revision released (pure recomputation)
+  supplier_now:   { cad_released_revision, drawings: [{ drawing_number, released_revision }] },
+  supplier_after: { ... same shape, as it would be after the release }
+}
+```
+`refusal` carries exactly the text the release would answer with; the modal
+shows it in place of the Release button. `warnings_after` and
+`supplier_after` are computed by feeding `statusSummary` / the supplier
+view the revision list with this revision's status set to `released` and
+the previously released one to `superseded`; nothing is written.
+
+**Zero-file refusal** in `releaseRevisionRow` (so `releaseCadRevision`,
+`setCadRevisionStatus`, `releaseCadModel`, `setDrawingRevisionStatus`,
+`setDrawingStatus` and `registerCadRevision { release: true }` all get it): a
+CAD revision with no file rows → 400 "Rev B has no file"; a drawing
+revision without `storage_path` → 400 "Issue B has no file".
+
+### Frontend (assets/app.js, v458)
+
+- **One release modal**, `releaseModal(kind, revision_id, { onDone })`,
+  `openModal` titled "Release Rev B · <part number> <part name>" / "Release
+  Issue B · <drawing number> <title>". A `dl` with labels outside the values:
+  Revision (letter, chip, checked/approved who+when when stamped) · Files
+  (format badge + name + sha8, or "none") · Supersedes (letter + released
+  date, or "—") · Drawings of this part (CAD: one line per drawing: number ·
+  released issue or "—" · "made from Rev X" when known) / CAD of this part
+  (drawing: released Rev and whether this issue was made from it) ·
+  Warnings (the `warnings_after` chips, "none" when empty) · Supplier will
+  see (`supplier_now` → `supplier_after`, "nothing" when empty). Buttons:
+  Release (`btn-primary`) · Cancel. When `can_release` is false the Release
+  button is replaced by the refusal text. Release posts `releaseCadRevision
+  { cad_model_revision_id }` or `setDrawingRevisionStatus { drawing_revision_id,
+  status: "released" }`, closes, calls onDone. Errors in a red line in the
+  modal. No `confirm()` anywhere in the drawings/CAD code.
+- **CAD register**: Release leaves the main row (Preview · Fusion remain).
+  In the expanded revision group the current revision shows Release as
+  `btn btn-xs` (not primary) when `canTransition` allows it, opening the
+  modal; a released or superseded revision shows no button.
+- **Drawings register**: every row gets the ▶ expander the CAD register has
+  (Rushroom only). The group, loaded with `getDrawing` on first expand, lists
+  one line per issue: letter · chip · who/when (checked, approved, released
+  stamps) · file name · Open (the surface at that issue). The current issue
+  carries its transitions as `btn btn-xs`: Mark checked / Mark approved /
+  Back to draft, and Release through the modal. Clicking number or title
+  still opens the surface.
+- **Drawing surface**: the "Mark released" action opens the same modal; the
+  other transitions stay direct.
+- After a release both registers reload silently and an expanded row stays
+  expanded.

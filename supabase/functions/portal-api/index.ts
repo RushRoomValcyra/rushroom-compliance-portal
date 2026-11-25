@@ -36,11 +36,11 @@ import { articleOf, canBeEligibleType, expandAssemblyInputs, preAssemblyEligibil
 import { sidePanelRole } from "../_shared/side-panel-role-core.mjs";
 import {
   canTransition, compareRevision, deriveObject, nextRevisionLetter as nextLetterCore,
-  statusSummary,
+  releaseCheck, releasedView, statusSummary,
 } from "../_shared/status-core.mjs";
 import {
   FUSION_STEP_KEYS, STEP_KEYS, STEP_STATUSES, applyResults, buildSnapshot, expectedOutcome,
-  newSteps, normaliseSteps, setStep, skipRemaining, timeoutPatch, verifyRun,
+  newSteps, normaliseSteps, setStep, skipRemaining, snapshotSupplierView, timeoutPatch, verifyRun,
 } from "../_shared/test-agent-core.mjs";
 import {
   STEP_KEYS as RENDER_STEP_KEYS, WORKER_STEP_KEYS as RENDER_WORKER_STEP_KEYS,
@@ -800,8 +800,10 @@ function nextRevisionLetter(existing: string[]): string {
 // until migration 0063 drops them, so a rolled-back function keeps working.
 // ---------------------------------------------------------------------------
 
+// storage_path is selected so the release rule can refuse an issue without a
+// file (DRAWINGS_TAB_UX §11); getDrawing strips it again before answering.
 const DRAWING_REV_FIELDS =
-  "id, drawing_id, revision, status, file_name, notes, released_at, released_by, checked_at, checked_by, "
+  "id, drawing_id, revision, status, file_name, storage_path, notes, released_at, released_by, checked_at, checked_by, "
   + "approved_at, approved_by, source_cad_file_id, source_sha256, supplier_revision, created_at";
 
 /** Revisions of many drawings in one query, grouped and letter-sorted. */
@@ -867,23 +869,19 @@ function transitionStamp(to: string, session: any): Record<string, unknown> {
 
 /**
  * Release one revision — the same rule on both sides. Only the current (highest)
- * revision may be released; the previously released one is superseded;
- * released_at/by land on this revision only. Returns null on success or the
- * {error, status} to answer with.
+ * revision may be released; it must carry a file; the previously released one
+ * is superseded; released_at/by land on this revision only. The rule itself is
+ * releaseCheck in status-core.mjs, so previewRelease can answer with the exact
+ * refusal before anything is written. Returns the {error, status} to answer
+ * with, or what was superseded.
  */
 async function releaseRevisionRow(
   tdb: any, session: any, table: "drawing_revisions" | "cad_model_revisions",
   kind: "drawing" | "cad", revisions: any[], rev: any,
 ): Promise<{ error: string; status: number } | { superseded: number; superseded_revision: string | null; already?: boolean }> {
-  const word = kind === "cad" ? "Rev" : "Issue";
-  const derived = deriveObject(revisions);
-  if (rev.status === "released") return { superseded: 0, superseded_revision: null, already: true };
-  if (derived.current && derived.current.id !== rev.id) {
-    return { error: `${word} ${rev.revision} is not the current revision; ${derived.current.revision} is`, status: 400 };
-  }
-  if (!canTransition(kind, rev.status, "released")) {
-    return { error: `Cannot go from ${rev.status} to released`, status: 400 };
-  }
+  const check = releaseCheck(kind, revisions, rev);
+  if ("error" in check) return { error: check.error, status: 400 };
+  if (check.already) return { superseded: 0, superseded_revision: null, already: true };
   const prior = revisions.filter((r) => r.status === "released" && r.id !== rev.id);
   const priorIds = prior.map((r) => r.id);
   // The letter that was released before this one — the add-in and the page
@@ -5433,6 +5431,9 @@ Deno.serve(async (req) => {
         sha_short: String(f.sha256 || "").slice(0, 8),
       };
     };
+    // The file is reached through drawingFileUrl (a signed URL), never by its
+    // storage path: the path stays on the server.
+    shownRevisions = shownRevisions.map(({ storage_path: _path, ...r }: any) => r);
     // The CAD registry is Rushroom-only everywhere else (listCadModels,
     // getComponentCad answer suppliers 403): a supplier gets no source_cad.
     shownRevisions = shownRevisions.map((r: any) => ({ ...r, source_cad: role === "rushroom" ? sourceCadOf(r) : null }));
@@ -6036,6 +6037,184 @@ Deno.serve(async (req) => {
       })) },
     });
     return json({ cad_model, revisions: revOut, files, summary });
+  }
+
+  // Step D (docs/DRAWINGS_TAB_UX.md §11): the facts the release modal lays out,
+  // computed with the rule the release itself uses (releaseCheck) and the same
+  // loaders getComponentCad / cadTestSnapshot read with. Nothing is written:
+  // "after" is releasedView over the loaded rows, fed to statusSummary and the
+  // supplier view.
+  if (action === "previewRelease") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const kind = body.kind === "cad" || body.kind === "drawing" ? body.kind as "cad" | "drawing" : "";
+    const revision_id = String(body.revision_id ?? "");
+    if (!kind || !revision_id) return json({ error: "kind (cad | drawing) and revision_id required" }, 400);
+    const word = kind === "cad" ? "Rev" : "Issue";
+    const sha8 = (s: unknown) => (s ? String(s).slice(0, 8) : null);
+
+    // The part's drawings with their issues: the getComponentCad shape plus
+    // title and visibility (the supplier view reads is_supplier_visible).
+    const loadPartDrawings = async (componentId: string): Promise<any[]> => {
+      const { data: dlinks } = await tdb("drawing_components").select("drawing_id, role").eq("component_id", componentId);
+      const drawingIds = [...new Set(((dlinks || []) as any[]).map((l) => l.drawing_id))];
+      if (!drawingIds.length) return [];
+      const { data: drws } = await tdb("drawings").select("id, drawing_number, title, is_supplier_visible").in("id", drawingIds);
+      const revsByDrawing = await loadDrawingRevisions(tdb, drawingIds);
+      const roleOf: Record<string, string> = {};
+      for (const l of (dlinks || []) as any[]) {
+        // A drawing linked in several roles counts as depicting when any link does.
+        if (!roleOf[l.drawing_id] || l.role === "depicts") roleOf[l.drawing_id] = l.role;
+      }
+      return ((drws || []) as any[]).map((d) => ({
+        id: d.id, drawing_number: d.drawing_number, title: d.title ?? null, role: roleOf[d.id] || "depicts",
+        is_supplier_visible: d.is_supplier_visible !== false,
+        revisions: (revsByDrawing[d.id] || []).map((r: any) => ({
+          id: r.id, revision: r.revision, status: r.status, source_sha256: r.source_sha256 || null,
+          source_cad_file_id: r.source_cad_file_id || null,
+        })),
+      })).sort((a, b) => (a.role === "depicts" ? 0 : 1) - (b.role === "depicts" ? 0 : 1)
+        || String(a.drawing_number).localeCompare(String(b.drawing_number), undefined, { numeric: true, sensitivity: "base" }));
+    };
+    // What statusSummary wants of the CAD side.
+    const summaryCad = (cadRevs: any[]) => ({ revisions: cadRevs.map((r) => ({
+      id: r.id, revision: r.revision, status: r.status,
+      files: (r.files || []).map((f: any) => ({ id: f.id, format: f.format, sha256: f.sha256 ?? null })),
+    })) });
+    // "Made from": the CAD file an issue records (by id, else by the STEP's
+    // sha256, oldest file first) → its CAD Rev letter. The files are already
+    // on the loaded CAD revisions, so no further query.
+    const madeFromOf = (cadRevs: any[], issue: any) => {
+      if (!issue) return null;
+      let hit: { rev: any; file: any } | null = null;
+      if (issue.source_cad_file_id) {
+        for (const r of cadRevs) for (const f of r.files || []) if (f.id === issue.source_cad_file_id) hit = { rev: r, file: f };
+      }
+      if (!hit && issue.source_sha256) {
+        const all = cadRevs.flatMap((r) => (r.files || []).map((f: any) => ({ rev: r, file: f })))
+          .filter((x) => x.file.sha256 === issue.source_sha256)
+          .sort((a, b) => String(a.file.created_at ?? "").localeCompare(String(b.file.created_at ?? "")));
+        hit = all[0] || null;
+      }
+      return hit ? { cad_revision: hit.rev.revision, sha8: sha8(hit.file.sha256) } : null;
+    };
+    const revisionOut = (r: any, files: any[]) => ({
+      id: r.id, revision: r.revision, status: r.status, created_at: r.created_at ?? null,
+      checked_at: r.checked_at ?? null, checked_by: r.checked_by ?? null,
+      approved_at: r.approved_at ?? null, approved_by: r.approved_by ?? null, files,
+    });
+    // The released revision this one would supersede (the one releaseRevisionRow names).
+    const supersedesOf = (revisions: any[], rev: any) => {
+      const p = deriveObject(revisions.filter((r) => r.status === "released" && r.id !== rev.id)).current;
+      return p ? { id: p.id, revision: p.revision, released_at: p.released_at ?? null } : null;
+    };
+    const verdict = (revisions: any[], rev: any) => {
+      const check = releaseCheck(kind, revisions, rev);
+      if ("error" in check) return { can_release: false, refusal: check.error };
+      // Releasing a released revision is a no-op on the server; the modal has nothing to offer.
+      if (check.already) return { can_release: false, refusal: `${word} ${rev.revision} is already released` };
+      return { can_release: true, refusal: null };
+    };
+    const loadPart = async (componentId: string | null) => {
+      if (!componentId) return null;
+      const { data } = await tdb("bom_components").select("id, part_number, name").eq("id", componentId).maybeSingle();
+      return data || null;
+    };
+
+    if (kind === "cad") {
+      const { data: rr } = await tdb("cad_model_revisions").select("id, cad_model_id").eq("id", revision_id);
+      if (!(rr || []).length) return json({ error: "CAD revision not found" }, 404);
+      const cad_model_id = (rr as any[])[0].cad_model_id;
+      const { data: modelRows } = await tdb("cad_models").select("id, component_id").eq("id", cad_model_id);
+      const model = (modelRows || [])[0];
+      if (!model) return json({ error: "CAD model not found" }, 404);
+      const [revisions, component, drawings] = await Promise.all([
+        loadCadRevisions(tdb, cad_model_id),
+        loadPart(model.component_id ?? null),
+        model.component_id ? loadPartDrawings(model.component_id) : Promise.resolve([] as any[]),
+      ]);
+      const rev = revisions.find((r) => r.id === revision_id);
+      if (!rev) return json({ error: "CAD revision not found" }, 404);
+      const after = releasedView(revisions, rev.id);
+      return json({
+        kind, word,
+        object: { id: model.id, part_number: component?.part_number ?? null, component_name: component?.name ?? null },
+        revision: revisionOut(rev, (rev.files || []).map((f: any) => ({
+          format: f.format, file_name: f.file_name ?? null, sha8: sha8(f.sha256), fusion_version: f.fusion_version ?? null,
+        }))),
+        ...verdict(revisions, rev),
+        supersedes: supersedesOf(revisions, rev),
+        related: { drawings: drawings.map((d) => {
+          const dd = deriveObject(d.revisions);
+          return {
+            id: d.id, drawing_number: d.drawing_number, title: d.title, role: d.role,
+            current_revision: dd.current?.revision ?? null, current_status: dd.status,
+            released_revision: dd.released?.revision ?? null,
+            made_from: madeFromOf(revisions, dd.released),
+          };
+        }) },
+        warnings_now: statusSummary({ drawings, cad: summaryCad(revisions) }).warnings,
+        warnings_after: statusSummary({ drawings, cad: summaryCad(after) }).warnings,
+        supplier_now: snapshotSupplierView({ cadRevisions: revisions, drawings }),
+        supplier_after: snapshotSupplierView({ cadRevisions: after, drawings }),
+      });
+    }
+
+    // kind === "drawing"
+    const { data: rr } = await tdb("drawing_revisions").select("id, drawing_id").eq("id", revision_id);
+    if (!(rr || []).length) return json({ error: "Revision not found" }, 404);
+    const drawing_id = (rr as any[])[0].drawing_id;
+    const { data: drawRows } = await tdb("drawings")
+      .select("id, drawing_number, title, owner_component_id, is_supplier_visible").eq("id", drawing_id);
+    const drawing = (drawRows || [])[0];
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+    const owner: string | null = drawing.owner_component_id || null;
+    const [revisions, component, ownerDrawings, modelRows] = await Promise.all([
+      loadDrawingRevisions(tdb, [drawing_id]).then((m) => m[drawing_id] || []),
+      loadPart(owner),
+      owner ? loadPartDrawings(owner) : Promise.resolve([] as any[]),
+      owner ? tdb("cad_models").select("id, component_id").eq("component_id", owner).then((r: any) => r.data || []) : Promise.resolve([]),
+    ]);
+    const rev = revisions.find((r: any) => r.id === revision_id);
+    if (!rev) return json({ error: "Revision not found" }, 404);
+    const model = (modelRows as any[])[0] || null;
+    const cadRevs: any[] = model ? await loadCadRevisions(tdb, model.id) : [];
+    // The part's drawings, this one included even when its link row is missing.
+    const thisAsSummary = {
+      id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title ?? null, role: "depicts",
+      is_supplier_visible: drawing.is_supplier_visible !== false,
+      revisions: revisions.map((r: any) => ({
+        id: r.id, revision: r.revision, status: r.status, source_sha256: r.source_sha256 || null,
+        source_cad_file_id: r.source_cad_file_id || null,
+      })),
+    };
+    const drawingsNow = ownerDrawings.some((d) => d.id === drawing.id) ? ownerDrawings : [thisAsSummary, ...ownerDrawings];
+    const drawingsAfter = drawingsNow.map((d) => d.id === drawing.id ? { ...d, revisions: releasedView(d.revisions, rev.id) } : d);
+    // A free drawing has no part to be coherent with: no warnings either way.
+    const warningsOf = (drawings: any[]) =>
+      owner ? statusSummary({ drawings, cad: model ? summaryCad(cadRevs) : null }).warnings : [];
+    const cadDerived = model ? deriveObject(cadRevs) : null;
+    const extMatch = /\.([A-Za-z0-9]+)$/.exec(String(rev.file_name || ""));
+    return json({
+      kind, word,
+      object: {
+        id: drawing.id, part_number: component?.part_number ?? null, component_name: component?.name ?? null,
+        drawing_number: drawing.drawing_number, title: drawing.title ?? null,
+      },
+      revision: revisionOut(rev, rev.storage_path
+        ? [{ format: extMatch ? extMatch[1].toLowerCase() : null, file_name: rev.file_name ?? null, sha8: null, fusion_version: null }]
+        : []),
+      ...verdict(revisions, rev),
+      supersedes: supersedesOf(revisions, rev),
+      related: { cad: cadDerived ? {
+        current_revision: cadDerived.current?.revision ?? null, current_status: cadDerived.status,
+        released_revision: cadDerived.released?.revision ?? null,
+        this_issue_made_from: madeFromOf(cadRevs, rev),
+      } : null },
+      warnings_now: warningsOf(drawingsNow),
+      warnings_after: warningsOf(drawingsAfter),
+      supplier_now: snapshotSupplierView({ cadRevisions: cadRevs, drawings: drawingsNow }),
+      supplier_after: snapshotSupplierView({ cadRevisions: cadRevs, drawings: drawingsAfter }),
+    });
   }
 
   // Release and the other transitions — on the revision, never on the model.

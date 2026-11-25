@@ -1499,3 +1499,17 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/DRAWING_RENDER.md`, `supabase/migrations/0062_drawing_render_jobs.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/portal-api/index.ts`, `assets/app.js`, `index.html`, `supplier.html`, `tools/drawing-worker/*`, `tests/drawing-render.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `docs/STATUS_MODEL.md`, `CLAUDE.md`.
 
 ---
+
+---
+
+## 2026-11-25 — A release shows its consequences before the click, and never happens on a revision without a file
+
+**Decision:** Every release of a CAD revision or a drawing issue goes through one modal fed by `previewRelease`, which computes with the release rule itself: whether this revision may be released and why not, what it supersedes, the part's drawings or CAD, the coherence warnings as they would stand afterwards, and what the supplier will see. Release leaves the CAD register's main row and sits in the revision group as a plain button; the Drawings register gets the same expandable issue group and the same transitions. The server refuses to release a revision that has no file. CAD keeps draft → released (the Fusion flow has no checker).
+
+**Why:** A green primary Release on every one of 51 draft rows behind a native confirm was the most prominent control on the register and the one with the largest consequence. The consequence was invisible: nothing said which drawing issue was released against this CAD, that a letter would become superseded, or that the supplier's package would change. The two registers released in different ways, one click against three screens. A revision with no file could be released, which is a record asserting something that does not exist.
+
+**Consequences:** `previewRelease { kind, revision_id }` (Rushroom only); `releaseCheck` shared by the preview and `releaseRevisionRow`; `releasedView` in `status-core.mjs` for the after-state; zero-file refusal on every release path. No `confirm()` in the CAD and drawings code. Step E (the New drawing modal) remains.
+
+**Files changed:** `docs/DRAWINGS_TAB_UX.md`, `supabase/functions/portal-api/index.ts`, `supabase/functions/_shared/status-core.mjs`, `assets/app.js`, `index.html`, `supplier.html`, `tests/release-discipline.test.mjs`, `tests/status-model.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
+
+---

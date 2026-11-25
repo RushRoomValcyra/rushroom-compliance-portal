@@ -47,19 +47,20 @@ function functionBody(name) {
 const rev = (revision, status, extra = {}) => ({ id: `rev-${revision}`, revision, status, ...extra });
 const withFile = (r) => ({ ...r, files: [{ id: `f-${r.revision}`, format: "step", sha256: `sha-${r.revision}` }] });
 
-test("releaseCheck: the four answers the contract names", () => {
-  const b = withFile(rev("B", "approved")), c = withFile(rev("C", "draft"));
+test("releaseCheck: the four answers the contract names (three states since §12: a drawing draft releases like a CAD draft)", () => {
+  const b = withFile(rev("B", "draft")), c = withFile(rev("C", "draft"));
   assert.deepEqual(releaseCheck("cad", [b, c], b), { error: "Rev B is not the current revision; C is" });
   assert.deepEqual(releaseCheck("drawing", [b, c], b), { error: "Issue B is not the current revision; C is" });
-  const d = rev("D", "draft", { storage_path: "p/d.pdf" });
-  assert.deepEqual(releaseCheck("drawing", [d], d), { error: "Cannot go from draft to released" });
+  // The transition refusal is now reserved for an old row carrying a retired word.
+  const d = rev("D", "checked", { storage_path: "p/d.pdf" });
+  assert.deepEqual(releaseCheck("drawing", [d], d), { error: "Cannot go from checked to released" });
   const e = rev("E", "draft", { files: [] });
   assert.deepEqual(releaseCheck("cad", [e], e), { error: "Rev E has no file" });
-  const f = rev("F", "approved", { storage_path: "" });
+  const f = rev("F", "draft", { storage_path: "" });
   assert.deepEqual(releaseCheck("drawing", [f], f), { error: "Issue F has no file" });
   assert.deepEqual(releaseCheck("cad", [b, c], c), { ok: true });
-  const g = rev("G", "approved", { storage_path: "p/g.pdf" });
-  assert.deepEqual(releaseCheck("drawing", [g], g), { ok: true });
+  const g = rev("G", "draft", { storage_path: "p/g.pdf" });
+  assert.deepEqual(releaseCheck("drawing", [g], g), { ok: true }, "a drawing draft with a file releases directly");
 });
 
 test("releaseCheck never writes: the revisions passed in are the same afterwards", () => {
@@ -81,6 +82,30 @@ test("releasedView: the previous release is superseded and the input stays as it
 // ---------------------------------------------------------------------------
 // Static guarantees over portal-api
 // ---------------------------------------------------------------------------
+test("the retired transitions are gone from portal-api: nothing stamps checked or approved", () => {
+  const start = src.indexOf("function transitionStamp(");
+  assert.notEqual(start, -1, "transitionStamp is the one stamping helper");
+  const body = src.slice(start, src.indexOf("\n}", start));
+  assert.ok(!/checked_at|approved_at/.test(body), "transitionStamp still stamps a retired state");
+  assert.ok(/released_at/.test(body) && /released_by/.test(body), "the release stamp stays");
+  // No write anywhere sets checked_at / approved_at.
+  assert.deepEqual(src.match(/(?:checked|approved)_(?:at|by): (?!r\.)[^,}]*/g) || [], [],
+    "a write still stamps checked_* / approved_* (reads of r.checked_at for old rows are fine)");
+  // Both status actions refuse through canTransition — the same table as the release.
+  for (const [name, kind] of [["setDrawingRevisionStatus", "drawing"], ["releaseCadRevision", "cad"]]) {
+    const block = actionBlock(name);
+    assert.ok(block.includes(`canTransition("${kind}", rev.status, status)`), `${name} does not consult the table`);
+    assert.ok(block.includes("`Cannot go from ${rev.status} to ${status}`"), `${name} does not answer with the table's text`);
+  }
+});
+
+test("createDrawingWithRevision and createDrawing no longer read projection_angle, sheet_size or scale", () => {
+  for (const name of ["createDrawingWithRevision", "createDrawing"]) {
+    const block = actionBlock(name);
+    assert.ok(!/body\.(?:projection_angle|sheet_size|scale)\b/.test(block), `${name} still reads a retired field from the body`);
+  }
+});
+
 test("releaseRevisionRow applies releaseCheck before any write", () => {
   const body = functionBody("releaseRevisionRow");
   const check = body.indexOf("releaseCheck(kind, revisions, rev)");

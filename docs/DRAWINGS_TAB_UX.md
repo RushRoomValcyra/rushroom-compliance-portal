@@ -296,3 +296,66 @@ revision without `storage_path` → 400 "Issue B has no file".
   other transitions stay direct.
 - After a release both registers reload silently and an expanded row stays
   expanded.
+
+## 12 Three states, and step E (contract, 2026-11-25)
+
+Decided by ziirvass: "as few statuses as possible, without losing control".
+Checked and Approved go. A revision is **Draft · Released · Superseded**, on
+drawings and on CAD alike, and the controls that stop a bad release are the
+ones built today: the release modal with the facts, the zero-file refusal,
+the released-by stamp and the Change Log. The day a second engineer reviews
+another's drawing, the honest form is a "Reviewed by" stamp on the issue,
+not a state. Found while testing step D: a draft issue reading "Approved
+25/11/2026 · Checked 25/11/2026" — what five states cost in a company of one.
+
+### Rules (STATUS_MODEL §5.1 replaced)
+
+| From | To | Who | Effect |
+|---|---|---|---|
+| draft | released | rushroom | `released_at/by`; the previously released revision → superseded; refused without a file, refused unless current |
+| released | superseded | automatic | never by hand |
+| superseded | — | | terminal |
+
+`canTransition(kind, from, to)` in `status-core.mjs` has exactly these for
+both kinds. `setDrawingRevisionStatus` / `setDrawingStatus` /
+`setCadRevisionStatus` answer 400 "Cannot go from draft to checked" for the
+retired words. The enum `drawing_status` keeps its five values (no row uses
+checked or approved; dropping values is a later migration with the 0063
+clean-up). The `checked_*` / `approved_*` columns stay, unwritten.
+
+### Frontend
+
+- Filter chips in both registers: All · Draft · Released · Superseded.
+- The issue group (Drawings register) and the CAD revision group: no Mark
+  checked / Mark approved / Back to draft; the current draft revision has
+  Release (through the modal) only.
+- The drawing surface rail: the same.
+- The release modal's Revision line shows the chip and the created date;
+  no checked/approved stamps.
+- `REVISION_TRANSITIONS` in app.js mirrors the new table.
+- Vocabulary: three words on screen, Draft · Released · Superseded;
+  `drawingStatusChip` / `drawingStatusLabel` keep rendering the two retired
+  words for any old row a future import might carry.
+
+### Step E — the New drawing modal
+
+One modal, three moments, no sentences:
+
+1. **Part** — the part search and list as today (preselected and skipped
+   when opened from a part), plus a bare checkbox **Free drawing**, label
+   outside the box. Next.
+2. **File** — the drop zone; the file is uploaded and read on landing as
+   today. The "PDF or image…" sentence goes; the step pill row stays as the
+   only orientation.
+3. **Review** — ONE row, labels above the controls, in this order: Title ·
+   Supplier drawing no. · Supplier issue · Supplier (checkbox). The
+   confidence badge stays on a label when the AI read the field. Save.
+   Projection angle, sheet size and scale are removed from the form, from
+   `createDrawingWithRevision`'s accepted body, and from
+   `extractDrawingMeta`'s key list and prompt in portal-ai (the columns stay
+   on `drawings`, unwritten, until the 0063 clean-up). The identity note
+   ("The drawing number and revision letter are assigned…") and the free
+   drawing explanation are deleted.
+
+Context line at the top of steps 2 and 3: "Drawing for <part name>" or
+"Free drawing", as a plain label.

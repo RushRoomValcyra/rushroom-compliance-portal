@@ -58,7 +58,8 @@ test("listCadModels reports the derived facts per model", async (t) => {
     for (const key of ["current_revision", "status", "released_revision", "formats", "preview_file", "revision_count"]) {
       assert.ok(key in m, `model ${m.id} lacks ${key}`);
     }
-    assert.ok(["draft", "checked", "approved", "released", "superseded"].includes(m.status), `unexpected status ${m.status}`);
+    // The enum keeps five words until 0063; a live row should carry one of the three lifecycle states.
+    assert.ok(["draft", "released", "superseded"].includes(m.status), `model ${m.id} carries a retired status ${m.status}`);
     // The object only reports: no revisions means draft and no letters.
     if (m.revision_count === 0) {
       assert.equal(m.current_revision, null);
@@ -135,6 +136,21 @@ test("the status of a CAD model is derived, never set by hand", async (t) => {
 });
 
 // --- static guarantees, no network -----------------------------------------
+
+test("a CAD draft releases directly and the retired words are refused — the same table as drawings", async () => {
+  const { canTransition, TRANSITIONS } = await import(new URL("../supabase/functions/_shared/status-core.mjs", import.meta.url));
+  assert.equal(canTransition("cad", "draft", "released"), true);
+  assert.equal(canTransition("cad", "draft", "checked"), false);
+  assert.equal(canTransition("cad", "draft", "approved"), false);
+  assert.deepEqual(TRANSITIONS.cad, TRANSITIONS.drawing);
+  // setCadRevisionStatus refuses through the table with the table's text.
+  const src = read("supabase/functions/portal-api/index.ts");
+  const start = src.indexOf('action === "releaseCadRevision" || action === "setCadRevisionStatus"');
+  const block = src.slice(start, src.indexOf('action === "listCadModels"', start));
+  assert.ok(block.includes('canTransition("cad", rev.status, status)'), "setCadRevisionStatus does not consult the table");
+  assert.ok(block.includes("`Cannot go from ${rev.status} to ${status}`"), "setCadRevisionStatus does not answer with the table's text");
+  assert.ok(!/checked_at|approved_at/.test(block), "setCadRevisionStatus still stamps a retired state");
+});
 
 test("portal-api derives status from the shared status core", () => {
   const src = read("supabase/functions/portal-api/index.ts");

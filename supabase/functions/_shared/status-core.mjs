@@ -15,15 +15,20 @@
  * "Fusion v12" for Fusion's own save counter (never a revision).
  */
 
+// The enum drawing_status keeps its five values until the 0063 clean-up, and
+// STATUSES keeps them so an old row carrying "checked" or "approved" still
+// renders a word. The lifecycle itself has three: draft, released, superseded
+// (docs/STATUS_MODEL.md §5.1, changed 2026-11-25; DRAWINGS_TAB_UX.md §12).
 export const STATUSES = ["draft", "checked", "approved", "released", "superseded"];
 
-// Hand transitions only. released → superseded is automatic — it happens when
-// a later revision is released — and is never offered or accepted by hand.
-// A CAD revision may go draft → released directly: the Fusion flow has no
-// checker. A drawing must pass checked and approved, as today.
+// Hand transitions only, the same table for drawings and CAD: draft → released
+// is the one hand move. released → superseded is automatic — it happens when a
+// later revision is released — and is never offered or accepted by hand.
+// checked and approved have no entry and no exit: nothing reaches them, and a
+// row that still carries one of the words (none does today) cannot move.
 export const TRANSITIONS = {
-  drawing: { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] },
-  cad:     { draft: ["checked", "released"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] },
+  drawing: { draft: ["released"], released: [], superseded: [] },
+  cad:     { draft: ["released"], released: [], superseded: [] },
 };
 
 /** kind 'drawing' | 'cad'. Unknown kind or status → false, never a throw. */
@@ -168,7 +173,7 @@ export function hasReleaseFile(kind, rev) {
 /** The release rule, in the order releaseRevisionRow applies it:
  *    already released              → { ok: true, already: true }  (a no-op, not a refusal)
  *    not the current revision      → { error: "Rev E is not the current revision; G is" }
- *    transition not allowed (§5.1) → { error: "Cannot go from draft to released" }
+ *    transition not allowed (§5.1) → { error: "Cannot go from checked to released" }  (an old row)
  *    no file                       → { error: "Rev B has no file" }
  *    otherwise                     → { ok: true }
  *  revisions: every revision of the object (the shape loadCadRevisions /

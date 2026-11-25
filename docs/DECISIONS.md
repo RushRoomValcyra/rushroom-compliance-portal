@@ -1513,3 +1513,17 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/DRAWINGS_TAB_UX.md`, `supabase/functions/portal-api/index.ts`, `supabase/functions/_shared/status-core.mjs`, `assets/app.js`, `index.html`, `supplier.html`, `tests/release-discipline.test.mjs`, `tests/status-model.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
 
 ---
+
+---
+
+## 2026-11-25 — Three revision states: Draft, Released, Superseded
+
+**Decision:** A drawing issue and a CAD revision have three states, Draft → Released → Superseded, on both sides alike. Checked and Approved are retired as states; the enum keeps the words and the `checked_*` / `approved_*` columns stay, unwritten, until the clean-up migration. If a second engineer one day reviews another's drawing, that is a "Reviewed by" stamp on the issue, not a state. With the same change the New drawing modal becomes one review row (Title · Supplier drawing no. · Supplier issue · Supplier) and stops collecting projection angle, sheet size and scale, which no screen displayed.
+
+**Why:** Rushroom is a startup with one engineer, not a corporate with a checker and an approver. Five states gave three clicks by the same person and no control a reader could audit; the first time the middle states were used, a draft issue read "Approved · Checked" after being put back to draft. The controls that actually stop a bad release are the release modal with the facts, the refusal of a revision without a file, the released-by stamp and the Change Log. "As few statuses as possible, without losing control" (ziirvass, 2026-11-25).
+
+**Consequences:** `TRANSITIONS` in `status-core.mjs` is the three-state table for both kinds; the transition actions refuse the retired words; registers, groups, surface and release modal lose Mark checked / Mark approved / Back to draft and the stamps; filter chips are All · Draft · Released · Superseded; `extractDrawingMeta` no longer reads the three fields; STATUS_MODEL §5.1 rewritten.
+
+**Files changed:** `docs/DRAWINGS_TAB_UX.md`, `docs/STATUS_MODEL.md`, `supabase/functions/_shared/status-core.mjs`, `supabase/functions/portal-api/index.ts`, `supabase/functions/portal-ai/index.ts`, `assets/app.js`, `index.html`, `supplier.html`, `tests/*.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
+
+---

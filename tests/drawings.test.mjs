@@ -66,18 +66,25 @@ test("setDrawingStatus refuses an illegal transition on the current issue", asyn
   if (notDeployed(list)) return t.skip("drawings not deployed yet");
   const draft = (list.json?.drawings ?? []).find((d) => d.status === "draft" && d.revision);
   if (!draft) return t.skip("no draft drawing to exercise transitions against");
-  // A drawing's draft issue may only go to checked; jumping straight to released
-  // must be refused (CAD may skip the checker, drawings may not).
-  const r = await call("setDrawingStatus", { token, drawing_id: draft.id, status: "released" });
-  assert.equal(r.status, 400, "draft → released should be rejected");
-  assert.match(r.json?.error ?? "", /cannot go from draft to released/i);
-  // The same refusal when the revision is named directly.
+  // Three states (STATUS_MODEL §5.1, 2026-11-25): a draft issue goes to released
+  // and nowhere else; the retired words are refused with the table's answer.
+  // The probe below is read-only: on a deployed copy that still has the old
+  // table, "checked" would be ACCEPTED and stamp a production row, so the
+  // test must know which table it is talking to before it sends anything.
   const detail = await call("getDrawing", { token, drawing_id: draft.id });
   const current = (detail.json?.revisions ?? []).find((x) => x.revision === draft.revision);
   if (!current) return t.skip("current revision not found in getDrawing");
-  const r2 = await call("setDrawingRevisionStatus", { token, drawing_revision_id: current.id, status: "released" });
+  const probe = await call("previewRelease", { token, kind: "drawing", revision_id: current.id });
+  if (notDeployed(probe)) return t.skip("previewRelease not deployed yet");
+  if (/cannot go from draft to released/i.test(probe.json?.refusal ?? "")) return t.skip("the deployed copy predates three states");
+  const r = await call("setDrawingStatus", { token, drawing_id: draft.id, status: "checked" });
+  assert.equal(r.status, 400, "draft → checked should be rejected");
+  assert.match(r.json?.error ?? "", /cannot go from draft to checked/i);
+  // The same refusal when the revision is named directly.
+  const r2 = await call("setDrawingRevisionStatus", { token, drawing_revision_id: current.id, status: "approved" });
   if (notDeployed(r2)) return t.skip("setDrawingRevisionStatus not deployed yet");
-  assert.equal(r2.status, 400, "draft → released should be rejected on the revision too");
+  assert.equal(r2.status, 400, "draft → approved should be rejected on the revision too");
+  assert.match(r2.json?.error ?? "", /cannot go from draft to approved/i);
 });
 
 test("a drawing reports its current issue's status and its released issue separately", async (t) => {
@@ -129,6 +136,25 @@ test("addDrawingRevision is the only way a drawing goes back to draft", () => {
   assert.ok(st.length > 0, "setDrawingStatus is not an alias of setDrawingRevisionStatus");
   assert.ok(!/tdb\("drawings"\)\.update\(\{ status/.test(st), "setDrawingStatus still writes drawings.status directly");
   assert.ok(/canTransition\("drawing"/.test(st), "drawing transitions do not use the shared table");
+  // Three states: the block no longer stamps a checker or an approver.
+  assert.ok(!/checked_at|approved_at/.test(st), "setDrawingRevisionStatus still stamps a retired state");
+});
+
+test("a drawing draft releases directly — the shared table has no checked or approved step for drawings", async () => {
+  const { canTransition, TRANSITIONS } = await import(new URL("../supabase/functions/_shared/status-core.mjs", import.meta.url));
+  assert.equal(canTransition("drawing", "draft", "released"), true);
+  assert.equal(canTransition("drawing", "draft", "checked"), false);
+  assert.equal(canTransition("drawing", "draft", "approved"), false);
+  assert.deepEqual(Object.keys(TRANSITIONS.drawing).sort(), ["draft", "released", "superseded"]);
+});
+
+test("createDrawingWithRevision takes no projection angle, sheet size or scale", () => {
+  const src = read("supabase/functions/portal-api/index.ts");
+  const start = src.indexOf('action === "createDrawingWithRevision"');
+  const block = src.slice(start, src.indexOf('\n  if (action === "', start + 10));
+  assert.ok(block.length > 0);
+  assert.ok(!/body\.(?:projection_angle|sheet_size|scale)\b/.test(block), "a retired field is still read from the body");
+  // The columns stay on drawings until 0063; the read actions may still return them for old rows.
 });
 
 test("a supplier cannot write to the drawings domain", async (t) => {

@@ -856,14 +856,11 @@ async function syncCadModel(tdb: any, cadModelId: string, revisions?: any[]): Pr
   return derived;
 }
 
-/** The who/when a transition stamps on the revision row (§5.1). Back to draft
- *  clears nothing: the trail of who checked it stays. */
+/** The who/when a transition stamps on the revision row (§5.1, three states
+ *  since 2026-11-25): released carries released_at/by; nothing else is stamped.
+ *  checked_* / approved_* stay on the tables, unwritten, until the 0063 clean-up. */
 function transitionStamp(to: string, session: any): Record<string, unknown> {
-  const now = new Date().toISOString();
-  const uid = session?.uid || null;
-  if (to === "checked")  return { status: to, checked_at: now,  checked_by: uid };
-  if (to === "approved") return { status: to, approved_at: now, approved_by: uid };
-  if (to === "released") return { status: to, released_at: now, released_by: uid };
+  if (to === "released") return { status: to, released_at: new Date().toISOString(), released_by: session?.uid || null };
   return { status: to };
 }
 
@@ -5456,9 +5453,8 @@ Deno.serve(async (req) => {
     if (!title) return json({ error: "title required" }, 400);
     const { data, error } = await tdb("drawings").insert({
       drawing_number: drawing_number.slice(0, 80), title: title.slice(0, 200),
-      projection_angle: body.projection_angle ? String(body.projection_angle).slice(0, 10) : null,
-      sheet_size: body.sheet_size ? String(body.sheet_size).slice(0, 10) : null,
-      scale: body.scale ? String(body.scale).slice(0, 20) : null,
+      // projection_angle, sheet_size and scale are no longer taken from the body
+      // (DRAWINGS_TAB_UX.md §12, step E); the columns stay, unwritten, until 0063.
       is_supplier_visible: body.is_supplier_visible === false ? false : true,
       created_by: session.uid || null,
     }).select("id").maybeSingle();
@@ -5578,6 +5574,10 @@ Deno.serve(async (req) => {
         return json({ ok: true, already: true, status, revision: rev.revision, superseded: 0, audited: 0, bumped: [] });
       }
     } else {
+      // Three states (§5.1): draft → released is the one hand move, so every
+      // other word lands here and is refused with the table's answer —
+      // "Cannot go from draft to checked". The write below stays for the day
+      // the table grows an entry; today nothing reaches it.
       if (!canTransition("drawing", rev.status, status)) {
         return json({ error: `Cannot go from ${rev.status} to ${status}` }, 400);
       }
@@ -5679,9 +5679,8 @@ Deno.serve(async (req) => {
       drawing_type: drawingType,
       owner_component_id: ownerId, node_sequence,
       supplier_drawing_number: body.supplier_drawing_number ? String(body.supplier_drawing_number).slice(0, 120) : null,
-      projection_angle: body.projection_angle ? String(body.projection_angle).slice(0, 10) : null,
-      sheet_size: body.sheet_size ? String(body.sheet_size).slice(0, 10) : null,
-      scale: body.scale ? String(body.scale).slice(0, 20) : null,
+      // projection_angle, sheet_size and scale are no longer taken from the body
+      // (DRAWINGS_TAB_UX.md §12, step E); the columns stay, unwritten, until 0063.
       // Surgery template drawings are internal — never share jig geometry with suppliers.
       is_supplier_visible: drawingType === "surgery_template" ? false : (body.is_supplier_visible === false ? false : true),
       created_by: session.uid || null,
@@ -6255,6 +6254,8 @@ Deno.serve(async (req) => {
       superseded_revision = r.superseded_revision;
       already = Boolean(r.already);
     } else {
+      // Three states (§5.1): the same refusal as on the drawing side —
+      // "Cannot go from draft to checked"; the write is reached by nothing today.
       if (!canTransition("cad", rev.status, status)) {
         return json({ error: `Cannot go from ${rev.status} to ${status}` }, 400);
       }

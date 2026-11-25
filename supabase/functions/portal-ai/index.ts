@@ -1212,9 +1212,11 @@ Valid field keys: ${FIELD_KEYS.join(", ")}`;
     const fname = String(body.file_name ?? "drawing").trim();
     if (!path) return json({ error: "storage_path required" }, 400);
 
+    // scale, sheet_size and projection_angle left the key list on 2026-11-25
+    // (DRAWINGS_TAB_UX.md §12, step E): the form no longer has the fields.
     const KEYS = [
-      "title", "supplier_drawing_number", "supplier_revision", "scale", "sheet_size",
-      "projection_angle", "material_callout", "general_tolerance", "drawn_by", "checked_by", "drawing_date",
+      "title", "supplier_drawing_number", "supplier_revision",
+      "material_callout", "general_tolerance", "drawn_by", "checked_by", "drawing_date",
     ];
 
     const system = `You are reading an engineering drawing and extracting what its title block and notes state.
@@ -1224,8 +1226,6 @@ Rules that matter more than coverage:
 - Put the value exactly as printed in \`as_printed\`, and a normalised form in \`value\`.
 - \`supplier_revision\` is whatever the drawing itself calls its revision or issue — "B", "02", "Rev 3", "Issue C". Report it verbatim. Do NOT translate it into a letter sequence.
 - \`supplier_drawing_number\` is the number printed ON the drawing, the supplier's or designer's own. There is no other drawing number to find.
-- \`projection_angle\` is "first" or "third" only, and only if the drawing shows the projection symbol or states it in words.
-- \`sheet_size\` is a paper size such as A0, A1, A2, A3 or A4.
 - \`general_tolerance\` is the tolerance block statement (for example "ISO 2768-m" or "±0.2 unless stated"), not an individual dimension's tolerance.
 - \`title\` is the part or assembly name as the drawing names it.
 - Set confidence honestly: "high" only when the text is unambiguous and clearly legible. A scanned or rotated drawing you are reading with effort is "low".

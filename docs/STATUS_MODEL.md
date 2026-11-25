@@ -1,6 +1,8 @@
 # One status model for drawings and CAD models
 
-_Design, 2026-11-24. Decided direction: status lives on the revision (ziirvass, 2026-11-24). Not built._
+_Design, 2026-11-24. Decided direction: status lives on the revision (ziirvass, 2026-11-24). Built 0060, step D 2026-11-25._
+
+_Changed 2026-11-25 (ziirvass, DRAWINGS_TAB_UX.md §12): **three states.** Checked and Approved go; a revision is Draft · Released · Superseded on drawings and on CAD alike, and §5.1 is one table with one hand move, draft → released. Why: "as few statuses as possible, without losing control" — the controls that stop a bad release are the ones step D built (the release modal with the facts, the zero-file refusal, the released-by stamp, the Change Log), and the two review states had cost more than they guarded: found while testing step D, a draft issue reading "Approved 25/11/2026 · Checked 25/11/2026". The day a second engineer reviews another's drawing, the honest form is a "Reviewed by" stamp on the issue, not a state. The enum `drawing_status` keeps its five values and the `checked_*` / `approved_*` columns stay, unwritten, until the 0063 clean-up; `STATUSES` in `status-core.mjs` keeps the five words so an old row still renders. The §1 fault table and §9 (0060) stand as history and are not rewritten._
 
 ## 1 Why
 
@@ -40,9 +42,11 @@ The word **version** is reserved for Fusion's counter; the portal says revision 
 
 ## 4 Data model
 
-One enum for both lifecycles — `drawing_status` already exists with the right five values; it is reused, not duplicated:
+One enum for both lifecycles — `drawing_status` already exists; it is reused, not duplicated. Since 2026-11-25 three of its five values are the lifecycle:
 
-`draft → checked → approved → released → superseded`
+`draft → released → superseded`
+
+`checked` and `approved` remain in the enum (dropping a value is a migration, planned with the 0063 clean-up); no transition reaches them and no row uses them.
 
 ### 4.1 drawing_revisions (changed)
 
@@ -50,7 +54,8 @@ One enum for both lifecycles — `drawing_status` already exists with the right 
 |---|---|---|
 | `status drawing_status` | unchanged; becomes the only status of a drawing | the revision is the controlled object |
 | `released_at` | unchanged | |
-| `checked_at`, `checked_by`, `approved_at`, `approved_by`, `released_by` | **new**, nullable | a state without who and when is half a state; the title block has Checked by / Approved by cells that are blank today |
+| `released_by` | **new**, nullable | a state without who and when is half a state |
+| `checked_at`, `checked_by`, `approved_at`, `approved_by` | added in 0060, **retired 2026-11-25**: stay, unwritten, until 0063 | no transition stamps them any more; a future "Reviewed by" is a stamp on the issue, not a state |
 | `source_cad_file_id` → `cad_model_files(id)`, `source_sha256 VARCHAR(64)` | **new**, nullable | the STEP file a drawing was made from. `drawset.py` writes the STEP's sha256 into its `.sources.json`; with it on the revision the portal can say *this drawing is not from the released CAD* exactly, not by date |
 
 ### 4.2 drawings (changed)
@@ -71,7 +76,8 @@ One enum for both lifecycles — `drawing_status` already exists with the right 
 | `status` | `drawing_status` NOT NULL DEFAULT 'draft' |
 | `fusion_revision_label` | VARCHAR(20) — "RevF" as found in the document name at registration |
 | `fusion_version` | INTEGER — the save counter when the letter was first registered |
-| `released_at`, `released_by`, `checked_at`, `checked_by`, `approved_at`, `approved_by` | as on drawing revisions |
+| `released_at`, `released_by` | as on drawing revisions |
+| `checked_at`, `checked_by`, `approved_at`, `approved_by` | as on drawing revisions: retired 2026-11-25, unwritten, dropped with 0063 |
 | `notes` | TEXT |
 | `created_at`, `created_by` | |
 | UNIQUE | (organization_id, cad_model_id, revision) |
@@ -97,16 +103,15 @@ Not changed: `surgery_templates.status` (active / retired — a rule set, not a 
 
 ## 5 Rules
 
-### 5.1 Transitions — one table for both
+### 5.1 Transitions — one table for both (three states since 2026-11-25)
 
 | From | To | Who | Effect |
 |---|---|---|---|
-| draft | checked | rushroom | `checked_at/by` |
-| checked | approved, draft | rushroom | `approved_at/by`; back to draft clears nothing |
-| approved | released, draft | rushroom | see release |
-| draft | released | rushroom, **CAD only** | the Fusion flow has no checker; a drawing must pass checked and approved as today |
+| draft | released | rushroom | `released_at/by`; the previously released revision → superseded; refused without a file, refused unless current |
 | released | superseded | automatic, when a later revision is released | never by hand |
 | superseded | — | | terminal |
+
+`canTransition(kind, from, to)` in `status-core.mjs` has exactly these for both kinds. `setDrawingRevisionStatus` / `setDrawingStatus` / `setCadRevisionStatus` answer 400 "Cannot go from draft to checked" for the retired words. A row that still carries `checked` or `approved` (none does) has no exit: it is released by adding the next issue and releasing that.
 
 Release, on both sides: only the **current** revision can be released (refused otherwise, 400 "Rev E is not the current revision; G is"). The previously released revision becomes superseded. `released_at/by` are stamped on that revision only. The BOM history gets one `drawing_released` / "CAD revision F released" event; the part's revision letter is **not** bumped by a release (today's rule, kept).
 
@@ -144,8 +149,8 @@ Returned by `getComponentCad` as `summary` and shown on the part card and in the
 | `getSidePanelSurgery`, `listSupplierComponents` | both read `drawings.status` today and swallow errors (`{ data }` without `error`), so the drop in 0063 would silently empty the surgery template badges and the supplier BOM's drawing rows. Both derive the status from the current revision |
 | **Suppliers** (`listDrawings`, `getDrawing`, `drawingFileUrl`, `listSupplierComponents` with role `supplier`) | **Changed policy.** Today a supplier sees every status and can open a draft file (`supplierDrawingScope` filters only `is_supplier_visible`). From now a supplier sees a drawing only when it has a **released** revision, sees only that revision (status Released, issue = the released letter), and `drawingFileUrl` refuses any other revision to a supplier. Without this the new default revision — the newest letter, which is a draft the moment a new issue is started — would put a supplier on an unreleased drawing |
 | `addDrawingRevision` | unchanged signature; accepts `source_cad_file_id`, `source_sha256`; the new revision is draft and current |
-| `setDrawingStatus` | kept as an alias for one release: acts on the current revision. New `setDrawingRevisionStatus {drawing_revision_id, status}` with the §5.1 table; stamps `*_at/_by` |
-| `createDrawingWithRevision`, `adoptDrawing` | unchanged: both leave the Rev A row at `draft` and never wrote `drawings.status`; `supplier_revision` ("their F") stays a label on the revision, not a status |
+| `setDrawingStatus` | kept as an alias for one release: acts on the current revision. New `setDrawingRevisionStatus {drawing_revision_id, status}` with the §5.1 table; stamps `released_at/by` |
+| `createDrawingWithRevision`, `adoptDrawing` | unchanged: both leave the Rev A row at `draft` and never wrote `drawings.status`; `supplier_revision` ("their F") stays a label on the revision, not a status. Since 2026-11-25 `createDrawingWithRevision` (and the older `createDrawing`) no longer read `projection_angle`, `sheet_size`, `scale` from the body, and `extractDrawingMeta` in portal-ai no longer asks for them; the three `drawings` columns stay, unwritten, until 0063 |
 | `linkCadDocument`, `cadUploadUrl`, `getComponentCad` | `getComponentCad` returns `cad_model` + `revisions[]` (each with `files[]`) + `summary` (§5.4); model-level `status`, `current_revision`, `released_revision` are derived |
 | `registerCadRevision` | finds or creates the revision row (draft) from `revision` / `fusion_revision_label`; replace-or-refuse per §5.2; `release: true` releases that revision at the end, same rule as below |
 | `releaseCadModel` | kept as an alias: releases the current revision. New `releaseCadRevision {cad_model_revision_id}` and `setCadRevisionStatus` with the §5.1 table |
@@ -158,14 +163,14 @@ All Rushroom-only, as today. The alias actions are removed in the release after 
 | Place | Shows |
 |---|---|
 | Drawings register row | *Issue F released · G draft* (chip per fact); filter chips apply to the current revision |
-| Drawing surface rail | the current revision's chip and actions ("Mark checked" …) act on the current revision; each revision row keeps its own chip (already so); the release confirm names the revision that will be superseded |
+| Drawing surface rail | the current revision's chip; its one action, Release, opens the release modal (DRAWINGS_TAB_UX.md §11); each revision row keeps its own chip (already so); the modal names the revision that will be superseded |
 | Part card → Drawings tab | a status line at the top: **CAD** Rev F released · G draft · **Drawing** RR-… Issue F released, followed by the §5.4 warnings as amber chips; the drawing rows keep Revision + Status |
 | Part card → CAD model block | same facts, plus "Fusion v12" on the current revision's files |
 | CAD Models tab, main row | Rev column *F released · G draft*; **Release** on the row releases the current draft revision; Draft / Released filter chips read the current revision |
 | CAD Models tab, expanded row | one group per revision: letter, status chip, who/when, files with format badge, Fusion version, sha, Preview / Download; Release per draft revision that is current |
 | `supplier.html` | suppliers see released drawings only (new, see §6): the register and the supplier BOM's drawing rows show the released issue with a Released chip (`drawingStatusChip`, not the lifecycle colours), and the surface lists only released revisions |
 
-The words on screen are exactly the enum values capitalised: Draft, Checked, Approved, Released, Superseded. "Rev" for CAD, "Issue" for drawings, "Fusion v" for the counter.
+The words on screen are the three lifecycle values capitalised: Draft, Released, Superseded. `drawingStatusChip` / `drawingStatusLabel` still render Checked and Approved for any old row a future import might carry. "Rev" for CAD, "Issue" for drawings, "Fusion v" for the counter.
 
 ## 8 Fusion add-in
 
@@ -192,7 +197,7 @@ Between 0060 and 0063 the API **dual-writes**: it stops reading `drawings.status
 
 Deploy order: `supabase db push` → `supabase functions deploy portal-api --no-verify-jwt` → `git push origin main` → reload the add-in in Fusion.
 
-**0063 — drop** (numbered 0061 when this was written; 0061 became `cad_test_runs`, docs/TEST_AGENT.md; 0062 became `drawing_render_jobs`, docs/DRAWING_RENDER.md), one release later: `drawings.status`, `cad_models.status`, `cad_models.current_revision`, `cad_model_files.revision`, `cad_model_files.released_at`; `cad_model_files.cad_model_revision_id` becomes NOT NULL; the alias actions and the dual writes go.
+**0063 — drop** (numbered 0061 when this was written; 0061 became `cad_test_runs`, docs/TEST_AGENT.md; 0062 became `drawing_render_jobs`, docs/DRAWING_RENDER.md), one release later: `drawings.status`, `cad_models.status`, `cad_models.current_revision`, `cad_model_files.revision`, `cad_model_files.released_at`; `cad_model_files.cad_model_revision_id` becomes NOT NULL; the alias actions and the dual writes go. Added 2026-11-25 to the same clean-up: `drawing_revisions` and `cad_model_revisions` lose `checked_at`, `checked_by`, `approved_at`, `approved_by`; `drawings` loses `projection_angle`, `sheet_size`, `scale`; the enum `drawing_status` loses `checked` and `approved` (after a check that no row carries them).
 
 ## 10 Tests
 
@@ -203,7 +208,7 @@ Deploy order: `supabase db push` → `supabase functions deploy portal-api --no-
 
 ## 11 Open questions
 
-1. CAD: is draft → released without checked/approved right, or should a CAD revision go through the same four steps as a drawing?
+1. ~~CAD: is draft → released without checked/approved right, or should a CAD revision go through the same four steps as a drawing?~~ Answered 2026-11-25 the other way round: drawings take the CAD rule, draft → released for both (§5.1).
 2. Is the `RevF` label in Fusion document names authoritative enough to be the default letter, or should the add-in always ask?
 3. When a drawing is released with an issue letter different from the released CAD letter: warn (this design) or refuse?
 4. Who may release? Today everyone with the `rushroom` role; nothing finer exists.

@@ -7024,16 +7024,20 @@
   // PROP-045: drawing vocabulary. Declared above first use on purpose —
   // these are const, not hoisted, and the component panel reads them well
   // before the register is defined further down.
+  // The enum keeps five values; the three a revision can be today are
+  // REVISION_STATES (DRAWINGS_TAB_UX §12). DRAWING_STATUSES stays for the chip
+  // renderer, so an old row carrying a retired word still gets its colour.
   const DRAWING_STATUSES = ["draft", "checked", "approved", "released", "superseded"];
+  const REVISION_STATES = ["draft", "released", "superseded"];
   const DRAWING_ROLES = ["depicts", "installation", "wiring"];
 
-  // Hand transitions, STATUS_MODEL §5.1 — a mirror of TRANSITIONS in
-  // _shared/status-core.mjs (app.js is not a module). released → superseded is
-  // automatic and never offered; CAD may go draft → released (no checker in the
-  // Fusion flow), a drawing passes checked and approved.
+  // Hand transitions, STATUS_MODEL §5.1 as replaced by DRAWINGS_TAB_UX §12 — a
+  // mirror of TRANSITIONS in _shared/status-core.mjs (app.js is not a module).
+  // One hand move, draft → released, the same for a drawing and a CAD revision;
+  // released → superseded is automatic and never offered.
   const REVISION_TRANSITIONS = {
-    drawing: { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] },
-    cad:     { draft: ["checked", "released"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] },
+    drawing: { draft: ["released"], released: [], superseded: [] },
+    cad:     { draft: ["released"], released: [], superseded: [] },
   };
   const canTransition = (kind, from, to) => {
     const allowed = (REVISION_TRANSITIONS[kind] || {})[from];
@@ -7042,7 +7046,7 @@
 
   // The enum values are lowercase in the database and must stay that way; this
   // is the display spelling, used everywhere a status stands on its own as a
-  // label. Mid-sentence uses ("Mark checked") keep the lowercase form.
+  // label.
   const drawingStatusLabel = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
   function drawingStatusChip(status) {
@@ -12640,8 +12644,6 @@
                   isCurrent ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, "current") : null,
                   rev.fusion_revision_label ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap", title: "Label in the Fusion document name" }, rev.fusion_revision_label) : null,
                   revisionStamp("Released", rev.released_at, rev.released_by),
-                  revisionStamp("Approved", rev.approved_at, rev.approved_by),
-                  revisionStamp("Checked", rev.checked_at, rev.checked_by),
                   el("span", { style: "flex:1" }),
                   fromCadBtn,
                   releaseRevBtn,
@@ -12738,10 +12740,10 @@
         value: _cadFilter.q, style: "min-width:220px",
         oninput: (e) => { _cadFilter.q = e.target.value; repaintCad(); },
       });
-      // The five statuses, read from the current revision — the same row as
+      // The three states, read from the current revision — the same row as
       // the Drawings register.
       const chips = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" },
-        [{ id: "", label: "All" }, ...DRAWING_STATUSES.map((s) => ({ id: s, label: drawingStatusLabel(s) }))].map((s) =>
+        [{ id: "", label: "All" }, ...REVISION_STATES.map((s) => ({ id: s, label: drawingStatusLabel(s) }))].map((s) =>
           el("button", {
             class: `btn btn-sm${_cadFilter.status === s.id ? " btn-primary" : ""}`, type: "button",
             style: "font-size:0.75rem;padding:2px 10px",
@@ -12809,7 +12811,7 @@
         oninput: (e) => { state.q = e.target.value; repaint(); },
       });
       const chips = isRushroom ? el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" },
-        [{ id: "", label: "All" }, ...DRAWING_STATUSES.map((s) => ({ id: s, label: drawingStatusLabel(s) }))].map((s) =>
+        [{ id: "", label: "All" }, ...REVISION_STATES.map((s) => ({ id: s, label: drawingStatusLabel(s) }))].map((s) =>
           el("button", {
             class: `btn btn-sm${state.status === s.id && !state.freeOnly ? " btn-primary" : ""}`, type: "button",
             style: "font-size:0.75rem;padding:2px 10px",
@@ -12854,19 +12856,12 @@
       const openSurface = (d, revisionId) =>
         openDrawingSurface(d.id, role, { onChange: () => load({ silent: true }), revisionId: revisionId || null });
 
-      // The expanded revision group (§11, Rushroom only): one line per issue —
-      // letter, chip, who/when, file name, Open — and on the current issue its
-      // §5.1 transitions; Release goes through the release modal. Loaded with
-      // getDrawing on first expand; the CAD register's expander, for drawings.
+      // The expanded revision group (§11, §12, Rushroom only): one line per
+      // issue — letter, chip, who/when, file name, Open — and on the current
+      // draft issue Release, through the release modal (the only hand move).
+      // Loaded with getDrawing on first expand; the CAD register's expander,
+      // for drawings.
       function revisionGroup(d, detailTd) {
-        const errLine = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;padding:0.2rem 0" });
-        const fail = (msg) => { errLine.textContent = msg || ""; errLine.style.display = msg ? "" : "none"; };
-        const move = async (rev, to, btn) => {
-          fail("");
-          btn.disabled = true;
-          try { await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: rev.id, status: to }); await load({ silent: true }); }
-          catch (ex) { fail(ex.message); btn.disabled = false; }
-        };
         return (async () => {
           detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "Loading issues…"));
           let r;
@@ -12885,30 +12880,23 @@
           const currentId = drawing.current_revision_id || (revisions[0] && revisions[0].id) || null;
           const lines = revisions.map((rev) => {
             const isCurrent = rev.id === currentId;
-            const actions = isCurrent ? (REVISION_TRANSITIONS.drawing[rev.status || "draft"] || []).map((to) => {
-              if (to === "released") {
-                return el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
-                  onclick: () => releaseModal("drawing", rev.id, { onDone: () => load({ silent: true }) }) }, "Release");
-              }
-              const label = to === "draft" ? "Back to draft" : `Mark ${to}`;
-              return el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
-                onclick: (ev) => move(rev, to, ev.currentTarget) }, label);
-            }) : [];
+            const releaseBtn = isCurrent && canTransition("drawing", rev.status || "draft", "released")
+              ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
+                  onclick: () => releaseModal("drawing", rev.id, { onDone: () => load({ silent: true }) }) }, "Release")
+              : null;
             return el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.35rem 0;border-bottom:1px solid var(--border,#e2e8f0)" }, [
               el("span", { style: "font-weight:700;white-space:nowrap" }, `Issue ${rev.revision}`),
               drawingStatusChip(rev.status || "draft"),
               isCurrent ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, "current") : null,
               rev.supplier_revision ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap", title: "Supplier issue" }, rev.supplier_revision) : null,
               revisionStamp("Released", rev.released_at, rev.released_by),
-              revisionStamp("Approved", rev.approved_at, rev.approved_by),
-              revisionStamp("Checked", rev.checked_at, rev.checked_by),
               el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, rev.file_name || ""),
-              ...actions,
+              releaseBtn,
               el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
                 onclick: () => openSurface(d, rev.id) }, `Open Issue ${rev.revision}`),
             ].filter(Boolean));
           });
-          detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0" }, [...lines, errLine]));
+          detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0" }, lines));
         })();
       }
 
@@ -13755,8 +13743,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         [label(1, "Belongs to"), label(2, "File"), label(3, "Review")]);
     };
 
-    const identityNote = () => el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.7rem" },
-      "The drawing number and revision letter are assigned by the system — you will not be asked for them. Whatever the supplier calls this drawing is recorded separately, so changing supplier never changes our reference.");
+    // Context line for steps 2 and 3 (§12): a plain label, no sentence.
+    const contextLabel = () => el("div", { class: "form-label", style: "margin-bottom:0.6rem" },
+      state.free ? "Free drawing" : `Drawing for ${state.ownerName}`);
 
     // ---- Step 1: what is this a drawing of? --------------------------------
     function renderStep1() {
@@ -13786,20 +13775,16 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           if (state.free) { state.ownerId = null; state.ownerName = ""; }
           paint(); gate();
         } });
+        freeBox.setAttribute("aria-label", "Free drawing");
         const next = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true,
-          onclick: () => renderStep2() }, "Next — add the file");
+          onclick: () => renderStep2() }, "Next");
         function gate() { next.disabled = !(state.ownerId || state.free); }
 
         box.replaceChildren(
           stepHeader(),
-          el("div", { class: "form-label" }, "What is this a drawing of?"),
+          el("div", { class: "form-label" }, "Part"),
           search, list,
-          el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin-top:0.7rem;font-size:0.875rem" }, [
-            freeBox, el("span", {}, "Free drawing — development work, not attached to a part yet"),
-          ]),
-          el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.2rem" },
-            "A free drawing can be adopted onto a part later. Until then it is listed under Free drawings so it is not forgotten."),
-          identityNote(),
+          el("div", { style: "margin-top:0.7rem" }, [el("div", { class: "form-label" }, "Free drawing"), freeBox]),
           el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.9rem" }, [
             el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "Cancel"), next,
           ]),
@@ -13827,7 +13812,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       // Coming back from Review: the file is already up, so do not make the user
       // upload it again just to change a field.
       const continueBtn = state.path
-        ? el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => renderStep3() }, "Continue to review →")
+        ? el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => renderStep3() }, "Review")
         : null;
 
       // Paste is the sibling gesture to drop — a drawing is as often a screenshot
@@ -13871,11 +13856,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           // deletes its source because there the upload is only evidence.
           const res = await API.post(token, "extractDrawingMeta", { storage_path: uploaded.path, file_name: file.name });
           (res.fields || []).forEach((f) => { state.extracted[f.key] = f; });
-          if (res.is_engineering_drawing === false) {
-            state.aiNote = res.note || "This does not look like an engineering drawing. Check the file, or continue and fill the fields in by hand.";
-          } else if (!(res.fields || []).length) {
-            state.aiNote = "Nothing could be read from this file — often a scan or a flattened image. Fill the fields in by hand.";
-          }
+          // A noun phrase, not advice: the one-row form below is the next step.
+          if (res.is_engineering_drawing === false) state.aiNote = "Not an engineering drawing";
+          else if (!(res.fields || []).length) state.aiNote = "Nothing readable in the title block";
           zone.finishProcessing(!state.aiNote, state.aiNote ? `✓ ${file.name} — uploaded, nothing readable` : undefined);
         } catch (ex) {
           state.aiNote = `The drawing could not be read automatically (${ex.message}). Fill the fields in by hand — nothing is lost.`;
@@ -13887,15 +13870,11 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
 
       setChildren(box,
         stepHeader(),
-        el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-          state.free ? "Free drawing — not attached to a part." : `Drawing for ${state.ownerName}`),
+        contextLabel(),
         el("div", { class: "form-label" }, "Drawing file"),
         zone.el,
-        el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.4rem" },
-          "PDF or image. It is uploaded and read in one step — what can be found in the title block is filled in for you to check."),
-        state.path
-          ? el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.4rem" },
-              `Already uploaded: ${state.file ? state.file.name : "your file"}. Drop a new one to replace it.`)
+        state.path && state.file
+          ? el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.4rem" }, state.file.name)
           : null,
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.9rem" }, [
@@ -13923,27 +13902,25 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           style: `font-size:0.6875rem;font-weight:600;color:${tone};border:1px solid ${tone}44;background:${tone}12;padding:0px 6px;border-radius:999px;margin-left:0.4rem`,
         }, c);
       };
-      const field = (k, label, placeholder) => {
-        const inp = el("input", { class: "up-text", type: "text", value: val(k), placeholder: placeholder || "" });
+      // One row (§12): label above each control, the confidence badge on the
+      // label when the AI read the field, Back and Save at the row's end.
+      const field = (k, label, flex) => {
+        const inp = el("input", { class: "up-text", type: "text", value: val(k), "aria-label": label, style: "width:100%" });
         inputs[k] = inp;
-        return el("div", { style: "margin-bottom:0.55rem" }, [
+        return el("div", { style: `flex:${flex}` }, [
           el("div", { class: "form-label" }, [el("span", {}, label), confBadge(k)].filter(Boolean)),
           inp,
         ]);
       };
       const inputs = {};
-      const projSel = el("select", { class: "up-text" }, [
-        el("option", { value: "" }, "—"), el("option", { value: "first" }, "First angle"), el("option", { value: "third" }, "Third angle")]);
-      projSel.value = ["first", "third"].includes(val("projection_angle")) ? val("projection_angle") : "";
-      const sheetSel = el("select", { class: "up-text" }, ["", "A0", "A1", "A2", "A3", "A4"].map((s) => el("option", { value: s }, s || "—")));
-      sheetSel.value = ["A0", "A1", "A2", "A3", "A4"].includes(val("sheet_size").toUpperCase()) ? val("sheet_size").toUpperCase() : "";
-      const supVis = el("input", { type: "checkbox", checked: "checked" });
-      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
+      const supVis = el("input", { type: "checkbox", checked: "checked", "aria-label": "Supplier" });
+      const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:none" }, "");
+      const say = (msg) => { status.textContent = msg || ""; status.style.display = msg ? "block" : "none"; };
 
       const save = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = inputs.title.value.trim();
-        if (!title) { status.textContent = "Title is required — it is how the drawing is recognised in the register."; return; }
-        ev.target.disabled = true; status.textContent = "Saving…";
+        if (!title) { say("Title is required"); return; }
+        ev.target.disabled = true; say("Saving…");
         try {
           const res = await API.post(token, "createDrawingWithRevision", {
             owner_component_id: state.free ? null : state.ownerId,
@@ -13951,50 +13928,32 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             title,
             supplier_drawing_number: inputs.supplier_drawing_number.value.trim() || null,
             supplier_revision: inputs.supplier_revision.value.trim() || null,
-            projection_angle: projSel.value || null,
-            sheet_size: sheetSel.value || null,
-            scale: inputs.scale.value.trim() || null,
             is_supplier_visible: supVis.checked,
           });
           box.replaceChildren(
-            el("h3", { style: "margin:0 0 0.6rem;font-size:1rem" }, "Drawing created"),
-            el("div", { class: "notice", style: "font-size:0.875rem" }, [
-              el("div", { style: "font-weight:600;font-size:1rem" }, `${res.drawing_number} · Issue ${res.revision}`),
-              el("div", { style: "margin-top:0.3rem" }, state.free
-                ? "Free drawing — adopt it onto a part when it is ready."
-                : `Drawing ${res.node_sequence} of ${state.ownerName}. Its Change Log now records this.`),
-            ]),
-            el("div", { class: "muted", style: "font-size:0.75rem;margin:0.6rem 0" },
-              "This number is ours and will not change if you change supplier."),
-            el("div", { style: "display:flex;justify-content:flex-end" },
+            contextLabel(),
+            el("div", { style: "font-weight:600;font-size:1rem" }, `${res.drawing_number} · Issue ${res.revision}`),
+            el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.9rem" },
               el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => { close(); await onDone(); } }, "Done")),
           );
-        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
-      } }, "Create drawing");
+        } catch (ex) { say(ex.message); ev.target.disabled = false; }
+      } }, "Save");
 
       setChildren(box,
         stepHeader(),
+        contextLabel(),
         state.aiNote ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.7rem" }, state.aiNote) : null,
-        state.aiRan && !state.aiNote
-          ? el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.7rem" },
-              `Read from the drawing — check each value before saving. Hover a badge to see the text it came from.`)
-          : null,
-        field("title", "Title", "45 mm steel pin"),
-        field("supplier_drawing_number", "Supplier drawing no.", "e.g. 4711-02"),
-        field("supplier_revision", "Supplier issue", "e.g. Rev 3, Issue B, 02"),
-        el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:0.6rem" }, [
-          el("div", {}, [el("div", { class: "form-label" }, [el("span", {}, "Projection"), confBadge("projection_angle")].filter(Boolean)), projSel]),
-          el("div", {}, [el("div", { class: "form-label" }, [el("span", {}, "Sheet size"), confBadge("sheet_size")].filter(Boolean)), sheetSel]),
-          el("div", { style: "flex:1;min-width:120px" }, [field("scale", "Scale", "1:1")]),
-        ]),
-        el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin:0.6rem 0;font-size:0.875rem" }, [
-          supVis, el("span", {}, "Supplier"),
+        el("div", { style: "display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end" }, [
+          field("title", "Title", "2 1 200px"),
+          field("supplier_drawing_number", "Supplier drawing no.", "1 1 150px"),
+          field("supplier_revision", "Supplier issue", "1 1 110px"),
+          el("div", {}, [el("div", { class: "form-label" }, "Supplier"), supVis]),
+          el("div", { style: "display:flex;gap:0.5rem;margin-left:auto" }, [
+            el("button", { class: "btn btn-sm", type: "button", onclick: () => renderStep2() }, "← Back"),
+            save,
+          ]),
         ]),
         status,
-        el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
-          el("button", { class: "btn btn-sm", type: "button", onclick: () => renderStep2() }, "← Back"),
-          save,
-        ]),
       );
     }
 
@@ -14242,12 +14201,11 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         : [obj.drawing_number, obj.title].filter(Boolean).join(" ");
       setTitle(`Release ${word} ${letter}${subject ? ` · ${subject}` : ""}`);
 
-      // Revision: letter, chip, the stamps it already carries.
+      // Revision: letter, chip, when it was created (§12: no checked/approved stamps).
       const revisionCell = line([
         el("span", { style: "font-weight:700;white-space:nowrap" }, `${word} ${letter}`),
         drawingStatusChip(rev.status || "draft"),
-        revisionStamp("Checked", rev.checked_at, rev.checked_by),
-        revisionStamp("Approved", rev.approved_at, rev.approved_by),
+        revisionStamp("Created", rev.created_at),
       ]);
 
       // Files: badge · name · sha8 (· Fusion vN), or "none".
@@ -14575,21 +14533,17 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       }
 
       // ---- the side rail ----------------------------------------------------
-      // STATUS_MODEL §5.1: the revision is the controlled object. The actions
-      // act on the *current* (newest) issue, whichever one is being viewed, and
-      // go through setDrawingRevisionStatus with that revision's id. released →
-      // superseded is automatic on the next release, never a button.
-      // Release goes through the release modal (§11), which lays out the facts
-      // and names the issue that will be superseded; the other transitions are direct.
-      const NEXT = REVISION_TRANSITIONS.drawing;
+      // STATUS_MODEL §5.1 as replaced by DRAWINGS_TAB_UX §12: the revision is
+      // the controlled object and the one hand move is draft → released, on the
+      // *current* (newest) issue whichever one is being viewed, through the
+      // release modal (§11), which lays out the facts and names the issue that
+      // will be superseded. released → superseded is automatic, never a button.
       const currentRev = revisions.find((r) => r.id === drawing.current_revision_id) || revisions[0] || null;
       const releasedRev = revisions.find((r) => r.status === "released") || null;
-      const statusActions = role === "rushroom" && currentRev ? (NEXT[currentRev.status] || []).map((s) =>
-        el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
-          if (s === "released") { releaseModal("drawing", currentRev.id, { onDone: reload }); return; }
-          try { await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: currentRev.id, status: s }); await reload(); }
-          catch (ex) { alert(ex.message); }
-        } }, `Mark ${s}`)) : [];
+      const statusActions = role === "rushroom" && currentRev && canTransition("drawing", currentRev.status || "draft", "released")
+        ? [el("button", { class: "btn btn-xs", type: "button",
+            onclick: () => releaseModal("drawing", currentRev.id, { onDone: reload }) }, "Release")]
+        : [];
 
       // Drawing from CAD (docs/DRAWING_RENDER.md §2): "New issue from CAD" when
       // the owner part has a CAD revision with a STEP file — the released one,

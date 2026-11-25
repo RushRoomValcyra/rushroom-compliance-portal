@@ -15,29 +15,25 @@ const { STATUSES, TRANSITIONS, canTransition, compareRevision, nextRevisionLette
 // ---------------------------------------------------------------------------
 // Transition table — every from/to pair, both kinds
 // ---------------------------------------------------------------------------
-test("STATUSES are the five enum values in lifecycle order", () => {
+// STATUSES keeps the five enum words so an old row still renders; the lifecycle
+// (the transition table) has three states since 2026-11-25 (STATUS_MODEL §5.1,
+// DRAWINGS_TAB_UX §12).
+const LIFECYCLE = ["draft", "released", "superseded"];
+
+test("STATUSES are the five enum values; the transition table has the three lifecycle states, both kinds", () => {
   assert.deepEqual(STATUSES, ["draft", "checked", "approved", "released", "superseded"]);
   for (const kind of ["drawing", "cad"]) {
-    assert.deepEqual(Object.keys(TRANSITIONS[kind]).sort(), [...STATUSES].sort(), `${kind} table covers every status`);
+    assert.deepEqual(Object.keys(TRANSITIONS[kind]).sort(), [...LIFECYCLE].sort(), `${kind} table is the three states`);
+    assert.ok(!("checked" in TRANSITIONS[kind]) && !("approved" in TRANSITIONS[kind]), `${kind} table still names a retired state`);
   }
+  assert.deepEqual(TRANSITIONS.drawing, TRANSITIONS.cad, "one table for both kinds");
 });
 
-// The full matrix as the design §5.1 writes it. Anything not listed is refused.
+// The full matrix as §5.1 writes it, over every enum word. Anything not listed is
+// refused — the retired words have no entry and no exit.
 const ALLOWED = {
-  drawing: {
-    draft: ["checked"],
-    checked: ["approved", "draft"],
-    approved: ["released", "draft"],
-    released: [],
-    superseded: [],
-  },
-  cad: {
-    draft: ["checked", "released"],          // the Fusion flow has no checker
-    checked: ["approved", "draft"],
-    approved: ["released", "draft"],
-    released: [],
-    superseded: [],
-  },
+  drawing: { draft: ["released"], checked: [], approved: [], released: [], superseded: [] },
+  cad:     { draft: ["released"], checked: [], approved: [], released: [], superseded: [] },
 };
 
 for (const kind of ["drawing", "cad"]) {
@@ -56,10 +52,19 @@ test("released → superseded is never a hand transition on either side", () => 
   assert.equal(canTransition("cad", "released", "superseded"), false);
 });
 
-test("a drawing may not skip checked and approved; a CAD revision may", () => {
-  assert.equal(canTransition("drawing", "draft", "released"), false);
+test("draft → released is the one hand move, on both sides; the retired words are refused", () => {
+  assert.equal(canTransition("drawing", "draft", "released"), true);
   assert.equal(canTransition("cad", "draft", "released"), true);
-  assert.equal(canTransition("cad", "draft", "approved"), false, "CAD still cannot jump to approved");
+  for (const kind of ["drawing", "cad"]) {
+    assert.equal(canTransition(kind, "draft", "checked"), false, `${kind}: draft → checked is refused`);
+    assert.equal(canTransition(kind, "draft", "approved"), false, `${kind}: draft → approved is refused`);
+    // An old row carrying a retired word cannot move: no exit, not even back to draft.
+    assert.equal(canTransition(kind, "checked", "released"), false);
+    assert.equal(canTransition(kind, "checked", "draft"), false);
+    assert.equal(canTransition(kind, "approved", "released"), false);
+    assert.equal(canTransition(kind, "approved", "draft"), false);
+    assert.equal(canTransition(kind, "released", "draft"), false, `${kind}: a release is not undone by hand`);
+  }
 });
 
 test("superseded is terminal; nothing moves to superseded or out of it by hand", () => {
@@ -143,6 +148,7 @@ test("deriveObject: released F with a new draft G reports 'F released · G draft
 });
 
 test("deriveObject: current is by letter order, not array order or status — AA above Z", () => {
+  // AA carries a retired word (an old row): deriveObject reports it as it is.
   const z = rev("Z", "released"), aa = rev("AA", "checked");
   const d = deriveObject([aa, z]);
   assert.equal(d.current, aa);
@@ -363,7 +369,7 @@ test("cad_missing: the part has released drawings and no CAD model", () => {
 });
 
 test("cad_missing does not fire when no drawing is released", () => {
-  const s = statusSummary({ drawings: [drawing("RR-100", "depicts", [rev("F", "approved")])], cad: null });
+  const s = statusSummary({ drawings: [drawing("RR-100", "depicts", [rev("F", "draft")])], cad: null });
   assert.deepEqual(codes(s), []);
 });
 
@@ -424,27 +430,33 @@ test("releaseCheck: the current CAD draft with a file may be released", () => {
 });
 
 test("releaseCheck: not the current revision — exact text, Rev for CAD, Issue for drawings", () => {
-  const e = rev("E", "approved", { files: [cadFile("fe")] }), g = rev("G", "draft", { files: [cadFile("fg")] });
+  const e = rev("E", "draft", { files: [cadFile("fe")] }), g = rev("G", "draft", { files: [cadFile("fg")] });
   assert.deepEqual(releaseCheck("cad", [e, g], e), { error: "Rev E is not the current revision; G is" });
-  const b = rev("B", "approved", { storage_path: "p/b.pdf" }), c = rev("C", "draft", { storage_path: "p/c.pdf" });
+  const b = rev("B", "draft", { storage_path: "p/b.pdf" }), c = rev("C", "draft", { storage_path: "p/c.pdf" });
   assert.deepEqual(releaseCheck("drawing", [b, c], b), { error: "Issue B is not the current revision; C is" });
 });
 
-test("releaseCheck: a transition the §5.1 table refuses — a drawing draft cannot be released", () => {
-  const b = rev("B", "draft", { storage_path: "p/b.pdf" });
-  assert.deepEqual(releaseCheck("drawing", [b], b), { error: "Cannot go from draft to released" });
-  const c = rev("C", "checked", { files: [cadFile("fc")] });
-  assert.deepEqual(releaseCheck("cad", [c], c), { error: "Cannot go from checked to released" });
+test("releaseCheck: the current drawing draft with a file may be released — same rule as CAD since 2026-11-25", () => {
+  const a = rev("A", "released", { storage_path: "p/a.pdf" }), b = rev("B", "draft", { storage_path: "p/b.pdf" });
+  assert.deepEqual(releaseCheck("drawing", [a, b], b), { ok: true });
+  assert.deepEqual(releaseCheck("drawing", [b], b), { ok: true }, "a first issue needs no predecessor");
+});
+
+test("releaseCheck: a transition the §5.1 table refuses — an old row carrying a retired word has no way out", () => {
+  const b = rev("B", "checked", { storage_path: "p/b.pdf" });
+  assert.deepEqual(releaseCheck("drawing", [b], b), { error: "Cannot go from checked to released" });
+  const c = rev("C", "approved", { files: [cadFile("fc")] });
+  assert.deepEqual(releaseCheck("cad", [c], c), { error: "Cannot go from approved to released" });
 });
 
 test("releaseCheck: no file — refused after the transition check, before any write", () => {
   const b = rev("B", "draft", { files: [] });
   assert.deepEqual(releaseCheck("cad", [b], b), { error: "Rev B has no file" });
-  const d = rev("D", "approved", { storage_path: null });
+  const d = rev("D", "draft", { storage_path: null });
   assert.deepEqual(releaseCheck("drawing", [d], d), { error: "Issue D has no file" });
-  // The transition refusal wins over the missing file: a drawing draft without a file says "Cannot go".
-  const draft = rev("E", "draft", {});
-  assert.deepEqual(releaseCheck("drawing", [draft], draft), { error: "Cannot go from draft to released" });
+  // The transition refusal wins over the missing file: an old checked row without a file says "Cannot go".
+  const old = rev("E", "checked", {});
+  assert.deepEqual(releaseCheck("drawing", [old], old), { error: "Cannot go from checked to released" });
 });
 
 test("releaseCheck: an already released revision is a no-op, not a refusal; null is 'no revision'", () => {
@@ -454,7 +466,7 @@ test("releaseCheck: an already released revision is a no-op, not a refusal; null
 });
 
 test("releaseCheck: order — 'not current' is answered before the transition and the file", () => {
-  // B is a checked draft with no file and not current: the first rule in the chain speaks.
+  // B is an old checked row with no file and not current: the first rule in the chain speaks.
   const b = rev("B", "checked", { files: [] }), c = rev("C", "draft", { files: [] });
   assert.deepEqual(releaseCheck("cad", [b, c], b), { error: "Rev B is not the current revision; C is" });
 });

@@ -5181,9 +5181,13 @@ Deno.serve(async (req) => {
       parts_count: partsCount[d.id] || 0,
       owner_component_id: d.owner_component_id || null,
       owner_name: d.owner_component_id ? (ownerMap[d.owner_component_id]?.name || "") : "",
+      owner_part_number: d.owner_component_id ? (ownerMap[d.owner_component_id]?.part_number || "") : "",
       node_sequence: d.node_sequence || null,
       supplier_drawing_number: d.supplier_drawing_number || "",
       is_free: !d.owner_component_id,
+      // What a supplier may build from: the released issue, and only when the
+      // drawing is shown to suppliers at all (docs/DRAWINGS_TAB_UX.md §10).
+      supplier_sees: d.is_supplier_visible && derived.released ? derived.released.revision : null,
       };
     }).sort((a: any, b: any) => a.drawing_number.localeCompare(b.drawing_number, undefined, { numeric: true, sensitivity: "base" }));
 
@@ -5237,6 +5241,47 @@ Deno.serve(async (req) => {
         name: byId[l.component_id]?.name || "", part_number: byId[l.component_id]?.part_number || "",
       }));
     }
+
+    // "Made from" (docs/DRAWINGS_TAB_UX.md §10): the CAD file each issue was
+    // drawn from — by source_cad_file_id first, else by the STEP's sha256 that
+    // drawset.py records — resolved to its CAD Rev letter. Three queries for
+    // the whole drawing, never one per revision.
+    const SRC_FILE_FIELDS = "id, cad_model_revision_id, file_name, sha256";
+    const srcIds = [...new Set(shownRevisions.map((r: any) => r.source_cad_file_id).filter(Boolean))];
+    const srcShas = [...new Set(shownRevisions.map((r: any) => r.source_sha256).filter(Boolean))];
+    const srcFileById: Record<string, any> = {};
+    const srcFileBySha: Record<string, any> = {};
+    if (srcIds.length) {
+      const { data } = await tdb("cad_model_files").select(SRC_FILE_FIELDS).in("id", srcIds);
+      for (const f of (data || []) as any[]) srcFileById[f.id] = f;
+    }
+    if (srcShas.length) {
+      // A resend of unchanged geometry gives two files one sha: the drawing
+      // was made from the one that existed first, so the oldest wins.
+      const { data } = await tdb("cad_model_files").select(SRC_FILE_FIELDS + ", created_at")
+        .in("sha256", srcShas).order("created_at", { ascending: true });
+      for (const f of (data || []) as any[]) if (f.sha256 && !srcFileBySha[f.sha256]) srcFileBySha[f.sha256] = f;
+    }
+    const srcRevIds = [...new Set([...Object.values(srcFileById), ...Object.values(srcFileBySha)]
+      .map((f: any) => f.cad_model_revision_id).filter(Boolean))];
+    const cadLetterOf: Record<string, string> = {};
+    if (srcRevIds.length) {
+      const { data } = await tdb("cad_model_revisions").select("id, revision").in("id", srcRevIds);
+      for (const r of (data || []) as any[]) cadLetterOf[r.id] = r.revision;
+    }
+    const sourceCadOf = (r: any) => {
+      const f = (r.source_cad_file_id && srcFileById[r.source_cad_file_id])
+        || (r.source_sha256 && srcFileBySha[r.source_sha256]) || null;
+      if (!f) return null;
+      return {
+        cad_revision: cadLetterOf[f.cad_model_revision_id] ?? null,
+        file_name: f.file_name ?? null,
+        sha_short: String(f.sha256 || "").slice(0, 8),
+      };
+    };
+    // The CAD registry is Rushroom-only everywhere else (listCadModels,
+    // getComponentCad answer suppliers 403): a supplier gets no source_cad.
+    shownRevisions = shownRevisions.map((r: any) => ({ ...r, source_cad: role === "rushroom" ? sourceCadOf(r) : null }));
 
     // Same rule as PROP-043's changelog: a source that fails is reported, never
     // silently rendered as an empty list.
@@ -5941,8 +5986,8 @@ Deno.serve(async (req) => {
     // Revisions and files for every model in two queries, not N round-trips.
     const modelIds = (models as any[]).map((m) => m.id);
     const [{ data: allRevs }, { data: allFiles }] = await Promise.all([
-      tdb("cad_model_revisions").select("id, cad_model_id, revision, status, fusion_version, released_at").in("cad_model_id", modelIds),
-      tdb("cad_model_files").select("id, cad_model_id, cad_model_revision_id, format, storage_path, file_name, fusion_version")
+      tdb("cad_model_revisions").select("id, cad_model_id, revision, status, fusion_version, released_at, created_at").in("cad_model_id", modelIds),
+      tdb("cad_model_files").select("id, cad_model_id, cad_model_revision_id, format, storage_path, file_name, fusion_version, sha256, created_at")
         .in("cad_model_id", modelIds).order("format"),
     ]);
     const filesByRev: Record<string, any[]> = {};
@@ -5952,11 +5997,74 @@ Deno.serve(async (req) => {
       (revsByModel[r.cad_model_id] ||= []).push({ ...r, files: filesByRev[r.id] || [] });
     }
 
+    // The parts' drawings and the §5.4 warnings (docs/DRAWINGS_TAB_UX.md §10):
+    // three queries for the whole register — drawing_components for every
+    // component, drawings for those ids, drawing_revisions for those ids —
+    // never one per model. Same input shape as getComponentCad builds.
+    const linksByComp: Record<string, any[]> = {};
+    const drawingById: Record<string, any> = {};
+    let drawingRevs: Record<string, any[]> = {};
+    if (compIds.length) {
+      const { data: dlinks } = await tdb("drawing_components")
+        .select("drawing_id, component_id, role").in("component_id", compIds);
+      for (const l of (dlinks || []) as any[]) (linksByComp[l.component_id] ||= []).push(l);
+      const drawingIds = [...new Set(((dlinks || []) as any[]).map((l) => l.drawing_id))];
+      if (drawingIds.length) {
+        const { data: drws } = await tdb("drawings")
+          .select("id, drawing_number, title, is_supplier_visible").in("id", drawingIds);
+        for (const d of (drws || []) as any[]) drawingById[d.id] = d;
+        drawingRevs = await loadDrawingRevisions(tdb, drawingIds);
+      }
+    }
+    const summaryDrawingsOf = (componentId: string): any[] => {
+      const roleOf: Record<string, string> = {};
+      for (const l of linksByComp[componentId] || []) {
+        // A drawing linked in several roles counts as depicting when any link does.
+        if (!roleOf[l.drawing_id] || l.role === "depicts") roleOf[l.drawing_id] = l.role;
+      }
+      return Object.keys(roleOf).map((id) => drawingById[id]).filter(Boolean).map((d: any) => ({
+        id: d.id, drawing_number: d.drawing_number, title: d.title, role: roleOf[d.id] || "depicts",
+        is_supplier_visible: d.is_supplier_visible,
+        revisions: (drawingRevs[d.id] || []).map((r: any) => ({
+          id: r.id, revision: r.revision, status: r.status, source_sha256: r.source_sha256 || null,
+          source_cad_file_id: r.source_cad_file_id || null,
+        })),
+      }));
+    };
+    const byDepictingThenNumber = (a: any, b: any) =>
+      (a.role === "depicts" ? 0 : 1) - (b.role === "depicts" ? 0 : 1)
+      || String(a.drawing_number).localeCompare(String(b.drawing_number), undefined, { numeric: true, sensitivity: "base" });
+    const newest = (rows: any[]): string | null => rows.reduce<string | null>((max, r) => {
+      const t = r?.created_at ? String(r.created_at) : null;
+      return t && (!max || t > max) ? t : max;
+    }, null);
+
     const enriched = await Promise.all((models as any[]).map(async (m) => {
       const revisions = (revsByModel[m.id] || []).sort((a, b) => compareRevision(a.revision, b.revision));
       const derived = deriveObject(revisions);
       const current = derived.current;
       const formats = current ? [...new Set(current.files.map((f: any) => f.format as string))] : [];
+
+      const summaryDrawings = m.component_id ? summaryDrawingsOf(m.component_id) : [];
+      const summary = statusSummary({
+        drawings: summaryDrawings,
+        cad: { revisions: revisions.map((r) => ({
+          id: r.id, revision: r.revision, status: r.status,
+          files: r.files.map((f: any) => ({ id: f.id, format: f.format, sha256: f.sha256 ?? null })),
+        })) },
+      });
+      const drawings = summaryDrawings.map((d) => {
+        const dd = deriveObject(d.revisions);
+        return {
+          id: d.id, drawing_number: d.drawing_number, title: d.title, role: d.role,
+          current_revision: dd.current?.revision ?? null,
+          current_status: dd.status,
+          released_revision: dd.released?.revision ?? null,
+          is_supplier_visible: d.is_supplier_visible,
+        };
+      }).sort(byDepictingThenNumber);
+      // Newest created_at among the model's revisions and files, else the model's.
+      const updated_at = newest([...revisions, ...revisions.flatMap((r) => r.files)]) ?? m.created_at;
       // Preview from the released revision when there is one (what a supplier
       // sees), else the current. STEP first for the viewer, GLB as fallback.
       const previewRev = derived.released ?? current;
@@ -5986,6 +6094,10 @@ Deno.serve(async (req) => {
         revision_count: revisions.length,
         formats,
         preview_file,
+        drawings,
+        warnings: summary.warnings,
+        supplier_sees: derived.released?.revision ?? null,
+        updated_at,
       };
     }));
 

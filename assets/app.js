@@ -7065,6 +7065,30 @@
     return wrap;
   }
 
+  // The same two facts with the letters bare — for a register cell whose header
+  // already carries the word ("Rev" / "Issue"): "F [Released] · G [Draft]".
+  // Register sort: revision letters by length then text ("Z" < "AA", the
+  // compareRevision order of _shared/status-core.mjs); everything else by text.
+  const LETTER_KEYS = new Set(["current_revision", "released_revision", "revision", "supplier_sees"]);
+  function sortValue(a, b, key) {
+    const av = String(a ?? ""), bv = String(b ?? "");
+    if (LETTER_KEYS.has(key) && (av.length !== bv.length)) return av.length - bv.length;
+    return av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+  }
+  function revisionLetterFacts(current, status, released, empty = "—") {
+    if (!current) return el("span", { class: "muted" }, empty);
+    const wrap = el("span", { style: "display:inline-flex;align-items:center;gap:0.35rem;flex-wrap:wrap" });
+    const letter = (l) => el("span", { style: "white-space:nowrap;font-weight:600" }, l);
+    if (released && released !== current) {
+      wrap.append(letter(released), drawingStatusChip("released"),
+        el("span", { class: "muted" }, "·"),
+        letter(current), drawingStatusChip(status || "draft"));
+    } else {
+      wrap.append(letter(current), drawingStatusChip(status || (released === current ? "released" : "draft")));
+    }
+    return wrap;
+  }
+
   // §5.4 coherence warnings from getComponentCad.summary — information, never a
   // block; amber so they read as a caution next to the green Released chips.
   function statusWarningChip(w) {
@@ -7144,7 +7168,7 @@
       body,
     ]);
     const note = () => [
-      el("p", { style: small }, "The extra holes and milling a side panel needs for a customer order are set per interior in Order Operations, not on the part. Drawings and templates they refer to stay in this part's Drawings tab."),
+      el("p", { style: small }, "The extra holes and milling a side panel needs for a customer order are set per interior in Order Operations, not on the part. Drawings and templates they refer to are in CAD & Drawings."),
       rulesLink(),
     ];
     API.post(token, "getSidePanelSurgery", { component_id: componentId })
@@ -7753,7 +7777,7 @@
       // or null when nothing is registered. cad_model.status / current_revision /
       // released_revision are derived from the revisions (STATUS_MODEL §4.5).
       // CAD model — read-only reference on the part card.
-      // All management (revisions, file uploads, Fusion link editing) lives in Drawings → CAD Models.
+      // All management (revisions, file uploads, Fusion link editing) lives in CAD & Drawings → CAD Models.
       let cadSection = null;
       if (role === "rushroom") {
         const cadModel = cadR && cadR.cad_model;
@@ -7776,7 +7800,7 @@
             el("h4", { style: "margin:0" }, "CAD model"),
             el("button", { class: "btn btn-xs", type: "button", onclick: () => {
               document.getElementById("tab-drawings")?.click();
-            } }, "Manage in Drawings →"),
+            } }, "Manage in CAD & Drawings →"),
           ]),
           cadModel
             ? el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem 1.2rem;align-items:center;font-size:0.875rem" }, [
@@ -7798,7 +7822,7 @@
                   : null,
               ].filter(Boolean))
             : el("div", { class: "muted", style: "font-size:0.875rem" },
-                "No CAD model linked. Auto-stamp this part in Fusion to register it, or use Drawings → CAD Models."),
+                "No CAD model linked — register it from Fusion or in CAD & Drawings → CAD Models."),
         ]);
       }
 
@@ -7815,10 +7839,8 @@
           el("div", { style: "margin-top:0.35rem" },
             "Datasheets, test reports, declarations and quality certificates attach here — use + Add document → Upload & link."),
           el("div", { style: "margin-top:0.35rem" },
-            "Production drawings do not live here. They have their own Drawings tab, with drawing numbers, revision letters and an approval state."),
+            "Production drawings are on the CAD & Drawings tab."),
         ]),
-        el("div", { class: "muted", style: "font-size:0.75rem;margin-top:0.5rem" },
-          "A new revision of a document here is recorded in the Change Log. It does not move this part's revision letter — a supplier reissuing their datasheet is not a change to your part. Drawing revisions, which do move it, are on the Drawings tab."),
       ]);
 
       // Materials section
@@ -12110,43 +12132,75 @@
   // to one part. The two name each other on purpose: the failure that produced
   // PROP-044 was two screens with no route between them.
   // ==========================================================================
+  // The CAD & Drawings tab's window-focus reload listener: one per render, the
+  // previous one removed by the next (see renderDrawings).
+  let _drawingsVisHandler = null;
   async function renderDrawings(role, mount) {
     const token = API.getToken(role);
 
-    // ---- Top-level tab: Drawings | CAD Models --------------------------------
-    let _topTab = "drawings";
+    // ---- One sub-tab bar: CAD Models · Drawings · Surgery Templates ----------
+    // (docs/DRAWINGS_TAB_UX.md §10.A). The registers stay mounted and toggle
+    // display, so the test-agent panel inside CAD Models keeps polling while
+    // another register is in view. A supplier gets the drawings register alone:
+    // the other two are Rushroom-only on the server.
+    const cadRegisterEl      = el("div", {});
+    const testAgentEl        = el("div", { style: "display:none" });
+    const cadModelsContentEl = el("div", {}, [testAgentEl, cadRegisterEl]);
     const drawingsContentEl  = el("div", {});
-    const cadModelsContentEl = el("div", { style: "display:none" });
-
-    function topTabStyle(active) {
-      return `padding:9px 22px;font-size:0.875rem;font-weight:${active ? "600" : "400"};background:none;border:none;border-bottom:3px solid ${active ? "var(--brand,#2fa564)" : "transparent"};margin-bottom:-3px;cursor:pointer;white-space:nowrap;color:${active ? "var(--brand,#2fa564)" : "var(--text-muted,#888)"};transition:color .15s,border-color .15s`;
+    const templatesContentEl = el("div", {});
+    const SUB_TABS = role === "rushroom"
+      ? [
+          { id: "cad_models",        label: "CAD Models",        content: cadModelsContentEl, load: () => loadCadModels() },
+          { id: "drawings",          label: "Drawings",          content: drawingsContentEl,  load: () => { if (!_dwgLoadedAt) load(); } },
+          { id: "surgery_templates", label: "Surgery Templates", content: templatesContentEl, load: () => loadAndDrawTemplates() },
+        ]
+      : [{ id: "drawings", label: "Drawings", content: drawingsContentEl, load: () => { if (!_dwgLoadedAt) load(); } }];
+    let _subTab = SUB_TABS[0].id;
+    const subBtns = {};
+    function showSubTab(id) {
+      _subTab = id;
+      for (const t of SUB_TABS) {
+        const on = t.id === id;
+        t.content.style.display = on ? "" : "none";
+        if (subBtns[t.id]) { subBtns[t.id].classList.toggle("active", on); subBtns[t.id].setAttribute("aria-selected", on ? "true" : "false"); }
+      }
+      const t = SUB_TABS.find((x) => x.id === id);
+      if (t) t.load();
+      scheduleChromeMeasure();
     }
-    const TOP_TABS = [{ id: "drawings", label: "Drawings" }, { id: "cad_models", label: "CAD Models" }];
-    const topTabBtns = TOP_TABS.map((t) =>
-      el("button", { type: "button", style: topTabStyle(_topTab === t.id), onclick: () => {
-        if (_topTab === t.id) return;
-        _topTab = t.id;
-        topTabBtns.forEach((b, i) => { b.style.cssText = topTabStyle(_topTab === TOP_TABS[i].id); });
-        drawingsContentEl.style.display  = t.id === "drawings"   ? "" : "none";
-        cadModelsContentEl.style.display = t.id === "cad_models" ? "" : "none";
-        if (t.id === "cad_models") loadCadModels();
-      } }, t.label));
-    // The robot button (docs/TEST_AGENT.md) sits at the right end of the bar.
-    // It is NOT part of topTabBtns: that array is indexed against TOP_TABS.
-    const testAgentEl = el("div", { style: "display:none" });
-    const robotBtn = role === "rushroom"
-      ? el("button", {
-          type: "button", class: "btn btn-sm",
-          style: "margin-left:auto;align-self:center;margin-bottom:3px;display:inline-flex;align-items:center;flex-shrink:0",
-          title: "Run the CAD change-order test agent", "aria-pressed": "false",
-          onclick: () => toggleTestAgent(),
-        }, el("span", { class: "btn-ico", style: "margin-right:0", html: ICONS.robot }))
+    const subBar = SUB_TABS.length > 1
+      ? el("div", { class: "subtab-bar" }, el("div", { class: "subtabs", role: "tablist" }, SUB_TABS.map((t) => {
+          const b = el("button", { class: "subtab", type: "button", role: "tab", onclick: () => { if (_subTab !== t.id) showSubTab(t.id); } }, el("span", {}, t.label));
+          subBtns[t.id] = b;
+          return b;
+        })))
       : null;
-    const topTabBar = el("div", {
-      style: "display:flex;gap:0;border-bottom:3px solid var(--border,#e2e8f0);margin-bottom:1.2rem;overflow-x:auto"
-    }, [...topTabBtns, robotBtn].filter(Boolean));
+    mount.replaceChildren(...[subBar, ...SUB_TABS.map((t) => t.content)].filter(Boolean));
 
-    mount.replaceChildren(topTabBar, testAgentEl, drawingsContentEl, cadModelsContentEl);
+    // The test agent (docs/TEST_AGENT.md) lives with its subject: a labelled
+    // button in the CAD Models toolbar, its panel at the top of that register.
+    const testAgentBtn = role === "rushroom"
+      ? actionBtn("Test agent", "robot", { title: "Run the CAD change-order test agent", onClick: () => toggleTestAgent() })
+      : null;
+    if (testAgentBtn) testAgentBtn.setAttribute("aria-pressed", "false");
+
+    // ---- Reload on return to the window --------------------------------------
+    // One document-level listener per render; the previous render's listener is
+    // removed first, so re-rendering the tab never stacks them. A register
+    // loaded more than 30 s ago is reloaded when the page becomes visible
+    // again, so a send from Fusion shows up without Refresh.
+    let _cadLoadedAt = 0, _dwgLoadedAt = 0, _tplLoadedAt = 0;
+    const STALE_MS = 30000;
+    if (_drawingsVisHandler) document.removeEventListener("visibilitychange", _drawingsVisHandler);
+    _drawingsVisHandler = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!mount.isConnected) { document.removeEventListener("visibilitychange", _drawingsVisHandler); _drawingsVisHandler = null; return; }
+      const now = Date.now();
+      if (_cadLoadedAt && now - _cadLoadedAt > STALE_MS) { _cadLoaded = false; loadCadModels({ silent: true }); }
+      if (_dwgLoadedAt && now - _dwgLoadedAt > STALE_MS) load({ silent: true });
+      if (_tplLoadedAt && now - _tplLoadedAt > STALE_MS) reloadTemplates({ silent: true });
+    };
+    document.addEventListener("visibilitychange", _drawingsVisHandler);
 
     // ---- CAD change-order test agent panel (docs/TEST_AGENT.md) --------------
     // One row of controls, the live step list while the run executes, the
@@ -12185,9 +12239,10 @@
     function taExpectedText(m) {
       const cur = m.current_revision || null;
       const st = m.status || "draft";
-      if (!cur) return "no revision → run creates Rev A draft";
-      if (["released", "superseded"].includes(st)) return `Rev ${cur} ${st} → run creates Rev ${taNextLetter(cur)} draft`;
-      return `Rev ${cur} ${st} → files replaced on Rev ${cur}`;
+      if (!cur) return "no revision → run creates Rev A Draft";
+      const word = drawingStatusLabel(st);
+      if (["released", "superseded"].includes(st)) return `Rev ${cur} ${word} → run creates Rev ${taNextLetter(cur)} Draft`;
+      return `Rev ${cur} ${word} → files replaced on Rev ${cur}`;
     }
     const taUnwrapRun = (res) => (res && res.run !== undefined ? res.run : res) || null;
     const taUnwrapRuns = (res) => Array.isArray(res) ? res : (res?.runs || res?.cad_test_runs || []);
@@ -12227,7 +12282,7 @@
       const rows = list.filter((m) => m.fusion_document_id && m.component_id);
       const keep = taSelect.value;
       taSelect.replaceChildren(...rows.map((m) =>
-        el("option", { value: m.component_id }, `${m.part_number || "—"} ${m.component_name || ""} · Rev ${m.current_revision || "—"} ${m.status || "draft"}`)));
+        el("option", { value: m.component_id }, `${m.part_number || "—"} ${m.component_name || ""} · Rev ${m.current_revision || "—"} ${drawingStatusLabel(m.status || "draft")}`)));
       taSelect._rows = rows;
       const first = rows.find((m) => m.component_id === keep) || rows.find((m) => (m.status || "draft") === "draft") || rows[0];
       if (first) taSelect.value = first.component_id;
@@ -12244,13 +12299,13 @@
       const open = force === undefined ? !_taOpen : !!force;
       _taOpen = open;
       testAgentEl.style.display = open ? "" : "none";
-      if (robotBtn) { robotBtn.setAttribute("aria-pressed", open ? "true" : "false"); robotBtn.classList.toggle("btn-primary", open); }
+      if (testAgentBtn) testAgentBtn.setAttribute("aria-pressed", open ? "true" : "false");
       if (!open) { taStopPolling(); return; }
       taError("");
       // Fresh registry facts on every open: a release made elsewhere (the CAD
       // Models tab, Fusion) must show in the select and the expected outcome.
-      _taModels = null; _cadLoaded = false;
-      await Promise.all([taLoadParts(), taLoadRuns()]);
+      _taModels = null;
+      await Promise.all([reloadCadModels({ silent: true }), taLoadParts(), taLoadRuns()]);
       // A run was live when the panel closed: pick it up again.
       if (_taRunId) {
         try {
@@ -12315,8 +12370,8 @@
       _taRunId = null;
       // The send changed the registry: the CAD list, the part select and the
       // expected outcome must all show it.
-      _cadLoaded = false; _taModels = null;
-      if (_topTab === "cad_models") loadCadModels();
+      _taModels = null;
+      reloadCadModels({ silent: true });
       taLoadParts();
       taLoadRuns();
     }
@@ -12419,25 +12474,36 @@
       ])));
     }
 
-    // ---- CAD Models section --------------------------------------------------
+    // ---- CAD Models register ---------------------------------------------------
+    // The part-centric coherence view (STATUS_MODEL §7, DRAWINGS_TAB_UX §10.B):
+    // every model with its depicting drawings and the §5.4 warnings the server
+    // computes for it. Filter and sort are client-side on the full list.
     let _cadLoaded = false;
-    let _cadAll = [];   // full list from server — filter client-side
-    const _cadFilter = { q: "", status: "" };
+    let _cadAll = [];
+    const _cadFilter = { q: "", status: "", sort: "updated_at", dir: -1 };
 
-    async function loadCadModels() {
+    async function loadCadModels(opts = {}) {
       if (_cadLoaded) return;
-      cadModelsContentEl.replaceChildren(el("div", { class: "loading" }, "Loading CAD models…"));
+      if (opts.silent !== true) cadRegisterEl.replaceChildren(el("div", { class: "loading" }, "Loading CAD models…"));
       let data;
       try {
         data = await API.post(token, "listCadModels", {});
       } catch (ex) {
-        cadModelsContentEl.replaceChildren(el("div", { class: "error" }, `Couldn't load CAD models: ${ex.message}`));
+        // The toolbar stays: Refresh retries, and the test agent is reachable.
+        cadRegisterEl.replaceChildren(el("div", { class: "card" }, [
+          el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
+            el("span", { style: "flex:1" }), testAgentBtn, actionBtn("Refresh", "refresh", { onClick: () => reloadCadModels() }),
+          ].filter(Boolean)),
+          el("div", { class: "error" }, `Couldn't load CAD models: ${ex.message}`),
+        ]));
         return;
       }
       _cadLoaded = true;
+      _cadLoadedAt = Date.now();
       _cadAll = data.cad_models || [];
       drawCadModels();
     }
+    const reloadCadModels = (opts) => { _cadLoaded = false; return loadCadModels(opts); };
 
     function drawCadModels() {
       const FMT_COLOR = { f3z: "#4a9eed", step: "#8b93a1", glb: "#a855f7", dxf: "#f59e0b" };
@@ -12445,11 +12511,13 @@
       // One status vocabulary for drawings and CAD (STATUS_MODEL §7): the same
       // chip as the Drawings register, Draft / Checked / Approved / Released / Superseded.
       const statusChip = (s) => drawingStatusChip(s || "draft");
+      const dash = () => el("span", { class: "muted" }, "—");
+      const mono = (txt) => el("span", { style: "font-family:monospace;font-size:0.8125rem" }, txt);
 
       // Release the current revision of a model (§5.1: only the current one may
       // be released; the previously released letter becomes superseded).
-      // listCadModels carries letters, not ids, so the revision id comes from
-      // getComponentCad unless the row already has it.
+      // listCadModels carries current_revision_id; older rows fall back to
+      // getComponentCad for the id.
       async function releaseCurrentRevision(m, btn, revisionId) {
         const supersedes = m.released_revision && m.released_revision !== m.current_revision
           ? ` Rev ${m.released_revision} becomes superseded.`
@@ -12466,32 +12534,26 @@
             id = cur.id;
           }
           await API.post(token, "releaseCadRevision", { cad_model_revision_id: id });
-          _cadLoaded = false;
-          await loadCadModels();
+          await reloadCadModels();
         } catch (ex) {
           alert(ex.message);
           if (btn) btn.disabled = false;
         }
       }
 
-      const fmtBadge = (fmt) => {
-        const fc = FMT_COLOR[fmt] || "#888";
-        return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap` }, fmt.toUpperCase());
-      };
-
-      // Client-side filter
-      const q = _cadFilter.q.trim().toLowerCase();
-      const visible = _cadAll.filter((m) => {
-        if (_cadFilter.status && (m.status || "draft") !== _cadFilter.status) return false;
-        if (!q) return true;
-        return (m.part_number || "").toLowerCase().includes(q) ||
-               (m.component_name || "").toLowerCase().includes(q) ||
-               (m.fusion_document_name || "").toLowerCase().includes(q);
-      });
-
       const tbody = el("tbody", {});
-      const COLS = 8; // ▶ | Part no. | Component | Formats | Rev | Status | actions
-      const rows = visible.flatMap((m) => {
+      const COLS = 8; // ▶ | Part no. | Part | Rev | Drawings | Supplier sees | Updated | actions
+      const head = (label, key) => el("th", {
+        style: key ? "cursor:pointer;user-select:none" : "",
+        onclick: key ? () => { _cadFilter.dir = _cadFilter.sort === key ? -_cadFilter.dir : 1; _cadFilter.sort = key; drawCadModels(); } : null,
+      }, key && _cadFilter.sort === key ? `${label} ${_cadFilter.dir > 0 ? "▲" : "▼"}` : label);
+
+      // Search matches part number, part name, Fusion document name and the
+      // numbers and titles of the depicting drawings.
+      const hay = (m) => [m.part_number, m.component_name, m.fusion_document_name,
+        ...(m.drawings || []).flatMap((d) => [d.drawing_number, d.title])].filter(Boolean).join(" ").toLowerCase();
+
+      function rowsFor(m) {
         const fusionHref = m.fusion_document_id
           ? `https://manage.autodesk.com/en/redirect?productKey=fusion360&dcs=${encodeURIComponent(m.fusion_document_id)}`
           : null;
@@ -12518,8 +12580,8 @@
           try {
             const r = await API.post(token, "getComponentCad", { component_id: m.component_id });
             // One group per revision (§7): letter, status chip, who/when, then
-            // its files. `revisions[]` is the contract; a flat `files[]` with a
-            // letter per file (the previous shape) is regrouped the same way.
+            // its files with their format badges. `revisions[]` is the contract;
+            // a flat `files[]` with a letter per file is regrouped the same way.
             let groups = r.revisions || null;
             if (!groups) {
               const byLetter = new Map();
@@ -12532,7 +12594,7 @@
             groups = groups.slice().sort((a, b) => (a.revision.length - b.revision.length) || a.revision.localeCompare(b.revision)).reverse();
             const currentLetter = r.cad_model?.current_revision || m.current_revision || (groups[0] && groups[0].revision) || null;
             if (!groups.length) {
-              detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No revisions yet. Use Send to portal in Fusion to register one."));
+              detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No revisions."));
             } else {
               const groupEls = groups.map((rev) => {
                 const isCurrent = rev.revision === currentLetter;
@@ -12567,7 +12629,7 @@
                       : null,
                     f.download_url ? el("a", { href: f.download_url, download: f.file_name || undefined, class: "btn btn-xs", style: "flex-shrink:0" }, "⬇ Download") : null,
                   ].filter(Boolean));
-                }) : [el("div", { class: "muted", style: "font-size:0.75rem;padding:0.2rem 0 0.25rem 0.75rem" }, "No files on this revision.")];
+                }) : [el("div", { class: "muted", style: "font-size:0.75rem;padding:0.2rem 0 0.25rem 0.75rem" }, "No files.")];
                 return el("div", { style: "border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:0.2rem" }, [head, ...fileRows]);
               });
               detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0 0.2rem" }, groupEls));
@@ -12589,16 +12651,33 @@
           ? el("button", { type: "button", class: "btn btn-xs btn-primary", onclick: (ev) => releaseCurrentRevision(m, ev.target) }, "Release")
           : null;
 
+        // Drawings cell: one line per depicting drawing — number, released
+        // issue letter (or —) — then the §5.4 warnings as amber chips.
+        const drawings = m.drawings || [];
+        const warnings = m.warnings || [];
+        const drawingsCell = drawings.length || warnings.length
+          ? el("div", { style: "display:flex;flex-direction:column;gap:0.2rem" }, [
+              ...drawings.map((d) => el("div", { style: "display:flex;align-items:center;gap:0.4rem;white-space:nowrap" }, [
+                el("button", { class: "linklike", type: "button", title: d.title || "",
+                  onclick: () => openDrawingSurface(d.id, role, { onChange: () => reloadCadModels({ silent: true }) }) }, d.drawing_number || "—"),
+                d.released_revision ? el("span", { style: "font-weight:600" }, d.released_revision) : dash(),
+              ])),
+              warnings.length ? el("div", { style: "display:flex;gap:0.3rem;flex-wrap:wrap" }, warnings.map(statusWarningChip)) : null,
+            ].filter(Boolean))
+          : dash();
+
         const mainTr = el("tr", {}, [
           el("td", { style: "width:1.5rem;padding-right:0" }, expandBtn),
-          el("td", {}, m.part_number ? el("span", { style: "font-family:monospace;font-size:0.8125rem" }, m.part_number) : el("span", { class: "muted" }, "—")),
+          el("td", {}, m.part_number ? mono(m.part_number) : dash()),
           el("td", {}, m.component_name || el("span", { class: "muted" }, "unlinked")),
-          el("td", {}, el("div", { style: "display:flex;gap:3px;flex-wrap:wrap" },
-            (m.formats || []).length ? (m.formats).map(fmtBadge) : [el("span", { class: "muted" }, "—")])),
-          // Rev column: "F released · G draft" — the released letter a supplier
-          // may build from, and the newest one with its own status (§7).
-          el("td", {}, revisionFacts("Rev", m.current_revision || null, m.status, m.released_revision || null, { empty: "—", compact: true })),
-          el("td", {}, statusChip(m.status || "draft")),
+          // Rev: letter + chip; "F Released · G Draft" when a newer revision is
+          // in work (§7). The word is in the header.
+          el("td", {}, revisionLetterFacts(m.current_revision || null, m.status, m.released_revision || null)),
+          el("td", {}, drawingsCell),
+          el("td", {}, m.supplier_sees ? `Rev ${m.supplier_sees}` : dash()),
+          el("td", {}, m.updated_at
+            ? el("span", { style: "font-variant-numeric:tabular-nums;white-space:nowrap" }, new Date(m.updated_at).toLocaleDateString("en-GB"))
+            : dash()),
           el("td", {}, el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" }, [
             previewBtn,
             releaseBtn,
@@ -12606,75 +12685,72 @@
           ].filter(Boolean))),
         ]);
         return [mainTr, detailTr];
-      });
+      }
 
-      tbody.replaceChildren(...rows.length ? rows : [
-        el("tr", {}, el("td", { colspan: COLS, class: "muted", style: "padding:1rem" },
-          q || _cadFilter.status ? "No models match the current filter." : "No CAD models registered yet. Auto-stamp a Fusion document to link it here.")),
-      ]);
+      const countEl = el("span", { class: "muted", style: "font-size:0.8125rem" });
+      function repaintCad() {
+        const q = _cadFilter.q.trim().toLowerCase();
+        const visible = _cadAll
+          .filter((m) => !_cadFilter.status || (m.status || "draft") === _cadFilter.status)
+          .filter((m) => !q || hay(m).includes(q))
+          .sort((a, b) => sortValue(a[_cadFilter.sort], b[_cadFilter.sort], _cadFilter.sort) * _cadFilter.dir);
+        countEl.textContent = visible.length === _cadAll.length
+          ? `${_cadAll.length} model${_cadAll.length === 1 ? "" : "s"}`
+          : `${visible.length} of ${_cadAll.length} models`;
+        const rows = visible.flatMap(rowsFor);
+        tbody.replaceChildren(...(rows.length ? rows : [
+          el("tr", {}, el("td", { colspan: COLS, class: "muted", style: "padding:1rem" }, "No CAD models.")),
+        ]));
+      }
 
-      // Search + status filter toolbar
       const searchEl = el("input", {
-        class: "up-text", type: "search", placeholder: "Search part no. or name…",
-        value: _cadFilter.q, style: "min-width:200px;max-width:280px",
+        class: "up-text", type: "search", placeholder: "Search…",
+        value: _cadFilter.q, style: "min-width:220px",
         oninput: (e) => { _cadFilter.q = e.target.value; repaintCad(); },
       });
-      const STATUS_OPTS = [["", "All"], ["draft", "Draft"], ["released", "Released"]];
-      const statusChips = el("div", { style: "display:flex;gap:4px;align-items:center;flex-wrap:wrap" },
-        STATUS_OPTS.map(([v, label]) => {
-          const active = _cadFilter.status === v;
-          const btn = el("button", {
-            type: "button",
-            style: `font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid ${active ? "var(--brand,#2fa564)" : "var(--border,#e2e8f0)"};background:${active ? "var(--brand,#2fa564)" : "transparent"};color:${active ? "#fff" : "var(--text-muted,#888)"};cursor:pointer`,
-            onclick: () => { _cadFilter.status = v; drawCadModels(); },
-          }, label);
-          return btn;
-        }));
+      // The five statuses, read from the current revision — the same row as
+      // the Drawings register.
+      const chips = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" },
+        [{ id: "", label: "All" }, ...DRAWING_STATUSES.map((s) => ({ id: s, label: drawingStatusLabel(s) }))].map((s) =>
+          el("button", {
+            class: `btn btn-sm${_cadFilter.status === s.id ? " btn-primary" : ""}`, type: "button",
+            style: "font-size:0.75rem;padding:2px 10px",
+            onclick: () => { _cadFilter.status = s.id; drawCadModels(); },
+          }, s.label)));
 
-      const countEl = el("span", { class: "muted", style: "font-size:0.8125rem" },
-        visible.length === _cadAll.length
-          ? `${_cadAll.length} model${_cadAll.length === 1 ? "" : "s"}`
-          : `${visible.length} of ${_cadAll.length}`);
-
-      cadModelsContentEl.replaceChildren(
+      cadRegisterEl.replaceChildren(
         el("div", { class: "card" }, [
-          el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
-            el("h3", { style: "margin:0" }, "CAD Models"),
+          el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
             countEl,
-            el("span", { style: "flex:1" }),
-            actionBtn("Refresh", "refresh", { onClick: () => { _cadLoaded = false; loadCadModels(); } }),
-          ]),
-          el("div", { style: "display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem" }, [
-            searchEl, statusChips,
-          ]),
-          el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-            "Models link here automatically via the Fusion add-in (auto-stamp). Use Send to portal in Fusion to register a revision or format; Release here or in that dialog releases it."),
+            el("span", { class: "spacer", style: "flex:1" }),
+            testAgentBtn,
+            actionBtn("Refresh", "refresh", { onClick: () => reloadCadModels() }),
+          ].filter(Boolean)),
+          el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [searchEl, chips]),
           el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
-            el("thead", {}, el("tr", {}, ["", "Part no.", "Component", "Formats", "Rev", "Status", ""].map((h) => el("th", {}, h)))),
+            el("thead", {}, el("tr", {}, [
+              el("th", {}, ""), head("Part no.", "part_number"), head("Part", "component_name"), head("Rev", "current_revision"),
+              head("Drawings"), head("Supplier sees", "supplier_sees"), head("Updated", "updated_at"), el("th", {}, ""),
+            ])),
             tbody,
           ])),
         ]),
       );
-
-      // Focus the search box after redraw only when user typed into it
-      if (document.activeElement?.type === "search") searchEl.focus();
+      repaintCad();
     }
 
-    function repaintCad() {
-      // Lightweight repaint: re-filter and redraw without touching _cadFilter state.
-      drawCadModels();
-    }
+    // ---- Drawings register ----------------------------------------------------
+    // Surgery-template drawings have their own register; this one lists the
+    // rest (§10.A). A supplier sees released issues only (the server decides)
+    // with the reduced columns and no filter chips (§4).
+    const state = { q: "", status: "", freeOnly: false, sort: "drawing_number", dir: 1 };
 
-    // ---- Drawings section (existing, now mounts into drawingsContentEl) ------
-
-    // typeFilter: "engineering" | "surgery_template" | "" (all)
-    const state = { q: "", status: "", freeOnly: false, typeFilter: "engineering", sort: "drawing_number", dir: 1 };
-
-    // Surgery template data — loaded lazily on first switch to that view.
+    // Surgery template data — loaded lazily on first visit to that register.
     let tplCache = null; // { templates: [], rules: [], rulesWarning: "" }
 
-    async function load() {
-      drawingsContentEl.replaceChildren(el("div", { class: "loading" }, "Loading drawings…"));
+    async function load(opts) {
+      const silent = !!(opts && opts.silent === true);
+      if (!silent) drawingsContentEl.replaceChildren(el("div", { class: "loading" }, "Loading drawings…"));
       let data;
       try {
         data = await API.post(token, "listDrawings", {});
@@ -12682,70 +12758,37 @@
         drawingsContentEl.replaceChildren(el("div", { class: "error" }, `Couldn't load drawings: ${ex.message}`));
         return;
       }
-      tplCache = null; // invalidate template cache on full reload
+      _dwgLoadedAt = Date.now();
+      tplCache = null; // a drawing may be a template's drawing: refetch on next visit
       draw(data.drawings || []);
     }
 
-    // Type navigation tabs — Engineering (default) / Surgery Templates / All
-    // Rendered once outside draw() so they survive repaint() calls.
-    const TAB_DEFS = [
-      { id: "engineering",      label: "Engineering" },
-      { id: "surgery_template", label: "Surgery Templates" },
-      { id: "",                 label: "All" },
-    ];
-    function tabStyle(active) {
-      return `padding:9px 20px;font-size:0.875rem;font-weight:${active ? "600" : "400"};background:none;border:none;border-bottom:2px solid ${active ? "var(--brand,#2fa564)" : "transparent"};margin-bottom:-2px;cursor:pointer;white-space:nowrap;color:${active ? "var(--brand,#2fa564)" : "var(--text-muted,#888)"};transition:color .15s,border-color .15s`;
-    }
-    const typeChipBar = el("div", {
-      style: "display:flex;gap:0;border-bottom:2px solid var(--border,#e2e8f0);margin-bottom:1.1rem;overflow-x:auto"
-    }, TAB_DEFS.map((t) =>
-      el("button", {
-        type: "button",
-        style: tabStyle(state.typeFilter === t.id),
-        onclick: () => {
-          if (state.typeFilter === t.id) return;
-          state.typeFilter = t.id;
-          typeChipBar.querySelectorAll("button").forEach((btn, i) => {
-            btn.style.cssText = tabStyle(state.typeFilter === TAB_DEFS[i].id);
-          });
-          draw(_lastAll);
-        },
-      }, t.label)));
-
-    let _lastAll = []; // held so type chip onclick can re-call draw()
-
     function draw(all) {
-      _lastAll = all;
-      if (state.typeFilter === "surgery_template") {
-        loadAndDrawTemplates();
-        return;
-      }
-
-      // Engineering view: hide surgery template drawings (they're managed in their own section).
-      const visible = state.typeFilter === "engineering"
-        ? all.filter((d) => d.drawing_type !== "surgery_template")
-        : all;
+      const isRushroom = role === "rushroom";
+      const visible = all.filter((d) => d.drawing_type !== "surgery_template");
+      const dash = () => el("span", { class: "muted" }, "—");
+      const mono = (txt) => el("span", { style: "font-family:monospace;font-size:0.8125rem" }, txt);
 
       const search = el("input", {
-        class: "up-text", type: "search", placeholder: "Search number or title…",
+        class: "up-text", type: "search", placeholder: "Search…",
         value: state.q, style: "min-width:220px",
         oninput: (e) => { state.q = e.target.value; repaint(); },
       });
-      const chips = el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" },
+      const chips = isRushroom ? el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" },
         [{ id: "", label: "All" }, ...DRAWING_STATUSES.map((s) => ({ id: s, label: drawingStatusLabel(s) }))].map((s) =>
           el("button", {
             class: `btn btn-sm${state.status === s.id && !state.freeOnly ? " btn-primary" : ""}`, type: "button",
             style: "font-size:0.75rem;padding:2px 10px",
             onclick: () => { state.status = s.id; state.freeOnly = false; repaint(); },
-          }, s.label)));
+          }, s.label))) : null;
       // PROP-046: free drawings must be findable, or "free" is just where
       // drawings go to be forgotten.
       const freeCount = visible.filter((d) => d.is_free).length;
-      const freeChip = el("button", {
+      const freeChip = isRushroom ? el("button", {
         class: `btn btn-sm${state.freeOnly ? " btn-primary" : ""}`, type: "button",
         style: "font-size:0.75rem;padding:2px 10px",
         onclick: () => { state.freeOnly = !state.freeOnly; if (state.freeOnly) state.status = ""; repaint(); },
-      }, freeCount ? `Free drawings (${freeCount})` : "Free drawings");
+      }, freeCount ? `Free drawings (${freeCount})` : "Free drawings") : null;
 
       const tbody = el("tbody", {});
       const head = (label, key) => el("th", {
@@ -12753,70 +12796,63 @@
         onclick: key ? () => { state.dir = state.sort === key ? -state.dir : 1; state.sort = key; repaint(); } : null,
       }, key && state.sort === key ? `${label} ${state.dir > 0 ? "▲" : "▼"}` : label);
 
+      // Part: owner name, then its part number; "+N" when the drawing is used
+      // on more parts than the owner; "free" when unowned.
+      const partCell = (d) => {
+        if (d.is_free) return el("span", { class: "muted" }, "free");
+        return el("span", { style: "display:inline-flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [
+          el("span", {}, d.owner_name || "—"),
+          d.owner_part_number ? mono(d.owner_part_number) : null,
+          d.parts_count > 1 ? el("span", { class: "muted", title: `Used on ${d.parts_count} parts` }, `+${d.parts_count - 1}`) : null,
+        ].filter(Boolean));
+      };
+      const haystack = (d) => [d.drawing_number, d.title, d.owner_name, d.owner_part_number, d.supplier_drawing_number]
+        .filter(Boolean).join(" ").toLowerCase();
+      const cols = [
+        head("Number", "drawing_number"), head("Title", "title"), head("Issue", "revision"), head("Part", "owner_name"),
+        isRushroom ? head("Supplier sees", "supplier_sees") : head("Supplier drawing no.", "supplier_drawing_number"),
+      ];
+
       function repaint() {
         const q = state.q.trim().toLowerCase();
         const rows = visible
           .filter((d) => !state.freeOnly || d.is_free)
           .filter((d) => !state.status || d.status === state.status)
-          .filter((d) => !q || `${d.drawing_number} ${d.title}`.toLowerCase().includes(q))
-          .sort((a, b) => {
-            const av = String(a[state.sort] ?? ""), bv = String(b[state.sort] ?? "");
-            return av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" }) * state.dir;
-          });
+          .filter((d) => !q || haystack(d).includes(q))
+          .sort((a, b) => sortValue(a[state.sort], b[state.sort], state.sort) * state.dir);
         tbody.replaceChildren(...(rows.length ? rows.map((d) =>
           el("tr", { style: "cursor:pointer", onclick: () => openDrawingSurface(d.id, role, { onChange: load }) }, [
             el("td", {}, el("strong", {}, d.drawing_number)),
             el("td", {}, d.title),
-            // Issue column: "F released · G draft" when a newer issue is in work
-            // (STATUS_MODEL §7); the Status column is the current issue's chip.
-            el("td", {}, revisionFacts("Issue", d.revision || null, d.status, d.released_revision || null, { empty: "no issue yet", compact: true })),
-            el("td", {}, drawingStatusChip(d.status)),
-            el("td", {}, d.is_free
-              ? el("span", { class: "muted", title: "Not attached to a part — adopt it when it is ready" }, "free drawing")
-              : el("span", { title: d.node_sequence ? `Drawing ${d.node_sequence} of this part` : "" },
-                  `${d.owner_name || "—"}${d.node_sequence ? ` · #${d.node_sequence}` : ""}`)),
-            el("td", {}, d.supplier_drawing_number || el("span", { class: "muted" }, "—")),
-            el("td", {}, d.parts_count ? `${d.parts_count} part${d.parts_count === 1 ? "" : "s"}` : el("span", { class: "muted" }, "unlinked")),
-            role === "rushroom"
-              ? el("td", {}, d.is_supplier_visible
-                  ? el("span", { title: "Manufacturing partners can see this drawing" }, "Yes")
-                  : el("span", { class: "muted", title: "Withheld from suppliers" }, "No"))
-              : null,
-          ])) : [el("tr", {}, el("td", { colspan: role === "rushroom" ? 8 : 7, class: "muted", style: "padding:1rem" },
-            visible.length ? "No drawings match those filters." : "No drawings yet."))]));
+            // Issue: letter + chip; "F Released · G Draft" when a newer issue is
+            // in work (STATUS_MODEL §7). The word is in the header.
+            el("td", {}, revisionLetterFacts(d.revision || null, d.status, d.released_revision || null)),
+            el("td", {}, partCell(d)),
+            isRushroom
+              ? el("td", {}, d.supplier_sees ? `Issue ${d.supplier_sees}` : dash())
+              : el("td", {}, d.supplier_drawing_number || dash()),
+          ])) : [el("tr", {}, el("td", { colspan: cols.length, class: "muted", style: "padding:1rem" }, "No drawings."))]));
       }
 
-      const emptyHelp = visible.length ? null : el("div", { class: "notice", style: "font-size:0.875rem;margin-top:0.6rem" },
-        role === "rushroom"
-          ? "+ New drawing asks which part the drawing is for, then takes the file and reads what it can from the title block. The drawing number and Rev A are assigned for you. Revising a drawing later advances the revision letter of every part it is on, and is recorded in their Change Log."
-          : "No drawings have been shared with you yet.");
-
       drawingsContentEl.replaceChildren(
-        typeChipBar,
         el("div", { class: "card" }, [
-        el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
-          el("h3", { style: "margin:0" }, "Drawings"),
-          el("span", { class: "muted", style: "font-size:0.8125rem" }, `${visible.length} drawing${visible.length === 1 ? "" : "s"}`),
-          el("span", { class: "spacer", style: "flex:1" }),
-          role === "rushroom" ? actionBtn("New drawing", "plus", { primary: true, onClick: () => newDrawingModal(role, load) }) : null,
-          actionBtn("Refresh", "refresh", { onClick: load }),
-        ]),
-        el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips, freeChip]),
-        el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
-          el("thead", {}, el("tr", {}, [
-            head("Number", "drawing_number"), head("Title", "title"), head("Issue", "revision"),
-            head("Status", "status"), head("Belongs to", "owner_name"), head("Supplier no.", "supplier_drawing_number"), head("Used on", "parts_count"),
-            role === "rushroom" ? head("Supplier") : null,
-          ].filter(Boolean))),
-          tbody,
-        ])),
-        emptyHelp,
-      ]));
+          el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
+            el("span", { class: "muted", style: "font-size:0.8125rem" }, `${visible.length} drawing${visible.length === 1 ? "" : "s"}`),
+            el("span", { class: "spacer", style: "flex:1" }),
+            isRushroom ? actionBtn("New drawing", "plus", { primary: true, onClick: () => newDrawingModal(role, load) }) : null,
+            actionBtn("Refresh", "refresh", { onClick: () => load() }),
+          ]),
+          el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips, freeChip].filter(Boolean)),
+          el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
+            el("thead", {}, el("tr", {}, cols)),
+            tbody,
+          ])),
+        ]));
       repaint();
     }
 
-    // ---- Surgery Templates section (PROP-074, previously a standalone tab) ----
-    // Loaded lazily the first time the "Surgery Templates" chip is selected.
+    // ---- Surgery Templates register (PROP-074) --------------------------------
+    // Loaded lazily the first time the Surgery Templates sub-tab is selected.
     let tplAllTemplates = [];
     let tplAllRules = [];
     let tplRulesWarning = "";
@@ -12832,9 +12868,10 @@
       return tplAllRules.filter((r) => !covered.has(r.id || r.rule_id));
     }
 
-    async function loadAndDrawTemplates() {
+    async function loadAndDrawTemplates(opts) {
+      const silent = !!(opts && opts.silent === true);
       if (!tplCache) {
-        drawingsContentEl.replaceChildren(el("div", { class: "loading" }, "Loading surgery templates…"));
+        if (!silent) templatesContentEl.replaceChildren(el("div", { class: "loading" }, "Loading surgery templates…"));
         try {
           const [tplRes, rulesRes] = await Promise.all([
             API.post(token, "listSurgeryTemplatesPage", {}),
@@ -12846,9 +12883,10 @@
             rulesWarning: rulesRes.warning || "",
           };
         } catch (ex) {
-          drawingsContentEl.replaceChildren(el("div", { class: "error" }, `Couldn't load surgery templates: ${ex.message}`));
+          templatesContentEl.replaceChildren(el("div", { class: "error" }, `Couldn't load surgery templates: ${ex.message}`));
           return;
         }
+        _tplLoadedAt = Date.now();
       }
       tplAllTemplates = tplCache.templates;
       tplAllRules = tplCache.rules;
@@ -12856,9 +12894,9 @@
       drawTemplateSection();
     }
 
-    async function reloadTemplates() {
+    async function reloadTemplates(opts) {
       tplCache = null;
-      await loadAndDrawTemplates();
+      await loadAndDrawTemplates(opts && opts.silent === true ? { silent: true } : undefined);
     }
 
     function drawTemplateSection() {
@@ -12872,23 +12910,23 @@
           }, "+ New template")
         : null;
 
-      const header = el("div", { style: "display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem" }, [
-        el("h3", { style: "margin:0" }, "Surgery Templates"),
-        el("span", { class: "muted", style: "font-size:0.8125rem" }, `${active.length} active`),
-        el("span", { style: "flex:1" }),
+      const header = el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
+        el("span", { class: "muted", style: "font-size:0.8125rem" }, `${active.length} template${active.length === 1 ? "" : "s"}`),
+        el("span", { class: "spacer", style: "flex:1" }),
         newBtn,
-        actionBtn("Refresh", "refresh", { onClick: reloadTemplates }),
+        actionBtn("Refresh", "refresh", { onClick: () => reloadTemplates() }),
       ].filter(Boolean));
 
+      // Rules with no active template face: a coherence warning, amber chips
+      // like the §5.4 warnings in the CAD register.
       const uncoveredNotice = uncovered.length
-        ? el("div", { class: "notice warn", style: "font-size:0.875rem;margin-bottom:1rem" }, [
-            el("strong", {}, `${uncovered.length} rule${uncovered.length > 1 ? "s" : ""} without an active template face: `),
-            uncovered.map((r) => r.label || r.name || r.id || r.rule_id).join(", "),
-          ])
+        ? el("div", { style: "display:flex;gap:0.3rem;flex-wrap:wrap;margin-bottom:0.6rem" },
+            uncovered.map((r) => statusWarningChip({ code: "rule_without_face", text: `${r.label || r.name || r.id || r.rule_id} · no template face` })))
         : null;
 
+      // A failed rules load keeps the amber class: it is a failure, not help copy.
       const rulesNote = tplRulesWarning
-        ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.7rem" }, tplRulesWarning)
+        ? el("div", { class: "notice warn", style: "font-size:0.8125rem;margin-bottom:0.6rem" }, tplRulesWarning)
         : null;
 
       function tplOpenPrintLabels(t) {
@@ -13135,15 +13173,14 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           ])
         : null;
 
-      drawingsContentEl.replaceChildren(
-        typeChipBar,
-        el("div", { style: "max-width:860px;padding:1rem 0" }, [
+      templatesContentEl.replaceChildren(
+        el("div", { style: "max-width:860px" }, [
           header,
           rulesNote,
           uncoveredNotice,
           active.length
             ? el("div", {}, active.map(tplCard))
-            : el("div", { class: "notice", style: "font-size:0.875rem" }, "No templates yet. Use + New template to create the first one."),
+            : el("div", { class: "muted", style: "font-size:0.875rem;padding:1rem 0" }, "No templates."),
           retiredSection,
         ].filter(Boolean)),
       );
@@ -13334,7 +13371,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const close = openModal("Link drawing to template", container);
       API.post(token, "listDrawings", { drawing_type: "surgery_template" }).then(({ drawings: dwgs }) => {
         if (!dwgs || !dwgs.length) {
-          container.replaceChildren(el("p", { class: "notice" }, "No surgery template drawings yet. Create one with + New template."),
+          container.replaceChildren(el("p", { class: "muted", style: "font-size:0.875rem" }, "No template drawings."),
             el("div", { style: "display:flex;justify-content:flex-end" },
               el("button", { class: "btn btn-sm", type: "button", onclick: () => close() }, "✕ Close")));
           return;
@@ -13544,7 +13581,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       ruleSel.focus();
     }
 
-    await load();
+    // Land on the first register: CAD Models for Rushroom, Drawings for a supplier.
+    showSubTab(SUB_TABS[0].id);
   }
 
   // PROP-046: one modal, three steps — node, file, review.
@@ -13810,18 +13848,15 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
               `Read from the drawing — check each value before saving. Hover a badge to see the text it came from.`)
           : null,
         field("title", "Title", "45 mm steel pin"),
-        el("div", { class: "form-label", style: "margin-top:0.6rem" }, "What the supplier calls it"),
-        el("div", { class: "muted", style: "font-size:0.75rem;margin-bottom:0.4rem" },
-          "Recorded for recognition and purchase orders. Nothing in the system keys off these."),
-        field("supplier_drawing_number", "Supplier drawing number", "e.g. 4711-02"),
-        field("supplier_revision", "Supplier revision", "e.g. Rev 3, Issue B, 02"),
+        field("supplier_drawing_number", "Supplier drawing no.", "e.g. 4711-02"),
+        field("supplier_revision", "Supplier issue", "e.g. Rev 3, Issue B, 02"),
         el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:0.6rem" }, [
           el("div", {}, [el("div", { class: "form-label" }, [el("span", {}, "Projection"), confBadge("projection_angle")].filter(Boolean)), projSel]),
           el("div", {}, [el("div", { class: "form-label" }, [el("span", {}, "Sheet size"), confBadge("sheet_size")].filter(Boolean)), sheetSel]),
           el("div", { style: "flex:1;min-width:120px" }, [field("scale", "Scale", "1:1")]),
         ]),
         el("label", { style: "display:flex;align-items:center;gap:0.45rem;margin:0.6rem 0;font-size:0.875rem" }, [
-          supVis, el("span", {}, "Visible to manufacturing partners"),
+          supVis, el("span", {}, "Supplier"),
         ]),
         status,
         el("div", { style: "display:flex;justify-content:flex-end;gap:0.5rem" }, [
@@ -14060,7 +14095,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
               onclick: () => { if (!active) { paint(r.id); } },
             }, [
               el("span", { class: "drawing-rev-name" }, `Issue ${r.revision}`),
-              r.supplier_revision ? el("span", { class: "muted t-2xs" }, `their ${r.supplier_revision}`) : null,
+              r.supplier_revision ? el("span", { class: "muted t-2xs", title: "Supplier issue" }, r.supplier_revision) : null,
               drawingStatusChip(r.status),
             ].filter(Boolean));
           }))
@@ -14082,19 +14117,30 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             ? `${ownerName || "a part"}${drawing.node_sequence ? ` · drawing ${drawing.node_sequence}` : ""}`
             : el("span", { style: "color:#b45309;font-weight:600" }, "Free drawing")),
           ...(drawing.supplier_drawing_number
-            ? [el("dt", {}, "Supplier ID"), el("dd", {}, drawing.supplier_drawing_number)] : []),
+            ? [el("dt", {}, "Supplier drawing no."), el("dd", {}, drawing.supplier_drawing_number)] : []),
+          ...(current && current.supplier_revision
+            ? [el("dt", {}, "Supplier issue"), el("dd", {}, current.supplier_revision)] : []),
+          // Made from: the CAD revision and file the viewed issue was drawn from,
+          // when the issue records its source (getDrawing → revision.source_cad).
+          ...(current && current.source_cad && (current.source_cad.cad_revision || current.source_cad.sha_short)
+            ? [el("dt", {}, "Made from"), el("dd", {}, [
+                current.source_cad.cad_revision ? `CAD Rev ${current.source_cad.cad_revision}` : "CAD file",
+                current.source_cad.sha_short
+                  ? el("span", { class: "muted", style: "font-family:var(--mono,monospace);margin-left:0.4rem", title: current.source_cad.file_name || "" }, `· ${current.source_cad.sha_short}`)
+                  : null,
+              ].filter(Boolean))] : []),
           el("dt", {}, "Used on"),
           el("dd", {}, components.length
             ? `${components.length} part${components.length === 1 ? "" : "s"}`
             : "not linked to a part"),
+          // Supplier: whether the released issue may be shown to manufacturing
+          // partners. The label sits in the rail's label column, outside the box.
+          ...(role === "rushroom"
+            ? [el("dt", {}, "Supplier"), el("dd", {}, el("input", { type: "checkbox", "aria-label": "Supplier", checked: drawing.is_supplier_visible ? "checked" : null, onchange: async (e) => {
+                try { await API.post(token, "setDrawingSupplierVisibility", { drawing_id: drawing.id, is_supplier_visible: e.target.checked }); if (opts.onChange) await opts.onChange(); }
+                catch (ex) { alert(ex.message); e.target.checked = !e.target.checked; }
+              } }))] : []),
         ]),
-        role === "rushroom" ? el("label", { class: "drawing-supvis t-sm" }, [
-          el("input", { type: "checkbox", checked: drawing.is_supplier_visible ? "checked" : null, onchange: async (e) => {
-            try { await API.post(token, "setDrawingSupplierVisibility", { drawing_id: drawing.id, is_supplier_visible: e.target.checked }); if (opts.onChange) await opts.onChange(); }
-            catch (ex) { alert(ex.message); e.target.checked = !e.target.checked; }
-          } }),
-          el("span", {}, "Visible to manufacturing partners"),
-        ]) : null,
         statusActions.length
           ? el("div", { class: "drawing-rail-actions" }, [
               current && currentRev && current.id !== currentRev.id

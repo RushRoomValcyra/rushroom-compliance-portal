@@ -26,9 +26,9 @@ red step in the portal, not as a supplier building from the wrong file.
 
 ## Where
 
-Portal → **Drawings** tab → the robot button at the right end of the
-Drawings | CAD Models tab bar (Rushroom roles only). It opens a one-row
-panel: part select · Run · Close. The panel shows the live step list while
+Portal → **CAD & Drawings** tab → CAD Models → the **Test agent** button
+(robot icon) in the register toolbar beside Refresh (Rushroom roles only).
+It opens a one-row panel above the register: part select · Run · Close. The panel shows the live step list while
 the run executes and the before/after facts when it is done.
 
 Fusion side: the add-in polls the portal every 5 s while connected and
@@ -182,8 +182,8 @@ by portal-api and by the tests. Nothing in them touches a database.
 
 ## Portal UI
 
-Robot button (inline SVG, same `svg()` helper as the other icons) at the right
-of the Drawings | CAD Models tab bar. Panel directly under the bar:
+"Test agent" button (robot icon, same `svg()` helper as the other icons) in
+the CAD Models toolbar beside Refresh. Panel at the top of the register:
 
 ```
 Part  [RR-202609-JKEDBREJ Drawer Front M · Rev A draft ▾]   Rev A draft → files replaced on Rev A      [Run]  [×]

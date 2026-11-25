@@ -1471,3 +1471,17 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/TEST_AGENT.md`, `supabase/migrations/0061_cad_test_runs.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/_shared/test-agent-core.mjs`, `supabase/functions/portal-api/index.ts`, `assets/app.js`, `index.html`, `supplier.html`, `fusion-addin/RushroomPIM/lib/test_agent.py`, `fusion-addin/RushroomPIM/lib/test_agent_poller.py`, `fusion-addin/RushroomPIM/commands/test_agent_cmd.py`, `fusion-addin/RushroomPIM/RushroomPIM.py`, `tests/cad-test-agent.test.mjs`, `docs/ROADMAP.md`, `docs/STATUS_MODEL.md`, `docs/SYSTEM_OVERVIEW.html`.
 
 ---
+
+---
+
+## 2026-11-25 — The tab is called what it holds: CAD & Drawings, and the CAD register is where a part's coherence shows
+
+**Decision:** The top-level tab "Drawings" becomes **CAD & Drawings**, with one sub-tab bar in data-flow order: CAD Models · Drawings · Surgery Templates. The CAD Models register carries, per part, the depicting drawings with their released issue, the §5.4 coherence warnings and what the supplier sees; the Drawings register carries the part (name and number) and what the supplier sees. The supplier shell keeps the name "Drawings" and shows only that register. "Engineering" is the intended name once the Product BOM leaves As Operated; Product Definition was weighed and set aside as abstract to a supplier; Technical Documentation was rejected because in a CE portal it means the Annex IV file.
+
+**Why:** The tab held four things and was named for one. Three stacked tab bars repeated the word before the first row. The two registers never met, so "is the released drawing made from the released CAD" was unanswerable on the tab that STATUS_MODEL §5.4 says should answer it, and the warnings the page received were thrown away. A supplier could click five controls that only failed. The field the supplier knows a drawing by had three names.
+
+**Consequences:** `listCadModels` returns `drawings`, `warnings`, `supplier_sees`, `updated_at`, `current_revision_id`; `listDrawings` returns `owner_part_number` and `supplier_sees`; `getDrawing` returns `source_cad` per issue. The type bar Engineering / Surgery Templates / All is gone; Surgery Templates is a sub-tab. Explanatory notices are removed from the tab; the amber class is for warnings. The release discipline (modal with facts, Release out of the main row, zero-file refusal) is a separate step (D).
+
+**Files changed:** `index.html`, `supplier.html`, `assets/app.js`, `supabase/functions/portal-api/index.ts`, `tests/cad-drawings-tab.test.mjs`, `docs/DRAWINGS_TAB_UX.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
+
+---

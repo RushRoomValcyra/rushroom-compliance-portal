@@ -82,6 +82,8 @@ Manufacturing (PROP-030): family_routing_steps, work_orders,
         work_order_steps, work_order_components
 
 Fitting stage (PROP-056): bom_edges.fitting_stage (hub / site / NULL)
+Revision states (2026-11-25): a drawing issue and a CAD revision are Draft → Released →
+        Superseded only; checked/approved are retired enum words (docs/STATUS_MODEL.md §5.1)
 Component types (PROP-058): part | raw_material | sub_assembly |
         phantom_assembly (structural only) | finished_good | spare_part | product_family
 

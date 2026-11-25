@@ -42,6 +42,12 @@ import {
   FUSION_STEP_KEYS, STEP_KEYS, STEP_STATUSES, applyResults, buildSnapshot, expectedOutcome,
   newSteps, normaliseSteps, setStep, skipRemaining, timeoutPatch, verifyRun,
 } from "../_shared/test-agent-core.mjs";
+import {
+  STEP_KEYS as RENDER_STEP_KEYS, WORKER_STEP_KEYS as RENDER_WORKER_STEP_KEYS,
+  failPatch as renderFailPatch, lastSeen as specsLastSeen, newSteps as newRenderSteps,
+  normaliseSpec, normaliseSteps as normaliseRenderSteps, setStep as setRenderStep,
+  skipRemaining as skipRemainingRenderSteps, timeoutPatch as renderTimeoutPatch, titleBlock,
+} from "../_shared/render-job-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
@@ -791,7 +797,7 @@ function nextRevisionLetter(existing: string[]): string {
 // object shows is derived here; nothing below reads drawings.status,
 // cad_models.status, cad_models.current_revision, cad_model_files.revision or
 // cad_model_files.released_at. Those columns are still WRITTEN (dual-write)
-// until migration 0062 drops them, so a rolled-back function keeps working.
+// until migration 0063 drops them, so a rolled-back function keeps working.
 // ---------------------------------------------------------------------------
 
 const DRAWING_REV_FIELDS =
@@ -810,7 +816,7 @@ async function loadDrawingRevisions(tdb: any, drawingIds: string[]): Promise<Rec
   return byDrawing;
 }
 
-/** Dual-write: drawings.status mirrors the derived status until 0062 drops it. */
+/** Dual-write: drawings.status mirrors the derived status until 0063 drops it. */
 async function syncDrawingStatus(tdb: any, drawingId: string, revisions?: any[]): Promise<any> {
   const revs = revisions ?? (await loadDrawingRevisions(tdb, [drawingId]))[drawingId] ?? [];
   const derived = deriveObject(revs);
@@ -1027,6 +1033,154 @@ async function withCadTestContext(tdb: any, runs: any[]): Promise<any[]> {
       component_name: c.name ?? r.before?.component_name ?? null,
       fusion_document_id: m.fusion_document_id ?? r.before?.fusion_document_id ?? null,
       fusion_document_name: m.fusion_document_name ?? r.before?.fusion_document_name ?? null,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// One rule for "a new issue on a drawing" (the releaseRevisionRow pattern):
+// addDrawingRevision (the upload modal) and finishDrawingRender (the worker)
+// both go through here, so the letter check, the source-CAD facts, the
+// current-revision pointer, the dual-written status and the audit fan-out
+// cannot drift between a hand upload and a rendered issue.
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert one issue on `drawing` ({ id, drawing_number, title }).
+ *  opts.revision     — the letter; blank → nextRevisionLetter of the existing ones.
+ *                      A letter below the current issue is refused (§5.2); a
+ *                      letter that already exists is refused by the unique index.
+ *  opts.storage_path, opts.file_name — the PDF already in DOC_BUCKET.
+ *  opts.notes, opts.source_cad_file_id, opts.source_sha256 — optional facts.
+ * Returns { id, revision, audit } or { error, status } to answer with.
+ */
+async function insertDrawingRevision(
+  tdb: any, session: any, drawing: any,
+  opts: { revision?: string; storage_path: string; file_name: string; notes?: string | null;
+          source_cad_file_id?: string | null; source_sha256?: string | null },
+): Promise<{ id: string; revision: string; audit: { audited: number; bumped: string[] } } | { error: string; status: number }> {
+  const drawing_id = String(drawing.id);
+  const existing = (await loadDrawingRevisions(tdb, [drawing_id]))[drawing_id] || [];
+  const priorLabels = existing.map((r: any) => r.revision);
+  const current = deriveObject(existing).current;
+  const revision = String(opts.revision ?? "").trim().toUpperCase().slice(0, 10)
+    || nextRevisionLetter(priorLabels);
+  // Letters are chosen, not counted, but a new issue must sort after every
+  // existing one (§5.2) — an out-of-order letter is refused, not reshuffled.
+  if (current && compareRevision(revision, current.revision) < 0) {
+    return { error: `Issue ${revision} is below the current ${current.revision}`, status: 400 };
+  }
+  const from = current ? current.revision : "—";
+
+  const { data: inserted, error } = await tdb("drawing_revisions").insert({
+    drawing_id, revision, storage_path: opts.storage_path, file_name: String(opts.file_name).slice(0, 200),
+    notes: opts.notes ? String(opts.notes).slice(0, 1000) : null,
+    // The STEP this drawing was made from (drawset.py writes its sha256 into
+    // .sources.json) — lets statusSummary say "not from the released CAD".
+    source_cad_file_id: String(opts.source_cad_file_id ?? "").trim() || null,
+    source_sha256: opts.source_sha256 ? String(opts.source_sha256).trim().toLowerCase().slice(0, 64) : null,
+    created_by: session.uid || null,
+  }).select("id").maybeSingle();
+  if (error) {
+    if (/duplicate key|unique/i.test(error.message)) {
+      return { error: `Revision ${revision} already exists on this drawing`, status: 400 };
+    }
+    return { error: error.message, status: 400 };
+  }
+  // The new issue is draft and current, so the drawing now reports
+  // "F released · G draft" instead of lying "released" (the §1 fault).
+  await tdb("drawings").update({ current_revision_id: inserted?.id }).eq("id", drawing_id);
+  await syncDrawingStatus(tdb, drawing_id);
+
+  // A drawing revision is a change to every BOM node that shows it — the same
+  // rule PROP-043 established, now on the drawings chain.
+  const audit = await recordDrawingEvent(tdb, session, drawing_id, "drawing_revised",
+    `Drawing revised: ${drawing.drawing_number} ${drawing.title} ${from} → ${revision}`,
+    { bump: true, bumpSummary: `Drawing revised: ${drawing.drawing_number} ${from} → ${revision}` });
+
+  return { id: inserted?.id, revision, audit };
+}
+
+// ---------------------------------------------------------------------------
+// Drawing from CAD — render jobs (docs/DRAWING_RENDER.md). The step rules live
+// in _shared/render-job-core.mjs; this section only loads rows and writes jobs.
+// The helpers mirror the test agent's (expireCadTestRuns, withCadTestContext)
+// rather than generalising them: the two logs have different owners and the
+// render job carries a drawing the test run does not.
+// ---------------------------------------------------------------------------
+
+const RENDER_JOB_LIST_FIELDS =
+  "id, component_id, cad_model_revision_id, cad_file_id, drawing_id, created_drawing, spec, issue, status, "
+  + "requested_by, requested_at, claimed_at, claimed_by, finished_at, steps, result, error, created_at";
+
+/** A drawing this job created that still has no issue is deleted again, so
+ *  no half-made drawing is left (DRAWING_RENDER.md §3). drawing_id on the job
+ *  goes to NULL through the FK, so the failed job stays readable. Returns the
+ *  deleted drawing's number, or null when nothing was deleted. */
+async function removeEmptyRenderDrawing(tdb: any, session: any, job: any): Promise<string | null> {
+  if (!job || !job.created_drawing || !job.drawing_id) return null;
+  const { data: issues } = await tdb("drawing_revisions").select("id").eq("drawing_id", job.drawing_id).limit(1);
+  if ((issues || []).length) return null;
+  const { data: drw } = await tdb("drawings").select("id, drawing_number, title").eq("id", job.drawing_id).maybeSingle();
+  if (!drw) return null;
+  const { error } = await tdb("drawings").delete().eq("id", drw.id);
+  if (error) return null;
+  await writeBomHistory(tdb, session, job.component_id, "updated",
+    `Drawing ${drw.drawing_number} ${drw.title} removed: render from CAD ended with no issue`);
+  return drw.drawing_number;
+}
+
+/** Apply the lazy timeouts to every open render job of the org before anyone
+ *  reads them. Cheap: one indexed select; writes only when a job expired. A
+ *  job that expires cleans up the drawing it created, as a failure does. */
+async function expireDrawingRenderJobs(tdb: any, session: any): Promise<any[]> {
+  const { data: open } = await tdb("drawing_render_jobs")
+    .select("id, status, requested_at, claimed_at, steps, drawing_id, created_drawing, component_id")
+    .in("status", ["requested", "running"]).order("requested_at", { ascending: true });
+  const now = Date.now();
+  const still: any[] = [];
+  for (const job of (open || []) as any[]) {
+    const patch = renderTimeoutPatch(job, now);
+    if (!patch) { still.push(job); continue; }
+    const { data: upd } = await tdb("drawing_render_jobs").update(patch).eq("id", job.id).eq("status", job.status).select("id");
+    if (upd?.length) await removeEmptyRenderDrawing(tdb, session, job);
+  }
+  // The jobs still open, oldest first — the poll and the one-per-drawing check
+  // read this list instead of selecting again (one query on the idle path).
+  return still;
+}
+
+/** The job as the panel and the worker read it: drawing number, part and CAD
+ *  letter attached, steps normalised to the six. */
+async function withRenderJobContext(tdb: any, jobs: any[]): Promise<any[]> {
+  const rows = (jobs || []).filter(Boolean);
+  if (!rows.length) return [];
+  const compIds = [...new Set(rows.map((r) => r.component_id).filter(Boolean))];
+  const drawingIds = [...new Set(rows.map((r) => r.drawing_id).filter(Boolean))];
+  const revIds = [...new Set(rows.map((r) => r.cad_model_revision_id).filter(Boolean))];
+  const [{ data: comps }, { data: drws }, { data: revs }] = await Promise.all([
+    compIds.length ? tdb("bom_components").select("id, part_number, name").in("id", compIds) : { data: [] },
+    drawingIds.length ? tdb("drawings").select("id, drawing_number, title").in("id", drawingIds) : { data: [] },
+    revIds.length ? tdb("cad_model_revisions").select("id, revision").in("id", revIds) : { data: [] },
+  ]);
+  const compMap: Record<string, any> = {};
+  for (const c of (comps || []) as any[]) compMap[c.id] = c;
+  const drwMap: Record<string, any> = {};
+  for (const d of (drws || []) as any[]) drwMap[d.id] = d;
+  const revMap: Record<string, any> = {};
+  for (const r of (revs || []) as any[]) revMap[r.id] = r;
+  return rows.map((r) => {
+    const c = compMap[r.component_id] || {};
+    const d = drwMap[r.drawing_id] || {};
+    const v = revMap[r.cad_model_revision_id] || {};
+    return {
+      ...r,
+      steps: normaliseRenderSteps(r.steps),
+      drawing_number: d.drawing_number ?? null,
+      drawing_title: d.title ?? null,
+      part_number: c.part_number ?? null,
+      component_name: c.name ?? null,
+      cad_revision: v.revision ?? null,
     };
   });
 }
@@ -5329,45 +5483,19 @@ Deno.serve(async (req) => {
     const drawing = (drawRows || [])[0];
     if (!drawing) return json({ error: "Drawing not found" }, 404);
 
-    const existing = (await loadDrawingRevisions(tdb, [drawing_id]))[drawing_id] || [];
-    const priorLabels = existing.map((r: any) => r.revision);
-    const current = deriveObject(existing).current;
-    const revision = String(body.revision ?? "").trim().toUpperCase().slice(0, 10)
-      || nextRevisionLetter(priorLabels);
-    // Letters are chosen, not counted, but a new issue must sort after every
-    // existing one (§5.2) — an out-of-order letter is refused, not reshuffled.
-    if (current && compareRevision(revision, current.revision) < 0) {
-      return json({ error: `Issue ${revision} is below the current ${current.revision}` }, 400);
-    }
-    const from = current ? current.revision : "—";
-
-    const { data: inserted, error } = await tdb("drawing_revisions").insert({
-      drawing_id, revision, storage_path, file_name: file_name.slice(0, 200),
-      notes: body.notes ? String(body.notes).slice(0, 1000) : null,
-      // The STEP this drawing was made from (drawset.py writes its sha256 into
-      // .sources.json) — lets statusSummary say "not from the released CAD".
-      source_cad_file_id: String(body.source_cad_file_id ?? "").trim() || null,
-      source_sha256: body.source_sha256 ? String(body.source_sha256).trim().toLowerCase().slice(0, 64) : null,
-      created_by: session.uid || null,
-    }).select("id").maybeSingle();
-    if (error) {
-      if (/duplicate key|unique/i.test(error.message)) {
-        return json({ error: `Revision ${revision} already exists on this drawing` }, 400);
-      }
-      return json({ error: error.message }, 400);
-    }
-    // The new issue is draft and current, so the drawing now reports
-    // "F released · G draft" instead of lying "released" (the §1 fault).
-    await tdb("drawings").update({ current_revision_id: inserted?.id }).eq("id", drawing_id);
-    await syncDrawingStatus(tdb, drawing_id);
-
-    // A drawing revision is a change to every BOM node that shows it — the same
-    // rule PROP-043 established, now on the drawings chain.
-    const audit = await recordDrawingEvent(tdb, session, drawing_id, "drawing_revised",
-      `Drawing revised: ${drawing.drawing_number} ${drawing.title} ${from} → ${revision}`,
-      { bump: true, bumpSummary: `Drawing revised: ${drawing.drawing_number} ${from} → ${revision}` });
-
-    return json({ ok: true, id: inserted?.id, revision, ...audit });
+    // The whole rule lives in insertDrawingRevision, shared with
+    // finishDrawingRender (a rendered issue follows the same rule): a letter
+    // that "is below the current" issue is refused, the new issue becomes
+    // current, the dual-written status is re-derived with
+    // syncDrawingStatus(tdb, drawing_id), source_cad_file_id / source_sha256
+    // are recorded, and the change fans out to every part the drawing depicts.
+    const r = await insertDrawingRevision(tdb, session, drawing, {
+      revision: body.revision, storage_path, file_name,
+      notes: body.notes ? String(body.notes) : null,
+      source_cad_file_id: body.source_cad_file_id, source_sha256: body.source_sha256,
+    });
+    if ("error" in r) return json({ error: r.error }, r.status);
+    return json({ ok: true, id: r.id, revision: r.revision, ...r.audit });
   }
 
   if (action === "linkDrawingToComponent") {
@@ -5457,7 +5585,7 @@ Deno.serve(async (req) => {
       if (error) return json({ error: error.message }, 400);
       Object.assign(rev, stamp);
     }
-    // Dual-write: drawings.status follows the current issue until 0062.
+    // Dual-write: drawings.status follows the current issue until 0063.
     await syncDrawingStatus(tdb, drawing_id, revisions);
 
     const audit = status === "released"
@@ -5789,7 +5917,7 @@ Deno.serve(async (req) => {
     } else {
       const { data: inserted, error } = await tdb("cad_model_files").insert({
         ...fileRow, cad_model_id, cad_model_revision_id: rev.id, format,
-        revision,              // dual-write until 0062 drops the column
+        revision,              // dual-write until 0063 drops the column
         released_at: null,
         created_by: session.uid || null,
       }).select("id").maybeSingle();
@@ -6011,7 +6139,7 @@ Deno.serve(async (req) => {
       const drawingIds = [...new Set(((dlinks || []) as any[]).map((l) => l.drawing_id))];
       if (drawingIds.length) {
         const { data: drws } = await tdb("drawings")
-          .select("id, drawing_number, title, is_supplier_visible").in("id", drawingIds);
+          .select("id, drawing_number, title, is_supplier_visible, render_spec").in("id", drawingIds);
         for (const d of (drws || []) as any[]) drawingById[d.id] = d;
         drawingRevs = await loadDrawingRevisions(tdb, drawingIds);
       }
@@ -6061,6 +6189,7 @@ Deno.serve(async (req) => {
           current_status: dd.status,
           released_revision: dd.released?.revision ?? null,
           is_supplier_visible: d.is_supplier_visible,
+          render_spec: d.render_spec ?? null,
         };
       }).sort(byDepictingThenNumber);
       // Newest created_at among the model's revisions and files, else the model's.
@@ -6283,6 +6412,350 @@ Deno.serve(async (req) => {
     if (!upd?.length) return json({ error: "Run is no longer running" }, 409);
     const [out] = await withCadTestContext(tdb, upd);
     return json({ run: out });
+  }
+
+  // ==========================================================================
+  // Drawing from CAD — render jobs (docs/DRAWING_RENDER.md). Rushroom only.
+  // Every action answers { job } (or { jobs }, { specs }); the worker and the
+  // panel read the same shape. Steps: claim · download · render · verify ·
+  // upload · register — the worker reports 2–5, the portal sets claim and
+  // register. The rules are in _shared/render-job-core.mjs.
+  // ==========================================================================
+
+  // --- request: validate part / CAD rev / STEP / spec / drawing, queue the job
+  if (action === "requestDrawingRender") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const component_id = String(body.component_id ?? "").trim();
+    const cad_model_revision_id = String(body.cad_model_revision_id ?? "").trim();
+    const spec = String(body.spec ?? "").trim();
+    const wantDrawingId = String(body.drawing_id ?? "").trim();
+    const title = String(body.title ?? "").trim();
+    if (!component_id || !cad_model_revision_id || !spec) {
+      return json({ error: "component_id, cad_model_revision_id and spec required" }, 400);
+    }
+    if (!wantDrawingId && !title) return json({ error: "drawing_id or title required" }, 400);
+
+    const { data: component } = await tdb("bom_components").select("id, part_number, name").eq("id", component_id).maybeSingle();
+    if (!component) return json({ error: "Component not found" }, 404);
+    const { data: modelRows } = await tdb("cad_models").select("id").eq("component_id", component_id);
+    const model = (modelRows || [])[0];
+    if (!model) return json({ error: "The part has no CAD model" }, 404);
+    const { data: rev } = await tdb("cad_model_revisions").select("id, cad_model_id, revision, status")
+      .eq("id", cad_model_revision_id).maybeSingle();
+    if (!rev) return json({ error: "CAD revision not found" }, 404);
+    if (rev.cad_model_id !== model.id) return json({ error: `Rev ${rev.revision} does not belong to this part's CAD model` }, 400);
+    const { data: stepFiles } = await tdb("cad_model_files").select("id, file_name, sha256, storage_path")
+      .eq("cad_model_revision_id", rev.id).eq("format", "step");
+    const stepFile = (stepFiles || [])[0];
+    if (!stepFile) return json({ error: `Rev ${rev.revision} has no STEP file` }, 400);
+
+    // The spec must be one a worker has registered; a multi-part spec is
+    // refused here rather than by the worker, so no job is queued that cannot
+    // be drawn (a render job draws one part, §6).
+    const { data: specRow } = await tdb("drawing_render_specs").select("name, parts").eq("name", spec).maybeSingle();
+    if (!specRow) return json({ error: `Spec ${spec} is not registered by any drawing worker` }, 400);
+    if (Number(specRow.parts) > 1) return json({ error: `Spec ${spec} has ${specRow.parts} parts; a render job draws one part` }, 400);
+
+    // Timeouts first, so a stale open job does not block the drawing.
+    await expireDrawingRenderJobs(tdb, session);
+
+    let drawing: any = null;
+    let created_drawing = false;
+    if (wantDrawingId) {
+      const { data: drw } = await tdb("drawings").select("id, drawing_number, title, owner_component_id, drawing_type")
+        .eq("id", wantDrawingId).maybeSingle();
+      if (!drw) return json({ error: "Drawing not found" }, 404);
+      // The drawing must depict the part: the owner link or a depicts link.
+      let depicts = drw.owner_component_id === component_id;
+      if (!depicts) {
+        const { data: links } = await tdb("drawing_components").select("id")
+          .eq("drawing_id", drw.id).eq("component_id", component_id).eq("role", "depicts").limit(1);
+        depicts = (links || []).length > 0;
+      }
+      if (!depicts) return json({ error: `Drawing ${drw.drawing_number} does not depict ${component.part_number}` }, 400);
+      const { data: openJobs } = await tdb("drawing_render_jobs").select("id, status")
+        .eq("drawing_id", drw.id).in("status", ["requested", "running"]).limit(1);
+      if ((openJobs || []).length) {
+        return json({ error: `A render is already ${openJobs![0].status} for drawing ${drw.drawing_number}`, job_id: openJobs![0].id }, 400);
+      }
+      drawing = drw;
+    } else {
+      // A new drawing, created now WITHOUT an issue (the file comes from the
+      // worker): the same row createDrawingWithRevision makes — engineering,
+      // owner = the part, number assigned here, node_sequence per owner, the
+      // owner link — plus render_spec. A job that ends with no issue deletes
+      // it again (removeEmptyRenderDrawing).
+      const drawing_number = await generateDrawingNumber(tdb);
+      const { data: siblings } = await tdb("drawings").select("node_sequence").eq("owner_component_id", component_id);
+      const used = (siblings || []).map((d: any) => d.node_sequence || 0);
+      const node_sequence = (used.length ? Math.max(...used) : 0) + 1;
+      const { data: createdRow, error: cErr } = await tdb("drawings").insert({
+        drawing_number, title: title.slice(0, 200), drawing_type: "engineering",
+        owner_component_id: component_id, node_sequence,
+        is_supplier_visible: true, render_spec: spec,
+        created_by: session.uid || null,
+      }).select("id, drawing_number, title").maybeSingle();
+      if (cErr || !createdRow) return json({ error: cErr?.message || "Drawing could not be created" }, 400);
+      await tdb("drawing_components").insert({
+        drawing_id: createdRow.id, component_id, role: "depicts", linked_by: session.uid || null,
+      });
+      await writeBomHistory(tdb, session, component_id, "drawing_linked",
+        `Drawing created: ${drawing_number} ${title} · render from CAD Rev ${rev.revision} requested`);
+      drawing = createdRow;
+      created_drawing = true;
+    }
+
+    // The letter is reserved now: A for a new drawing, else the next one.
+    const existing = (await loadDrawingRevisions(tdb, [drawing.id]))[drawing.id] || [];
+    const issue = nextRevisionLetter(existing.map((r: any) => r.revision));
+
+    const { data: job, error } = await tdb("drawing_render_jobs").insert({
+      component_id, cad_model_revision_id: rev.id, cad_file_id: stepFile.id,
+      drawing_id: drawing.id, created_drawing, spec, issue, status: "requested",
+      requested_by: session.uid || null, steps: newRenderSteps(),
+    }).select("*").maybeSingle();
+    if (error) {
+      // The partial unique index holds one-per-drawing when two requests arrive together.
+      if (created_drawing) await tdb("drawings").delete().eq("id", drawing.id);
+      if (/duplicate key|unique/i.test(error.message)) return json({ error: `A render is already requested or running for drawing ${drawing.drawing_number}` }, 400);
+      return json({ error: error.message }, 400);
+    }
+    const [out] = await withRenderJobContext(tdb, [job]);
+    return json({ job: out });
+  }
+
+  // --- read one job (the panel's 2 s poll) ----------------------------------
+  if (action === "getDrawingRenderJob") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    if (!job_id) return json({ error: "job_id required" }, 400);
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: job } = await tdb("drawing_render_jobs").select("*").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    const [out] = await withRenderJobContext(tdb, [job]);
+    return json({ job: out });
+  }
+
+  // --- the last N jobs, newest first; optionally one drawing's or one part's -
+  if (action === "listDrawingRenderJobs") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const limit = Math.min(Math.max(Number(body.limit) || 10, 1), 100);
+    await expireDrawingRenderJobs(tdb, session);
+    let q = tdb("drawing_render_jobs").select(RENDER_JOB_LIST_FIELDS);
+    if (body.drawing_id) q = q.eq("drawing_id", String(body.drawing_id));
+    if (body.component_id) q = q.eq("component_id", String(body.component_id));
+    const { data: jobs, error } = await q.order("requested_at", { ascending: false }).limit(limit);
+    if (error) return json({ error: error.message }, 500);
+    return json({ jobs: await withRenderJobContext(tdb, jobs || []) });
+  }
+
+  // --- cancel a job no worker has picked up ---------------------------------
+  if (action === "cancelDrawingRenderJob") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    if (!job_id) return json({ error: "job_id required" }, 400);
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: job } = await tdb("drawing_render_jobs").select("*").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    if (job.status !== "requested") return json({ error: `Job is ${job.status}; only a requested job can be cancelled` }, 409);
+    const at = new Date().toISOString();
+    const { data: upd, error } = await tdb("drawing_render_jobs")
+      .update({ status: "cancelled", finished_at: at, steps: skipRemainingRenderSteps(job.steps, RENDER_STEP_KEYS, at) })
+      .eq("id", job_id).eq("status", "requested").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!upd?.length) return json({ error: "Job was claimed before it could be cancelled" }, 409);
+    // A drawing the job created with no issue goes with it.
+    const removed = await removeEmptyRenderDrawing(tdb, session, upd[0]);
+    const [out] = await withRenderJobContext(tdb, [{ ...upd[0], drawing_id: removed ? null : upd[0].drawing_id }]);
+    return json({ job: removed ? { ...out, drawing_number: removed } : out });
+  }
+
+  // --- the worker asks for work (every 5 s while it runs) -------------------
+  if (action === "pollDrawingRenderJob") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const agent = String(body.agent ?? "").trim().slice(0, 200) || "drawing worker";
+    // One indexed select on the idle path: the open jobs, timeouts applied.
+    const open = await expireDrawingRenderJobs(tdb, session);
+    const target = open.find((j) => j.status === "requested");
+    if (!target) return json({ job: null });
+    const at = new Date().toISOString();
+    // The claim is one UPDATE guarded by status = 'requested': of two workers
+    // polling at once only one touches the row; the other gets no row back
+    // and answers job: null, the same as "nothing waiting".
+    const { data: claimed, error } = await tdb("drawing_render_jobs")
+      .update({ status: "running", claimed_at: at, claimed_by: agent, steps: setRenderStep(target.steps, "claim", "passed", agent, at) })
+      .eq("id", target.id).eq("status", "requested").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!claimed?.length || claimed[0].claimed_by !== agent) return json({ job: null });
+    const job = claimed[0];
+
+    // Everything the worker needs: the STEP (signed, 1 h), its sha, and the
+    // title-block facts. Loaded here, not stored on the job: the drawing's
+    // title or the part's name may be corrected before the next render.
+    const [{ data: component }, { data: drawing }, { data: rev }, { data: stepFile }] = await Promise.all([
+      tdb("bom_components").select("id, part_number, name").eq("id", job.component_id).maybeSingle(),
+      tdb("drawings").select("id, drawing_number, title").eq("id", job.drawing_id).maybeSingle(),
+      tdb("cad_model_revisions").select("id, revision").eq("id", job.cad_model_revision_id).maybeSingle(),
+      tdb("cad_model_files").select("id, file_name, sha256, storage_path").eq("id", job.cad_file_id).maybeSingle(),
+    ]);
+    if (!stepFile || !drawing) {
+      // The source or the target vanished between request and claim: close the
+      // job rather than hand the worker a job it cannot finish.
+      const reason = !stepFile ? "the STEP file no longer exists" : "the drawing no longer exists";
+      const patch = renderFailPatch(job.steps, reason, at);
+      const { data: failed } = await tdb("drawing_render_jobs").update(patch).eq("id", job.id).eq("status", "running").select("*");
+      if (failed?.length) await removeEmptyRenderDrawing(tdb, session, failed[0]);
+      return json({ job: null });
+    }
+    const { data: signed, error: signErr } = await db.storage.from(DOC_BUCKET).createSignedUrl(stepFile.storage_path, 3600);
+    if (signErr || !signed?.signedUrl) {
+      const patch = renderFailPatch(job.steps, `STEP could not be signed: ${signErr?.message || "no url"}`, at);
+      const { data: failed } = await tdb("drawing_render_jobs").update(patch).eq("id", job.id).eq("status", "running").select("*");
+      if (failed?.length) await removeEmptyRenderDrawing(tdb, session, failed[0]);
+      return json({ job: null });
+    }
+    const [out] = await withRenderJobContext(tdb, [job]);
+    return json({
+      job: {
+        ...out,
+        step_url: signed.signedUrl,
+        step_file_name: stepFile.file_name,
+        cad_sha256: stepFile.sha256 ?? null,
+        title_block: titleBlock({ drawing, job, component, revision: rev, file: stepFile, at }),
+        spec: job.spec,
+      },
+    });
+  }
+
+  // --- the worker reports a step as it happens (download · render · verify · upload)
+  if (action === "reportDrawingRenderStep") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    const key = String(body.key ?? "").trim();
+    const status = String(body.status ?? "").trim();
+    if (!job_id || !key || !status) return json({ error: "job_id, key and status required" }, 400);
+    if (!RENDER_WORKER_STEP_KEYS.includes(key)) return json({ error: `key must be one of: ${RENDER_WORKER_STEP_KEYS.join(", ")}` }, 400);
+    if (!["running", "passed", "failed", "skipped"].includes(status)) {
+      return json({ error: "status must be running, passed, failed or skipped" }, 400);
+    }
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: job } = await tdb("drawing_render_jobs").select("id, status, steps").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    if (job.status !== "running") return json({ error: `Job is ${job.status}, not running` }, 409);
+    const at = new Date().toISOString();
+    const detail = body.detail != null ? String(body.detail).slice(0, 2000) : null;
+    const data = body.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data : null;
+    const { data: upd, error } = await tdb("drawing_render_jobs")
+      .update({ steps: setRenderStep(job.steps, key, status, detail, at, data) })
+      .eq("id", job_id).eq("status", "running").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
+    const [out] = await withRenderJobContext(tdb, upd);
+    return json({ job: out });
+  }
+
+  // --- the worker is done: register the issue (or record the failure) -------
+  if (action === "finishDrawingRender") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    if (!job_id) return json({ error: "job_id required" }, 400);
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: job } = await tdb("drawing_render_jobs").select("*").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    if (job.status !== "running") return json({ error: `Job is ${job.status}, not running` }, 409);
+    const at = new Date().toISOString();
+
+    // One path closes a job as failed: the step the worker was on fails with
+    // the reason, the rest are skipped, a drawing this job created and that
+    // has no issue is deleted again.
+    const fail = async (reason: string, steps: any[] = job.steps) => {
+      const patch = renderFailPatch(steps, reason, at);
+      const { data: upd, error } = await tdb("drawing_render_jobs").update(patch).eq("id", job_id).eq("status", "running").select("*");
+      if (error) return json({ error: error.message }, 400);
+      if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
+      const removed = await removeEmptyRenderDrawing(tdb, session, upd[0]);
+      const [out] = await withRenderJobContext(tdb, [{ ...upd[0], drawing_id: removed ? null : upd[0].drawing_id }]);
+      return json({ job: removed ? { ...out, drawing_number: removed } : out });
+    };
+
+    if (body.error != null && body.error !== "") return await fail(String(body.error));
+
+    const storage_path = String(body.storage_path ?? "").trim();
+    const file_name = String(body.file_name ?? "").trim();
+    const sha256 = String(body.sha256 ?? "").trim().toLowerCase();
+    // The STEP sha the worker actually rendered from (it verified the download
+    // against the value the poll handed it). A resend from Fusion while the job
+    // ran replaces the file row's sha in place (§5.3), so the row is not the truth.
+    const renderedFrom = String(body.source_sha256 ?? "").trim().toLowerCase().slice(0, 64) || null;
+    if (!storage_path || !file_name || !sha256) {
+      return json({ error: "storage_path, file_name and sha256 required (or error)" }, 400);
+    }
+    const result = body.result && typeof body.result === "object" && !Array.isArray(body.result) ? body.result : {};
+
+    const [{ data: drawing }, { data: rev }, { data: stepFile }] = await Promise.all([
+      tdb("drawings").select("id, drawing_number, title").eq("id", job.drawing_id).maybeSingle(),
+      tdb("cad_model_revisions").select("id, revision").eq("id", job.cad_model_revision_id).maybeSingle(),
+      tdb("cad_model_files").select("id, sha256").eq("id", job.cad_file_id).maybeSingle(),
+    ]);
+    if (!drawing) return await fail("the drawing no longer exists");
+    let steps = setRenderStep(job.steps, "register", "running", null, at);
+    // The same rule addDrawingRevision uses: letter = the one reserved at
+    // request. An issue added meanwhile makes that letter a duplicate (or
+    // below the current) and the insert is refused — the job fails with it.
+    const r = await insertDrawingRevision(tdb, session, drawing, {
+      revision: job.issue, storage_path, file_name,
+      notes: `Rendered from CAD Rev ${rev?.revision ?? "?"} by drawset`,
+      source_cad_file_id: job.cad_file_id,
+      source_sha256: renderedFrom ?? stepFile?.sha256 ?? null,
+    });
+    if ("error" in r) return await fail(r.error, steps);
+
+    await tdb("drawings").update({ render_spec: job.spec }).eq("id", drawing.id);
+    steps = setRenderStep(steps, "register", "passed", `Issue ${r.revision} · ${file_name}`, at, { drawing_revision_id: r.id });
+    const patch = {
+      status: "done", finished_at: at, error: null, steps,
+      result: { ...result, drawing_revision_id: r.id, file_name, sha256 },
+    };
+    const { data: upd, error } = await tdb("drawing_render_jobs").update(patch).eq("id", job_id).eq("status", "running").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
+    const [out] = await withRenderJobContext(tdb, upd);
+    return json({ job: { ...out, ...r.audit } });
+  }
+
+  // --- the worker registers its spec catalogue (on start, every 10 min) -----
+  if (action === "registerDrawingSpecs") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const agent = String(body.agent ?? "").trim().slice(0, 200) || "drawing worker";
+    if (!Array.isArray(body.specs)) return json({ error: "specs must be a list" }, 400);
+    const at = new Date().toISOString();
+    const rows: any[] = [];
+    const seen = new Set<string>();
+    for (const s of body.specs) {
+      const n = normaliseSpec(s);
+      if (!n || seen.has(n.name)) continue;
+      seen.add(n.name);
+      rows.push({ ...n, agent, updated_at: at });
+    }
+    if (rows.length) {
+      const { error } = await tdb("drawing_render_specs").upsert(rows, { onConflict: "organization_id,name" });
+      if (error) return json({ error: error.message }, 400);
+    }
+    // Specs no longer in the worker's list are gone for this org.
+    let dq = tdb("drawing_render_specs").delete();
+    if (rows.length) dq = dq.not("name", "in", `(${rows.map((r) => `"${r.name.replace(/"/g, "")}"`).join(",")})`);
+    const { data: removed, error: dErr } = await dq.select("name");
+    if (dErr) return json({ error: dErr.message }, 400);
+    const { data: specs } = await tdb("drawing_render_specs").select("*").order("name");
+    return json({ ok: true, specs: specs || [], last_seen: specsLastSeen(specs || []), removed: (removed || []).map((r: any) => r.name) });
+  }
+
+  // --- the modal's spec list ------------------------------------------------
+  if (action === "listDrawingSpecs") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const { data: specs, error } = await tdb("drawing_render_specs").select("*").order("name");
+    if (error) return json({ error: error.message }, 500);
+    return json({ specs: specs || [], last_seen: specsLastSeen(specs || []) });
   }
 
 

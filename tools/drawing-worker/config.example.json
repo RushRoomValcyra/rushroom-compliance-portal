@@ -1,0 +1,7 @@
+{
+  "portal_url": "https://iwoqujpwhsoywudjtsnj.supabase.co/functions/v1/portal-api",
+  "token_file": "../../fusion-addin/RushroomPIM/config.json",
+  "drawset_dir": "/Users/famqvick/Documents/Claude/Projects/VALCYRA Interiors/fusion_scripts",
+  "python": "/Users/famqvick/.venvs/valcyra-draw/bin/python",
+  "poll_seconds": 5
+}

@@ -63,6 +63,10 @@ export const TENANT_TABLES = new Set([
   // CAD change-order test agent: one row per robot-button run (migration 0061,
   // docs/TEST_AGENT.md). The add-in polls it per org, so it must be scoped.
   "cad_test_runs",
+  // Drawings rendered from CAD by a worker on the engineer's Mac (migration
+  // 0062, docs/DRAWING_RENDER.md): the job log the worker polls per org, and
+  // the spec catalogue it registers.
+  "drawing_render_jobs", "drawing_render_specs",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

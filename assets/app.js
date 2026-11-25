@@ -12481,10 +12481,19 @@
     let _cadLoaded = false;
     let _cadAll = [];
     const _cadFilter = { q: "", status: "", sort: "updated_at", dir: -1 };
+    // Rows kept expanded across redraws (a render job finishing reloads the
+    // register; its group must still be open) and the render jobs shown per
+    // CAD revision id, live or finished (docs/DRAWING_RENDER.md §2).
+    const _cadExpanded = new Set();
+    const _drJobs = new Map();
+    const _drSeen = new Set();   // job ids that already opened their row once
 
     async function loadCadModels(opts = {}) {
       if (_cadLoaded) return;
       if (opts.silent !== true) cadRegisterEl.replaceChildren(el("div", { class: "loading" }, "Loading CAD models…"));
+      // Live render jobs in parallel with the list, so a job started before a
+      // page reload shows its steps in its revision group again.
+      const jobsP = API.post(token, "listDrawingRenderJobs", { limit: 10 }).then(drUnwrapJobs).catch(() => []);
       let data;
       try {
         data = await API.post(token, "listCadModels", {});
@@ -12501,6 +12510,13 @@
       _cadLoaded = true;
       _cadLoadedAt = Date.now();
       _cadAll = data.cad_models || [];
+      // Newest first from the API: the first live job per revision wins, and a
+      // row is opened for a job once (collapsing it afterwards stays collapsed).
+      for (const j of await jobsP) {
+        if (!drLive(j) || !j.cad_model_revision_id || _drJobs.has(j.cad_model_revision_id)) continue;
+        _drJobs.set(j.cad_model_revision_id, j);
+        if (j.component_id && !_drSeen.has(j.id)) { _drSeen.add(j.id); _cadExpanded.add(j.component_id); }
+      }
       drawCadModels();
     }
     const reloadCadModels = (opts) => { _cadLoaded = false; return loadCadModels(opts); };
@@ -12571,9 +12587,10 @@
         }, "▶");
         expandBtn.onclick = async () => {
           const open = detailTr.style.display !== "none";
-          if (open) { detailTr.style.display = "none"; expandBtn.style.transform = ""; return; }
+          if (open) { detailTr.style.display = "none"; expandBtn.style.transform = ""; _cadExpanded.delete(m.component_id); return; }
           detailTr.style.display = "";
           expandBtn.style.transform = "rotate(90deg)";
+          _cadExpanded.add(m.component_id);
           if (detailLoaded || detailBusy) return;
           detailBusy = true;
           detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "Loading revisions…"));
@@ -12596,10 +12613,33 @@
             if (!groups.length) {
               detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No revisions."));
             } else {
+              // Drawing from CAD (docs/DRAWING_RENDER.md §2): the job shown in a
+              // revision group, live (polled) or finished (its steps and result).
+              const mountRenderJob = (rev, slot) => {
+                const job = _drJobs.get(rev.id);
+                if (!job) return;
+                const panel = drawingRenderJobPanel(token, { onDone: (j) => {
+                  _drJobs.set(rev.id, j);
+                  // The Drawings column and the group show the new issue; the
+                  // row stays expanded and the finished steps are drawn again.
+                  reloadCadModels({ silent: true });
+                } });
+                slot.replaceChildren(panel.el);
+                panel.watch(job);
+              };
               const groupEls = groups.map((rev) => {
                 const isCurrent = rev.revision === currentLetter;
                 const files = (rev.files || []).slice().sort((a, b) => a.format.localeCompare(b.format));
                 const canRelease = isCurrent && !["released", "superseded"].includes(rev.status);
+                const jobSlot = el("div", {});
+                const fromCadBtn = rev.id && m.component_id && files.some((f) => f.format === "step")
+                  ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
+                      onclick: () => drawingRenderModal(role, {
+                        component_id: m.component_id, part_number: m.part_number || "", component_name: m.component_name || "",
+                        revision: rev, drawings: m.drawings || [],
+                      }, { onRequested: (job) => { _drJobs.set(rev.id, job); _cadExpanded.add(m.component_id); mountRenderJob(rev, jobSlot); } }) },
+                      `Drawing from Rev ${rev.revision}`)
+                  : null;
                 const releaseRevBtn = canRelease
                   ? el("button", { type: "button", class: "btn btn-xs btn-primary", style: "flex-shrink:0",
                       onclick: (ev) => releaseCurrentRevision({ ...m, current_revision: rev.revision }, ev.target, rev.id) }, "Release")
@@ -12613,6 +12653,7 @@
                   revisionStamp("Approved", rev.approved_at, rev.approved_by),
                   revisionStamp("Checked", rev.checked_at, rev.checked_by),
                   el("span", { style: "flex:1" }),
+                  fromCadBtn,
                   releaseRevBtn,
                 ].filter(Boolean));
                 const fileRows = files.length ? files.map((f) => {
@@ -12630,7 +12671,8 @@
                     f.download_url ? el("a", { href: f.download_url, download: f.file_name || undefined, class: "btn btn-xs", style: "flex-shrink:0" }, "⬇ Download") : null,
                   ].filter(Boolean));
                 }) : [el("div", { class: "muted", style: "font-size:0.75rem;padding:0.2rem 0 0.25rem 0.75rem" }, "No files.")];
-                return el("div", { style: "border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:0.2rem" }, [head, ...fileRows]);
+                if (rev.id) mountRenderJob(rev, jobSlot);
+                return el("div", { style: "border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:0.2rem" }, [head, ...fileRows, jobSlot]);
               });
               detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0 0.2rem" }, groupEls));
             }
@@ -12639,6 +12681,8 @@
             detailTd.replaceChildren(el("span", { style: "color:var(--danger,#e05454);font-size:0.8125rem" }, `Couldn't load revisions: ${ex.message}`));
           } finally { detailBusy = false; }
         };
+        // A row that was open before this redraw opens again (after the row is in the table).
+        if (m.component_id && _cadExpanded.has(m.component_id)) queueMicrotask(() => { if (detailTr.style.display === "none") expandBtn.onclick(); });
 
         const previewBtn = (m.preview_file?.download_url && ["step", "glb"].includes(m.preview_file.format))
           ? el("button", { type: "button", class: "btn btn-xs", onclick: () => openCadViewer(m.preview_file, m.component_name || m.part_number) }, "👁 Preview")
@@ -12651,8 +12695,9 @@
           ? el("button", { type: "button", class: "btn btn-xs btn-primary", onclick: (ev) => releaseCurrentRevision(m, ev.target) }, "Release")
           : null;
 
-        // Drawings cell: one line per depicting drawing — number, released
-        // issue letter (or —) — then the §5.4 warnings as amber chips.
+        // Drawings cell: one line per depicting drawing — number, then the
+        // issue facts as the Rev column shows them ("F Released · G Draft",
+        // STATUS_MODEL §7) — then the §5.4 warnings as amber chips.
         const drawings = m.drawings || [];
         const warnings = m.warnings || [];
         const drawingsCell = drawings.length || warnings.length
@@ -12660,7 +12705,7 @@
               ...drawings.map((d) => el("div", { style: "display:flex;align-items:center;gap:0.4rem;white-space:nowrap" }, [
                 el("button", { class: "linklike", type: "button", title: d.title || "",
                   onclick: () => openDrawingSurface(d.id, role, { onChange: () => reloadCadModels({ silent: true }) }) }, d.drawing_number || "—"),
-                d.released_revision ? el("span", { style: "font-weight:600" }, d.released_revision) : dash(),
+                revisionLetterFacts(d.current_revision || null, d.current_status, d.released_revision || null),
               ])),
               warnings.length ? el("div", { style: "display:flex;gap:0.3rem;flex-wrap:wrap" }, warnings.map(statusWarningChip)) : null,
             ].filter(Boolean))
@@ -13869,6 +13914,198 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     if (presetComponent) renderStep2(); else renderStep1();
   }
 
+  // ---- Drawing from CAD (docs/DRAWING_RENDER.md §2) ---------------------------
+  // One modal and one live step panel, shared by the CAD Models register (every
+  // revision with a STEP file) and the drawing surface ("New issue from CAD").
+  // The render runs on the engineer's Mac; the portal shows the job's six steps
+  // the way the test agent shows its twelve, polled every 2 s.
+  const DR_STEP_LABELS = { claim: "Claim", download: "Download", render: "Render", verify: "Verify", upload: "Upload", register: "Register" };
+  const DR_STEP_KEYS = Object.keys(DR_STEP_LABELS);
+  const DR_GLYPH = {
+    pending: ["·", "var(--muted,#8b93a1)"], running: ["…", "var(--text,#333)"],
+    passed: ["✓", "#15803d"], failed: ["✕", "#b91c1c"], skipped: ["–", "var(--muted,#8b93a1)"],
+  };
+  const DR_RESULT_COLOR = { done: "#15803d", failed: "#b91c1c", timed_out: "#b45309", cancelled: "var(--muted,#8b93a1)" };
+  const DR_LIVE = ["requested", "running"];
+  const DR_WORKER_STALE_MS = 10 * 60 * 1000;
+  const drLive = (job) => !!job && DR_LIVE.includes(job.status);
+  const drUnwrapJob = (res) => (res && res.job !== undefined ? res.job : res) || null;
+  const drUnwrapJobs = (res) => Array.isArray(res) ? res : (res?.jobs || res?.drawing_render_jobs || []);
+  const drResultText = (job) => job.status === "done" ? `Issue ${job.issue || ""} rendered`.replace("  ", " ")
+    : job.status === "timed_out" ? "Timed out: no drawing worker picked the job up"
+    : job.status === "cancelled" ? "Cancelled"
+    : `Failed: ${job.error || "no reason recorded"}`;
+  // Jobs started or seen from a drawing surface, by drawing id, so a repaint of
+  // the surface shows the same job again (live → polled, finished → its result).
+  const _drSurfaceJobs = new Map();
+
+  /** The six steps as rows with glyphs, the result line when the job is over,
+   *  a red line for any poll error. watch(job) shows it and polls
+   *  getDrawingRenderJob every 2 s until the status leaves requested/running;
+   *  the chain stops on 401/403/404, backs off on other errors, and ends when
+   *  the panel leaves the document or watch() is called again (generation guard). */
+  function drawingRenderJobPanel(token, opts = {}) {
+    const stepsEl = el("div", {});
+    const resultEl = el("div", { style: "display:none;margin-top:0.25rem;font-size:0.8125rem;font-weight:600" });
+    const errEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.25rem" });
+    const root = el("div", { class: "dr-job", style: "padding:0.3rem 0 0.3rem 0.75rem" }, [stepsEl, resultEl, errEl]);
+    let timer = null, gen = 0, job = null;
+    const stop = () => { gen++; if (timer) { clearTimeout(timer); timer = null; } };
+    const error = (msg) => { errEl.textContent = msg || ""; errEl.style.display = msg ? "" : "none"; };
+    function show(j) {
+      job = j;
+      if (!j) return;
+      const byKey = {};
+      for (const s of j.steps || []) byKey[s.key] = s;
+      const keys = [...new Set([...(j.steps || []).map((s) => s.key), ...DR_STEP_KEYS])];
+      stepsEl.replaceChildren(...keys.map((key) => {
+        const s = byKey[key] || { key, status: "pending" };
+        const [glyph, color] = DR_GLYPH[s.status] || DR_GLYPH.pending;
+        let detail = s.detail || "";
+        if (key === "claim" && j.status === "requested" && !detail) detail = "Waiting for the drawing worker";
+        return el("div", { style: "display:flex;align-items:baseline;gap:0.5rem;padding:0.1rem 0;font-size:0.8125rem" }, [
+          el("span", { style: `width:1.1rem;text-align:center;font-weight:700;color:${color};flex-shrink:0` }, glyph),
+          el("span", { style: `min-width:5.5rem;${s.status === "skipped" ? "color:var(--muted,#8b93a1)" : ""}` }, s.label || DR_STEP_LABELS[key] || key),
+          detail ? el("span", { style: "color:var(--muted,#8b93a1);font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0", title: detail }, detail) : null,
+        ].filter(Boolean));
+      }));
+      if (drLive(j)) { resultEl.style.display = "none"; return; }
+      resultEl.style.color = DR_RESULT_COLOR[j.status] || DR_RESULT_COLOR.failed;
+      resultEl.textContent = drResultText(j);
+      resultEl.style.display = "";
+    }
+    function watch(j) {
+      stop(); error(""); show(j);
+      if (!drLive(j)) return;
+      const g = gen, jobId = j.id;
+      let errors = 0;
+      const tick = async () => {
+        timer = null;
+        if (g !== gen || !root.isConnected) return;
+        let next;
+        try {
+          next = drUnwrapJob(await API.post(token, "getDrawingRenderJob", { job_id: jobId }));
+          errors = 0;
+        } catch (ex) {
+          error(ex.message);
+          // 401/403/404 will not get better by asking again. Anything else is
+          // the network: keep the job, slow down (2 s → 30 s) and keep asking.
+          if ([401, 403, 404].includes(ex.status)) return;
+          timer = setTimeout(tick, Math.min(2000 * 2 ** Math.min(++errors, 4), 30000)); return;
+        }
+        if (g !== gen) return;
+        error(""); show(next);
+        if (drLive(next)) { timer = setTimeout(tick, 2000); return; }
+        if (opts.onDone) opts.onDone(next);
+      };
+      timer = setTimeout(tick, 2000);
+    }
+    return { el: root, show, watch, stop, error, get job() { return job; } };
+  }
+
+  /**
+   * The one-row modal: Drawing [New drawing · each drawing depicting the part] ·
+   * Title (new drawing only) · Spec [the worker's catalogue] · Render.
+   *
+   * preset: { component_id, part_number, component_name, revision: { id, revision },
+   *           drawings: [{ id, drawing_number, title, role?, render_spec? }], drawing_id? }
+   * opts.onRequested(job) — the caller shows the job where it belongs.
+   *
+   * Spec preselection: the drawing's render_spec, else the spec of its newest
+   * job, else the first spec whose part_numbers include the part number, else
+   * the first spec with one part. Specs with more than one part are listed
+   * disabled with "(set)". No worker for 10 minutes → "No drawing worker" and
+   * Render stays disabled.
+   */
+  function drawingRenderModal(role, preset, opts = {}) {
+    const token = API.getToken(role);
+    const drawings = (preset.drawings || []).filter((d) => !d.role || d.role === "depicts");
+    const label = (txt) => el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);white-space:nowrap" }, txt);
+    const errEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.5rem" });
+    const error = (msg) => { errEl.textContent = msg || ""; errEl.style.display = msg ? "" : "none"; };
+
+    // Opened from a drawing's surface the modal is preset to that drawing and
+    // offers no other target: a job for a new drawing would otherwise be shown
+    // in the wrong rail.
+    const fixed = Boolean(preset.drawing_id && drawings.some((d) => d.id === preset.drawing_id));
+    const drawingSel = el("select", { class: "up-text", "aria-label": "Drawing", style: "min-width:220px;max-width:360px", disabled: fixed }, [
+      fixed ? null : el("option", { value: "" }, "New drawing"),
+      ...drawings.map((d) => el("option", { value: d.id }, [d.drawing_number, d.title].filter(Boolean).join(" · "))),
+    ].filter(Boolean));
+    if (preset.drawing_id && drawings.some((d) => d.id === preset.drawing_id)) drawingSel.value = preset.drawing_id;
+    const titleLabel = label("Title");
+    const titleInp = el("input", { class: "up-text", type: "text", "aria-label": "Title", style: "min-width:200px" });
+    const specSel = el("select", { class: "up-text", "aria-label": "Spec", style: "min-width:200px;max-width:320px" },
+      el("option", { value: "" }, "…"));
+    const specSlot = el("span", { style: "display:inline-flex;align-items:center;gap:0.75rem" }, [label("Spec"), specSel]);
+    const renderBtn = el("button", { type: "button", class: "btn btn-primary", disabled: true }, "Render");
+    const row = el("div", { style: "display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap" }, [
+      label("Drawing"), drawingSel, titleLabel, titleInp, specSlot, el("span", { style: "flex:1" }), renderBtn,
+    ]);
+    const close = openModal(`Drawing from Rev ${preset.revision.revision}`, el("div", {}, [row, errEl]));
+
+    let specs = [];
+    const specByDrawing = {};   // drawing id → spec of its newest job
+    const syncTitle = () => {
+      const isNew = !drawingSel.value;
+      titleLabel.style.display = isNew ? "" : "none";
+      titleInp.style.display = isNew ? "" : "none";
+    };
+    const preselect = () => {
+      if (!specs.length) return;
+      const d = drawings.find((x) => x.id === drawingSel.value) || null;
+      const single = specs.filter((s) => !(s.parts > 1));
+      const remembered = d && (d.render_spec || specByDrawing[d.id]);
+      const want = (remembered && single.some((s) => s.name === remembered) ? remembered : null)
+        || (single.find((s) => (s.part_numbers || []).includes(preset.part_number)) || {}).name
+        || (single[0] || {}).name;
+      if (want && single.some((s) => s.name === want)) specSel.value = want;
+    };
+    drawingSel.addEventListener("change", () => { syncTitle(); preselect(); });
+    syncTitle();
+
+    (async () => {
+      let res;
+      try { res = await API.post(token, "listDrawingSpecs", {}); }
+      catch (ex) { error(ex.message); return; }
+      specs = res?.specs || [];
+      const seen = res?.last_seen ? Date.parse(res.last_seen) : 0;
+      if (!specs.length || !seen || Date.now() - seen > DR_WORKER_STALE_MS) {
+        specSlot.replaceChildren(el("span", { style: "font-size:0.8125rem;color:#b45309;font-weight:600;white-space:nowrap" }, "No drawing worker"));
+        return;
+      }
+      specSel.replaceChildren(...specs.map((s) => el("option", { value: s.name, disabled: s.parts > 1, title: s.title || "" },
+        s.parts > 1 ? `${s.name} (set)` : s.name)));
+      try {
+        const jobs = drUnwrapJobs(await API.post(token, "listDrawingRenderJobs", { component_id: preset.component_id, limit: 20 }));
+        for (const j of jobs) if (j.drawing_id && j.spec && !specByDrawing[j.drawing_id]) specByDrawing[j.drawing_id] = j.spec;
+      } catch { /* the catalogue alone is enough to render */ }
+      preselect();
+      renderBtn.disabled = false;
+    })();
+
+    renderBtn.onclick = async () => {
+      error("");
+      const drawing_id = drawingSel.value || null;
+      const title = titleInp.value.trim();
+      const spec = specSel.value;
+      if (!drawing_id && !title) { error("Title required"); titleInp.focus(); return; }
+      if (!spec) { error("Spec required"); return; }
+      renderBtn.disabled = true;
+      try {
+        const body = { component_id: preset.component_id, cad_model_revision_id: preset.revision.id, spec };
+        if (drawing_id) body.drawing_id = drawing_id; else body.title = title;
+        const job = drUnwrapJob(await API.post(token, "requestDrawingRender", body));
+        if (!job || !job.id) throw new Error("The server returned no job");
+        close();
+        if (opts.onRequested) opts.onRequested(job);
+      } catch (ex) {
+        error(ex.message);
+        renderBtn.disabled = false;
+      }
+    };
+  }
+
   /** Upload a new revision. Shared by the register and the part panel, so the
    *  consequence is stated identically wherever the user happens to be. */
   function addDrawingRevisionModal(drawing, role, onDone) {
@@ -14087,6 +14324,45 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           catch (ex) { alert(ex.message); }
         } }, `Mark ${s}`)) : [];
 
+      // Drawing from CAD (docs/DRAWING_RENDER.md §2): "New issue from CAD" when
+      // the owner part has a CAD revision with a STEP file — the released one,
+      // else the current — and the render job's steps while one is live. Both
+      // are resolved after the paint, so the surface never waits on them.
+      const fromCadSlot = el("div", {});
+      const jobSlot = el("div", {});
+      const owner = components.find((c) => c.component_id === drawing.owner_component_id) || null;
+      const mountRenderJob = (job) => {
+        _drSurfaceJobs.set(drawing.id, job);
+        const panel = drawingRenderJobPanel(token, { onDone: async (j) => { _drSurfaceJobs.set(drawing.id, j); await reload(); } });
+        setChildren(jobSlot, panel.el);
+        panel.watch(job);
+      };
+      if (role === "rushroom" && drawing.owner_component_id) {
+        API.post(token, "getComponentCad", { component_id: drawing.owner_component_id }).then((r) => {
+          if (!r || !fromCadSlot.isConnected) return;
+          const hasStep = (rv) => (rv.files || []).some((f) => f.format === "step");
+          const revs = r.revisions || [];
+          const rev = revs.find((rv) => rv.status === "released" && hasStep(rv))
+            || revs.find((rv) => rv.revision === (r.cad_model?.current_revision || null) && hasStep(rv)) || null;
+          if (!rev || !rev.id) return;
+          setChildren(fromCadSlot, el("button", { class: "btn btn-sm", type: "button", style: "width:100%",
+            onclick: () => drawingRenderModal(role, {
+              component_id: drawing.owner_component_id, part_number: owner?.part_number || "", component_name: owner?.name || "",
+              revision: rev, drawing_id: drawing.id,
+              drawings: [{ id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title, render_spec: drawing.render_spec || null }],
+            }, { onRequested: mountRenderJob }) }, "New issue from CAD"));
+        }).catch(() => { /* no CAD model: no button */ });
+      }
+      if (role === "rushroom") {
+        const known = _drSurfaceJobs.get(drawing.id);
+        if (known && drLive(known)) mountRenderJob(known);
+        else API.post(token, "listDrawingRenderJobs", { drawing_id: drawing.id, limit: 1 }).then((res) => {
+          const j = drUnwrapJobs(res)[0];
+          // The newest job for this drawing, live or just finished in this session.
+          if (jobSlot.isConnected && (drLive(j) || (known && j && j.id === known.id))) mountRenderJob(j || known);
+        }).catch(() => { /* no job: nothing to show */ });
+      }
+
       const revisionList = revisions.length
         ? el("div", { class: "drawing-revlist" }, revisions.map((r) => {
             const active = current && r.id === current.id;
@@ -14155,6 +14431,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "width:100%",
               onclick: () => addDrawingRevisionModal(summary, role, reload) }, "+ New issue")
           : null,
+        role === "rushroom" ? fromCadSlot : null,
+        role === "rushroom" ? jobSlot : null,
         role === "rushroom" && !drawing.owner_component_id
           ? el("button", { class: "btn btn-sm", type: "button", style: "width:100%",
               onclick: () => adoptDrawingModal(drawing, role, reload) }, "Adopt onto a part")

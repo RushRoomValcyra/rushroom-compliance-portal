@@ -57,7 +57,7 @@ One enum for both lifecycles — `drawing_status` already exists with the right 
 
 | Column | Change |
 |---|---|
-| `status` | **dropped** (migration 0062, after the API stops reading it). The read actions return a derived `status` (= current revision's) and `released_revision` so the UI keeps one field name. |
+| `status` | **dropped** (migration 0063, after the API stops reading it). The read actions return a derived `status` (= current revision's) and `released_revision` so the UI keeps one field name. |
 | `current_revision_id` | unchanged |
 
 ### 4.3 cad_model_revisions (new) — mirrors drawing_revisions
@@ -81,8 +81,8 @@ One enum for both lifecycles — `drawing_status` already exists with the right 
 | Column | Change |
 |---|---|
 | `cad_model_revision_id` → cad_model_revisions | **new**, NOT NULL after backfill |
-| `revision` | **dropped** (0062) — one source of truth for the letter |
-| `released_at` | **dropped** (0062) — release is a property of the revision |
+| `revision` | **dropped** (0063) — one source of truth for the letter |
+| `released_at` | **dropped** (0063) — release is a property of the revision |
 | `fusion_version`, `sha256`, `format`, `storage_path`, `file_name` | unchanged |
 | UNIQUE | (organization_id, cad_model_revision_id, format) |
 
@@ -90,7 +90,7 @@ One enum for both lifecycles — `drawing_status` already exists with the right 
 
 | Column | Change |
 |---|---|
-| `status`, `current_revision` | **dropped** (0062) |
+| `status`, `current_revision` | **dropped** (0063) |
 | `current_revision_id` → cad_model_revisions | **new**; same shape as `drawings.current_revision_id` |
 
 Not changed: `surgery_templates.status` (active / retired — a rule set, not a document), `documents` / `document_versions`, `bom_components.lifecycle_status`.
@@ -141,7 +141,7 @@ Returned by `getComponentCad` as `summary` and shown on the part card and in the
 | Action | Change |
 |---|---|
 | `listDrawings`, `getDrawing` | `status` = current revision's status (derived); add `released_revision` (letter or null). The `body.status` filter applies to the derived status |
-| `getSidePanelSurgery`, `listSupplierComponents` | both read `drawings.status` today and swallow errors (`{ data }` without `error`), so the drop in 0062 would silently empty the surgery template badges and the supplier BOM's drawing rows. Both derive the status from the current revision |
+| `getSidePanelSurgery`, `listSupplierComponents` | both read `drawings.status` today and swallow errors (`{ data }` without `error`), so the drop in 0063 would silently empty the surgery template badges and the supplier BOM's drawing rows. Both derive the status from the current revision |
 | **Suppliers** (`listDrawings`, `getDrawing`, `drawingFileUrl`, `listSupplierComponents` with role `supplier`) | **Changed policy.** Today a supplier sees every status and can open a draft file (`supplierDrawingScope` filters only `is_supplier_visible`). From now a supplier sees a drawing only when it has a **released** revision, sees only that revision (status Released, issue = the released letter), and `drawingFileUrl` refuses any other revision to a supplier. Without this the new default revision — the newest letter, which is a draft the moment a new issue is started — would put a supplier on an unreleased drawing |
 | `addDrawingRevision` | unchanged signature; accepts `source_cad_file_id`, `source_sha256`; the new revision is draft and current |
 | `setDrawingStatus` | kept as an alias for one release: acts on the current revision. New `setDrawingRevisionStatus {drawing_revision_id, status}` with the §5.1 table; stamps `*_at/_by` |
@@ -184,15 +184,15 @@ Two migrations, so that a deployed API never reads a dropped column:
 **0060 — add and backfill** (safe with the old API still running)
 1. `cad_model_revisions` created; `TENANT_TABLES` updated (tests/tenant-tables guards it).
 2. One row per distinct `(cad_model_id, revision)` in `cad_model_files`: `status = released` when any file of that letter has `released_at` (take the earliest as `released_at`), else `draft`. Where a model ends up with more than one released letter, the highest stays released and the others become superseded.
-3. `cad_model_files.cad_model_revision_id` filled; it stays **nullable until 0062** — in the minute between `db push` and the function deploy the old `registerCadRevision` still inserts files without it, and a NOT NULL would make every Fusion send fail after the upload (orphaned storage objects). The new API always fills it. "Highest letter" uses `(length(revision), revision)`. `cad_models.current_revision_id` = that row.
+3. `cad_model_files.cad_model_revision_id` filled; it stays **nullable until 0063** — in the minute between `db push` and the function deploy the old `registerCadRevision` still inserts files without it, and a NOT NULL would make every Fusion send fail after the upload (orphaned storage objects). The new API always fills it. "Highest letter" uses `(length(revision), revision)`. `cad_models.current_revision_id` = that row.
 4. `drawing_revisions`: new columns. Backfill of the fault in §1: where the current revision is `draft` and `drawings.status` is `checked` or `approved`, copy it to the revision (that is what the user set). Where `drawings.status` is `superseded` by hand and the current revision still says `released`, copy `superseded` to it. Where `drawings.status` is `released` or `superseded` and the drawing has **no** revision at all (placeholder surgery-template drawings from 0055, drawings made with `createDrawing` and released before a file was added: `setDrawingStatus` only wrote the revision row when one existed), there is nothing to carry the state: these report `draft` from now on and the migration lists them in a NOTICE so they can be given a revision by hand. The migration RAISEs a NOTICE with every count.
 5. Nothing dropped.
 
-Between 0060 and 0062 the API **dual-writes**: it stops reading `drawings.status`, `cad_models.status`, `cad_models.current_revision`, `cad_model_files.revision` and `cad_model_files.released_at`, but keeps writing them (the derived status, the letter, the release stamp), so that rolling the function back still works. The response shapes keep every field name the deployed page reads (`status`, `current_revision`, flat `files[]` with `released_at` in `getComponentCad`), so the API can be deployed before the page.
+Between 0060 and 0063 the API **dual-writes**: it stops reading `drawings.status`, `cad_models.status`, `cad_models.current_revision`, `cad_model_files.revision` and `cad_model_files.released_at`, but keeps writing them (the derived status, the letter, the release stamp), so that rolling the function back still works. The response shapes keep every field name the deployed page reads (`status`, `current_revision`, flat `files[]` with `released_at` in `getComponentCad`), so the API can be deployed before the page.
 
 Deploy order: `supabase db push` → `supabase functions deploy portal-api --no-verify-jwt` → `git push origin main` → reload the add-in in Fusion.
 
-**0062 — drop** (numbered 0061 when this was written; 0061 became `cad_test_runs`, docs/TEST_AGENT.md), one release later: `drawings.status`, `cad_models.status`, `cad_models.current_revision`, `cad_model_files.revision`, `cad_model_files.released_at`; `cad_model_files.cad_model_revision_id` becomes NOT NULL; the alias actions and the dual writes go.
+**0063 — drop** (numbered 0061 when this was written; 0061 became `cad_test_runs`, docs/TEST_AGENT.md; 0062 became `drawing_render_jobs`, docs/DRAWING_RENDER.md), one release later: `drawings.status`, `cad_models.status`, `cad_models.current_revision`, `cad_model_files.revision`, `cad_model_files.released_at`; `cad_model_files.cad_model_revision_id` becomes NOT NULL; the alias actions and the dual writes go.
 
 ## 10 Tests
 

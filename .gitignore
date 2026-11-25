@@ -28,3 +28,7 @@ fusion-addin/RushroomPIM/debug.log
 fusion-addin/RushroomPIM/pending_stamps.json
 __pycache__/
 fusion-addin/RushroomPIM/import_progress.json
+
+# Drawing worker runtime state (tools/drawing-worker): portal URL/paths and the log are per machine.
+tools/drawing-worker/config.json
+tools/drawing-worker/worker.log

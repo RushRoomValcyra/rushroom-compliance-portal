@@ -1485,3 +1485,17 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `index.html`, `supplier.html`, `assets/app.js`, `supabase/functions/portal-api/index.ts`, `tests/cad-drawings-tab.test.mjs`, `docs/DRAWINGS_TAB_UX.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
 
 ---
+
+---
+
+## 2026-11-25 — A drawing is rendered from a named CAD revision, by a worker on the engineer's Mac
+
+**Decision:** Drawings are generated from the STEP of a named CAD revision through the portal: a render job (`drawing_render_jobs`) carries the part, the CAD revision, its STEP file, the target drawing and the drawset spec; a worker on the Mac that has the geometry kernel polls the portal, renders with `drawset.py`, verifies, uploads and registers the issue with `source_cad_file_id` and `source_sha256`. The worker publishes its spec catalogue so the portal can offer specs. One part per job.
+
+**Why:** The status model already treats a drawing as derived from a CAD revision and warns when the released drawing was not made from the released CAD, but no screen could produce that fact: drawings were rendered by hand and uploaded as files, and "made from" stayed empty. Edge functions cannot run OCP; the Mac can, and the test agent proved on the same day that a poller on the Mac is a dependable seam. Reading the sidecar on upload (option 1) would have recorded the fact without guaranteeing it; Fusion's own drawings (option 3) would have meant rebuilding the house drawing standard inside Fusion.
+
+**Consequences:** Migration 0062 (`drawing_render_jobs`, `drawing_render_specs`, `drawings.render_spec`); the STATUS_MODEL drop migration becomes 0063. Nine Rushroom-only actions; `addDrawingRevision` and `finishDrawingRender` share `insertDrawingRevision`. A drawing created by a job that fails with no issue is deleted again, so no half-made drawing is left. Multi-part drawing sets (Door M Left/Right + Middle on one PDF) are out of scope until the job carries one STEP per spec part.
+
+**Files changed:** `docs/DRAWING_RENDER.md`, `supabase/migrations/0062_drawing_render_jobs.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/portal-api/index.ts`, `assets/app.js`, `index.html`, `supplier.html`, `tools/drawing-worker/*`, `tests/drawing-render.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `docs/STATUS_MODEL.md`, `CLAUDE.md`.
+
+---

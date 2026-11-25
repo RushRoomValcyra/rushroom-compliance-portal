@@ -1,8 +1,13 @@
 """
 Thin HTTP client for the Rushroom portal-api edge function.
 Uses Python's built-in urllib — no external dependencies required.
+
+Also carries sha256_of(path): the add-in sends the digest of every exported
+file with registerCadRevision so the portal can tell exactly which STEP a
+drawing was made from (STATUS_MODEL.md §4.1 / §5.4), not by date.
 """
 from __future__ import annotations
+import hashlib
 import json
 import urllib.error
 import urllib.request
@@ -83,3 +88,15 @@ def upload_file(signed_url: str, file_path: str) -> None:
                 raise RuntimeError(f"Upload returned HTTP {resp.status}")
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"Upload failed: HTTP {exc.code}")
+
+
+def sha256_of(file_path: str) -> str:
+    """
+    Return the lowercase hex SHA-256 of the file at file_path.
+    Streams in 1 MiB chunks so a large .f3z does not have to fit in memory twice.
+    """
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()

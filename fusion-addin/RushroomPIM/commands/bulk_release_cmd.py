@@ -1,20 +1,30 @@
 """
-Bulk Release command.
+Send to portal (bulk) command (STATUS_MODEL.md §8).
 
 Opens an HTML palette that lists every STAMPED component in the active
-design, shows each one's current portal revision status, and lets the user
-release them all in one pass.
+design, shows each one's portal facts — released letter, current letter and
+its status — and sends them all in one pass.
 
 Flow:
-  1. Palette loads → Python scans the design for stamped components and
-     optionally calls getComponentCad for each to show the current revision.
+  1. Palette loads → Python scans the design for stamped components and calls
+     getComponentCad for each to show "Rev F released · G draft".
   2. User picks formats (STEP + GLB default; f3z is document-level and
-     attaches to the first component only — typically skipped in bulk).
-  3. User clicks "Release All" or "Release Selected".
+     attaches to the first component only — typically skipped in bulk) and
+     optionally ticks "Release this revision" for the whole batch.
+  3. User clicks "Send selected".
   4. Python processes each component in sequence:
        a. Ensure a cad_model record exists (linkCadDocument if needed).
-       b. export_formats  →  cadUploadUrl  →  upload  →  registerCadRevision.
-       c. Send per-component progress back to the HTML.
+       b. export_formats  →  cadUploadUrl  →  upload  →  registerCadRevision
+          (with fusion_revision_label parsed from the document name and the
+          file's sha256; every format of one component lands on one letter).
+       c. If release is ticked and every requested format registered, call
+          releaseCadRevision for that component's revision — one release per
+          component, after its files.  A partial export stays draft.
+       d. Send per-component progress back to the HTML.
+
+The letter: the document name's RevX label is the default for every component
+in the batch (one document, one design revision); when the name carries no
+label the portal picks the next letter per component, as before.
 
 f3z note: a Fusion archive (.f3z) is a DOCUMENT-level export — it captures
 the whole file, not a single component.  Releasing 20 components in one
@@ -34,9 +44,10 @@ import adsk.fusion
 from lib.auth import get_token
 from lib.exports import (
     ATTR_GROUP, ATTR_COMPONENT_ID, ATTR_PART_NUMBER,
-    cleanup_tmpdir, export_formats, get_doc_info, get_fusion_version, get_stamp,
+    cleanup_tmpdir, export_formats, get_doc_info, get_doc_name,
+    get_fusion_version, get_stamp, parse_revision_label,
 )
-from lib.portal import call, upload_file
+from lib.portal import call, sha256_of, upload_file
 
 BUTTON_ID  = "RushroomPIM_BulkRelease"
 PALETTE_ID = "RushroomPIM_BulkReleasePalette"
@@ -71,9 +82,14 @@ def _scan_stamped() -> list:
 
 def _enrich_with_portal_status(rows: list) -> list:
     """
-    For each row, call getComponentCad to find out the current revision and
-    status.  Returns the same list with extra keys: current_revision, status.
-    Done in a single batch to avoid per-row latency where possible.
+    For each row, call getComponentCad and read the derived facts off cad_model:
+      current_revision  — highest letter ("" when no revision)
+      cad_status        — status of the current revision (draft/checked/approved/
+                          released/superseded); "none" when no cad_model, "error"
+                          when the portal could not be reached
+      released_revision — the letter a supplier may build from, or ""
+      revision_count    — len(revisions)
+    One call per row; the design is small enough that this is acceptable.
     """
     enriched = []
     for row in rows:
@@ -82,14 +98,37 @@ def _enrich_with_portal_status(rows: list) -> list:
             cm = r.get("cad_model") or {}
             enriched.append({
                 **row,
-                "current_revision": cm.get("current_revision") or "",
-                "cad_status":       cm.get("status") or "none",
-                "cad_model_id":     cm.get("id") or "",
-                "file_count":       len(r.get("files") or []),
+                "current_revision":  cm.get("current_revision") or "",
+                "released_revision": cm.get("released_revision") or "",
+                "cad_status":        (cm.get("status") or "none") if cm else "none",
+                "cad_model_id":      cm.get("id") or "",
+                "revision_count":    len(r.get("revisions") or []),
+                "file_count":        len(r.get("files") or []),
             })
         except Exception:
-            enriched.append({**row, "current_revision": "", "cad_status": "error", "cad_model_id": "", "file_count": 0})
+            enriched.append({
+                **row, "current_revision": "", "released_revision": "",
+                "cad_status": "error", "cad_model_id": "", "revision_count": 0, "file_count": 0,
+            })
     return enriched
+
+
+def _superseded_letter(rel_r: dict, prev_released, just_released):
+    """
+    Name the revision a release superseded.  The portal reports it as a letter
+    (superseded_revision) or only as a count (superseded); in the latter case
+    the letter that was released before this send is the one superseded.
+    """
+    rel_r = rel_r or {}
+    letter = rel_r.get("superseded_revision")
+    if isinstance(letter, str) and letter:
+        return letter
+    count = rel_r.get("superseded")
+    if isinstance(count, str) and count:
+        return count
+    if count and prev_released and prev_released != just_released:
+        return prev_released
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +166,13 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
 
     def _release_batch(self, data: dict):
         """
-        Process a list of components: export → upload → register.
+        Process a list of components: export → upload → register (→ release).
         Sends releaseProgress after each component.
         """
         component_ids   = data.get("component_ids") or []  # list of pim_component_id strings
         formats_enabled = set(data.get("formats") or ["step", "glb"])
         include_f3z     = data.get("include_f3z", False)
+        do_release      = bool(data.get("release", False))
 
         if not component_ids:
             self._send("releaseDone", {"ok": 0, "errors": 0, "messages": ["Nothing selected."]})
@@ -151,6 +191,9 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
 
         doc_info       = get_doc_info()
         fusion_version = get_fusion_version()
+        parsed         = parse_revision_label(get_doc_name())
+        rev_label      = parsed[0] if parsed else None   # "RevF" as written in the name
+        rev_letter     = parsed[1] if parsed else None   # "F" — default letter for the batch
         f3z_done       = False   # only upload the archive once per batch
 
         ok_count    = 0
@@ -177,14 +220,17 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
 
             tmpdir = None
             try:
-                # 1. Ensure cad_model record exists.
+                # 1. Ensure cad_model record exists; remember the released letter
+                #    so a release can name what it superseded.
                 r  = call("getComponentCad", component_id=cid)
                 cm = r.get("cad_model") if r else None
+                prev_released = None
                 if not cm:
                     link_r = call("linkCadDocument", component_id=cid, **doc_info)
                     cad_model_id = link_r.get("id") or ""
                 else:
-                    cad_model_id = cm["id"]
+                    cad_model_id  = cm["id"]
+                    prev_released = cm.get("released_revision") or None
 
                 if not cad_model_id:
                     raise RuntimeError("Could not get or create cad_model record")
@@ -203,8 +249,12 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                 if not exported:
                     raise RuntimeError("No formats exported — ensure the document is saved and has geometry")
 
-                # 4. Upload + register each file.
+                missing = [f for f in fmts if f not in exported]
+
+                # 4. Upload + register each file — all on one letter.
                 revision_registered = None
+                revision_id         = None
+                letter              = rev_letter
                 for fmt, file_path in exported.items():
                     file_name    = os.path.basename(file_path)
                     url_r        = call("cadUploadUrl", fileName=file_name)
@@ -218,20 +268,49 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                         format=fmt,
                         storage_path=storage_path,
                         file_name=file_name,
+                        revision=letter,
+                        fusion_revision_label=rev_label,
                         fusion_version=fusion_version,
+                        sha256=sha256_of(file_path),
                     )
                     revision_registered = reg_r.get("revision", revision_registered)
+                    revision_id         = reg_r.get("revision_id", revision_id)
+                    # Pin the letter the portal chose so the next formats join it.
+                    if letter is None and revision_registered:
+                        letter = revision_registered
 
                 if include_f3z and "f3z" in exported:
                     f3z_done = True
+
+                # 5. Release this component's revision — only when every
+                #    requested format registered.
+                released   = False
+                superseded = None
+                note       = ""
+                if do_release:
+                    if missing:
+                        note = f" — not released: {', '.join(missing).upper()} failed to export"
+                    elif not revision_id:
+                        note = " — not released: portal returned no revision id"
+                    else:
+                        rel_r = call("releaseCadRevision", cad_model_revision_id=revision_id)
+                        released = True
+                        superseded = _superseded_letter(rel_r, prev_released, revision_registered)
+
+                if released:
+                    outcome = "released" + (f", Rev {superseded} superseded" if superseded else "")
+                else:
+                    outcome = "draft"
 
                 ok_count += 1
                 self._send("releaseProgress", {
                     "pim_component_id": cid,
                     "done": True,
                     "revision": revision_registered or "?",
+                    "released": released,
+                    "superseded": superseded,
                     "formats": list(exported.keys()),
-                    "message": f"{part_num}  →  Rev {revision_registered}",
+                    "message": f"{part_num}  →  Rev {revision_registered} — {outcome}{note}",
                     "index": idx,
                     "total": len(component_ids),
                 })
@@ -276,7 +355,7 @@ class _CreatedHandler(adsk.core.CommandCreatedEventHandler):
             cmd.execute.add(on_exec)
             self._handlers.append(on_exec)
         except Exception:
-            self._ui.messageBox("RushroomPIM BulkRelease error:\n" + traceback.format_exc())
+            self._ui.messageBox("RushroomPIM Send to portal (bulk) error:\n" + traceback.format_exc())
 
 
 class _ExecuteHandler(adsk.core.CommandEventHandler):
@@ -298,8 +377,8 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
 
             html_url = "file://" + _UI_HTML
             palette  = self._ui.palettes.add(
-                PALETTE_ID, "Rushroom Bulk Release",
-                html_url, True, True, True, 860, 620,
+                PALETTE_ID, "Rushroom — Send to portal (bulk)",
+                html_url, True, True, True, 900, 620,
             )
             handler = _PaletteHTMLHandler(self._app, self._ui, self._handlers)
             palette.incomingFromHTML.add(handler)
@@ -308,7 +387,7 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
             _palette = palette
 
         except Exception:
-            self._ui.messageBox("BulkRelease failed:\n" + traceback.format_exc())
+            self._ui.messageBox("Send to portal (bulk) failed:\n" + traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +410,9 @@ class BulkReleaseCommand:
 
         self._def = cmd_defs.addButtonDefinition(
             BUTTON_ID,
-            "Bulk Release",
-            "Export and register CAD revisions for all stamped components in one pass",
+            "Send to portal (bulk)",
+            "Export and register CAD files for all stamped components in one pass; "
+            "optionally release each revision",
         )
         on_created = _CreatedHandler(self._app, self._ui, self._handlers)
         self._def.commandCreated.add(on_created)

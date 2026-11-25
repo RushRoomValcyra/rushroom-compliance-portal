@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Rushroom Bulk Release</title>
+<title>Rushroom — Send to portal (bulk)</title>
 <style>
   :root {
     --bg:         #1a1d23;
@@ -88,11 +88,24 @@
     display: inline-block; padding: 2px 7px; border-radius: 999px;
     font-size: 11px; font-weight: 600;
   }
-  .status-badge.none    { background: var(--bg3); color: var(--muted); }
-  .status-badge.ok      { background: var(--green-bg); color: var(--green); }
-  .status-badge.error   { background: var(--red-bg); color: var(--red); }
-  .status-badge.working { background: var(--amber-bg); color: var(--amber); }
-  .status-badge.done    { background: var(--green-bg); color: var(--green); }
+  .status-badge.none       { background: var(--bg3); color: var(--muted); }
+  .status-badge.draft      { background: var(--bg3); color: var(--text); }
+  .status-badge.checked    { background: var(--pill-step); color: var(--blue); }
+  .status-badge.approved   { background: var(--pill-glb); color: var(--purple); }
+  .status-badge.released   { background: var(--green-bg); color: var(--green); }
+  .status-badge.superseded { background: var(--bg3); color: var(--muted); text-decoration: line-through; }
+  .status-badge.error      { background: var(--red-bg); color: var(--red); }
+  .status-badge.working    { background: var(--amber-bg); color: var(--amber); }
+  .status-badge.done       { background: var(--green-bg); color: var(--green); }
+
+  .rev-fact { white-space: nowrap; }
+  .rev-fact + .rev-fact::before { content: " · "; color: var(--muted); }
+  .rev-fact.released { color: var(--green); font-weight: 600; }
+  .rev-fact .st { color: var(--muted); font-weight: 400; }
+
+  label.release { color: var(--text); }
+  label.release input[type=checkbox] { accent-color: var(--amber); }
+  .release-note { font-size: 11px; color: var(--amber); display: none; }
 
   .progress-row { display: flex; align-items: center; gap: 10px; }
   .progress-bar-wrap { flex: 1; height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
@@ -112,7 +125,7 @@
 <body>
 
 <div style="display:flex;align-items:baseline;gap:10px">
-  <h1>Bulk Release to Portal</h1>
+  <h1>Send to portal (bulk)</h1>
   <span class="subtitle" id="scan-status">Scanning design…</span>
 </div>
 
@@ -131,9 +144,11 @@
     <label><input type="checkbox" id="chk-all" onchange="toggleAll()" checked /> Select all</label>
     <span class="count-badge" id="count-badge"></span>
   </div>
+  <label class="release"><input type="checkbox" id="chk-release" onchange="toggleRelease()" /> Release this revision</label>
+  <span class="release-note" id="release-note">Each component's revision is released after its files register</span>
   <div class="spacer"></div>
   <button onclick="rescan()">Rescan</button>
-  <button class="primary" id="btn-release" onclick="startRelease()" disabled>Release selected</button>
+  <button class="primary" id="btn-release" onclick="startRelease()" disabled>Send selected</button>
 </div>
 
 <!-- Table -->
@@ -144,8 +159,8 @@
         <th class="check"></th>
         <th>Part #</th>
         <th>Component</th>
-        <th>Portal revision</th>
-        <th>Status</th>
+        <th>Portal</th>
+        <th>Result</th>
       </tr>
     </thead>
     <tbody id="tbl-body">
@@ -215,16 +230,25 @@ function onScanDone(data) {
 // ---------------------------------------------------------------------------
 // Table rendering
 // ---------------------------------------------------------------------------
+// Portal vocabulary: Draft / Checked / Approved / Released / Superseded.
+function cap(s) { s = String(s || "draft"); return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase(); }
+
 function statusBadge(cad_status) {
-  const map = {
-    "none":  ["none",  "No CAD"],
-    "":      ["none",  "No CAD"],
-    "draft": ["ok",    "Draft"],
-    "ok":    ["ok",    "Current"],
-    "error": ["error", "Error"],
-  };
-  const [cls, label] = map[cad_status] || ["none", cad_status || "—"];
-  return `<span class="status-badge ${cls}">${label}</span>`;
+  if (cad_status === "error") return '<span class="status-badge error">Portal error</span>';
+  if (!cad_status || cad_status === "none") return '<span class="status-badge none">No CAD model</span>';
+  return `<span class="status-badge ${esc(cad_status)}">${esc(cap(cad_status))}</span>`;
+}
+
+// "Rev F released · G draft" — the two facts a model reports (released, current).
+function portalCell(r) {
+  if (r.cad_status === "error") return '<span style="color:var(--red)">—</span>';
+  const rel = r.released_revision || "";
+  const cur = r.current_revision || "";
+  if (!rel && !cur) return "—";
+  const parts = [];
+  if (rel) parts.push(`<span class="rev-fact released">Rev ${esc(rel)} <span class="st">released</span></span>`);
+  if (cur && cur !== rel) parts.push(`<span class="rev-fact">${rel ? "" : "Rev "}${esc(cur)} <span class="st">${esc(String(r.cad_status || "draft").toLowerCase())}</span></span>`);
+  return parts.join("");
 }
 
 function renderTable() {
@@ -238,7 +262,7 @@ function renderTable() {
       <td class="check"><input type="checkbox" checked onchange="updateCount()" /></td>
       <td class="part">${esc(r.pim_part_number || "—")}</td>
       <td class="name" title="${esc(r.fusion_name)}">${esc(r.fusion_name)}</td>
-      <td class="rev">${r.current_revision ? "Rev " + esc(r.current_revision) : "—"}</td>
+      <td class="rev">${portalCell(r)}</td>
       <td class="status-cell" id="st-${i}">${statusBadge(r.cad_status)}</td>
     </tr>
   `).join("");
@@ -279,23 +303,33 @@ function toggleFmt(fmt) {
   }
 }
 
+function toggleRelease() {
+  const on = document.getElementById("chk-release").checked;
+  document.getElementById("release-note").style.display = on ? "inline" : "none";
+  document.getElementById("btn-release").textContent = on ? "Send + release selected" : "Send selected";
+}
+
 // ---------------------------------------------------------------------------
-// Release
+// Send (register, optionally release)
 // ---------------------------------------------------------------------------
 function startRelease() {
   const ids = checkedIds();
   if (!ids.length) return;
-  const fmts = Object.entries(fmtState).filter(([,v]) => v && arguments[0] !== "f3z").map(([k]) => k).filter(k => k !== "f3z");
+  const fmts = Object.entries(fmtState).filter(([k, v]) => v && k !== "f3z").map(([k]) => k);
+  const release = document.getElementById("chk-release").checked;
   running = true;
+  _progressCount = 0;
+  _progressTotal = ids.length;
   document.getElementById("btn-release").disabled = true;
   document.getElementById("progress-row").style.display = "flex";
   document.getElementById("progress-bar").style.width = "0%";
   document.getElementById("progress-text").textContent = "0 / " + ids.length;
-  logMsg("Starting release of " + ids.length + " component" + (ids.length !== 1 ? "s" : "") + "…");
+  logMsg((release ? "Sending and releasing " : "Sending ") + ids.length + " component" + (ids.length !== 1 ? "s" : "") + "…");
   send("releaseBatch", {
     component_ids: ids,
     formats: fmts,
     include_f3z: fmtState.f3z,
+    release: release,
   });
 }
 
@@ -318,8 +352,18 @@ function onProgress(data) {
       if (data.error) {
         cell.innerHTML = '<span class="status-badge error">Error</span>';
       } else if (data.done) {
-        const rev = data.revision ? " Rev " + data.revision : "";
-        cell.innerHTML = '<span class="status-badge done">Done' + rev + '</span>';
+        const rev = data.revision ? "Rev " + esc(data.revision) + " " : "";
+        const st  = data.released ? "released" : "draft";
+        cell.innerHTML = '<span class="status-badge ' + st + '">' + rev + cap(st) + '</span>';
+        // Keep the Portal column truthful after the send.
+        if (rows[idx]) {
+          rows[idx].current_revision = data.revision || rows[idx].current_revision;
+          rows[idx].cad_status = st;
+          if (data.released) rows[idx].released_revision = data.revision || rows[idx].released_revision;
+          const tr = document.getElementById("row-" + idx);
+          const revCell = tr && tr.querySelector("td.rev");
+          if (revCell) revCell.innerHTML = portalCell(rows[idx]);
+        }
       } else {
         cell.innerHTML = '<span class="status-badge working">…</span>';
       }

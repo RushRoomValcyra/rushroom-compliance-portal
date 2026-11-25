@@ -7038,6 +7038,51 @@
     }, drawingStatusLabel(status));
   }
 
+  // STATUS_MODEL §2: an object has no status of its own; it reports its current
+  // revision (newest letter, with that revision's status) and its released one.
+  // "Issue F released · G draft" — one chip per fact. `word` is "Rev" for CAD
+  // and "Issue" for drawings; both letters come from the same alphabet.
+  //   current:  letter of the newest revision (or null)
+  //   status:   that revision's status
+  //   released: letter of the released revision (or null)
+  //   opts.compact: in a table row that has its own Status column, the plain
+  //   case is just the letter; the two-fact form appears only when the released
+  //   and current letters differ.
+  function revisionFacts(word, current, status, released, opts = {}) {
+    if (!current) return el("span", { class: "muted" }, opts.empty || "no revision yet");
+    const wrap = el("span", { style: "display:inline-flex;align-items:center;gap:0.35rem;flex-wrap:wrap" });
+    const letter = (l) => el("span", { style: "white-space:nowrap;font-weight:600" }, `${word} ${l}`);
+    if (released && released !== current) {
+      wrap.append(letter(released), drawingStatusChip("released"),
+        el("span", { class: "muted" }, "·"),
+        el("span", { style: "white-space:nowrap" }, current), drawingStatusChip(status || "draft"));
+    } else if (opts.compact) {
+      wrap.append(letter(current));
+    } else {
+      wrap.append(letter(current), drawingStatusChip(status || (released === current ? "released" : "draft")));
+    }
+    return wrap;
+  }
+
+  // §5.4 coherence warnings from getComponentCad.summary — information, never a
+  // block; amber so they read as a caution next to the green Released chips.
+  function statusWarningChip(w) {
+    return el("span", {
+      title: w.code || "",
+      style: "display:inline-block;font-size:0.75rem;font-weight:600;padding:1px 8px;border-radius:999px;color:#b45309;border:1px solid #b4530944;background:#b4530912",
+    }, w.text || w.code);
+  }
+
+  // Who/when for a revision: "Released 24/11/2026 · name". `by` is whatever the
+  // API stamped (uid or name); a bare UUID says nothing to a reader and is dropped.
+  function revisionStamp(verb, at, by) {
+    if (!at) return null;
+    const d = new Date(at).toLocaleDateString("en-GB");
+    const isUuid = typeof by === "string" && /^[0-9a-f-]{32,36}$/i.test(by);
+    return el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap" },
+      `${verb} ${d}${by && !isUuid ? ` · ${by}` : ""}`);
+  }
+
   // Pre-assembly eligibility: whether this component may be built in the hub
   // ahead of orders. Automatic when something is fitted into it at the Hub;
   // otherwise the checkbox marks it (is_stocked). Order Operations lists every
@@ -7120,7 +7165,7 @@
                 el("strong", {}, `${ru.stage === "site" ? "On site" : "Hub"} · ${SURGERY_OPERATION[ru.operation_type] || ru.operation_type}`),
                 `${ru.size ? ` (${ru.size} only)` : ""}: ${ru.instruction}${ru.drawing_number ? ` · drawing ${ru.drawing_number}` : ""}`,
                 tmpl
-                  ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:#16a34a18;color:#16a34a;font-weight:600;margin-left:0.4rem;white-space:nowrap" }, `Template: ${tmpl.drawing_number}${tmpl.revision ? ` Rev ${tmpl.revision}` : ""}`)
+                  ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:#16a34a18;color:#16a34a;font-weight:600;margin-left:0.4rem;white-space:nowrap" }, `Template: ${tmpl.drawing_number}${tmpl.revision ? ` Issue ${tmpl.revision}` : ""}`)
                   : null,
               ].filter(Boolean));
             }));
@@ -7594,7 +7639,7 @@
             return;
           }
           const sel = el("select", { class: "up-text", style: "width:100%;margin-top:4px" },
-            available.map((d) => el("option", { value: d.id }, `${d.drawing_number} — ${d.title}${d.revision ? ` (Rev ${d.revision})` : ""}`)));
+            available.map((d) => el("option", { value: d.id }, `${d.drawing_number} — ${d.title}${d.revision ? ` (Issue ${d.revision})` : ""}`)));
           const roleSel = el("select", { class: "up-text", style: "margin-top:4px" },
             DRAWING_ROLES.map((r) => el("option", { value: r }, r)));
           box.replaceChildren(
@@ -7625,7 +7670,7 @@
             ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:#16a34a18;color:#16a34a;font-weight:600;margin-left:0.4rem;white-space:nowrap" }, "Surgery Template")
             : null,
         ].filter(Boolean)),
-        el("td", {}, d.revision ? `Rev ${d.revision}` : el("span", { class: "muted" }, "no revision")),
+        el("td", {}, revisionFacts("Issue", d.revision, d.status, d.released_revision, { empty: "no issue", compact: true })),
         el("td", {}, drawingStatusChip(d.status)),
         el("td", {}, d.parts_count > 1
           ? el("span", { title: "Revising this drawing affects every part it is on" }, `${d.parts_count} parts`)
@@ -7640,6 +7685,41 @@
           }) }, "Open →")),
       ]));
 
+      // STATUS_MODEL §7: one line of facts above the rows — the CAD model's
+      // current/released revision, each depicting drawing's issue — then the
+      // §5.4 coherence warnings. getComponentCad.summary is the source; when it
+      // is absent (no model, or the call failed) the drawings' own derived fields
+      // carry the line and there are no warnings to show.
+      const cadSummary = cadR && cadR.summary ? cadR.summary : null;
+      let statusLine = null;
+      if (role === "rushroom" && (cadSummary || partDrawings.length)) {
+        const facts = [];
+        const cadFact = cadSummary
+          ? (cadSummary.cad
+              ? revisionFacts("Rev", cadSummary.cad.current?.revision || null, cadSummary.cad.current?.status, cadSummary.cad.released?.revision || null)
+              : el("span", { class: "muted" }, "no CAD model"))
+          : (cadR && cadR.cad_model
+              ? revisionFacts("Rev", cadR.cad_model.current_revision || null, cadR.cad_model.status, cadR.cad_model.released_revision || null)
+              : el("span", { class: "muted" }, "no CAD model"));
+        facts.push(el("span", { style: "display:inline-flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [el("strong", {}, "CAD"), cadFact]));
+        const drawingFacts = cadSummary
+          ? (cadSummary.drawings || []).map((dw) => ({ number: dw.drawing_number, current: dw.current?.revision || null, status: dw.current?.status, released: dw.released?.revision || null }))
+          : partDrawings.filter((dw) => dw.drawing_type !== "surgery_template").map((dw) => ({ number: dw.drawing_number, current: dw.revision || null, status: dw.status, released: dw.released_revision || null }));
+        for (const dw of drawingFacts) {
+          facts.push(el("span", { style: "display:inline-flex;align-items:center;gap:0.4rem;flex-wrap:wrap" }, [
+            el("strong", {}, "Drawing"), el("span", {}, dw.number), revisionFacts("Issue", dw.current, dw.status, dw.released, { empty: "no issue" }),
+          ]));
+        }
+        const warnings = (cadSummary && cadSummary.warnings) || [];
+        statusLine = el("div", { style: "display:flex;flex-direction:column;gap:0.35rem;margin-bottom:0.6rem;font-size:0.875rem" }, [
+          el("div", { style: "display:flex;align-items:center;gap:0.4rem 1rem;flex-wrap:wrap" },
+            facts.flatMap((f, i) => (i ? [el("span", { class: "muted" }, "·"), f] : [f]))),
+          warnings.length
+            ? el("div", { style: "display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap" }, warnings.map(statusWarningChip))
+            : null,
+        ]);
+      }
+
       const drawingsSection = el("div", { style: "margin-top:1rem" }, [
         el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem;flex-wrap:wrap" }, [
           el("h4", { style: "margin:0" }, "Drawings"),
@@ -7652,9 +7732,10 @@
             ? el("button", { class: "btn btn-xs", type: "button", onclick: openLinkDrawingModal }, "+ Link an existing drawing")
             : null,
         ].filter(Boolean)),
+        statusLine,
         drawingRows.length
           ? el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
-              el("thead", {}, el("tr", {}, ["Number", "Title", "Revision", "Status", "Used on", ""].map((h) => el("th", {}, h)))),
+              el("thead", {}, el("tr", {}, ["Number", "Title", "Issue", "Status", "Used on", ""].map((h) => el("th", {}, h)))),
               el("tbody", {}, drawingRows),
             ]))
           : el("div", { class: "muted", style: "font-size:0.875rem" }, [
@@ -7667,7 +7748,9 @@
       ]);
 
       // Phase 1.2: CAD tab — Fusion link, revision list, file downloads.
-      // cadR = { cad_model: {...}, files: [...] } or null when nothing is registered.
+      // cadR = { cad_model, revisions: [{ revision, status, files: [...] }], files, summary }
+      // or null when nothing is registered. cad_model.status / current_revision /
+      // released_revision are derived from the revisions (STATUS_MODEL §4.5).
       // CAD model — read-only reference on the part card.
       // All management (revisions, file uploads, Fusion link editing) lives in Drawings → CAD Models.
       let cadSection = null;
@@ -7676,6 +7759,16 @@
         const fusionHref = cadModel && cadModel.fusion_document_id
           ? `https://manage.autodesk.com/en/redirect?productKey=fusion360&dcs=${encodeURIComponent(cadModel.fusion_document_id)}`
           : null;
+        // The current revision's files carry the Fusion save counter — metadata
+        // on the file, never a revision of its own (§3).
+        const cadRevisions = (cadR && cadR.revisions) || [];
+        const currentCadRev = cadModel && cadModel.current_revision
+          ? cadRevisions.find((r) => r.revision === cadModel.current_revision) || null
+          : null;
+        const currentCadFiles = currentCadRev
+          ? (currentCadRev.files || [])
+          : ((cadR && cadR.files) || []).filter((f) => cadModel && f.revision === cadModel.current_revision);
+        const fusionVersions = [...new Set(currentCadFiles.map((f) => f.fusion_version).filter(Boolean))].sort((a, b) => a - b);
 
         cadSection = el("div", { style: "margin-top:1rem" }, [
           el("div", { style: "display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;flex-wrap:wrap" }, [
@@ -7685,14 +7778,20 @@
             } }, "Manage in Drawings →"),
           ]),
           cadModel
-            ? el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem 1.2rem;align-items:baseline;font-size:0.875rem" }, [
+            ? el("div", { style: "display:flex;flex-wrap:wrap;gap:0.4rem 1.2rem;align-items:center;font-size:0.875rem" }, [
                 cadModel.fusion_document_name
                   ? el("span", {}, [el("span", { class: "muted" }, "Document: "), cadModel.fusion_document_name])
                   : null,
-                cadModel.current_revision
-                  ? el("span", {}, [el("span", { class: "muted" }, "Revision: "), cadModel.current_revision])
-                  : el("span", { class: "muted" }, "no revision yet"),
-                el("span", { class: "muted", style: "font-size:0.75rem" }, `Status: ${cadModel.status}`),
+                revisionFacts("Rev", cadModel.current_revision || null, cadModel.status, cadModel.released_revision || null),
+                currentCadFiles.length
+                  ? el("span", { style: "display:inline-flex;align-items:center;gap:0.3rem;flex-wrap:wrap" }, [
+                      ...[...new Set(currentCadFiles.map((f) => f.format))].map((fmt) =>
+                        el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:#8b93a118;color:#8b93a1;font-weight:700;white-space:nowrap" }, String(fmt).toUpperCase())),
+                      fusionVersions.length
+                        ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, `Fusion v${fusionVersions.join(", v")}`)
+                        : null,
+                    ].filter(Boolean))
+                  : null,
                 fusionHref
                   ? el("a", { href: fusionHref, target: "_blank", rel: "noopener", class: "btn btn-xs" }, "Open in Fusion ↗")
                   : null,
@@ -11881,10 +11980,10 @@
         return el("div", { style: "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.6rem;border-bottom:1px solid var(--border,#e2e8f0)44;flex-wrap:wrap;font-size:0.8125rem" }, [
           el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${dtc}18;color:${dtc};white-space:nowrap;flex-shrink:0` }, (d.drawing_type || "engineering")),
           el("strong", { style: "white-space:nowrap;flex-shrink:0" }, d.drawing_number),
-          d.revision ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);flex-shrink:0" }, `Rev ${d.revision}`) : null,
+          d.revision ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);flex-shrink:0" }, `Issue ${d.revision}`) : null,
           el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, d.title || ""),
           d.supplier_drawing_number ? el("span", { style: "font-family:var(--mono,monospace);font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, d.supplier_drawing_number) : null,
-          el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${STATUS_COLOR[d.status] || "#8b93a1"}18;color:${STATUS_COLOR[d.status] || "#8b93a1"};white-space:nowrap;flex-shrink:0` }, d.status || ""),
+          drawingStatusChip(d.status || "draft"),
         ].filter(Boolean));
       });
       return el("div", { style: "border-top:1px solid var(--border,#e2e8f0)" }, rows);
@@ -12060,11 +12159,37 @@
     function drawCadModels() {
       const FMT_COLOR = { f3z: "#4a9eed", step: "#8b93a1", glb: "#a855f7", dxf: "#f59e0b" };
 
-      const statusChip = (s) => {
-        const c = s === "released" ? "#d1fae5:#065f46" : s === "draft" ? "#e0e7ff:#3730a3" : "#fef3c7:#92400e";
-        const [bg, fg] = c.split(":");
-        return el("span", { style: `font-size:0.75rem;padding:2px 7px;border-radius:4px;background:${bg};color:${fg};font-weight:500` }, s);
-      };
+      // One status vocabulary for drawings and CAD (STATUS_MODEL §7): the same
+      // chip as the Drawings register, Draft / Checked / Approved / Released / Superseded.
+      const statusChip = (s) => drawingStatusChip(s || "draft");
+
+      // Release the current revision of a model (§5.1: only the current one may
+      // be released; the previously released letter becomes superseded).
+      // listCadModels carries letters, not ids, so the revision id comes from
+      // getComponentCad unless the row already has it.
+      async function releaseCurrentRevision(m, btn, revisionId) {
+        const supersedes = m.released_revision && m.released_revision !== m.current_revision
+          ? ` Rev ${m.released_revision} becomes superseded.`
+          : "";
+        if (!confirm(`Release Rev ${m.current_revision} of ${m.component_name || m.part_number || "this part"}?${supersedes}`)) return;
+        if (btn) btn.disabled = true;
+        try {
+          let id = revisionId || m.current_revision_id || null;
+          if (!id) {
+            if (!m.component_id) throw new Error("No component linked to this model");
+            const r = await API.post(token, "getComponentCad", { component_id: m.component_id });
+            const cur = (r.revisions || []).find((rv) => rv.revision === (r.cad_model?.current_revision || m.current_revision));
+            if (!cur) throw new Error(`Rev ${m.current_revision} was not found on the portal`);
+            id = cur.id;
+          }
+          await API.post(token, "releaseCadRevision", { cad_model_revision_id: id });
+          _cadLoaded = false;
+          await loadCadModels();
+        } catch (ex) {
+          alert(ex.message);
+          if (btn) btn.disabled = false;
+        }
+      }
 
       const fmtBadge = (fmt) => {
         const fc = FMT_COLOR[fmt] || "#888";
@@ -12096,7 +12221,7 @@
         const expandBtn = el("button", {
           type: "button",
           style: "background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--muted,#8b93a1);padding:0 2px;transition:transform 0.15s",
-          title: m.component_id ? "Show all file revisions" : "No component linked",
+          title: m.component_id ? "Show every revision and its files" : "No component linked",
           disabled: !m.component_id,
         }, "▶");
         expandBtn.onclick = async () => {
@@ -12109,26 +12234,60 @@
           detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "Loading revisions…"));
           try {
             const r = await API.post(token, "getComponentCad", { component_id: m.component_id });
-            const files = (r.files || []).sort((a, b) => a.revision.localeCompare(b.revision) || a.format.localeCompare(b.format));
-            if (!files.length) {
-              detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No files yet. Use Release to Portal in Fusion to upload a revision."));
+            // One group per revision (§7): letter, status chip, who/when, then
+            // its files. `revisions[]` is the contract; a flat `files[]` with a
+            // letter per file (the previous shape) is regrouped the same way.
+            let groups = r.revisions || null;
+            if (!groups) {
+              const byLetter = new Map();
+              for (const f of r.files || []) {
+                if (!byLetter.has(f.revision)) byLetter.set(f.revision, { id: null, revision: f.revision, status: f.released_at ? "released" : "draft", released_at: f.released_at || null, files: [] });
+                byLetter.get(f.revision).files.push(f);
+              }
+              groups = [...byLetter.values()];
+            }
+            groups = groups.slice().sort((a, b) => (a.revision.length - b.revision.length) || a.revision.localeCompare(b.revision)).reverse();
+            const currentLetter = r.cad_model?.current_revision || m.current_revision || (groups[0] && groups[0].revision) || null;
+            if (!groups.length) {
+              detailTd.replaceChildren(el("span", { class: "muted", style: "font-size:0.8125rem" }, "No revisions yet. Use Send to portal in Fusion to register one."));
             } else {
-              const fileRows = files.map((f) => {
-                const fc = FMT_COLOR[f.format] || "#888";
-                const relDate = f.released_at ? new Date(f.released_at).toLocaleDateString("en-GB") : null;
-                return el("div", { style: "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid var(--border,#e2e8f0)44;flex-wrap:wrap;font-size:0.8125rem" }, [
-                  el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap;flex-shrink:0` }, f.format.toUpperCase()),
-                  el("span", { style: "white-space:nowrap;flex-shrink:0" }, `Rev ${f.revision}`),
-                  el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, f.file_name || ""),
-                  f.fusion_version ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Fusion v${f.fusion_version}`) : null,
-                  relDate ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, relDate) : null,
-                  (f.download_url && ["step", "glb"].includes(f.format))
-                    ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0", onclick: () => openCadViewer(f, m.component_name || m.part_number) }, "👁 Preview")
-                    : null,
-                  f.download_url ? el("a", { href: f.download_url, download: f.file_name || undefined, class: "btn btn-xs", style: "flex-shrink:0" }, "⬇ Download") : null,
+              const groupEls = groups.map((rev) => {
+                const isCurrent = rev.revision === currentLetter;
+                const files = (rev.files || []).slice().sort((a, b) => a.format.localeCompare(b.format));
+                const canRelease = isCurrent && !["released", "superseded"].includes(rev.status);
+                const releaseRevBtn = canRelease
+                  ? el("button", { type: "button", class: "btn btn-xs btn-primary", style: "flex-shrink:0",
+                      onclick: (ev) => releaseCurrentRevision({ ...m, current_revision: rev.revision }, ev.target, rev.id) }, "Release")
+                  : null;
+                const head = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.45rem 0 0.2rem" }, [
+                  el("span", { style: "font-weight:700;white-space:nowrap" }, `Rev ${rev.revision}`),
+                  statusChip(rev.status),
+                  isCurrent ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap" }, "current") : null,
+                  rev.fusion_revision_label ? el("span", { class: "muted", style: "font-size:0.75rem;white-space:nowrap", title: "Label in the Fusion document name" }, rev.fusion_revision_label) : null,
+                  revisionStamp("Released", rev.released_at, rev.released_by),
+                  revisionStamp("Approved", rev.approved_at, rev.approved_by),
+                  revisionStamp("Checked", rev.checked_at, rev.checked_by),
+                  el("span", { style: "flex:1" }),
+                  releaseRevBtn,
                 ].filter(Boolean));
+                const fileRows = files.length ? files.map((f) => {
+                  const fc = FMT_COLOR[f.format] || "#888";
+                  const viewerFile = { ...f, revision: rev.revision };
+                  return el("div", { style: "display:flex;align-items:center;gap:0.5rem;padding:0.25rem 0 0.25rem 0.75rem;border-bottom:1px solid var(--border,#e2e8f0)44;flex-wrap:wrap;font-size:0.8125rem" }, [
+                    el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:${fc}18;color:${fc};font-weight:700;white-space:nowrap;flex-shrink:0` }, f.format.toUpperCase()),
+                    el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#8b93a1);font-size:0.75rem" }, f.file_name || ""),
+                    f.fusion_version ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, `Fusion v${f.fusion_version}`) : null,
+                    f.sha256 ? el("span", { style: "font-family:var(--mono,monospace);font-size:0.6875rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0", title: f.sha256 }, f.sha256.slice(0, 8)) : null,
+                    f.created_at ? el("span", { style: "font-size:0.75rem;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, new Date(f.created_at).toLocaleDateString("en-GB")) : null,
+                    (f.download_url && ["step", "glb"].includes(f.format))
+                      ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0", onclick: () => openCadViewer(viewerFile, m.component_name || m.part_number) }, "👁 Preview")
+                      : null,
+                    f.download_url ? el("a", { href: f.download_url, download: f.file_name || undefined, class: "btn btn-xs", style: "flex-shrink:0" }, "⬇ Download") : null,
+                  ].filter(Boolean));
+                }) : [el("div", { class: "muted", style: "font-size:0.75rem;padding:0.2rem 0 0.25rem 0.75rem" }, "No files on this revision.")];
+                return el("div", { style: "border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:0.2rem" }, [head, ...fileRows]);
               });
-              detailTd.replaceChildren(el("div", { style: "padding:0.4rem 0 0.2rem" }, fileRows));
+              detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0 0.2rem" }, groupEls));
             }
             detailLoaded = true;
           } catch (ex) {
@@ -12140,19 +12299,11 @@
           ? el("button", { type: "button", class: "btn btn-xs", onclick: () => openCadViewer(m.preview_file, m.component_name || m.part_number) }, "👁 Preview")
           : null;
 
-        const releaseBtn = (m.status || "draft") !== "released"
-          ? el("button", { type: "button", class: "btn btn-xs btn-primary", onclick: async (ev) => {
-              if (!confirm(`Release CAD model for ${m.component_name || m.part_number || "this part"}? This marks it as the released revision.`)) return;
-              ev.target.disabled = true;
-              try {
-                await API.post(token, "releaseCadModel", { cad_model_id: m.id });
-                _cadLoaded = false;
-                await loadCadModels();
-              } catch (ex) {
-                alert(ex.message);
-                ev.target.disabled = false;
-              }
-            } }, "Release")
+        // Release on the row = release the current draft revision (§7). Nothing
+        // to release when there is no revision or the current one is already
+        // released / superseded.
+        const releaseBtn = m.current_revision && !["released", "superseded"].includes(m.status || "draft")
+          ? el("button", { type: "button", class: "btn btn-xs btn-primary", onclick: (ev) => releaseCurrentRevision(m, ev.target) }, "Release")
           : null;
 
         const mainTr = el("tr", {}, [
@@ -12161,7 +12312,9 @@
           el("td", {}, m.component_name || el("span", { class: "muted" }, "unlinked")),
           el("td", {}, el("div", { style: "display:flex;gap:3px;flex-wrap:wrap" },
             (m.formats || []).length ? (m.formats).map(fmtBadge) : [el("span", { class: "muted" }, "—")])),
-          el("td", {}, m.current_revision ? `Rev ${m.current_revision}` : el("span", { class: "muted" }, "—")),
+          // Rev column: "F released · G draft" — the released letter a supplier
+          // may build from, and the newest one with its own status (§7).
+          el("td", {}, revisionFacts("Rev", m.current_revision || null, m.status, m.released_revision || null, { empty: "—", compact: true })),
           el("td", {}, statusChip(m.status || "draft")),
           el("td", {}, el("div", { style: "display:flex;gap:4px;flex-wrap:wrap" }, [
             previewBtn,
@@ -12212,7 +12365,7 @@
             searchEl, statusChips,
           ]),
           el("div", { class: "notice", style: "font-size:0.8125rem;margin-bottom:0.8rem" },
-            "Models link here automatically via the Fusion add-in (auto-stamp). Use Release to Portal in Fusion to register a new revision or format."),
+            "Models link here automatically via the Fusion add-in (auto-stamp). Use Send to portal in Fusion to register a revision or format; Release here or in that dialog releases it."),
           el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
             el("thead", {}, el("tr", {}, ["", "Part no.", "Component", "Formats", "Rev", "Status", ""].map((h) => el("th", {}, h)))),
             tbody,
@@ -12331,7 +12484,9 @@
           el("tr", { style: "cursor:pointer", onclick: () => openDrawingSurface(d.id, role, { onChange: load }) }, [
             el("td", {}, el("strong", {}, d.drawing_number)),
             el("td", {}, d.title),
-            el("td", {}, d.revision || el("span", { class: "muted" }, "no revision yet")),
+            // Issue column: "F released · G draft" when a newer issue is in work
+            // (STATUS_MODEL §7); the Status column is the current issue's chip.
+            el("td", {}, revisionFacts("Issue", d.revision || null, d.status, d.released_revision || null, { empty: "no issue yet", compact: true })),
             el("td", {}, drawingStatusChip(d.status)),
             el("td", {}, d.is_free
               ? el("span", { class: "muted", title: "Not attached to a part — adopt it when it is ready" }, "free drawing")
@@ -12366,7 +12521,7 @@
         el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chips, freeChip]),
         el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
           el("thead", {}, el("tr", {}, [
-            head("Number", "drawing_number"), head("Title", "title"), head("Revision", "revision"),
+            head("Number", "drawing_number"), head("Title", "title"), head("Issue", "revision"),
             head("Status", "status"), head("Belongs to", "owner_name"), head("Supplier no.", "supplier_drawing_number"), head("Used on", "parts_count"),
             role === "rushroom" ? head("Supplier") : null,
           ].filter(Boolean))),
@@ -12550,7 +12705,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         const retiredFaces = t.faces.filter((f) => f.status === "retired");
         const drawingBadge = t.drawing
           ? el("span", { style: "font-size:0.75rem;color:#555;margin-left:0.4rem" },
-              `${t.drawing.number}${t.drawing.revision ? ` Rev ${t.drawing.revision}` : ""}`)
+              `${t.drawing.number}${t.drawing.revision ? ` Issue ${t.drawing.revision}` : ""}`)
           : el("span", { style: "font-size:0.75rem;color:#e05454;margin-left:0.4rem" }, "no drawing — link one");
 
         const faceRows = activeFaces.map((f) =>
@@ -12902,7 +13057,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           return;
         }
         const opts = [el("option", { value: "" }, "— no drawing —"),
-          ...dwgs.map((d) => el("option", { value: d.id }, `${d.drawing_number} — ${d.title}${d.revision ? ` Rev ${d.revision}` : ""}`))];
+          ...dwgs.map((d) => el("option", { value: d.id }, `${d.drawing_number} — ${d.title}${d.revision ? ` Issue ${d.revision}` : ""}`))];
         const sel = el("select", { class: "up-text" }, opts);
         sel.value = t.drawing ? t.drawing.id : "";
         const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;min-height:1.2em;display:block" }, "");
@@ -13351,7 +13506,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           box.replaceChildren(
             el("h3", { style: "margin:0 0 0.6rem;font-size:1rem" }, "Drawing created"),
             el("div", { class: "notice", style: "font-size:0.875rem" }, [
-              el("div", { style: "font-weight:600;font-size:1rem" }, `${res.drawing_number} · Rev ${res.revision}`),
+              el("div", { style: "font-weight:600;font-size:1rem" }, `${res.drawing_number} · Issue ${res.revision}`),
               el("div", { style: "margin-top:0.3rem" }, state.free
                 ? "Free drawing — adopt it onto a part when it is ready."
                 : `Drawing ${res.node_sequence} of ${state.ownerName}. Its Change Log now records this.`),
@@ -13450,7 +13605,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
 
     body.replaceChildren(
       el("div", { class: "muted", style: "font-size:0.8125rem;margin-bottom:0.6rem" },
-        `${drawing.drawing_number} — ${drawing.title}${drawing.revision ? ` · currently Rev ${drawing.revision}` : ""}`),
+        `${drawing.drawing_number} — ${drawing.title}${drawing.revision ? ` · currently Issue ${drawing.revision}` : ""}`),
       effect,
       el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "File"), fileInp, fileLabel]),
       el("div", { style: "margin-bottom:0.6rem" }, [el("div", { class: "form-label" }, "Revision letter"), revInp]),
@@ -13578,13 +13733,13 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       async function showRevision(rev) {
         if (!rev) return;
         disposeCurrent();
-        setChildren(filePane, el("div", { class: "loading" }, `Loading Rev ${rev.revision}…`));
+        setChildren(filePane, el("div", { class: "loading" }, `Loading Issue ${rev.revision}…`));
         try {
           const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: rev.id });
           // The file name carries the extension the renderer switches on; the
           // signed URL's query string would otherwise be read as one.
           disposeFile = await window.PortalViewer.render(filePane, {
-            name: `${drawing.drawing_number} Rev ${rev.revision}`,
+            name: `${drawing.drawing_number} Issue ${rev.revision}`,
             open_url: url,
             storage_path: rev.file_name || "",
           });
@@ -13595,11 +13750,22 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       }
 
       // ---- the side rail ----------------------------------------------------
-      const NEXT = { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: ["superseded"], superseded: [] };
-      const statusActions = role === "rushroom" ? (NEXT[drawing.status] || []).map((s) =>
+      // STATUS_MODEL §5.1: the revision is the controlled object. The actions
+      // act on the *current* (newest) issue, whichever one is being viewed, and
+      // go through setDrawingRevisionStatus with that revision's id. released →
+      // superseded is automatic on the next release, never a button.
+      const NEXT = { draft: ["checked"], checked: ["approved", "draft"], approved: ["released", "draft"], released: [], superseded: [] };
+      const currentRev = revisions.find((r) => r.id === drawing.current_revision_id) || revisions[0] || null;
+      const releasedRev = revisions.find((r) => r.status === "released") || null;
+      const statusActions = role === "rushroom" && currentRev ? (NEXT[currentRev.status] || []).map((s) =>
         el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
-          if (s === "released" && !confirm(`Release ${drawing.drawing_number}? This supersedes the previously released revision and is recorded on every linked part.`)) return;
-          try { await API.post(token, "setDrawingStatus", { drawing_id: drawing.id, status: s }); await reload(); }
+          if (s === "released") {
+            const supersedes = releasedRev && releasedRev.id !== currentRev.id
+              ? ` Issue ${releasedRev.revision} becomes superseded.`
+              : "";
+            if (!confirm(`Release ${drawing.drawing_number} Issue ${currentRev.revision}?${supersedes} This is recorded on every linked part.`)) return;
+          }
+          try { await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: currentRev.id, status: s }); await reload(); }
           catch (ex) { alert(ex.message); }
         } }, `Mark ${s}`)) : [];
 
@@ -13610,18 +13776,23 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
               class: `drawing-rev${active ? " is-active" : ""}`, type: "button",
               onclick: () => { if (!active) { paint(r.id); } },
             }, [
-              el("span", { class: "drawing-rev-name" }, `Rev ${r.revision}`),
+              el("span", { class: "drawing-rev-name" }, `Issue ${r.revision}`),
               r.supplier_revision ? el("span", { class: "muted t-2xs" }, `their ${r.supplier_revision}`) : null,
               drawingStatusChip(r.status),
             ].filter(Boolean));
           }))
-        : el("div", { class: "muted t-sm" }, "No revisions yet.");
+        : el("div", { class: "muted t-sm" }, "No issues yet.");
 
+      // Head: the viewed issue with its own chip; the released issue named when it
+      // is another one, so "Released" never stands next to a draft letter.
       const rail = el("div", { class: "drawing-rail" }, [
         el("div", { class: "drawing-rail-head" }, [
-          el("span", { class: "drawing-rev-big" }, current ? `Rev ${current.revision}` : "No revision"),
-          drawingStatusChip(drawing.status),
-        ]),
+          el("span", { class: "drawing-rev-big" }, current ? `Issue ${current.revision}` : "No issue"),
+          current ? drawingStatusChip(current.status) : drawingStatusChip(drawing.status || "draft"),
+          releasedRev && current && releasedRev.id !== current.id
+            ? el("span", { class: "muted t-sm", style: "white-space:nowrap" }, `· Issue ${releasedRev.revision} released`)
+            : null,
+        ].filter(Boolean)),
         el("dl", { class: "drawing-meta" }, [
           el("dt", {}, "Belongs to"),
           el("dd", {}, drawing.owner_component_id
@@ -13641,12 +13812,19 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           } }),
           el("span", {}, "Visible to manufacturing partners"),
         ]) : null,
-        statusActions.length ? el("div", { class: "drawing-rail-actions" }, statusActions) : null,
-        el("h4", { class: "drawing-rail-h" }, `Revisions (${revisions.length})`),
+        statusActions.length
+          ? el("div", { class: "drawing-rail-actions" }, [
+              current && currentRev && current.id !== currentRev.id
+                ? el("span", { class: "muted t-sm", style: "align-self:center;white-space:nowrap" }, `Issue ${currentRev.revision}:`)
+                : null,
+              ...statusActions,
+            ].filter(Boolean))
+          : null,
+        el("h4", { class: "drawing-rail-h" }, `Issues (${revisions.length})`),
         revisionList,
         role === "rushroom"
           ? el("button", { class: "btn btn-sm btn-primary", type: "button", style: "width:100%",
-              onclick: () => addDrawingRevisionModal(summary, role, reload) }, "+ New revision")
+              onclick: () => addDrawingRevisionModal(summary, role, reload) }, "+ New issue")
           : null,
         role === "rushroom" && !drawing.owner_component_id
           ? el("button", { class: "btn btn-sm", type: "button", style: "width:100%",

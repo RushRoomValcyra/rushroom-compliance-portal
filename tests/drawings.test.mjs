@@ -16,7 +16,8 @@ const read = (p) => readFileSync(join(root, p), "utf8");
 const notDeployed = (r) => /unknown action/i.test(r.json?.error ?? "");
 
 const WRITES = ["createDrawing", "addDrawingRevision", "linkDrawingToComponent",
-                "unlinkDrawingFromComponent", "setDrawingStatus", "setDrawingSupplierVisibility"];
+                "unlinkDrawingFromComponent", "setDrawingStatus", "setDrawingRevisionStatus",
+                "setDrawingSupplierVisibility"];
 const READS = ["listDrawings", "getDrawing", "drawingFileUrl"];
 
 for (const action of [...WRITES, ...READS]) {
@@ -55,17 +56,79 @@ test("createDrawing rejects a blank number and a blank title", async (t) => {
   assert.equal(noTitle.status, 400);
 });
 
-test("setDrawingStatus refuses an illegal transition", async (t) => {
+// Status lives on the revision (docs/STATUS_MODEL.md). A drawing's `status` is
+// its current issue's; `released_revision` is the issue a supplier may build
+// from. The two are different facts and the API reports both.
+test("setDrawingStatus refuses an illegal transition on the current issue", async (t) => {
   if (!CREDS.rushroomPassword) return t.skip("TEST_RUSHROOM_PASSWORD not set");
   const token = await loginShared("rushroom", CREDS.rushroomPassword);
   const list = await call("listDrawings", { token });
   if (notDeployed(list)) return t.skip("drawings not deployed yet");
-  const draft = (list.json?.drawings ?? []).find((d) => d.status === "draft");
+  const draft = (list.json?.drawings ?? []).find((d) => d.status === "draft" && d.revision);
   if (!draft) return t.skip("no draft drawing to exercise transitions against");
-  // draft may only go to checked; jumping straight to released must be refused.
+  // A drawing's draft issue may only go to checked; jumping straight to released
+  // must be refused (CAD may skip the checker, drawings may not).
   const r = await call("setDrawingStatus", { token, drawing_id: draft.id, status: "released" });
   assert.equal(r.status, 400, "draft → released should be rejected");
   assert.match(r.json?.error ?? "", /cannot go from draft to released/i);
+  // The same refusal when the revision is named directly.
+  const detail = await call("getDrawing", { token, drawing_id: draft.id });
+  const current = (detail.json?.revisions ?? []).find((x) => x.revision === draft.revision);
+  if (!current) return t.skip("current revision not found in getDrawing");
+  const r2 = await call("setDrawingRevisionStatus", { token, drawing_revision_id: current.id, status: "released" });
+  if (notDeployed(r2)) return t.skip("setDrawingRevisionStatus not deployed yet");
+  assert.equal(r2.status, 400, "draft → released should be rejected on the revision too");
+});
+
+test("a drawing reports its current issue's status and its released issue separately", async (t) => {
+  if (!CREDS.rushroomPassword) return t.skip("TEST_RUSHROOM_PASSWORD not set");
+  const token = await loginShared("rushroom", CREDS.rushroomPassword);
+  const list = await call("listDrawings", { token });
+  if (notDeployed(list)) return t.skip("drawings not deployed yet");
+  const drawings = list.json?.drawings ?? [];
+  if (!drawings.length || !("released_revision" in drawings[0])) return t.skip("revision status model not deployed yet");
+  for (const d of drawings) {
+    assert.ok("released_revision" in d, `${d.drawing_number} lacks released_revision`);
+    // status = released means the current issue IS the released one.
+    if (d.status === "released") assert.equal(d.released_revision, d.revision, `${d.drawing_number}: released but the released issue differs`);
+    // A released drawing with a new issue in work says draft, and still names
+    // the released issue — the §1 fault this model fixes.
+    if (d.released_revision && d.released_revision !== d.revision) {
+      assert.notEqual(d.status, "released", `${d.drawing_number}: issue ${d.revision} is in work but the drawing says released`);
+    }
+  }
+  // getDrawing agrees with the list, revision by revision.
+  const sample = drawings.find((d) => d.released_revision) ?? drawings[0];
+  const r = await call("getDrawing", { token, drawing_id: sample.id });
+  assert.equal(r.status, 200, `error: ${r.json?.error}`);
+  const { drawing, revisions } = r.json;
+  assert.equal(drawing.status, sample.status);
+  assert.equal(drawing.released_revision, sample.released_revision);
+  const released = revisions.filter((x) => x.status === "released");
+  assert.ok(released.length <= 1, "at most one issue is released at a time");
+  assert.equal(released[0]?.revision ?? null, drawing.released_revision);
+  // The status filter reads the derived status.
+  const filtered = await call("listDrawings", { token, status: sample.status });
+  assert.ok((filtered.json?.drawings ?? []).some((d) => d.id === sample.id), "the status filter does not apply to the derived status");
+  assert.ok((filtered.json?.drawings ?? []).every((d) => d.status === sample.status), "the status filter let another status through");
+});
+
+test("addDrawingRevision is the only way a drawing goes back to draft", () => {
+  const src = read("supabase/functions/portal-api/index.ts");
+  const start = src.indexOf('action === "addDrawingRevision"');
+  const block = src.slice(start, src.indexOf('action === "linkDrawingToComponent"', start));
+  // The new issue is draft and current, and the drawing's derived status follows.
+  assert.ok(/syncDrawingStatus\(tdb, drawing_id\)/.test(block), "addDrawingRevision does not re-derive the drawing's status");
+  assert.ok(/source_cad_file_id/.test(block) && /source_sha256/.test(block), "the STEP a drawing was made from is not recorded");
+  // Out-of-order letters are refused, not reshuffled.
+  assert.ok(/is below the current/.test(block), "an out-of-order issue letter is not refused");
+  // setDrawingStatus never writes drawings.status by hand any more; the alias
+  // acts on the current revision through the same code as the new action.
+  const st = src.slice(src.indexOf('action === "setDrawingRevisionStatus" || action === "setDrawingStatus"'),
+                       src.indexOf('action === "setDrawingSupplierVisibility"'));
+  assert.ok(st.length > 0, "setDrawingStatus is not an alias of setDrawingRevisionStatus");
+  assert.ok(!/tdb\("drawings"\)\.update\(\{ status/.test(st), "setDrawingStatus still writes drawings.status directly");
+  assert.ok(/canTransition\("drawing"/.test(st), "drawing transitions do not use the shared table");
 });
 
 test("a supplier cannot write to the drawings domain", async (t) => {

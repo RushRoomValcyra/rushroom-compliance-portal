@@ -24,9 +24,16 @@ Physical properties (units: Fusion uses centimetres internally):
 The "correct" unit for mass in Fusion's Python API depends on the document's
 unit system. For safety we return the raw value and label it as "Fusion units".
 Phase 3.4 will reconcile units when storing these in the portal.
+
+Revision label (STATUS_MODEL.md §3 / §5.3):
+  By convention the design revision is written into the Fusion document name
+  ("VALCYRA RevF Door M").  parse_revision_label() lifts it out so the portal
+  letter defaults to the engineer's own letter instead of an export counter.
+  The regex mirrors parseRevisionLabel in _shared/status-core.mjs exactly.
 """
 from __future__ import annotations
 import os
+import re
 import tempfile
 from typing import Optional
 
@@ -36,6 +43,41 @@ import adsk.fusion
 ATTR_GROUP = "RushroomPIM"
 ATTR_COMPONENT_ID = "pim_component_id"
 ATTR_PART_NUMBER = "pim_part_number"
+
+# Same pattern as parseRevisionLabel() in _shared/status-core.mjs.
+_REV_LABEL_RE = re.compile(r"\bRev\s*([A-Z]{1,2})\b", re.IGNORECASE)
+
+
+def parse_revision_label(doc_name: Optional[str]) -> Optional[tuple]:
+    """
+    Find the design revision label in a Fusion document name.
+
+    "VALCYRA RevF Door M"  → ("RevF", "F")
+    "Panel rev ab v3"      → ("rev ab", "AB")
+    "Door M"               → None
+
+    Returns (label, letter) where label is the text exactly as written in the
+    name and letter is the upper-cased one- or two-letter revision, or None
+    when the name carries no label.
+    """
+    if not doc_name:
+        return None
+    m = _REV_LABEL_RE.search(doc_name)
+    if not m:
+        return None
+    return (m.group(0), m.group(1).upper())
+
+
+def get_doc_name() -> str:
+    """Return the active document's name (dataFile name when saved, else doc name)."""
+    try:
+        doc = get_app().activeDocument
+        df = doc.dataFile
+        if df:
+            return df.name or doc.name or ""
+        return doc.name or ""
+    except Exception:
+        return ""
 
 
 def get_app() -> adsk.core.Application:

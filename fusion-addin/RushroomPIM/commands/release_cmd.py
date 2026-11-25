@@ -1,20 +1,34 @@
 """
-Release to Portal command.
+Send to portal command (STATUS_MODEL.md §8).
 
 Preconditions:
   1. The active component must be stamped (pim_component_id attribute present).
   2. The user must be connected (valid token).
 
 Flow:
-  1. User selects formats (f3z / step / glb) and optionally a revision letter.
-  2. On execute:
+  1. The dialog shows the portal line for this part — "Rev F released ·
+     G draft · Fusion v12" — read from getComponentCad (cad_model.
+     current_revision / released_revision / status).
+  2. User selects formats (f3z / step / glb).  The Revision field defaults to
+     the letter parsed from the Fusion document name ("VALCYRA RevF …" → F);
+     blank means "next letter".  "Release this revision" is off by default.
+  3. On execute:
      a. Export each selected format to a temp directory.
      b. For each exported file:
-        i.  Request a signed upload URL  (cadUploadUrl)
-        ii. PUT the file to Supabase Storage
-        iii.Register the revision         (registerCadRevision)
-     c. Clean up the temp directory.
-     d. Report the registered revision letter and formats.
+        i.   Request a signed upload URL           (cadUploadUrl)
+        ii.  PUT the file to Supabase Storage
+        iii. Register it on the revision            (registerCadRevision,
+             with fusion_revision_label and sha256; same letter for all formats)
+     c. If "Release this revision" is ticked AND every selected format
+        registered, call releaseCadRevision once with the revision_id from
+        the last registerCadRevision response.  A partial export is never
+        released — the engineer gets a draft and a message instead.
+     d. Clean up the temp directory.
+     e. Report: "Registered Rev G (STEP, GLB) — draft" or
+        "— released, Rev F superseded".
+
+Status words on screen follow the portal enum: Draft / Checked / Approved /
+Released / Superseded.  "Rev" is the CAD letter, "Fusion v12" the save counter.
 
 Physical properties (volume, area, mass) are read and shown in the dialog but
 are NOT sent to the portal yet — the schema columns for them land in Phase 3.4.
@@ -29,13 +43,62 @@ from lib.exports import (
     cleanup_tmpdir,
     export_formats,
     get_active_component,
+    get_doc_name,
     get_fusion_version,
     get_physical_props,
     get_stamp,
+    parse_revision_label,
 )
-from lib.portal import call, upload_file
+from lib.portal import call, sha256_of, upload_file
 
 BUTTON_ID = "RushroomPIM_Release"
+
+
+def _superseded_letter(rel_r, prev_released, just_released):
+    """
+    Name the revision a release superseded.  The portal reports it as a letter
+    (superseded_revision) or only as a count (superseded); in the latter case
+    the letter that was released before this send is the one superseded.
+    """
+    rel_r = rel_r or {}
+    letter = rel_r.get("superseded_revision")
+    if isinstance(letter, str) and letter:
+        return letter
+    count = rel_r.get("superseded")
+    if isinstance(count, str) and count:
+        return count
+    if count and prev_released and prev_released != just_released:
+        return prev_released
+    return None
+
+
+def _cap(status):
+    """'released' → 'Released'; None → 'Draft' (the portal's default)."""
+    s = (status or "draft").strip()
+    return s[:1].upper() + s[1:].lower()
+
+
+def portal_line(cad_model, fusion_version=None):
+    """
+    Build the one-line portal summary from a getComponentCad cad_model:
+      "Rev F released · G draft · Fusion v12"
+    Facts that do not exist are left out; no model at all → "Not yet registered".
+    """
+    if not cad_model:
+        return "Not yet registered in portal"
+    released = cad_model.get("released_revision") or ""
+    current = cad_model.get("current_revision") or ""
+    status = (cad_model.get("status") or "draft").lower()
+    parts = []
+    if released:
+        parts.append(f"Rev {released} released")
+    if current and current != released:
+        parts.append(f"{'Rev ' if not released else ''}{current} {status}")
+    if not parts:
+        parts.append("No revision yet")
+    if fusion_version is not None:
+        parts.append(f"Fusion v{fusion_version}")
+    return " · ".join(parts)
 
 
 class _CreatedHandler(adsk.core.CommandCreatedEventHandler):
@@ -74,47 +137,52 @@ class _CreatedHandler(adsk.core.CommandCreatedEventHandler):
                 1, True,
             )
 
-            # Fetch current portal status so the user knows what they're releasing into.
-            cad_status = "unknown"
-            cur_rev = ""
+            fv = get_fusion_version()
+
+            # Portal line — what the engineer is sending into.
+            cad_model = None
+            portal_text = "Portal unreachable — status unknown"
             try:
                 cad_r = call("getComponentCad", component_id=stamp["pim_component_id"])
-                if cad_r.get("cad_model"):
-                    cad_status = cad_r["cad_model"].get("status") or "draft"
-                    cur_rev = cad_r["cad_model"].get("current_revision") or ""
-                else:
-                    cad_status = "not registered"
+                cad_model = (cad_r or {}).get("cad_model")
+                portal_text = portal_line(cad_model, fv)
             except Exception:
                 pass
-
-            status_text = {
-                "draft":          f"DRAFT{(' · ' + cur_rev) if cur_rev else ''}",
-                "released":       f"Released{(' · Rev ' + cur_rev) if cur_rev else ''}",
-                "not registered": "Not yet registered in portal",
-            }.get(cad_status, cad_status)
-            inputs.addTextBoxCommandInput("portal_status", "Portal status", status_text, 1, True)
-
-            if cad_status == "draft":
-                inputs.addTextBoxCommandInput(
-                    "draft_warning", "",
-                    "⚠  DRAFT model — files will be registered but status stays DRAFT "
-                    "until released in the portal (Drawings → CAD Models → Release).",
-                    2, True,
-                )
+            inputs.addTextBoxCommandInput("portal_status", "Portal", portal_text, 1, True)
 
             # Format checkboxes
             inputs.addBoolValueInput("fmt_f3z",  "Export .f3z  (Fusion archive)", True, "", True)
             inputs.addBoolValueInput("fmt_step", "Export .step (neutral, for suppliers)", True, "", True)
             inputs.addBoolValueInput("fmt_glb",  "Export .glb  (Blender / Studio)", True, "", True)
 
-            # Revision override — blank means "next letter"
-            inputs.addStringValueInput("revision", "Revision (blank = next letter)", "")
+            # Revision — defaults to the label in the document name (§5.3).
+            doc_name = get_doc_name()
+            parsed = parse_revision_label(doc_name)
+            default_letter = parsed[1] if parsed else ""
+            rev_input = inputs.addStringValueInput("revision", "Revision", default_letter)
+            if parsed:
+                rev_input.tooltip = f"From document name: {parsed[0]}. Blank = next letter."
+                inputs.addTextBoxCommandInput(
+                    "revision_hint", "",
+                    f"Rev {default_letter} from the document name ({parsed[0]}). "
+                    "Edit to override; blank = next letter.",
+                    1, True,
+                )
+            else:
+                rev_input.tooltip = "Blank = next letter after the portal's current revision."
+                inputs.addTextBoxCommandInput(
+                    "revision_hint", "",
+                    "No RevX label in the document name — blank means the next letter.",
+                    1, True,
+                )
 
-            # Fusion version — auto-read
-            fv = get_fusion_version()
+            # Release this revision — off by default (§8).
+            inputs.addBoolValueInput("release", "Release this revision", True, "", False)
+
+            # Fusion version — auto-read, metadata only
             inputs.addTextBoxCommandInput(
                 "fusion_version", "Fusion version",
-                str(fv) if fv is not None else "(unsaved doc — no version number)",
+                f"v{fv}" if fv is not None else "(unsaved doc — no version number)",
                 1, True,
             )
 
@@ -138,7 +206,7 @@ class _CreatedHandler(adsk.core.CommandCreatedEventHandler):
             self._handlers.append(on_exec)
 
         except Exception:
-            self._ui.messageBox("RushroomPIM Release error:\n" + traceback.format_exc())
+            self._ui.messageBox("RushroomPIM Send to portal error:\n" + traceback.format_exc())
 
 
 class _ExecuteHandler(adsk.core.CommandEventHandler):
@@ -153,6 +221,7 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
             comp = get_active_component()
             stamp = get_stamp(comp)
             cad_model_id = None
+            prev_released = None   # letter released before this send — the one a release supersedes
 
             # 0. Resolve the cad_model record for this component.
             cad_r = call("getComponentCad", component_id=stamp["pim_component_id"])
@@ -166,6 +235,7 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
                 cad_model_id = link_r.get("id")
             else:
                 cad_model_id = cad_r["cad_model"]["id"]
+                prev_released = cad_r["cad_model"].get("released_revision") or None
 
             if not cad_model_id:
                 raise RuntimeError("Could not find or create a CAD model record. Try Stamp again.")
@@ -184,7 +254,10 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
                 return
 
             revision_override = inputs.itemById("revision").value.strip().upper() or None
+            do_release = bool(inputs.itemById("release").value)
             fusion_version = get_fusion_version()
+            parsed = parse_revision_label(get_doc_name())
+            fusion_revision_label = parsed[0] if parsed else None
 
             # 2. Export.
             pd = self._ui.createProgressDialog()
@@ -199,10 +272,13 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
                     "No formats were exported successfully. "
                     "Check that the document is saved and the component has geometry."
                 )
+            missing = [f for f in formats if f not in exported]
 
             # 3. Upload + register each exported file.
             revision_registered = None
-            pd.maximumValue = len(exported) * 2 + 1
+            revision_id = None
+            replaced = []
+            pd.maximumValue = len(exported) * 2 + (2 if do_release else 1)
             step = 0
 
             for fmt, file_path in exported.items():
@@ -218,7 +294,7 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
                 upload_file(signed_url, file_path)
 
                 step += 1
-                pd.message = f"Registering {fmt.upper()} revision…"
+                pd.message = f"Registering {fmt.upper()}…"
                 pd.progressValue = step
 
                 reg_r = call(
@@ -228,28 +304,64 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
                     storage_path=storage_path,
                     file_name=file_name,
                     revision=revision_override,
+                    fusion_revision_label=fusion_revision_label,
                     fusion_version=fusion_version,
+                    sha256=sha256_of(file_path),
                 )
                 revision_registered = reg_r.get("revision", revision_registered)
-                # All formats in one release share the same letter — pass it
+                revision_id = reg_r.get("revision_id", revision_id)
+                if reg_r.get("replaced"):
+                    replaced.append(fmt)
+                # All formats in one send share the same letter — pass it
                 # explicitly after the first one so they all land in the same slot.
                 if revision_override is None and revision_registered:
                     revision_override = revision_registered
 
+            # 4. Release — only when asked AND every selected format made it.
+            released = False
+            superseded = None
+            release_note = ""
+            if do_release:
+                if missing:
+                    release_note = (
+                        f"\n\nNot released: {', '.join(missing).upper()} failed to export. "
+                        "Fix and send again, then release."
+                    )
+                elif not revision_id:
+                    release_note = (
+                        "\n\nNot released: the portal did not return a revision id. "
+                        "Release it in the portal (Drawings → CAD Models)."
+                    )
+                else:
+                    step += 1
+                    pd.message = f"Releasing Rev {revision_registered}…"
+                    pd.progressValue = step
+                    rel_r = call("releaseCadRevision", cad_model_revision_id=revision_id)
+                    released = True
+                    superseded = _superseded_letter(rel_r, prev_released, revision_registered)
+
             pd.progressValue = pd.maximumValue
             pd.hide()
 
+            # 5. Report.
             part_num = stamp.get("pim_part_number", "?")
             fmt_list = ", ".join(exported.keys()).upper()
-            self._ui.messageBox(
-                f"Released  {part_num}  →  Revision {revision_registered}\n\n"
-                f"Formats registered: {fmt_list}\n\n"
-                "The revision is now visible in the portal's CAD tab for this component.",
-                "Rushroom PIM",
-            )
+            if released:
+                outcome = "released"
+                if superseded:
+                    outcome += f", Rev {superseded} superseded"
+            else:
+                outcome = "draft"
+            msg = f"Registered Rev {revision_registered} ({fmt_list}) — {outcome}\n\n{part_num}"
+            if replaced:
+                msg += f"\nReplaced on the draft: {', '.join(replaced).upper()}"
+            if missing and not do_release:
+                msg += f"\nNot exported: {', '.join(missing).upper()}"
+            msg += release_note
+            self._ui.messageBox(msg, "Rushroom PIM")
 
         except Exception as ex:
-            self._ui.messageBox(f"Release failed: {ex}", "Rushroom PIM")
+            self._ui.messageBox(f"Send to portal failed: {ex}", "Rushroom PIM")
             args.isValidResult = False
         finally:
             if tmpdir:
@@ -272,8 +384,9 @@ class ReleaseCommand:
 
         self._def = cmd_defs.addButtonDefinition(
             BUTTON_ID,
-            "Release to Portal",
-            "Export and register a CAD revision in the Rushroom portal",
+            "Send to portal",
+            "Export this component and register the files on a CAD revision in the "
+            "Rushroom portal; optionally release that revision",
         )
         on_created = _CreatedHandler(self._ui, self._handlers)
         self._def.commandCreated.add(on_created)

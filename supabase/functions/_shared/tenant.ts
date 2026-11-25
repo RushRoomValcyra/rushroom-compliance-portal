@@ -58,6 +58,8 @@ export const TENANT_TABLES = new Set([
   "surgery_templates", "surgery_template_faces", "surgery_template_face_events",
   // Phase 1.2: CAD file registry (migration 0059)
   "cad_models", "cad_model_files",
+  // One status model: the CAD revision is the controlled object (migration 0060)
+  "cad_model_revisions",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

@@ -139,9 +139,12 @@ test("the status of a CAD model is derived, never set by hand", async (t) => {
 test("portal-api derives status from the shared status core", () => {
   const src = read("supabase/functions/portal-api/index.ts");
   assert.match(src, /from "\.\.\/_shared\/status-core\.mjs"/, "portal-api does not import status-core");
-  for (const fn of ["canTransition", "compareRevision", "deriveObject", "parseRevisionLabel", "statusSummary"]) {
+  for (const fn of ["canTransition", "compareRevision", "deriveObject", "statusSummary"]) {
     assert.ok(new RegExp(`\\b${fn}\\(`).test(src), `portal-api never calls ${fn}`);
   }
+  // The portal assigns the letter (next letter per send); the RevX label in a
+  // Fusion document name is metadata and must never decide a letter.
+  assert.ok(!/\bparseRevisionLabel\(/.test(src), "portal-api derives a letter from the document label");
   // Every status / transition action is implemented, aliases included.
   for (const a of ["registerCadRevision", "releaseCadRevision", "setCadRevisionStatus", "releaseCadModel",
                    "getComponentCad", "listCadModels", "setDrawingRevisionStatus", "setDrawingStatus"]) {

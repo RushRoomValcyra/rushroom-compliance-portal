@@ -84,7 +84,7 @@ export function parseRevisionLabel(name) {
 const letterOf = (rev) => (rev ? norm(rev.revision) : null);
 
 /** Coherence between a part's drawings and its CAD model (design §5.4).
- *  drawings: [{ id, drawing_number, role, revisions: [{ id, revision, status, source_sha256 }] }]
+ *  drawings: [{ id, drawing_number, role, revisions: [{ id, revision, status, source_cad_file_id, source_sha256 }] }]
  *            role = drawing_components.role; 'depicts' for the ones that depict the part
  *  cad:      null | { revisions: [{ id, revision, status, files: [{ format, sha256 }] }] }
  *  → { cad: null | { current, released }, drawings: [{ id, drawing_number, role, current, released }], warnings: [{ code, text, drawing_id? }] }
@@ -97,6 +97,12 @@ export function statusSummary({ drawings, cad } = {}) {
     ((cadDerived && cadDerived.released && cadDerived.released.files) || [])
       .map((f) => f && f.sha256).filter(Boolean),
   );
+  // Which CAD revision each file belongs to, so a drawing that records the file
+  // it was made from can be placed on a revision without comparing letters.
+  const revisionOfFile = new Map();
+  for (const r of (cad && cad.revisions) || []) {
+    for (const f of r.files || []) if (f && f.id) revisionOfFile.set(f.id, norm(r.revision));
+  }
 
   const drawingsOut = (drawings || []).map((d) => {
     const { current, released } = deriveObject(d.revisions);
@@ -124,15 +130,16 @@ export function statusSummary({ drawings, cad } = {}) {
     }
 
     if (cadReleasedLetter) {
-      // drawing_behind_cad: the CAD released letter sorts after the drawing's released issue.
-      if (compareRevision(cadReleasedLetter, issue) > 0) {
-        warnings.push({ code: "drawing_behind_cad", drawing_id: d.id,
-          text: `${name} is behind the released CAD Rev ${cadReleasedLetter}` });
-      }
-      // drawing_from_other_cad: the released issue records the STEP it was made
-      // from, and that file is not one of the released CAD revision's files.
+      // drawing_from_other_cad: the released issue records the CAD file it was
+      // made from (by id, or by the STEP's sha256), and that file does not belong
+      // to the released CAD revision. Issue letters and CAD letters are separate
+      // sequences, so they are never compared with each other.
+      const srcRev = d.released.source_cad_file_id ? revisionOfFile.get(d.released.source_cad_file_id) : null;
       const sha = d.released.source_sha256;
-      if (sha && !cadReleasedShas.has(sha)) {
+      if (srcRev && srcRev !== cadReleasedLetter) {
+        warnings.push({ code: "drawing_from_other_cad", drawing_id: d.id,
+          text: `${name} was made from CAD Rev ${srcRev}; the released CAD is Rev ${cadReleasedLetter}` });
+      } else if (!srcRev && sha && !cadReleasedShas.has(sha)) {
         warnings.push({ code: "drawing_from_other_cad", drawing_id: d.id,
           text: `${name} was not made from the released CAD Rev ${cadReleasedLetter}` });
       }

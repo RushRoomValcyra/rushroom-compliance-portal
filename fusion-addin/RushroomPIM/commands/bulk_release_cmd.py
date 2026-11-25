@@ -22,9 +22,10 @@ Flow:
           component, after its files.  A partial export stays draft.
        d. Send per-component progress back to the HTML.
 
-The letter: the document name's RevX label is the default for every component
-in the batch (one document, one design revision); when the name carries no
-label the portal picks the next letter per component, as before.
+The letter: the portal assigns it — the next letter per component, one step
+per send, whatever Fusion's save counter did in between.  The document name's
+RevX label (the product generation) travels along as fusion_revision_label
+and is never used for the letter.
 
 f3z note: a Fusion archive (.f3z) is a DOCUMENT-level export — it captures
 the whole file, not a single component.  Releasing 20 components in one
@@ -192,8 +193,8 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
         doc_info       = get_doc_info()
         fusion_version = get_fusion_version()
         parsed         = parse_revision_label(get_doc_name())
-        rev_label      = parsed[0] if parsed else None   # "RevF" as written in the name
-        rev_letter     = parsed[1] if parsed else None   # "F" — default letter for the batch
+        rev_label      = parsed[0] if parsed else None   # "RevF" as written in the name — metadata only
+        rev_letter     = None                            # the portal assigns the next letter per component
         f3z_done       = False   # only upload the archive once per batch
 
         ok_count    = 0

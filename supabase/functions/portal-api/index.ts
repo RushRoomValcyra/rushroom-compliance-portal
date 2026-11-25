@@ -36,7 +36,7 @@ import { articleOf, canBeEligibleType, expandAssemblyInputs, preAssemblyEligibil
 import { sidePanelRole } from "../_shared/side-panel-role-core.mjs";
 import {
   canTransition, compareRevision, deriveObject, nextRevisionLetter as nextLetterCore,
-  parseRevisionLabel, statusSummary,
+  statusSummary,
 } from "../_shared/status-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
@@ -5580,16 +5580,17 @@ Deno.serve(async (req) => {
     const fusionLabel = String(body.fusion_revision_label ?? "").trim().slice(0, 20) || null;
     const fusionVersion = body.fusion_version ? Number(body.fusion_version) : null;
     const sha256 = body.sha256 ? String(body.sha256).trim().toLowerCase().slice(0, 64) : null;
+    // The portal assigns the letter: one step per send, whatever Fusion's save
+    // counter did in between (v11 → Rev A, v14 → Rev B; v12 and v13 never left
+    // the engineer's machine). The RevX label in the document name is the
+    // product generation, stored as metadata, never used for the letter (§5.3).
     let revision = String(body.revision ?? "").trim().toUpperCase().slice(0, 10);
     if (revision) {
       if (current && compareRevision(revision, current.revision) < 0) {
         return json({ error: `Rev ${revision} is below the current ${current.revision}` }, 400);
       }
     } else {
-      const parsed = parseRevisionLabel(fusionLabel || "");
-      revision = parsed && (!current || compareRevision(parsed.letter, current.revision) > 0)
-        ? parsed.letter
-        : nextRevisionLetter(existingLetters);
+      revision = nextRevisionLetter(existingLetters);
     }
 
     // Find or create the revision row — a new letter is a DRAFT revision and
@@ -5697,6 +5698,7 @@ Deno.serve(async (req) => {
         id: d.id, drawing_number: d.drawing_number, role: roleOf[d.id] || "depicts",
         revisions: (revsByDrawing[d.id] || []).map((r: any) => ({
           id: r.id, revision: r.revision, status: r.status, source_sha256: r.source_sha256 || null,
+          source_cad_file_id: r.source_cad_file_id || null,
         })),
       }));
     }
@@ -5744,7 +5746,7 @@ Deno.serve(async (req) => {
       drawings: summaryDrawings,
       cad: { revisions: revisions.map((r) => ({
         id: r.id, revision: r.revision, status: r.status,
-        files: r.files.map((f: any) => ({ format: f.format, sha256: f.sha256 ?? null })),
+        files: r.files.map((f: any) => ({ id: f.id, format: f.format, sha256: f.sha256 ?? null })),
       })) },
     });
     return json({ cad_model, revisions: revOut, files, summary });

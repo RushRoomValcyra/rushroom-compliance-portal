@@ -25,18 +25,18 @@ The pattern: status is kept on the object, but release is a property of a revisi
 - A drawing revision and a CAD model revision have the same lifecycle, the same words and the same rules.
 - A drawing or a CAD model has no status of its own. It reports two facts derived from its revisions: the **current** revision (newest letter) with its status, and the **released** revision (the one a supplier may build from), if any. Shown as *Issue F released · G draft*.
 - One release action, same on both sides: release the current revision, supersede the previously released one, stamp who and when on that revision only.
-- Letters are chosen, not counted. The CAD letter and the drawing issue letter are the same alphabet and normally the same letter for the same design revision.
+- The portal assigns the letters, one step per send. The CAD letter and the drawing issue letter are separate sequences from the same alphabet; neither is derived from Fusion's save counter nor from the product generation in a document name.
 
 ## 3 Glossary — the three numbers
 
 | Name | What it is | Who sets it | Where it shows |
 |---|---|---|---|
-| **Fusion version** `v12` | Fusion's own save counter of the document (`dataFile.versionNumber`), not monotonic across copies | Fusion, on every save | Only as metadata on a CAD file ("Fusion v12"), never as a revision |
-| **Revision** `Rev F` | The controlled design revision of a part's CAD model in the portal; a letter, A, B … Z, AA | The engineer, at registration (default: the label in the Fusion document name, see §5.3) | CAD Models tab, part card, Fusion dialog |
-| **Issue** `Issue F` | The controlled revision of a drawing; a letter from the same alphabet | The drafter, at `addDrawingRevision` (default: next letter) | Drawings register, part card, title block |
-| **Revision label** `RevF` in a document name | The design revision written into the Fusion document name by convention (`VALCYRA RevF Door M …`) | The engineer, by naming the document | Stored on the CAD revision as `fusion_revision_label`; it is where the default letter comes from |
+| **Fusion version** `v11`, `v14` | Fusion's own save counter of the document (`dataFile.versionNumber`): every save, not monotonic across copies | Fusion, on every save | Only as metadata on a CAD file ("Fusion v14"), never as a revision. Gaps are normal: v12 and v13 were working iterations that never left the engineer's machine |
+| **Revision** `Rev B` | The controlled revision of a part's CAD model in the portal: one step per **send to the portal**; a letter, A, B … Z, AA | The portal, at registration (next letter); the engineer may override forward | CAD Models tab, part card, Fusion dialog |
+| **Issue** `Issue A` | The controlled revision of a drawing; a letter from the same alphabet, its own sequence | The portal, at `addDrawingRevision` (next letter); override forward | Drawings register, part card, title block |
+| **Revision label** `RevF` in a document name | The **product generation** written into every Fusion document name of that generation (`VALCYRA RevF Door M …`, Rev F panels, Rev F drawings) | The engineer, by naming the document | Stored on the CAD revision as `fusion_revision_label` and shown next to it; never used for a letter — every Rev F part would otherwise start at F whether it changed once or five times |
 
-The word **version** is reserved for Fusion's counter; the portal says revision and issue.
+The word **version** is reserved for Fusion's counter; the portal says revision and issue. The three numbers are independent: v11 becomes Rev A when sent, v14 becomes Rev B when sent, and a drawing of that part can be at Issue A throughout.
 
 ## 4 Data model
 
@@ -119,9 +119,9 @@ Release, on both sides: only the **current** revision can be released (refused o
 
 ### 5.3 Letter policy (CAD)
 
-- `registerCadRevision` takes `revision` (letter) and `fusion_revision_label`. The add-in always sends the label it parses from the document name (`Rev([A-Z]{1,2})`, case-insensitive) and, unless the engineer overrides, the letter derived from it.
-- If no label can be parsed the default is the next letter, and the dialog says so.
-- A letter lower than the current one is refused (§5.2); the dialog shows the portal's current and released letters before the user confirms.
+- `registerCadRevision` takes `revision` (letter, optional) and `fusion_revision_label` (metadata). With no letter the portal assigns the **next letter** after the model's current one — one step per send, whatever Fusion's save counter did in between. The label the add-in parses from the document name (`Rev([A-Z]{1,2})`, case-insensitive) is stored and shown, never used for the letter.
+- A send while the current revision is still a draft lands on that same draft letter and replaces its files (§5.2): v15 overwrites v14 on Rev B. After a release the next send is C.
+- A typed letter overrides, forward only: a letter lower than the current one is refused (§5.2). The dialog shows what will happen before the user confirms: "Next: Rev B · Rev A released · Fusion v14 · RevF (document label, recorded only)".
 - **One letter per export, resolved once.** The add-in resolves the letter before the format loop (the label, the override, or the letter the first `registerCadRevision` answers with) and sends it on every format. Today the bulk command never passes a letter, so STEP lands on B and GLB on C — one export split over two letters, each with one file. The backfill does not try to merge such rows; they stay as they are and sort by the rule above.
 
 ### 5.4 Coherence between a part's drawing and its CAD
@@ -131,8 +131,7 @@ Computed in one pure function, `statusSummary(drawingsOfPart, cadModelWithRevisi
 | Warning | Rule |
 |---|---|
 | `cad_draft_drawing_released` | a drawing with role `depicts` has a released issue and the CAD model has no released revision |
-| `drawing_behind_cad` | the CAD released letter sorts after the drawing's released issue |
-| `drawing_from_other_cad` | the released drawing revision's `source_sha256` is set and equals no `sha256` of the released CAD revision's files |
+| `drawing_from_other_cad` | the released drawing revision records the CAD file it was made from (`source_cad_file_id`, or `source_sha256` from drawset's sidecar) and that file belongs to another CAD revision than the released one: "made from CAD Rev B; the released CAD is Rev C". Issue letters and CAD letters are never compared — they are separate sequences. Without a recorded source the portal says nothing |
 | `cad_missing` | the part has released drawings and no CAD model |
 
 Returned by `getComponentCad` as `summary` and shown on the part card and in the CAD Models tab. Warnings are information, never blocks: a supplier package is a human decision.

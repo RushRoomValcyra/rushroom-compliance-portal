@@ -271,30 +271,39 @@ test("cad_draft_drawing_released: the CAD model exists but has no revisions at a
   assert.deepEqual(s.cad, { current: null, released: null });
 });
 
-test("drawing_behind_cad: CAD released G, drawing released F", () => {
+test("issue letters and CAD letters are separate sequences: issue A on CAD Rev C is not a warning by itself", () => {
   const s = statusSummary({
-    drawings: [drawing("RR-100", "depicts", [rev("F", "released")])],
-    cad: cadModel([cadRev("F", "superseded", ["sha-F"]), cadRev("G", "released", ["sha-G"])]),
+    drawings: [drawing("RR-100", "depicts", [rev("A", "released")])],
+    cad: cadModel([cadRev("B", "superseded", ["sha-B"]), cadRev("C", "released", ["sha-C"])]),
   });
-  assert.deepEqual(codes(s), ["drawing_behind_cad"]);
-  assert.match(s.warnings[0].text, /issue F/);
-  assert.match(s.warnings[0].text, /Rev G/);
+  assert.deepEqual(codes(s), [], "no source recorded, so the portal says nothing");
 });
 
-test("drawing_behind_cad: letter order is shorter-first — CAD AA is after drawing Z", () => {
+test("drawing_from_other_cad by file id: the released issue was made from a file of a superseded CAD revision", () => {
+  const cad = { revisions: [
+    { id: "cB", revision: "B", status: "superseded", files: [{ id: "file-B", format: "step", sha256: "sha-B" }] },
+    { id: "cC", revision: "C", status: "released",   files: [{ id: "file-C", format: "step", sha256: "sha-C" }] },
+  ] };
   const s = statusSummary({
-    drawings: [drawing("RR-100", "depicts", [rev("Z", "released")])],
-    cad: cadModel([cadRev("AA", "released")]),
+    drawings: [{ id: "d1", drawing_number: "RR-100", role: "depicts",
+      revisions: [{ id: "r1", revision: "A", status: "released", source_cad_file_id: "file-B", source_sha256: "sha-B" }] }],
+    cad,
   });
-  assert.deepEqual(codes(s), ["drawing_behind_cad"]);
+  assert.deepEqual(codes(s), ["drawing_from_other_cad"]);
+  assert.match(s.warnings[0].text, /made from CAD Rev B/);
+  assert.match(s.warnings[0].text, /released CAD is Rev C/);
 });
 
-test("drawing_behind_cad does not fire when the drawing is AHEAD of the CAD (issue G, Rev F)", () => {
+test("drawing_from_other_cad by file id does not fire when the source file belongs to the released revision", () => {
+  const cad = { revisions: [
+    { id: "cC", revision: "C", status: "released", files: [{ id: "file-C", format: "step", sha256: "sha-C" }] },
+  ] };
   const s = statusSummary({
-    drawings: [drawing("RR-100", "depicts", [rev("G", "released")])],
-    cad: cadModel([cadRev("F", "released")]),
+    drawings: [{ id: "d1", drawing_number: "RR-100", role: "depicts",
+      revisions: [{ id: "r1", revision: "A", status: "released", source_cad_file_id: "file-C", source_sha256: "other" }] }],
+    cad,
   });
-  assert.deepEqual(codes(s), [], "a drawing ahead of the CAD is a warning the design does not define");
+  assert.deepEqual(codes(s), [], "the file id decides; the sha is only the fallback");
 });
 
 test("drawing_from_other_cad: the released issue's source sha matches no file of the released CAD revision", () => {
@@ -367,13 +376,13 @@ test("cad_missing and cad_draft_drawing_released are exclusive: no model vs. mod
 test("several warnings at once, one per drawing, and warnings always carry code and text", () => {
   const s = statusSummary({
     drawings: [
-      drawing("RR-100", "depicts", [rev("E", "released", { source_sha256: "sha-E" })]),   // behind G, and from other CAD
+      drawing("RR-100", "depicts", [rev("E", "released", { source_sha256: "sha-E" })]),   // made from the superseded CAD
       drawing("RR-101", "depicts", [rev("G", "released", { source_sha256: "sha-G" })]),   // clean
       drawing("RR-102", "depicts", [rev("A", "draft")]),                                   // nothing released
     ],
     cad: cadModel([cadRev("E", "superseded", ["sha-E"]), cadRev("G", "released", ["sha-G"])]),
   });
-  assert.deepEqual(codes(s), ["drawing_behind_cad", "drawing_from_other_cad"]);
+  assert.deepEqual(codes(s), ["drawing_from_other_cad"]);
   for (const w of s.warnings) {
     assert.equal(w.drawing_id, "dr-RR-100");
     assert.equal(typeof w.code, "string");
@@ -390,5 +399,5 @@ test("statusSummary: two released letters on the CAD (pre-0060 data) → the hig
     cad: cadModel([cadRev("F", "released"), cadRev("G", "released")]),
   });
   assert.equal(s.cad.released.revision, "G");
-  assert.deepEqual(codes(s), ["drawing_behind_cad"]);
+  assert.deepEqual(codes(s), [], "issue F on CAD Rev G is not a warning: the letters are separate sequences");
 });

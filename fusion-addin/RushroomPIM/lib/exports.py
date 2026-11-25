@@ -120,6 +120,23 @@ def get_doc_info() -> dict:
     }
 
 
+def next_revision_letter(current: Optional[str]) -> str:
+    """The letter after `current` in the portal's alphabet: A … Z, AA, AB …
+    Mirrors nextRevisionLetter in _shared/status-core.mjs so the dialog can say
+    which letter the portal will assign before anything is sent."""
+    if not current:
+        return "A"
+    chars = list(current.strip().upper())
+    i = len(chars) - 1
+    while i >= 0:
+        if chars[i] != "Z":
+            chars[i] = chr(ord(chars[i]) + 1)
+            return "".join(chars)
+        chars[i] = "A"
+        i -= 1
+    return "A" + "".join(chars)
+
+
 def get_fusion_version() -> Optional[int]:
     """Return the Fusion version number of the current document, or None."""
     app = get_app()

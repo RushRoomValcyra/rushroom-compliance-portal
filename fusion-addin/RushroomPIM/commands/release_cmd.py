@@ -47,6 +47,7 @@ from lib.exports import (
     get_fusion_version,
     get_physical_props,
     get_stamp,
+    next_revision_letter,
     parse_revision_label,
 )
 from lib.portal import call, sha256_of, upload_file
@@ -155,26 +156,29 @@ class _CreatedHandler(adsk.core.CommandCreatedEventHandler):
             inputs.addBoolValueInput("fmt_step", "Export .step (neutral, for suppliers)", True, "", True)
             inputs.addBoolValueInput("fmt_glb",  "Export .glb  (Blender / Studio)", True, "", True)
 
-            # Revision — defaults to the label in the document name (§5.3).
+            # Revision — the portal assigns the next letter, one step per send,
+            # independent of Fusion's save counter and of the RevX label in the
+            # document name (that label is the product generation, metadata only).
+            # Blank = next letter; a typed letter overrides, forward only (§5.3).
             doc_name = get_doc_name()
             parsed = parse_revision_label(doc_name)
-            default_letter = parsed[1] if parsed else ""
-            rev_input = inputs.addStringValueInput("revision", "Revision", default_letter)
-            if parsed:
-                rev_input.tooltip = f"From document name: {parsed[0]}. Blank = next letter."
-                inputs.addTextBoxCommandInput(
-                    "revision_hint", "",
-                    f"Rev {default_letter} from the document name ({parsed[0]}). "
-                    "Edit to override; blank = next letter.",
-                    1, True,
-                )
+            current = (cad_model or {}).get("current_revision") or ""
+            current_status = (cad_model or {}).get("status") or ""
+            released = (cad_model or {}).get("released_revision") or ""
+            if current and current_status != "released":
+                next_text = f"Rev {current} (draft, files replaced)"
             else:
-                rev_input.tooltip = "Blank = next letter after the portal's current revision."
-                inputs.addTextBoxCommandInput(
-                    "revision_hint", "",
-                    "No RevX label in the document name — blank means the next letter.",
-                    1, True,
-                )
+                next_text = f"Rev {next_revision_letter(current)}"
+            rev_input = inputs.addStringValueInput("revision", "Revision (blank = next)", "")
+            rev_input.tooltip = "Blank: the portal assigns the next letter. Type a letter to override (forward only)."
+            hint = f"Next: {next_text}"
+            if released:
+                hint += f" · Rev {released} released"
+            if fv is not None:
+                hint += f" · Fusion v{fv}"
+            if parsed:
+                hint += f" · {parsed[0]} (document label, recorded only)"
+            inputs.addTextBoxCommandInput("revision_hint", "", hint, 1, True)
 
             # Release this revision — off by default (§8).
             inputs.addBoolValueInput("release", "Release this revision", True, "", False)

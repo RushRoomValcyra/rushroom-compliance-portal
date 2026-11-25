@@ -185,3 +185,18 @@ model carries one part and one STEP. The spec catalogue already reports
 `parts`, so the modal can hide or mark multi-part specs; a later version
 carries one STEP per `parts[]` label. Running the worker as a service
 (launchd) rather than in a terminal. Rendering on a server.
+
+## 7 First render — 2026-11-25
+
+Side Panel Left (RR-202609-G26N4P8A), CAD Rev A released, spec
+`side_panel_left`, requested from the CAD register as a new drawing: claim
+→ download (175 860 bytes, sha b49e58a6; the file had been registered before
+shas were recorded, so the worker recorded it and the portal wrote it onto
+the file row) → render (16.5 s, four A3 sheets) → verify (drawset PASS,
+dimension list d8471e84…, the same fingerprint the hand-run set of 2026-11-25
+produced from the same STEP) → upload (108 125 bytes) → register. Result:
+RR-DWG-202611-SM5H6XGG Issue A, draft, `source_cad_file_id` set,
+`source_sha256` b49e58a6, title block reads the portal's number, Issue A
+and "From CAD Rev A · b49e58a6"; the drawing rail says "Made from: CAD Rev
+A · b49e58a6". 20 s end to end. The first attempt had failed on exactly
+that missing sha; the failure path removed the drawing it had created.

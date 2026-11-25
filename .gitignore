@@ -20,3 +20,10 @@ supabase/.branches/
 
 # Stray Google service-account key dir (unused, must never be committed)
 Compliance Portal/
+
+# Fusion add-in runtime state: the session token (written by Connect to Portal),
+# the log and the stamp queue are per machine, never part of the add-in.
+fusion-addin/RushroomPIM/config.json
+fusion-addin/RushroomPIM/debug.log
+fusion-addin/RushroomPIM/pending_stamps.json
+__pycache__/

@@ -171,7 +171,14 @@ by portal-api and by the tests. Nothing in them touches a database.
   failure is logged to `debug.log`, never shown in a dialog.
 - `commands/test_agent_cmd.py` — "Run portal test agent now": polls once and
   reports the result in a message box.
-- `RushroomPIM.py` — starts/stops the poller with the add-in.
+- `RushroomPIM.py` — starts/stops the poller with the add-in. It has to be the
+  add-in that registers the custom event: an event registered from a script
+  (the MCP bridge, a one-off run) is delivered only while that script is
+  executing, so a poller started that way is deaf the moment the script ends.
+  Found on the first run (2026-11-25): the thread fired every 5 s, nothing
+  arrived, the run timed out. After a code change, stop and run the add-in
+  from Utilities → Add-Ins; toggling it through accessibility flips the switch
+  without restarting it.
 
 ## Portal UI
 
@@ -195,3 +202,12 @@ Labels outside boxes, no explanatory copy, one row of controls.
 
 Releasing, drawings, GLB. The agent proves the CAD send path; the release
 path has its own rule (`releaseRevisionRow`) and its own tests.
+
+## First run — 2026-11-25
+
+Top Panel M (RR-202609-3T39YDLW), Rev A draft, document already open in
+Fusion: all twelve steps green in 16.6 s. Fusion v5 → v6, sha256
+27dde895… → 42088af7…, Rev A file replaced on the same row, supplier view
+"nothing" before and after, Change Log row "CAD revision A re-registered
+(step)". The run before it timed out for the reason recorded under
+`RushroomPIM.py` above.

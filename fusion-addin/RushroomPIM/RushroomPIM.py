@@ -11,6 +11,10 @@ Three commands, added to the Utilities workspace:
   Import project to portal — the same for every part document of the active
                        project in one pass, matched by the part number that
                        leads the document name (lib/project_import.py)
+  Run portal test agent now — polls the portal once for a waiting CAD test
+                       run and executes it (docs/TEST_AGENT.md). The same
+                       runs happen unattended: lib/test_agent_poller polls
+                       every 5 s while connected.
 
 Install:
   Mac:  ~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/
@@ -139,13 +143,22 @@ def run(context):
         from commands.bulk_stamp_cmd import BulkStampCommand
         from commands.bulk_release_cmd import BulkReleaseCommand
         from commands.import_project_cmd import ImportProjectCommand
+        from commands.test_agent_cmd import TestAgentCommand
+        from lib import test_agent_poller
         _log("imports OK")
 
         for Cmd in [ConnectCommand, StampCommand, ReleaseCommand, BulkStampCommand, BulkReleaseCommand, ImportProjectCommand]:
             cmd = Cmd(_app, _ui, _handlers)
             cmd.register()
             _commands.append(cmd)
+        cmd = TestAgentCommand(_app, _ui, _handlers, _log)
+        cmd.register()
+        _commands.append(cmd)
         _log("commands registered OK")
+
+        # Test agent: poll the portal every 5 s while connected (docs/TEST_AGENT.md)
+        test_agent_poller.start(_app, _log)
+        _log("test agent poller registered")
 
         # Auto-stamp queued files on open
         on_doc_opened = _DocumentOpenedHandler(_ui)
@@ -162,6 +175,11 @@ def run(context):
 
 def stop(context):
     global _commands, _handlers
+    try:
+        from lib import test_agent_poller
+        test_agent_poller.stop(_app or adsk.core.Application.get())
+    except Exception:
+        _log("test agent poller stop failed:\n" + traceback.format_exc())
     for cmd in _commands:
         try:
             cmd.unregister()

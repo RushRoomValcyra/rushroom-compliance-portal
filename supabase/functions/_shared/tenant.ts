@@ -60,6 +60,9 @@ export const TENANT_TABLES = new Set([
   "cad_models", "cad_model_files",
   // One status model: the CAD revision is the controlled object (migration 0060)
   "cad_model_revisions",
+  // CAD change-order test agent: one row per robot-button run (migration 0061,
+  // docs/TEST_AGENT.md). The add-in polls it per org, so it must be scoped.
+  "cad_test_runs",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

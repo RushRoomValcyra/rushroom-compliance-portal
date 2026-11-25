@@ -10,7 +10,7 @@
 -- This migration ADDS and BACKFILLS only. It drops nothing and is safe with
 -- the old portal-api still running: the old API keeps reading drawings.status,
 -- cad_models.status / current_revision and cad_model_files.revision /
--- released_at, all of which stay in place until 0061. The new API dual-writes
+-- released_at, all of which stay in place until 0062 (numbered 0061 when written; 0061 became cad_test_runs). The new API dual-writes
 -- them so a rollback of the function keeps working.
 --
 -- Steps (design §9):
@@ -20,7 +20,7 @@
 --      else draft. A model with several released letters keeps the highest
 --      released and the others become superseded.
 --   3. cad_model_files.cad_model_revision_id filled. It stays NULLABLE until
---      0061: between `db push` and the function deploy the old
+--      0062: between `db push` and the function deploy the old
 --      registerCadRevision still inserts files without it, and a NOT NULL
 --      would make every Fusion send fail after the upload (orphaned storage
 --      objects). cad_models.current_revision_id = the row with the highest letter.
@@ -75,7 +75,7 @@ ALTER TABLE cad_model_files
 CREATE INDEX IF NOT EXISTS idx_cad_model_files_revision
   ON cad_model_files (organization_id, cad_model_revision_id);
 -- One file per format per revision. The old (cad_model_id, revision, format)
--- constraint stays until 0061; the two agree as long as the letter is
+-- constraint stays until 0062; the two agree as long as the letter is
 -- dual-written.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cad_model_files_revision_format
   ON cad_model_files (organization_id, cad_model_revision_id, format)
@@ -188,7 +188,7 @@ BEGIN
   SELECT count(*) INTO n_files_linked FROM upd;
 
   -- … and count any file left behind (should be 0: every (model, letter) got
-  -- a row above). The column stays nullable until 0061 (design §9 step 3), so
+  -- a row above). The column stays nullable until 0062 (design §9 step 3), so
   -- the old API can still insert files during the deploy window; the new API
   -- always fills it.
   SELECT count(*) INTO n_files_unlinked FROM cad_model_files WHERE cad_model_revision_id IS NULL;
@@ -249,7 +249,7 @@ BEGIN
      AND NOT EXISTS (SELECT 1 FROM drawing_revisions r
                       WHERE r.drawing_id = d.id AND r.status = 'released');
 
-  -- 5. Nothing dropped (0061).
+  -- 5. Nothing dropped (0062).
   RAISE NOTICE E'0060 done:\n  cad_model_revisions created: %\n  models with >1 released letter (fixed): %\n  CAD revisions superseded: %\n  cad_model_files linked to a revision: %\n  cad_model_files still without a revision (expected 0): %\n  cad_models.current_revision_id set: %\n  drawing revisions given checked/approved: %\n  drawing revisions given superseded: %\n  drawings with no current revision (reported only): %\n  drawings released with no released revision (reported only): %',
     n_revisions_created, n_models_multi_rel, n_superseded, n_files_linked, n_files_unlinked,
     n_models_current, n_draw_copied, n_draw_superseded, n_draw_no_current, n_draw_rel_no_rev;

@@ -813,6 +813,7 @@
     tag: svg('<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>'),
     graph: svg('<circle cx="5" cy="6" r="2.4"/><circle cx="19" cy="6.5" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M6.9 7.4l3.6 8.2M17.2 8.2l-4 6.9M7.3 6.2h9.4"/>'),
     link: svg('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'),
+    robot: svg('<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v6"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/><path d="M9 18h6"/><path d="M2 12h2M20 12h2"/>'),
     "bom-tree": svg('<circle cx="12" cy="4" r="2"/><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="3" cy="20" r="2"/><circle cx="7" cy="20" r="2"/><circle cx="17" cy="20" r="2"/><circle cx="21" cy="20" r="2"/><line x1="12" y1="6" x2="5" y2="10"/><line x1="12" y1="6" x2="12" y2="10"/><line x1="12" y1="6" x2="19" y2="10"/><line x1="5" y1="14" x2="3" y2="18"/><line x1="5" y1="14" x2="7" y2="18"/><line x1="19" y1="14" x2="17" y2="18"/><line x1="19" y1="14" x2="21" y2="18"/>'),
     grid: svg('<rect x="3" y="3" width="18" height="18" rx="1"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/>'),
     gauge: svg('<path d="M3.34 19a10 10 0 1 1 17.32 0"/><path d="m12 14 4-4"/>'),
@@ -12130,11 +12131,290 @@
         cadModelsContentEl.style.display = t.id === "cad_models" ? "" : "none";
         if (t.id === "cad_models") loadCadModels();
       } }, t.label));
+    // The robot button (docs/TEST_AGENT.md) sits at the right end of the bar.
+    // It is NOT part of topTabBtns: that array is indexed against TOP_TABS.
+    const testAgentEl = el("div", { style: "display:none" });
+    const robotBtn = role === "rushroom"
+      ? el("button", {
+          type: "button", class: "btn btn-sm",
+          style: "margin-left:auto;align-self:center;margin-bottom:3px;display:inline-flex;align-items:center;flex-shrink:0",
+          title: "Run the CAD change-order test agent", "aria-pressed": "false",
+          onclick: () => toggleTestAgent(),
+        }, el("span", { class: "btn-ico", style: "margin-right:0", html: ICONS.robot }))
+      : null;
     const topTabBar = el("div", {
       style: "display:flex;gap:0;border-bottom:3px solid var(--border,#e2e8f0);margin-bottom:1.2rem;overflow-x:auto"
-    }, topTabBtns);
+    }, [...topTabBtns, robotBtn].filter(Boolean));
 
-    mount.replaceChildren(topTabBar, drawingsContentEl, cadModelsContentEl);
+    mount.replaceChildren(topTabBar, testAgentEl, drawingsContentEl, cadModelsContentEl);
+
+    // ---- CAD change-order test agent panel (docs/TEST_AGENT.md) --------------
+    // One row of controls, the live step list while the run executes, the
+    // before/after facts when it is done, the last runs underneath. Polls
+    // getCadTestRun every 2 s; the poll stops when the panel closes or the tab
+    // is re-rendered (the panel element leaves the document).
+    let _taOpen = false;
+    let _taTimer = null;
+    let _taRunId = null;
+    const TA_STEP_LABELS = {
+      claim: "Claim", open: "Open", change: "Change", save: "Save", stamp: "Stamp", export: "Export", send: "Send",
+      naming: "Naming", versioning: "Versioning", status: "Status", supplier: "Supplier", changelog: "Changelog",
+    };
+    const TA_STEP_KEYS = Object.keys(TA_STEP_LABELS);
+    const TA_GLYPH = {
+      pending: ["·", "var(--muted,#8b93a1)"], running: ["…", "var(--text,#333)"],
+      passed: ["✓", "#15803d"], failed: ["✕", "#b91c1c"], skipped: ["–", "var(--muted,#8b93a1)"],
+    };
+    const TA_RESULT_COLOR = { passed: "#15803d", failed: "#b91c1c", timed_out: "#b45309", cancelled: "var(--muted,#8b93a1)", requested: "var(--muted,#8b93a1)", running: "var(--text,#333)" };
+    const taMuted = (txt, extra = "") => el("span", { style: `color:var(--muted,#8b93a1);font-size:0.75rem;${extra}` }, txt);
+
+    // Mirror of _shared/status-core.mjs nextRevisionLetter for one letter:
+    // length first, then text, so Z → AA.
+    function taNextLetter(letter) {
+      const chars = String(letter || "").toUpperCase().split("");
+      if (!chars.length) return "A";
+      let i = chars.length - 1;
+      while (i >= 0) {
+        if (chars[i] !== "Z") { chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1); return chars.join(""); }
+        chars[i] = "A"; i--;
+      }
+      return "A" + chars.join("");
+    }
+    // Expected outcome from the selected row (the server's `expected` exists
+    // only after the request).
+    function taExpectedText(m) {
+      const cur = m.current_revision || null;
+      const st = m.status || "draft";
+      if (!cur) return "no revision → run creates Rev A draft";
+      if (["released", "superseded"].includes(st)) return `Rev ${cur} ${st} → run creates Rev ${taNextLetter(cur)} draft`;
+      return `Rev ${cur} ${st} → files replaced on Rev ${cur}`;
+    }
+    const taUnwrapRun = (res) => (res && res.run !== undefined ? res.run : res) || null;
+    const taUnwrapRuns = (res) => Array.isArray(res) ? res : (res?.runs || res?.cad_test_runs || []);
+    const taPartOf = (r) => r.part_number || r.component?.part_number || r.before?.part_number || "—";
+    const taTime = (iso) => iso ? new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "—";
+
+    const taSelect = el("select", { class: "up-text", "aria-label": "Part", style: "min-width:260px;max-width:460px" });
+    const taExpectEl = el("span", { style: "font-size:0.8125rem;white-space:nowrap" });
+    const taErrEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.5rem" });
+    const taRunBtn = el("button", { type: "button", class: "btn btn-primary", onclick: () => taRequest() }, "Run");
+    const taCloseBtn = el("button", { type: "button", class: "btn", title: "Close", onclick: () => toggleTestAgent(false) }, "×");
+    const taStepsEl = el("div", { style: "display:none;margin-top:0.75rem" });
+    const taResultEl = el("div", { style: "display:none;margin-top:0.5rem;font-size:0.875rem;font-weight:600" });
+    const taTableEl = el("div", { style: "display:none;margin-top:0.5rem" });
+    const taRunsEl = el("div", { style: "margin-top:0.75rem" });
+    const taRow = el("div", { style: "display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap" }, [
+      el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1)" }, "Part"),
+      taSelect, taExpectEl, el("span", { style: "flex:1" }), taRunBtn, taCloseBtn,
+    ]);
+    testAgentEl.append(el("div", { class: "card", style: "margin-bottom:1.2rem" }, [taRow, taErrEl, taStepsEl, taResultEl, taTableEl, taRunsEl]));
+
+    function taError(msg) {
+      taErrEl.textContent = msg || "";
+      taErrEl.style.display = msg ? "" : "none";
+    }
+    function taStopPolling() { if (_taTimer) { clearTimeout(_taTimer); _taTimer = null; } }
+
+    let _taModels = null;
+    async function taLoadParts() {
+      let list = _cadLoaded ? _cadAll : _taModels;
+      if (!list) {
+        try {
+          const data = await API.post(token, "listCadModels", {});
+          list = _taModels = data.cad_models || [];
+        } catch (ex) { taError(ex.message); return; }
+      }
+      const rows = list.filter((m) => m.fusion_document_id && m.component_id);
+      const keep = taSelect.value;
+      taSelect.replaceChildren(...rows.map((m) =>
+        el("option", { value: m.component_id }, `${m.part_number || "—"} ${m.component_name || ""} · Rev ${m.current_revision || "—"} ${m.status || "draft"}`)));
+      taSelect._rows = rows;
+      const first = rows.find((m) => m.component_id === keep) || rows.find((m) => (m.status || "draft") === "draft") || rows[0];
+      if (first) taSelect.value = first.component_id;
+      taRunBtn.disabled = !rows.length || !!_taRunId;   // never re-enable Run under a live run
+      taUpdateExpected();
+    }
+    function taUpdateExpected() {
+      const m = (taSelect._rows || []).find((r) => r.component_id === taSelect.value);
+      taExpectEl.textContent = m ? taExpectedText(m) : "";
+    }
+    taSelect.addEventListener("change", taUpdateExpected);
+
+    async function toggleTestAgent(force) {
+      const open = force === undefined ? !_taOpen : !!force;
+      _taOpen = open;
+      testAgentEl.style.display = open ? "" : "none";
+      if (robotBtn) { robotBtn.setAttribute("aria-pressed", open ? "true" : "false"); robotBtn.classList.toggle("btn-primary", open); }
+      if (!open) { taStopPolling(); return; }
+      taError("");
+      await Promise.all([taLoadParts(), taLoadRuns()]);
+      // A run was live when the panel closed: pick it up again.
+      if (_taRunId) {
+        try {
+          const run = taUnwrapRun(await API.post(token, "getCadTestRun", { run_id: _taRunId }));
+          if (run) {
+            taShowRun(run);
+            if (["requested", "running"].includes(run.status)) taWatch(run.id);
+            else taFinished();
+          }
+        } catch (ex) { taError(ex.message); }
+      }
+    }
+
+    async function taRequest() {
+      const component_id = taSelect.value;
+      if (!component_id) return;
+      taError("");
+      taRunBtn.disabled = true;
+      try {
+        const run = taUnwrapRun(await API.post(token, "requestCadTestRun", { component_id }));
+        if (!run || !run.id) throw new Error("The server returned no run");
+        taShowRun(run);
+        taWatch(run.id);
+      } catch (ex) {
+        taError(ex.message);
+        taRunBtn.disabled = false;
+      }
+    }
+
+    // Poll until the run leaves requested/running. Stops when the panel is
+    // closed, re-rendered away, or another run is loaded into the panel.
+    let _taWatchGen = 0;
+    function taWatch(runId) {
+      taStopPolling();
+      _taRunId = runId;
+      const gen = ++_taWatchGen;   // a re-watch of the same run ends the older chain
+      let errors = 0;
+      const tick = async () => {
+        _taTimer = null;
+        if (!_taOpen || !testAgentEl.isConnected || _taRunId !== runId || gen !== _taWatchGen) return;
+        let run;
+        try {
+          run = taUnwrapRun(await API.post(token, "getCadTestRun", { run_id: runId }));
+          errors = 0;
+        } catch (ex) {
+          taError(ex.message);
+          // 401/403/404 will not get better by asking again: the run is gone or
+          // the session is. Anything else is the network: keep the run, slow
+          // down (2 s → 30 s) and keep asking.
+          if ([401, 403, 404].includes(ex.status)) { _taRunId = null; taRunBtn.disabled = false; return; }
+          _taTimer = setTimeout(tick, Math.min(2000 * 2 ** Math.min(++errors, 4), 30000)); return;
+        }
+        if (_taRunId !== runId || gen !== _taWatchGen) return;
+        taShowRun(run);
+        if (run && ["requested", "running"].includes(run.status)) { _taTimer = setTimeout(tick, 2000); return; }
+        taFinished();
+      };
+      _taTimer = setTimeout(tick, 2000);
+    }
+    function taFinished() {
+      taRunBtn.disabled = false;
+      _taRunId = null;
+      // The send changed the registry: the CAD list, the part select and the
+      // expected outcome must all show it.
+      _cadLoaded = false; _taModels = null;
+      if (_topTab === "cad_models") loadCadModels();
+      taLoadParts();
+      taLoadRuns();
+    }
+
+    function taStepFile(snap) {
+      if (!snap || !snap.current) return null;
+      const rev = (snap.revisions || []).find((r) => r.id === snap.current.id) || (snap.revisions || []).find((r) => r.revision === snap.current.revision);
+      return (rev?.files || []).find((f) => f.format === "step") || (rev?.files || [])[0] || null;
+    }
+    function taSupplierText(snap) {
+      const sv = snap?.supplier_view;
+      if (!sv) return "—";
+      const parts = [];
+      if (sv.cad_released_revision) parts.push(`Rev ${sv.cad_released_revision}`);
+      for (const d of sv.drawings || []) if (d.released_revision) parts.push(`${d.drawing_number} issue ${d.released_revision}`);
+      return parts.length ? parts.join(", ") : "nothing";
+    }
+
+    function taShowRun(run) {
+      if (!run) return;
+      taRunBtn.disabled = ["requested", "running"].includes(run.status);
+      // Steps: the server's array in its order; the fixed keys fill the gaps
+      // (a fresh run carries all twelve as pending).
+      const byKey = {};
+      for (const s of run.steps || []) byKey[s.key] = s;
+      const keys = [...new Set([...(run.steps || []).map((s) => s.key), ...TA_STEP_KEYS])];
+      const rows = keys.map((key) => {
+        const s = byKey[key] || { key, status: "pending" };
+        const [glyph, color] = TA_GLYPH[s.status] || TA_GLYPH.pending;
+        let detail = s.detail || "";
+        if (key === "claim" && run.status === "requested" && !detail) detail = "Waiting for the Fusion add-in";
+        return el("div", { style: "display:flex;align-items:baseline;gap:0.5rem;padding:0.15rem 0;font-size:0.8125rem" }, [
+          el("span", { style: `width:1.1rem;text-align:center;font-weight:700;color:${color};flex-shrink:0` }, glyph),
+          el("span", { style: `min-width:6.5rem;${s.status === "skipped" ? "color:var(--muted,#8b93a1)" : ""}` }, s.label || TA_STEP_LABELS[key] || key),
+          detail ? taMuted(detail, "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0") : null,
+        ].filter(Boolean));
+      });
+      taStepsEl.replaceChildren(...rows);
+      taStepsEl.style.display = "";
+
+      const done = !["requested", "running"].includes(run.status);
+      if (!done) {
+        taResultEl.style.display = "none";
+        taTableEl.style.display = "none";
+        return;
+      }
+      const resultText = run.status === "passed" ? "Passed"
+        : run.status === "timed_out" ? "Timed out: the Fusion add-in did not pick the run up"
+        : run.status === "cancelled" ? "Cancelled"
+        : `Failed: ${run.error || "no reason recorded"}`;
+      taResultEl.style.color = TA_RESULT_COLOR[run.status] || TA_RESULT_COLOR.failed;
+      taResultEl.textContent = resultText;
+      taResultEl.style.display = "";
+
+      const before = run.before || null, after = run.after || null, send = run.send || null;
+      const bf = taStepFile(before), af = taStepFile(after);
+      const short = (sha) => sha ? String(sha).slice(0, 12) : "—";
+      const facts = [
+        ["Revision", before?.current?.revision || "—", send?.revision || after?.current?.revision || "—"],
+        ["Status", before?.current?.status || "—", after?.current?.status || "—"],
+        ["Fusion version", bf?.fusion_version ?? before?.current?.fusion_version ?? "—", send?.fusion_version ?? af?.fusion_version ?? after?.current?.fusion_version ?? "—"],
+        ["File name", bf?.file_name || "—", send?.file_name || af?.file_name || "—"],
+        ["SHA-256", short(bf?.sha256), short(send?.sha256 || af?.sha256)],
+        ["Supplier sees", taSupplierText(before), after ? taSupplierText(after) : "—"],
+      ];
+      const cell = (v, mono) => el("td", { style: `padding:0.25rem 0.75rem 0.25rem 0;font-size:0.8125rem;${mono ? "font-family:var(--mono,monospace);font-size:0.75rem;" : ""}word-break:break-all` }, String(v));
+      taTableEl.replaceChildren(el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.8125rem;width:auto" }, [
+        el("thead", {}, el("tr", {}, ["", "Before", "After"].map((h) => el("th", {}, h)))),
+        el("tbody", {}, facts.map(([k, b, a]) => el("tr", {}, [
+          el("td", { style: "padding:0.25rem 0.75rem 0.25rem 0;color:var(--muted,#8b93a1);white-space:nowrap" }, k),
+          cell(b, k === "SHA-256" || k === "File name"), cell(a, k === "SHA-256" || k === "File name"),
+        ]))),
+      ])));
+      taTableEl.style.display = "";
+    }
+
+    async function taLoadRuns() {
+      let runs;
+      try {
+        runs = taUnwrapRuns(await API.post(token, "listCadTestRuns", { limit: 5 }));
+      } catch (ex) { taError(ex.message); return; }
+      taRunsEl.replaceChildren(...runs.map((r) => el("div", {
+        style: "display:flex;align-items:center;gap:0.75rem;padding:0.2rem 0;font-size:0.8125rem;cursor:pointer;border-top:1px solid var(--border,#e2e8f0)44",
+        title: "Load this run",
+        onclick: async () => {
+          taError("");
+          try {
+            const run = taUnwrapRun(await API.post(token, "getCadTestRun", { run_id: r.id }));
+            taShowRun(run);
+            // A live run becomes the watched one; a finished run is only shown,
+            // and a watch on another live run is left alone.
+            if (run && ["requested", "running"].includes(run.status)) { if (_taRunId !== run.id) taWatch(run.id); }
+            else taRunBtn.disabled = !!_taRunId;
+          } catch (ex) { taError(ex.message); }
+        },
+      }, [
+        taMuted(taTime(r.requested_at), "font-variant-numeric:tabular-nums;flex-shrink:0"),
+        el("span", { style: "font-family:monospace;font-size:0.8125rem;flex-shrink:0" }, taPartOf(r)),
+        el("span", { style: `font-weight:600;color:${TA_RESULT_COLOR[r.status] || "var(--muted,#8b93a1)"}` }, String(r.status || "").replace("_", " ")),
+      ])));
+    }
 
     // ---- CAD Models section --------------------------------------------------
     let _cadLoaded = false;

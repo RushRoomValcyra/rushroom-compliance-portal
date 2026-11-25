@@ -155,7 +155,7 @@ test("portal-api derives status from the shared status core", () => {
 test("the API no longer reads the object-level status columns", () => {
   const src = read("supabase/functions/portal-api/index.ts")
     .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  // Reads of cad_models must not ask for the columns 0061 drops …
+  // Reads of cad_models must not ask for the columns 0062 drops …
   for (const m of src.matchAll(/tdb\("cad_models"\)\s*\.select\("([^"]*)"\)/g)) {
     const cols = m[1].split(",").map((c) => c.trim());
     assert.ok(!cols.includes("status") && !cols.includes("current_revision"),
@@ -185,7 +185,7 @@ test("release is one rule on both sides and only the current revision qualifies"
   assert.ok(/releaseRevisionRow\(tdb, session, "cad_model_revisions", "cad"/.test(src), "CAD bypasses the release helper");
 });
 
-test("the dual-write keeps the old columns alive until 0061", () => {
+test("the dual-write keeps the old columns alive until 0062", () => {
   const src = read("supabase/functions/portal-api/index.ts");
   const sync = src.slice(src.indexOf("async function syncCadModel("), src.indexOf("function transitionStamp("));
   assert.ok(/status: derived\.status/.test(sync) && /current_revision: derived\.current\?\.revision/.test(sync),

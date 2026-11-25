@@ -1457,3 +1457,17 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Consequences:** `listStockedAssemblies` returns every eligible component, parts included, with contract v1 unchanged; `resolveAssemblyInputs` takes any eligible child from the shelf as one unit, Hub-derived ones included. The rule lives in `preAssemblyEligibility` in `_shared/assembly-inputs-core.mjs`.
 
 **Files changed:** `index.html`, `assets/app.js`, `supabase/functions/portal-api/index.ts`, `supabase/functions/_shared/assembly-inputs-core.mjs`, `tests/pre-assemblies.test.mjs`, `tests/assembly-inputs.test.mjs`, `docs/PLANNER_MAPPINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `CLAUDE.md`.
+
+---
+
+## 2026-11-25 — The change-order path is tested on the real registry, from inside the portal
+
+**Decision:** The portal carries a test agent (robot button, Drawings tab) that runs one engineering change order end to end on production data: a one-line sketch on a chosen part in Fusion, a new Fusion version, stamp, STEP export, send, and then twelve checks on naming, versioning, status, supplier visibility and the Change Log. The Fusion add-in polls the portal for requested runs (`cad_test_runs`); the browser never talks to Fusion. The run never releases and never touches a released letter.
+
+**Why:** Every defect in the CAD path so far — files named from the root component instead of the hub name, a resend minting Rev B instead of replacing the draft, a release stamping every file — sat on the seam between Fusion, the add-in and the portal, where no unit test looks. The supplier builds from what the portal shows them, so a wrong name or letter is a production defect, not a cosmetic one. A test that exercises the seam itself, with the result visible where the engineer already works, catches a regression before a supplier does.
+
+**Consequences:** `cad_test_runs` (migration 0061, org-scoped, in `TENANT_TABLES`); seven portal-api actions (`requestCadTestRun`, `getCadTestRun`, `listCadTestRuns`, `cancelCadTestRun`, `pollCadTestRun`, `reportCadTestStep`, `finishCadTestRun`); the pure checks live in `_shared/test-agent-core.mjs` and are unit-tested. The part under test gains one Fusion version and one `PIM test agent` sketch per run (replaced, never accumulated). The STATUS_MODEL drop migration moves from 0061 to 0062. One run at a time per organization.
+
+**Files changed:** `docs/TEST_AGENT.md`, `supabase/migrations/0061_cad_test_runs.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/_shared/test-agent-core.mjs`, `supabase/functions/portal-api/index.ts`, `assets/app.js`, `index.html`, `supplier.html`, `fusion-addin/RushroomPIM/lib/test_agent.py`, `fusion-addin/RushroomPIM/lib/test_agent_poller.py`, `fusion-addin/RushroomPIM/commands/test_agent_cmd.py`, `fusion-addin/RushroomPIM/RushroomPIM.py`, `tests/cad-test-agent.test.mjs`, `docs/ROADMAP.md`, `docs/STATUS_MODEL.md`, `docs/SYSTEM_OVERVIEW.html`.
+
+---

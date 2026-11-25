@@ -38,6 +38,10 @@ import {
   canTransition, compareRevision, deriveObject, nextRevisionLetter as nextLetterCore,
   statusSummary,
 } from "../_shared/status-core.mjs";
+import {
+  FUSION_STEP_KEYS, STEP_KEYS, STEP_STATUSES, applyResults, buildSnapshot, expectedOutcome,
+  newSteps, normaliseSteps, setStep, skipRemaining, timeoutPatch, verifyRun,
+} from "../_shared/test-agent-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
@@ -787,7 +791,7 @@ function nextRevisionLetter(existing: string[]): string {
 // object shows is derived here; nothing below reads drawings.status,
 // cad_models.status, cad_models.current_revision, cad_model_files.revision or
 // cad_model_files.released_at. Those columns are still WRITTEN (dual-write)
-// until migration 0061 drops them, so a rolled-back function keeps working.
+// until migration 0062 drops them, so a rolled-back function keeps working.
 // ---------------------------------------------------------------------------
 
 const DRAWING_REV_FIELDS =
@@ -806,7 +810,7 @@ async function loadDrawingRevisions(tdb: any, drawingIds: string[]): Promise<Rec
   return byDrawing;
 }
 
-/** Dual-write: drawings.status mirrors the derived status until 0061 drops it. */
+/** Dual-write: drawings.status mirrors the derived status until 0062 drops it. */
 async function syncDrawingStatus(tdb: any, drawingId: string, revisions?: any[]): Promise<any> {
   const revs = revisions ?? (await loadDrawingRevisions(tdb, [drawingId]))[drawingId] ?? [];
   const derived = deriveObject(revs);
@@ -920,6 +924,111 @@ async function writeBomHistory(
     });
     return true;
   } catch { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// CAD change-order test agent (docs/TEST_AGENT.md). The rules live in
+// _shared/test-agent-core.mjs; this section only loads rows and writes runs.
+// ---------------------------------------------------------------------------
+
+/**
+ * The registry as the portal sees one part: the facts verifyRun compares before
+ * and after a run. Mirrors getComponentCad (drawings through drawing_components,
+ * CAD through loadCadRevisions) and adds the supplier view and the history count.
+ * Returns null when the part does not exist; model is null when it has no CAD.
+ */
+async function cadTestSnapshot(tdb: any, componentId: string): Promise<{ snapshot: any; model: any; component: any } | null> {
+  const { data: component } = await tdb("bom_components").select("id, part_number, name").eq("id", componentId).maybeSingle();
+  if (!component) return null;
+
+  const { data: dlinks } = await tdb("drawing_components").select("drawing_id, role").eq("component_id", componentId);
+  const drawingIds = [...new Set(((dlinks || []) as any[]).map((l) => l.drawing_id))];
+  let drawings: any[] = [];
+  if (drawingIds.length) {
+    const { data: drws } = await tdb("drawings").select("id, drawing_number, is_supplier_visible").in("id", drawingIds);
+    const revsByDrawing = await loadDrawingRevisions(tdb, drawingIds);
+    const roleOf: Record<string, string> = {};
+    for (const l of (dlinks || []) as any[]) {
+      if (!roleOf[l.drawing_id] || l.role === "depicts") roleOf[l.drawing_id] = l.role;
+    }
+    drawings = ((drws || []) as any[]).map((d) => ({
+      id: d.id, drawing_number: d.drawing_number, role: roleOf[d.id] || "depicts",
+      is_supplier_visible: d.is_supplier_visible !== false,
+      revisions: (revsByDrawing[d.id] || []).map((r: any) => ({
+        id: r.id, revision: r.revision, status: r.status, source_sha256: r.source_sha256 || null,
+        source_cad_file_id: r.source_cad_file_id || null,
+      })),
+    }));
+  }
+
+  // select("*"): the dual-written cad_models.status is wanted here precisely to
+  // check it against the current revision (status step), never to display it.
+  const { data: modelRows } = await tdb("cad_models").select("*").eq("component_id", componentId);
+  const model = (modelRows || [])[0] || null;
+  const revisions = model ? await loadCadRevisions(tdb, model.id) : [];
+
+  const { count } = await tdb("bom_component_history")
+    .select("id", { count: "exact", head: true }).eq("component_id", componentId);
+
+  const summary = statusSummary({
+    drawings,
+    cad: model ? { revisions: revisions.map((r) => ({
+      id: r.id, revision: r.revision, status: r.status,
+      files: r.files.map((f: any) => ({ id: f.id, format: f.format, sha256: f.sha256 ?? null })),
+    })) } : null,
+  });
+  const snapshot = buildSnapshot({
+    at: new Date().toISOString(), component, model, revisions, drawings,
+    historyCount: count ?? 0, warnings: summary.warnings,
+  });
+  return { snapshot, model, component };
+}
+
+/** Apply the lazy timeouts to every open run of the org before anyone reads
+ *  them. Cheap: one indexed select; writes only when a run actually expired. */
+async function expireCadTestRuns(tdb: any): Promise<any[]> {
+  const { data: open } = await tdb("cad_test_runs")
+    .select("id, status, requested_at, claimed_at, steps").in("status", ["requested", "running"])
+    .order("requested_at", { ascending: true });
+  const now = Date.now();
+  const still: any[] = [];
+  for (const run of (open || []) as any[]) {
+    const patch = timeoutPatch(run, now);
+    if (patch) await tdb("cad_test_runs").update(patch).eq("id", run.id).eq("status", run.status);
+    else still.push(run);
+  }
+  // The runs still open, oldest first — the poll and the one-at-a-time check
+  // read this list instead of selecting again (one query on the idle path).
+  return still;
+}
+
+/** The run as the panel and the add-in read it: part and Fusion document
+ *  attached, steps normalised to the twelve. */
+async function withCadTestContext(tdb: any, runs: any[]): Promise<any[]> {
+  const rows = (runs || []).filter(Boolean);
+  if (!rows.length) return [];
+  const compIds = [...new Set(rows.map((r) => r.component_id).filter(Boolean))];
+  const modelIds = [...new Set(rows.map((r) => r.cad_model_id).filter(Boolean))];
+  const [{ data: comps }, { data: models }] = await Promise.all([
+    compIds.length ? tdb("bom_components").select("id, part_number, name").in("id", compIds) : { data: [] },
+    modelIds.length ? tdb("cad_models").select("id, fusion_document_id, fusion_document_name").in("id", modelIds) : { data: [] },
+  ]);
+  const compMap: Record<string, any> = {};
+  for (const c of (comps || []) as any[]) compMap[c.id] = c;
+  const modelMap: Record<string, any> = {};
+  for (const m of (models || []) as any[]) modelMap[m.id] = m;
+  return rows.map((r) => {
+    const c = compMap[r.component_id] || {};
+    const m = modelMap[r.cad_model_id] || {};
+    return {
+      ...r,
+      steps: normaliseSteps(r.steps),
+      part_number: c.part_number ?? r.before?.part_number ?? null,
+      component_name: c.name ?? r.before?.component_name ?? null,
+      fusion_document_id: m.fusion_document_id ?? r.before?.fusion_document_id ?? null,
+      fusion_document_name: m.fusion_document_name ?? r.before?.fusion_document_name ?? null,
+    };
+  });
 }
 
 /**
@@ -5303,7 +5412,7 @@ Deno.serve(async (req) => {
       if (error) return json({ error: error.message }, 400);
       Object.assign(rev, stamp);
     }
-    // Dual-write: drawings.status follows the current issue until 0061.
+    // Dual-write: drawings.status follows the current issue until 0062.
     await syncDrawingStatus(tdb, drawing_id, revisions);
 
     const audit = status === "released"
@@ -5635,7 +5744,7 @@ Deno.serve(async (req) => {
     } else {
       const { data: inserted, error } = await tdb("cad_model_files").insert({
         ...fileRow, cad_model_id, cad_model_revision_id: rev.id, format,
-        revision,              // dual-write until 0061 drops the column
+        revision,              // dual-write until 0062 drops the column
         released_at: null,
         created_by: session.uid || null,
       }).select("id").maybeSingle();
@@ -5881,6 +5990,187 @@ Deno.serve(async (req) => {
     }));
 
     return json({ cad_models: enriched });
+  }
+
+  // ==========================================================================
+  // CAD change-order test agent (docs/TEST_AGENT.md). Rushroom only. Every
+  // action answers { run } (or { runs }); the add-in and the panel read the
+  // same shape. The rules are in _shared/test-agent-core.mjs.
+  // ==========================================================================
+
+  // --- request: snapshot the part, predict the outcome, queue the run --------
+  if (action === "requestCadTestRun") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const component_id = String(body.component_id ?? "").trim();
+    if (!component_id) return json({ error: "component_id required" }, 400);
+    // One at a time per org: the add-in executes on Fusion's main thread, and
+    // two runs on one document would race each other's save. The partial
+    // unique index idx_cad_test_runs_one_open holds the rule when two requests
+    // arrive together (mapped to the same 400 below).
+    const open = await expireCadTestRuns(tdb);
+    if (open.length) {
+      return json({ error: `A test run is already ${open[0].status}`, run_id: open[0].id }, 400);
+    }
+    const snap = await cadTestSnapshot(tdb, component_id);
+    if (!snap) return json({ error: "Component not found" }, 404);
+    if (!snap.model) return json({ error: "The part has no CAD model" }, 404);
+    if (!snap.model.fusion_document_id) return json({ error: "The CAD model has no Fusion document id" }, 404);
+    const { data: run, error } = await tdb("cad_test_runs").insert({
+      component_id, cad_model_id: snap.model.id, status: "requested",
+      requested_by: session.uid || null,
+      before: snap.snapshot, expected: expectedOutcome(snap.snapshot), steps: newSteps(),
+    }).select("*").maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) return json({ error: "A test run is already requested or running" }, 400);
+      return json({ error: error.message }, 400);
+    }
+    const [out] = await withCadTestContext(tdb, [run]);
+    return json({ run: out });
+  }
+
+  // --- read one run (the panel's 2 s poll) ----------------------------------
+  if (action === "getCadTestRun") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const run_id = String(body.run_id ?? "").trim();
+    if (!run_id) return json({ error: "run_id required" }, 400);
+    await expireCadTestRuns(tdb);
+    const { data: run } = await tdb("cad_test_runs").select("*").eq("id", run_id).maybeSingle();
+    if (!run) return json({ error: "Test run not found" }, 404);
+    const [out] = await withCadTestContext(tdb, [run]);
+    return json({ run: out });
+  }
+
+  // --- the last N runs, newest first ----------------------------------------
+  if (action === "listCadTestRuns") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const limit = Math.min(Math.max(Number(body.limit) || 10, 1), 50);
+    await expireCadTestRuns(tdb);
+    const { data: runs, error } = await tdb("cad_test_runs")
+      .select("id, component_id, cad_model_id, status, requested_by, requested_at, claimed_at, claimed_by, finished_at, expected, send, steps, error, before")
+      .order("requested_at", { ascending: false }).limit(limit);
+    if (error) return json({ error: error.message }, 500);
+    // The list carries the identity facts, not the full snapshots.
+    const out = (await withCadTestContext(tdb, runs || [])).map(({ before: _b, ...r }) => r);
+    return json({ runs: out });
+  }
+
+  // --- cancel a run the add-in has not picked up ----------------------------
+  if (action === "cancelCadTestRun") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const run_id = String(body.run_id ?? "").trim();
+    if (!run_id) return json({ error: "run_id required" }, 400);
+    await expireCadTestRuns(tdb);
+    const { data: run } = await tdb("cad_test_runs").select("*").eq("id", run_id).maybeSingle();
+    if (!run) return json({ error: "Test run not found" }, 404);
+    if (run.status !== "requested") return json({ error: `Run is ${run.status}; only a requested run can be cancelled` }, 409);
+    const at = new Date().toISOString();
+    const { data: upd, error } = await tdb("cad_test_runs")
+      .update({ status: "cancelled", finished_at: at, steps: skipRemaining(run.steps, STEP_KEYS, at) })
+      .eq("id", run_id).eq("status", "requested").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!upd?.length) return json({ error: "Run was claimed before it could be cancelled" }, 409);
+    const [out] = await withCadTestContext(tdb, upd);
+    return json({ run: out });
+  }
+
+  // --- the add-in asks for work (every 5 s while connected) -----------------
+  if (action === "pollCadTestRun") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const agent = String(body.agent ?? "").trim().slice(0, 200) || "Fusion add-in";
+    // One indexed select on the idle path: the open runs, timeouts applied.
+    const open = await expireCadTestRuns(tdb);
+    const target = open.find((r) => r.status === "requested");
+    if (!target) return json({ run: null });
+    const at = new Date().toISOString();
+    // The claim is one UPDATE guarded by status = 'requested': of two Fusion
+    // instances polling at once only one touches the row; the other gets no
+    // row back and answers run: null, the same as "nothing waiting".
+    const { data: claimed, error } = await tdb("cad_test_runs")
+      .update({ status: "running", claimed_at: at, claimed_by: agent, steps: setStep(target.steps, "claim", "passed", agent, at) })
+      .eq("id", target.id).eq("status", "requested").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!claimed?.length || claimed[0].claimed_by !== agent) return json({ run: null });
+    const [out] = await withCadTestContext(tdb, claimed);
+    return json({ run: out });
+  }
+
+  // --- the add-in reports a Fusion-side step as it happens ------------------
+  if (action === "reportCadTestStep") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const run_id = String(body.run_id ?? "").trim();
+    const key = String(body.key ?? "").trim();
+    const status = String(body.status ?? "").trim();
+    if (!run_id || !key || !status) return json({ error: "run_id, key and status required" }, 400);
+    if (!FUSION_STEP_KEYS.includes(key)) return json({ error: `key must be one of: ${FUSION_STEP_KEYS.join(", ")}` }, 400);
+    if (!["running", "passed", "failed", "skipped"].includes(status) || !STEP_STATUSES.includes(status)) {
+      return json({ error: "status must be running, passed, failed or skipped" }, 400);
+    }
+    await expireCadTestRuns(tdb);
+    const { data: run } = await tdb("cad_test_runs").select("id, status, steps, send").eq("id", run_id).maybeSingle();
+    if (!run) return json({ error: "Test run not found" }, 404);
+    if (run.status !== "running") return json({ error: `Run is ${run.status}, not running` }, 409);
+    const at = new Date().toISOString();
+    const detail = body.detail != null ? String(body.detail).slice(0, 2000) : null;
+    const data = body.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data : null;
+    // Structured facts ride on the step (the save step's version_before /
+    // version_after feed the versioning verdict); the send step's answer is
+    // also kept as the run's `send` record.
+    const patch: Record<string, unknown> = { steps: setStep(run.steps, key, status, detail, at, data) };
+    if (key === "send" && data) patch.send = { ...(run.send || {}), ...data };
+    const { data: upd, error } = await tdb("cad_test_runs").update(patch).eq("id", run_id).eq("status", "running").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!upd?.length) return json({ error: "Run is no longer running" }, 409);
+    const [out] = await withCadTestContext(tdb, upd);
+    return json({ run: out });
+  }
+
+  // --- the add-in is done: after snapshot, steps 8–12, verdict -------------
+  if (action === "finishCadTestRun") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const run_id = String(body.run_id ?? "").trim();
+    if (!run_id) return json({ error: "run_id required" }, 400);
+    await expireCadTestRuns(tdb);
+    const { data: run } = await tdb("cad_test_runs").select("*").eq("id", run_id).maybeSingle();
+    if (!run) return json({ error: "Test run not found" }, 404);
+    if (run.status !== "running") return json({ error: `Run is ${run.status}, not running` }, 409);
+    const at = new Date().toISOString();
+    let steps = normaliseSteps(run.steps);
+    // A Fusion step the add-in never reported as passed is a Fusion failure:
+    // the portal cannot verify a send that did not demonstrably happen.
+    for (const k of FUSION_STEP_KEYS) {
+      const s = steps.find((x) => x.key === k);
+      if (s && (s.status === "pending" || s.status === "running")) steps = setStep(steps, k, "failed", "not reported by the add-in", at);
+    }
+    const failedFusion = FUSION_STEP_KEYS.map((k) => steps.find((x) => x.key === k)).find((s) => s && s.status === "failed");
+    const patch: Record<string, unknown> = { finished_at: at };
+    if (failedFusion) {
+      patch.status = "failed";
+      patch.error = failedFusion.detail || `${failedFusion.label} failed`;
+      patch.steps = skipRemaining(steps, STEP_KEYS, at);
+    } else {
+      const snap = await cadTestSnapshot(tdb, run.component_id);
+      if (!snap) {
+        patch.status = "failed";
+        patch.error = "the part under test no longer exists";
+        patch.steps = skipRemaining(steps, STEP_KEYS, at);
+      } else {
+        const { data: historyRows } = await tdb("bom_component_history").select("id, changed_at, notes")
+          .eq("component_id", run.component_id).gt("changed_at", run.requested_at).order("changed_at", { ascending: true });
+        const verdict = verifyRun({
+          before: run.before, after: snap.snapshot, expected: run.expected, send: run.send || {}, steps,
+          historyRows: historyRows || [], requestedAt: run.requested_at, at,
+        });
+        patch.after = snap.snapshot;
+        patch.steps = applyResults(steps, verdict.steps);
+        patch.status = verdict.passed ? "passed" : "failed";
+        patch.error = verdict.passed ? null : (verdict.steps.find((s) => s.status === "failed")?.detail ?? "verification failed");
+      }
+    }
+    const { data: upd, error } = await tdb("cad_test_runs").update(patch).eq("id", run_id).eq("status", "running").select("*");
+    if (error) return json({ error: error.message }, 400);
+    if (!upd?.length) return json({ error: "Run is no longer running" }, 409);
+    const [out] = await withCadTestContext(tdb, upd);
+    return json({ run: out });
   }
 
 

@@ -27,3 +27,4 @@ fusion-addin/RushroomPIM/config.json
 fusion-addin/RushroomPIM/debug.log
 fusion-addin/RushroomPIM/pending_stamps.json
 __pycache__/
+fusion-addin/RushroomPIM/import_progress.json

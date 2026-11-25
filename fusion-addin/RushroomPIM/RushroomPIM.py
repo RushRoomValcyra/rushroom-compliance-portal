@@ -6,8 +6,11 @@ Three commands, added to the Utilities workspace:
   Stamp This Component  — searches the portal and writes pim_component_id +
                           pim_part_number attributes on the active component,
                           then registers this Fusion document as the CAD source
-  Release to Portal  — exports .f3z / .step / .glb, uploads via signed URL,
-                       and registers a revision letter in the portal registry
+  Send to portal     — exports .f3z / .step / .glb, uploads via signed URL,
+                       and registers them on a revision in the portal registry
+  Import project to portal — the same for every part document of the active
+                       project in one pass, matched by the part number that
+                       leads the document name (lib/project_import.py)
 
 Install:
   Mac:  ~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/
@@ -135,9 +138,10 @@ def run(context):
         from commands.release_cmd import ReleaseCommand
         from commands.bulk_stamp_cmd import BulkStampCommand
         from commands.bulk_release_cmd import BulkReleaseCommand
+        from commands.import_project_cmd import ImportProjectCommand
         _log("imports OK")
 
-        for Cmd in [ConnectCommand, StampCommand, ReleaseCommand, BulkStampCommand, BulkReleaseCommand]:
+        for Cmd in [ConnectCommand, StampCommand, ReleaseCommand, BulkStampCommand, BulkReleaseCommand, ImportProjectCommand]:
             cmd = Cmd(_app, _ui, _handlers)
             cmd.register()
             _commands.append(cmd)

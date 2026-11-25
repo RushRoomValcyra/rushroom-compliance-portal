@@ -5589,6 +5589,10 @@ Deno.serve(async (req) => {
       if (current && compareRevision(revision, current.revision) < 0) {
         return json({ error: `Rev ${revision} is below the current ${current.revision}` }, 400);
       }
+    } else if (current && current.status !== "released" && current.status !== "superseded") {
+      // A send while the current revision is still in work lands on that same
+      // letter and replaces its files (§5.2): v15 overwrites v14 on Rev B.
+      revision = current.revision;
     } else {
       revision = nextRevisionLetter(existingLetters);
     }

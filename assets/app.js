@@ -12247,6 +12247,9 @@
       if (robotBtn) { robotBtn.setAttribute("aria-pressed", open ? "true" : "false"); robotBtn.classList.toggle("btn-primary", open); }
       if (!open) { taStopPolling(); return; }
       taError("");
+      // Fresh registry facts on every open: a release made elsewhere (the CAD
+      // Models tab, Fusion) must show in the select and the expected outcome.
+      _taModels = null; _cadLoaded = false;
       await Promise.all([taLoadParts(), taLoadRuns()]);
       // A run was live when the panel closed: pick it up again.
       if (_taRunId) {

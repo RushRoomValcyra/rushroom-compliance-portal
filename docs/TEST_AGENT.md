@@ -211,3 +211,13 @@ Fusion: all twelve steps green in 16.6 s. Fusion v5 → v6, sha256
 "nothing" before and after, Change Log row "CAD revision A re-registered
 (step)". The run before it timed out for the reason recorded under
 `RushroomPIM.py` above.
+
+## Second run — 2026-11-25, after releasing Rev A
+
+Same part, Rev A released by hand first: all twelve steps green in 12.6 s.
+Expected mode `new_letter`; the send minted **Rev B draft** (`created`),
+Fusion v6 → v7, Rev A stayed released with its v6 file, the supplier view
+read "CAD Rev A" before and after, Change Log "CAD revision B registered
+(step)". Found while doing it: the panel reused its cached part list on
+reopen and still said "Rev A draft" after the release; it now reloads the
+registry on every open (v455).

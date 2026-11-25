@@ -149,7 +149,9 @@ One job, in order (each step reported before and after):
 
 1. `download` — GET `step_url` to a temp dir as `<step_file_name>`; sha256
    must equal `cad_sha256`, else the step fails ("STEP sha differs from the
-   registry").
+   registry"). A file registered before the portal recorded shas has
+   `cad_sha256 = null`: the download's sha becomes the fact, the step says
+   so, and `finishDrawingRender` writes it onto the file row.
 2. `render` — load `specs/<spec>.yaml`; refuse specs with more than one
    `parts` entry ("spec has N parts; a render job draws one part") — multi-part
    sets stay a by-hand job for now; write a temp spec with `parts[0].step` =

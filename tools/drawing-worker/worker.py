@@ -404,8 +404,8 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         st["want_sha"] = want
         if not url:
             raise StepFailed("job carries no step_url")
-        if not want:
-            raise StepFailed("job carries no cad_sha256")
+        # A STEP registered before the portal recorded shas has none: the
+        # download's sha becomes the fact, and finishDrawingRender backfills it.
         path = os.path.join(tmp, name)
         h = hashlib.sha256()
         n = 0
@@ -420,10 +420,11 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         except urllib.error.URLError as exc:
             raise StepFailed("STEP download failed: %s" % exc.reason)
         got = h.hexdigest()
-        if got != want:
+        if want and got != want:
             raise StepFailed("STEP sha differs from the registry")
-        st["step_path"], st["step_sha256"] = path, got
-        return "%s · %d bytes · %s" % (name, n, got[:8]), {"file_name": name, "bytes": n, "sha256": got}
+        st["step_path"], st["step_sha256"], st["want_sha"] = path, got, got
+        note = "" if want else " · registry had no sha, recorded"
+        return "%s · %d bytes · %s%s" % (name, n, got[:8], note), {"file_name": name, "bytes": n, "sha256": got}
 
     def step_render():
         spec_name = str(job.get("spec") or "").strip()

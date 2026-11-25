@@ -6702,6 +6702,11 @@ Deno.serve(async (req) => {
     // The same rule addDrawingRevision uses: letter = the one reserved at
     // request. An issue added meanwhile makes that letter a duplicate (or
     // below the current) and the insert is refused — the job fails with it.
+    // A STEP registered before shas were recorded gets the worker's: the
+    // drawing's "made from" and the file now agree.
+    if (stepFile && !stepFile.sha256 && renderedFrom) {
+      await tdb("cad_model_files").update({ sha256: renderedFrom }).eq("id", stepFile.id);
+    }
     const r = await insertDrawingRevision(tdb, session, drawing, {
       revision: job.issue, storage_path, file_name,
       notes: `Rendered from CAD Rev ${rev?.revision ?? "?"} by drawset`,

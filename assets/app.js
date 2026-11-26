@@ -14400,13 +14400,17 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         const [glyph, color] = DR_GLYPH[s.status] || DR_GLYPH.pending;
         let detail = s.detail || "";
         if (key === "claim" && j.status === "requested" && !detail) detail = "Waiting for the drawing worker";
+        // An iterate job registers no issue: its last step is the candidate
+        // (DYNAMIC_DRAWINGS §6, DRAWINGS_TAB_UX §13.4) from the first poll on,
+        // and the compare strip says the rest.
+        const label = key === "register" && j.mode === "iterate" ? "Candidate ready" : (s.label || DR_STEP_LABELS[key] || key);
         return el("div", { style: "display:flex;align-items:baseline;gap:0.5rem;padding:0.1rem 0;font-size:0.8125rem" }, [
           el("span", { style: `width:1.1rem;text-align:center;font-weight:700;color:${color};flex-shrink:0` }, glyph),
-          el("span", { style: `min-width:5.5rem;${s.status === "skipped" ? "color:var(--muted,#8b93a1)" : ""}` }, s.label || DR_STEP_LABELS[key] || key),
+          el("span", { style: `min-width:5.5rem;${s.status === "skipped" ? "color:var(--muted,#8b93a1)" : ""}` }, label),
           detail ? el("span", { style: "color:var(--muted,#8b93a1);font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0", title: detail }, detail) : null,
         ].filter(Boolean));
       }));
-      if (drLive(j)) { resultEl.style.display = "none"; return; }
+      if (drLive(j) || (j.status === "done" && j.mode === "iterate")) { resultEl.style.display = "none"; return; }
       resultEl.style.color = DR_RESULT_COLOR[j.status] || DR_RESULT_COLOR.failed;
       resultEl.textContent = drResultText(j);
       resultEl.style.display = "";
@@ -14551,6 +14555,698 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         error(ex.message);
         renderBtn.disabled = false;
       }
+    };
+  }
+
+  // ---- Dynamic drawings, layer 1 (docs/DYNAMIC_DRAWINGS.md §4.1, §6, §7 Phase 3)
+  // Click a dimension, change a property, no AI: a one-row form writing one op
+  // through applyDrawingSpecOps, a Render that iterates the draft, a split
+  // compare with the diff strip, Keep / Discard. Rushroom only — a supplier
+  // never sees a draft, a patch or a candidate (SUPPLIER_ACTIONS has none of
+  // these actions and supplier.html does not load the module).
+  // The ops vocabulary, the address rules and the diff live in ONE file,
+  // supabase/functions/_shared/drawing-spec-core.mjs, which index.html loads
+  // as window.PortalSpecCore the way cost-math.mjs is loaded (a classic script
+  // cannot import a module). Nothing here restates a rule from that file;
+  // without it the surface simply has no layer 1.
+  const specCore = () => window.PortalSpecCore || null;
+  // Rows the patch touched (amber) per drawing id, kept across repaints until
+  // the candidate is kept or discarded; the iterate jobs (by job id) dismissed
+  // with Edit, so their strip does not come back on the next repaint; and,
+  // per drawing id, the form a 409 interrupted — the repaint reopens it with
+  // its values and the text in red (DRAWINGS_TAB_UX §13.2).
+  const _drSurfaceTouched = new Map();
+  const _drSurfaceDismissed = new Set();
+  const _drSurfaceReopen = new Map();
+
+  // Mirror of _shared/status-core.mjs nextRevisionLetter for one letter: length
+  // first, then text, so Z → AA; no letter yet → A.
+  function drNextLetter(letter) {
+    const chars = String(letter || "").toUpperCase().split("");
+    if (!chars.length) return "A";
+    let i = chars.length - 1;
+    while (i >= 0) {
+      if (chars[i] !== "Z") { chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1); return chars.join(""); }
+      chars[i] = "A"; i--;
+    }
+    return "A" + chars.join("");
+  }
+
+  /** The kind-level tolerance a row offers when it cannot carry a per-feature
+   *  override (§4.1): position kinds → hole_position, pos_t → edge_bore_depth,
+   *  the outline → outline, a counterbore → counterbore_depth. Null = the
+   *  change is code, not spec (§4.3). */
+  function drToleranceKindFor(row) {
+    const kind = String(row.kind || "");
+    const at = row.at && typeof row.at === "object" ? row.at : null;
+    if (row.feature === "outline" || (at && at.type === "outline")) return "outline";
+    const core = specCore();
+    if (core && core.TOLERANCE_KINDS.includes(kind) && kind !== "general") return kind;
+    if (["pos", "pos_x", "pos_y", "pos_y_top", "cc", "ctq", "twin", "ends_in", "from", "to"].includes(kind)) return "hole_position";
+    if (kind === "pos_t") return "edge_bore_depth";
+    if (at && at.type === "hole" && kind === "depth" && String(at.axis || "").toUpperCase() !== "Z") return "edge_bore_depth";
+    if (/cbore|counterbore/.test(kind)) return "counterbore_depth";
+    return null;
+  }
+
+  const drNum = (v) => (typeof v === "number" ? String(Math.round(v * 100) / 100) : String(v ?? ""));
+  const drDimKey = (r) => `${r.sheet}|${r.feature}|${r.kind}`;
+
+  /** An address in words: "Ø5 at (37, 58.5)", "groove X at 12", "pocket at (40, 300)". */
+  function drAtWords(at) {
+    if (!at || typeof at !== "object") return "";
+    if (at.type === "hole") return `Ø${drNum(at.D)} at (${drNum(at.pos?.[0])}, ${drNum(at.pos?.[1])})`;
+    if (at.type === "groove") return `groove ${String(at.axis || "").toUpperCase()} at ${drNum(at.offset)}`;
+    if (at.type === "pocket") return `pocket at (${drNum(at.at?.[0])}, ${drNum(at.at?.[1])})`;
+    return "";
+  }
+
+  /** One op in words — what the Patch list, the history and the audit speak. */
+  function drOpWords(op) {
+    if (!op || typeof op !== "object") return "";
+    const where = drAtWords(op.at);
+    switch (op.op) {
+      case "override_dimension": {
+        const parts = [];
+        if (op.tol != null) parts.push(`${op.kind} tol ${op.tol}`);
+        if (op.name != null) parts.push(`${op.kind === "dia" ? "name" : "named"} ${op.name}`);
+        return `${parts.join(" · ") || op.kind} on ${where}`;
+      }
+      case "remove_override": return `${op.kind} override removed on ${where}`;
+      case "set_tolerance": return `${op.kind} tol ${op.tol} for all`;
+      case "set_inside_face": return `inside face ${op.side}`;
+      case "set_datum": return `datum ${op.axis} ${op.side}`;
+      case "set_from_top_rule": return `from top within ${drNum(op.within)}`;
+      case "name_edge": return `edge ${op.edge} named ${op.name}`;
+      case "set_edge_band": return op.text == null ? `edge band ${op.edge} cleared` : `edge band ${op.edge} ${op.text}`;
+      case "set_hole_rule": {
+        const parts = [];
+        if (op.name != null) parts.push(`name ${op.name}`);
+        if (op.dia_tol != null) parts.push(`dia tol ${op.dia_tol}`);
+        if (op.depth_tol != null) parts.push(`depth tol ${op.depth_tol}`);
+        return `Ø${drNum(op.D)} ${String(op.axis || "").toUpperCase()}${op.only_at ? ` at ${op.only_at.map((p) => `(${drNum(p[0])}, ${drNum(p[1])})`).join(" ")}` : ""}: ${parts.join(" · ") || "rule"}`;
+      }
+      case "remove_hole_rule": return `Ø${drNum(op.D)} ${String(op.axis || "").toUpperCase()} rule removed`;
+      case "add_pair": return `pair Ø${drNum(op.D)} c/c ${drNum(op.cc)}`;
+      case "remove_pair": return `pair Ø${drNum(op.D)} c/c ${drNum(op.cc)} removed`;
+      case "add_ctq": return `CTQ ${op.label} within ${drNum(op.within)}`;
+      case "remove_ctq": return `CTQ ${op.label} removed`;
+      case "set_view": return `view ${op.id}${op.scale != null ? ` scale ${op.scale}` : ""}${op.caption != null ? ` · ${op.caption}` : ""}`;
+      case "add_view": return `${op.kind} view added`;
+      case "remove_view": return `view ${op.id} removed`;
+      case "set_sheet": return `sheet ${op.sheet}${op.scale != null ? ` scale ${op.scale}` : ""}${op.orient ? ` ${op.orient}` : ""}`;
+      case "add_sheet": return `${op.kind} sheet added`;
+      case "remove_sheet": return `sheet ${op.sheet} removed`;
+      default: return String(op.op || "");
+    }
+  }
+
+  /** Patch (n): what the latest snapshot holds on top of the accepted one
+   *  (DRAWINGS_TAB_UX §13.3). The server composes every new seq on the latest
+   *  row whatever its status (portal-api applyDrawingSpecOps: basePatch =
+   *  latest.patch), so the lines are the DIFF of the two snapshots, never the
+   *  ops of one status: a candidate left by Edit, a failed render and a
+   *  discarded step all stay in view until × or Keep clears them, and nothing
+   *  rides along unseen into the next Render. One line per difference, × = the
+   *  ops that put the accepted value back: an override → remove_override, then
+   *  the accepted override again when it had one (remove first — the server
+   *  merges override_dimension); a kind tolerance → the accepted value, absent
+   *  when the accepted patch has none for that kind; an accepted override that
+   *  is gone → that override again. Every other difference lists without ×. */
+  function drPendingLines(accepted, latest) {
+    const core = specCore();
+    const acc = accepted && typeof accepted === "object" ? accepted : {};
+    const cur = latest && typeof latest === "object" ? latest : {};
+    const sameAt = (a, b) => (core ? core.atEquals(a, b) : JSON.stringify(a) === JSON.stringify(b));
+    const same = (x, y) => (core ? core.canonicalJson(x) === core.canonicalJson(y) : JSON.stringify(x) === JSON.stringify(y));
+    const withReason = (o) => ({ ...o, reason: "" });
+    const lines = [];
+    const accTol = acc.tolerances || {}, curTol = cur.tolerances || {};
+    for (const [kind, tol] of Object.entries(curTol)) {
+      if (accTol[kind] === tol) continue;
+      const op = { op: "set_tolerance", kind, tol };
+      lines.push({ op, text: drOpWords(op), remove: accTol[kind] != null ? [withReason({ op: "set_tolerance", kind, tol: accTol[kind] })] : null });
+    }
+    const accOv = Array.isArray(acc.overrides) ? acc.overrides : [], curOv = Array.isArray(cur.overrides) ? cur.overrides : [];
+    const ovOp = (o) => { const w = { op: "override_dimension", at: o.at, kind: o.kind }; if (o.tol != null) w.tol = o.tol; if (o.name != null) w.name = o.name; return w; };
+    for (const o of curOv) {
+      const was = accOv.find((x) => x.kind === o.kind && sameAt(x.at, o.at));
+      if (was && same(was, o)) continue;
+      const op = ovOp(o);
+      const rm = withReason({ op: "remove_override", at: o.at, kind: o.kind });
+      lines.push({ op, text: drOpWords(op), remove: was ? [rm, withReason(ovOp(was))] : [rm] });
+    }
+    for (const was of accOv) {
+      if (curOv.some((x) => x.kind === was.kind && sameAt(x.at, was.at))) continue;
+      const op = { op: "remove_override", at: was.at, kind: was.kind };
+      lines.push({ op, text: `remove ${was.kind}${was.tol != null ? " tol" : was.name != null ? " name" : ""} on ${drAtWords(was.at)}`, remove: [withReason(ovOp(was))] });
+    }
+    // Everything else the vocabulary can say (hole rules, pairs, CTQ, datums,
+    // edge names and bands): in words, no ×.
+    const rest = drRevertOps(acc, cur);
+    for (const op of rest.ops || []) {
+      if (op.op === "set_tolerance" || op.op === "override_dimension" || op.op === "remove_override") continue;
+      lines.push({ op, text: drOpWords(op), remove: null });
+    }
+    return lines;
+  }
+
+  /** A history row in words: "2 tolerances · 1 name" — the ops grouped by what
+   *  they change; a carry row has none. */
+  function drHistoryWords(row) {
+    const ops = Array.isArray(row.operations) ? row.operations : [];
+    const n = { tolerance: 0, name: 0, removal: 0, other: 0 };
+    for (const op of ops) {
+      if (!op) continue;
+      if (op.op === "set_tolerance" || (op.op === "override_dimension" && op.tol != null)) n.tolerance++;
+      else if ((op.op === "override_dimension" && op.name != null) || op.op === "name_edge") n.name++;
+      else if (/^remove_/.test(String(op.op))) n.removal++;
+      else n.other++;
+    }
+    const w = (c, s, p) => (c ? `${c} ${c === 1 ? s : p}` : null);
+    return [w(n.tolerance, "tolerance", "tolerances"), w(n.name, "name", "names"), w(n.removal, "removal", "removals"), w(n.other, "op", "ops")].filter(Boolean).join(" · ");
+  }
+  const DR_PATCH_TONE = { proposed: "#64748b", candidate: "#0369a1", accepted: "#15803d", discarded: "#b45309", failed: "#b91c1c" };
+  /** Proposed · Candidate · Accepted · Discarded · Failed — the drawingStatusChip look, the patch's words. */
+  function drPatchStatusChip(status) {
+    const tone = DR_PATCH_TONE[status] || "#64748b";
+    return el("span", {
+      style: `display:inline-block;font-size:0.75rem;font-weight:600;padding:1px 8px;border-radius:999px;color:${tone};border:1px solid ${tone}44;background:${tone}12`,
+    }, status ? status.charAt(0).toUpperCase() + status.slice(1) : "");
+  }
+  /** "14:32" today, "26/11 14:32" otherwise. */
+  function drWhen(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    const t = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const today = new Date();
+    return d.toDateString() === today.toDateString() ? t : `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" })} ${t}`;
+  }
+
+  /** The ops that turn snapshot `from` into snapshot `to` (a revert is a new
+   *  seq, never a delete). { ops } when the vocabulary can say it; { refused }
+   *  when it cannot — a tolerance, datum or edge name that must go away has
+   *  no remove op, and views / sheets are not rebuilt here (§4.4). */
+  function drRevertOps(from, to) {
+    const core = specCore();
+    if (!core) return { refused: "vocabulary not loaded" };
+    const a = from && typeof from === "object" ? from : {}, b = to && typeof to === "object" ? to : {};
+    const same = (x, y) => core.canonicalJson(x) === core.canonicalJson(y);
+    const ops = [];
+    const op = (o) => ops.push({ ...o, reason: "" });
+    const refuse = (why) => ({ refused: why });
+    // tolerances
+    for (const k of Object.keys(a.tolerances || {})) if (!(k in (b.tolerances || {}))) return refuse(`${k} tolerance`);
+    for (const [k, tol] of Object.entries(b.tolerances || {})) if ((a.tolerances || {})[k] !== tol) op({ op: "set_tolerance", kind: k, tol });
+    // overrides by (at, kind)
+    const ovA = Array.isArray(a.overrides) ? a.overrides : [], ovB = Array.isArray(b.overrides) ? b.overrides : [];
+    const ovKey = (o) => `${core.canonicalJson(o.at)}|${o.kind}`;
+    for (const o of ovA) if (!ovB.some((x) => core.atEquals(x.at, o.at) && x.kind === o.kind)) op({ op: "remove_override", at: o.at, kind: o.kind });
+    // The server MERGES override_dimension, set_hole_rule and add_pair into an
+    // entry that exists (drawing-spec-core OP_HANDLERS), so a changed entry is
+    // removed first and added again — otherwise a tol or name the chosen
+    // snapshot does not have would survive the revert.
+    for (const o of ovB) {
+      const prev = ovA.find((x) => core.atEquals(x.at, o.at) && x.kind === o.kind);
+      if (prev && ovKey(prev) === ovKey(o) && same(prev, o)) continue;
+      if (prev) op({ op: "remove_override", at: o.at, kind: o.kind });
+      const w = { op: "override_dimension", at: o.at, kind: o.kind };
+      if (o.tol != null) w.tol = o.tol;
+      if (o.name != null) w.name = o.name;
+      op(w);
+    }
+    // hole rules by (D, axis, only_at)
+    const fA = Array.isArray(a.features) ? a.features : [], fB = Array.isArray(b.features) ? b.features : [];
+    const fKey = (f) => core.canonicalJson([f.D, String(f.axis || "").toUpperCase(), f.only_at ?? null]);
+    for (const f of fA) if (!fB.some((x) => fKey(x) === fKey(f))) { const rm = { op: "remove_hole_rule", D: f.D, axis: f.axis }; if (f.only_at) rm.only_at = f.only_at; op(rm); }
+    for (const f of fB) {
+      const prev = fA.find((x) => fKey(x) === fKey(f));
+      if (prev && same(prev, f)) continue;
+      if (prev) { const rm = { op: "remove_hole_rule", D: f.D, axis: f.axis }; if (f.only_at) rm.only_at = f.only_at; op(rm); }
+      op({ op: "set_hole_rule", ...f });
+    }
+    // pairs by (D, cc); ctq by label
+    const pA = Array.isArray(a.pairs) ? a.pairs : [], pB = Array.isArray(b.pairs) ? b.pairs : [];
+    for (const p of pA) if (!pB.some((x) => same([x.D, x.cc], [p.D, p.cc]))) op({ op: "remove_pair", D: p.D, cc: p.cc });
+    for (const p of pB) {
+      const prev = pA.find((x) => same([x.D, x.cc], [p.D, p.cc]));
+      if (prev && same(prev, p)) continue;
+      if (prev) op({ op: "remove_pair", D: p.D, cc: p.cc });
+      op({ op: "add_pair", ...p });
+    }
+    const cA = Array.isArray(a.ctq) ? a.ctq : [], cB = Array.isArray(b.ctq) ? b.ctq : [];
+    for (const c of cA) if (!cB.some((x) => x.label === c.label)) op({ op: "remove_ctq", label: c.label });
+    for (const c of cB) if (!cA.some((x) => same(x, c))) op({ op: "add_ctq", ...c });
+    // datums, edge names, edge bands
+    const dA = a.datums || {}, dB = b.datums || {};
+    for (const k of ["inside_face", "x", "y", "y_from_top_within"]) if (dA[k] != null && dB[k] == null) return refuse(`datum ${k}`);
+    if (dB.inside_face != null && dB.inside_face !== dA.inside_face) op({ op: "set_inside_face", side: dB.inside_face });
+    for (const ax of ["x", "y"]) if (dB[ax] != null && dB[ax] !== dA[ax]) op({ op: "set_datum", axis: ax, side: dB[ax] });
+    if (dB.y_from_top_within != null && dB.y_from_top_within !== dA.y_from_top_within) op({ op: "set_from_top_rule", within: dB.y_from_top_within });
+    for (const k of Object.keys(a.edge_names || {})) if (!(k in (b.edge_names || {}))) return refuse(`edge name ${k}`);
+    for (const [k, name] of Object.entries(b.edge_names || {})) if ((a.edge_names || {})[k] !== name) op({ op: "name_edge", edge: k, name });
+    for (const k of Object.keys(a.edge_band || {})) if (!(k in (b.edge_band || {}))) op({ op: "set_edge_band", edge: k, text: null });
+    for (const [k, text] of Object.entries(b.edge_band || {})) if ((a.edge_band || {})[k] !== text) op({ op: "set_edge_band", edge: k, text });
+    // views and sheets: id assignment and derivation live in drawset
+    if (!same(a.views || {}, b.views || {})) return refuse("views");
+    if (!same(a.sheets || {}, b.sheets || {})) return refuse("sheets");
+    return { ops };
+  }
+
+  /** The dimension rows of a sidecar at a signed url: a list, or an object
+   *  holding one under rows / dimensions (the same reading the server does). */
+  async function drFetchDims(url) {
+    if (!url) return [];
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const parsed = await res.json();
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === "object") {
+        if (Array.isArray(parsed.rows)) return parsed.rows;
+        if (Array.isArray(parsed.dimensions)) return parsed.dimensions;
+      }
+    } catch { /* no sidecar: no table */ }
+    return [];
+  }
+
+  /** drawset's verdict on a job as label · value pairs (DRAWINGS_TAB_UX §13.4):
+   *  Round trip · Completeness · Wall flags · Regression; `warn` marks the
+   *  amber ones (a mismatch, a missing kind, a flag, anything but OK). */
+  function drVerifyLines(result) {
+    const v = result && result.verify && typeof result.verify === "object" ? result.verify : null;
+    if (!v) return [];
+    const text = (x) => (typeof x === "string" ? x : JSON.stringify(x));
+    const rt = v.round_trip && typeof v.round_trip === "object" ? v.round_trip : null;
+    const missing = Array.isArray(v.completeness_missing) ? v.completeness_missing : [];
+    const flags = Array.isArray(v.wall_flags) ? v.wall_flags : [];
+    const out = [];
+    if (rt) out.push({ label: "Round trip", text: `${rt.n != null ? `${rt.n} · ` : ""}${rt.mismatches ?? "—"} mismatch${Number(rt.mismatches) === 1 ? "" : "es"}`, warn: Number(rt.mismatches) > 0 });
+    out.push({ label: "Completeness", text: missing.length ? `${missing.length} missing · ${missing.map(text).join(", ")}` : "0 missing", warn: missing.length > 0 });
+    out.push({ label: "Wall flags", text: flags.length ? flags.map(text).join(", ") : "none", warn: flags.length > 0 });
+    if (v.regression != null) out.push({ label: "Regression", text: String(v.regression), warn: String(v.regression).toUpperCase() !== "OK" });
+    return out;
+  }
+
+  /**
+   * Layer 1 on one drawing surface. ctx: { token, drawing, current, currentRev,
+   * spec (getDrawingSpec, or null), dims (the current issue's sidecar rows),
+   * filePane, fileTarget, reload, mountRenderJob, onCandidateDispose }.
+   * Returns { nodes (rail sections: Dimensions · Patch · Spec), fromCadButton,
+   * setCadRev, setLive, mountCompare }.
+   */
+  function drawingSpecLayer(ctx) {
+    const { token, drawing, current, currentRev, spec, dims, filePane, fileTarget, reload, mountRenderJob } = ctx;
+    const core = specCore();
+    const state = {
+      latest: spec?.latest || null,
+      history: Array.isArray(spec?.history) ? spec.history.slice() : [],
+      cadRev: null, live: false,
+      touched: _drSurfaceTouched.get(drawing.id) || new Set(),
+      renderButtons: new Set(),
+    };
+    _drSurfaceTouched.set(drawing.id, state.touched);
+    const letter = currentRev ? currentRev.revision : "";
+    const isDraft = !!currentRev && (currentRev.status || "draft") === "draft";
+    const viewingCurrent = !!current && !!currentRev && current.id === currentRev.id;
+    const fromJob = !!spec?.issue_job;
+    // Only the current draft issue takes an edit (§3.7); a released issue's
+    // rows open nothing.
+    const editable = isDraft && viewingCurrent;
+    const parentSeq = () => (state.latest ? Number(state.latest.seq) || 0 : 0);
+    const proposed = () => (state.latest && state.latest.status === "proposed" ? state.latest : null);
+    const setMsg = (node, text, kind) => { node.textContent = text || ""; node.className = kind === "error" ? "dr-error" : "dr-refused"; node.style.display = text ? "" : "none"; };
+
+    // ---- posting ops: one place, so every form, × and revert agree ---------
+    // Returns true when a new seq was made (rejected ops, if any, are in `msg`).
+    // `reopen` ({ key, tol, name }) is the form to bring back after a 409.
+    async function postOps(ops, msg, reopen) {
+      setMsg(msg, "");
+      let res;
+      try {
+        res = await API.post(token, "applyDrawingSpecOps", { drawing_id: drawing.id, ops, parent_seq: parentSeq(), origin: "click" });
+      } catch (ex) {
+        if (ex.status === 409) {
+          // A second engineer moved the chain (the server names latest_seq):
+          // the surface repaints to what is true now, the form reopens with
+          // its values and the text in red under it (§13.2). Anything else
+          // would 409 again on every later Apply, × and Revert.
+          _drSurfaceReopen.set(drawing.id, { error: ex.message, form: reopen || null });
+          await reload();
+          return false;
+        }
+        const rejected = Array.isArray(ex.body?.rejected) ? ex.body.rejected : [];
+        if (rejected.length) setMsg(msg, rejected.map((r) => r.reason).join(" · "), "refused");
+        else setMsg(msg, ex.message, "error");
+        return false;
+      }
+      const rejected = Array.isArray(res?.rejected) ? res.rejected : [];
+      if (rejected.length) setMsg(msg, rejected.map((r) => r.reason).join(" · "), "refused");
+      if (!res || !res.patch_id) return false;
+      state.latest = { patch_id: res.patch_id, seq: res.seq, patch: res.patch, patch_sha256: res.patch_sha256, status: "proposed", origin: "click" };
+      // The server stores the ops as the validator normalised them (tolerance
+      // grammar, address case) and does not echo them: the same validator runs
+      // here so the history words match after the next reload.
+      const admitted = core && typeof core.validateOps === "function" ? core.validateOps(ops).ok : ops;
+      state.history.push({ patch_id: res.patch_id, seq: res.seq, origin: "click", status: "proposed", operations: admitted, created_at: new Date().toISOString() });
+      for (const t of Array.isArray(res.touched) ? res.touched : []) state.touched.add(drDimKey(t));
+      markTouched(); paintPatch(); paintSpec(); syncRender();
+      return true;
+    }
+
+    // ---- Render: the iterate job for the latest proposed patch (§3.7) -------
+    const syncRender = () => {
+      const ok = editable && !!proposed() && !!state.cadRev && !state.live;
+      for (const b of state.renderButtons) b.disabled = !ok;
+    };
+    async function startIterate(btn, msg) {
+      const p = proposed();
+      if (!p || !state.cadRev) return;
+      btn.disabled = true;
+      try {
+        const job = drUnwrapJob(await API.post(token, "requestDrawingRender", {
+          component_id: drawing.owner_component_id, cad_model_revision_id: state.cadRev.id,
+          drawing_id: drawing.id, mode: "iterate", spec_patch_id: p.patch_id,
+        }));
+        if (!job || !job.id) throw new Error("The server returned no job");
+        state.live = true; syncRender();
+        mountRenderJob(job);
+      } catch (ex) {
+        if (msg) setMsg(msg, ex.message, "error"); else alert(ex.message);
+        syncRender();
+      }
+    }
+
+    // ---- Entry: the button text by status, the letter stated before the click
+    // (DRAWINGS_TAB_UX §13.1): a draft made by a render job → Re-render; a
+    // released or superseded current issue → the next letter; a hand-uploaded
+    // draft, or no issue yet → today's text, mode issue.
+    function fromCadButton(openIssueModal) {
+      if (isDraft && fromJob) {
+        const b = el("button", { class: "btn btn-sm", type: "button", style: "width:100%", disabled: true,
+          onclick: () => startIterate(b, patchErr) }, `Re-render Issue ${letter} (draft)`);
+        state.renderButtons.add(b); syncRender();
+        return b;
+      }
+      const text = currentRev && !isDraft ? `New issue ${drNextLetter(letter)} from CAD` : "New issue from CAD";
+      return el("button", { class: "btn btn-sm", type: "button", style: "width:100%", onclick: openIssueModal }, text);
+    }
+
+    // ---- Dimensions (n): Sheet · Feature · Kind · Value (from STEP) · Tol · View
+    const rowEls = [];
+    let openRow = null;
+    const closeForm = () => { if (openRow) { openRow.formTr.remove(); openRow.tr.classList.remove("is-open"); openRow = null; } };
+    const markTouched = () => { for (const tr of rowEls) tr.classList.toggle("is-touched", state.touched.has(drDimKey(tr.__row))); };
+    const isOverrideRow = (r) => core.OVERRIDE_KINDS.includes(r.kind) && !!r.at && typeof r.at === "object";
+    // A row opens the form only when the vocabulary has an op for it (§13.2):
+    // an override kind with an address, or a kind with a kind-level tolerance.
+    // A kind in neither list opens nothing.
+    const canOpen = (r) => editable && (isOverrideRow(r) || !!drToleranceKindFor(r));
+    // `prefill` ({ tol, name, error }) brings a form back after a 409 repaint.
+    function openForm(tr, r, prefill) {
+      const isOverride = isOverrideRow(r);
+      const tolKind = isOverride ? null : drToleranceKindFor(r);
+      const cell = el("td", { colspan: 6 });
+      const formTr = el("tr", { class: "dr-dim-form" }, cell);
+      const msg = el("div", { class: "dr-refused", style: "display:none" });
+      const cancel = el("button", { class: "btn btn-xs", type: "button", onclick: closeForm }, "Cancel");
+      const tol = el("input", { class: "up-text", type: "text", "aria-label": "Tolerance" });
+      const name = isOverride && r.kind === "dia" ? el("input", { class: "up-text", type: "text", "aria-label": "Name" }) : null;
+      const apply = el("button", { class: "btn btn-xs btn-primary", type: "button", disabled: true }, "Apply");
+      const sync = () => { apply.disabled = !(tol.value.trim() || (name && name.value.trim())); };
+      tol.oninput = sync; if (name) name.oninput = sync;
+      const submit = async () => {
+        if (apply.disabled) return;
+        const op = isOverride
+          ? { op: "override_dimension", at: r.at, kind: r.kind, reason: "" }
+          : { op: "set_tolerance", kind: tolKind, tol: tol.value.trim(), reason: "" };
+        if (isOverride) {
+          if (tol.value.trim()) op.tol = tol.value.trim();
+          if (name && name.value.trim()) op.name = name.value.trim();
+        }
+        apply.disabled = true;
+        if (await postOps([op], msg, { key: drDimKey(r), tol: tol.value, name: name ? name.value : "" })) closeForm(); else sync();
+      };
+      apply.onclick = submit;
+      const onKey = (e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") closeForm(); };
+      tol.onkeydown = onKey; if (name) name.onkeydown = onKey;
+      // Labels above the controls, the New drawing modal's .form-row (§13.2).
+      const field = (text, input) => el("label", { class: "form-row" }, [el("span", { class: "form-label" }, text), input]);
+      setChildren(cell, el("div", { class: "dr-row" }, [
+        field(isOverride ? "Tolerance" : `Tolerance for all ${tolKind}`, tol),
+        name ? field("Name", name) : null,
+        apply, cancel,
+      ].filter(Boolean)), msg);
+      if (prefill) {
+        tol.value = prefill.tol || ""; if (name) name.value = prefill.name || "";
+        sync(); if (prefill.error) setMsg(msg, prefill.error, "error");
+      }
+      tr.after(formTr); tr.classList.add("is-open"); openRow = { tr, formTr };
+      const first = cell.querySelector("input"); if (first) first.focus();
+    }
+    const dimsNodes = [el("h4", { class: "drawing-rail-h" }, `Dimensions (${dims.length})`)];
+    if (!dims.length) dimsNodes.push(el("div", { class: "muted t-sm" }, "No dimensions."));
+    if (dims.length) {
+      const td = (v, cls) => el("td", { class: cls || null }, v == null ? "" : String(v));
+      for (const r of dims) {
+        const opens = canOpen(r);
+        const tr = el("tr", { class: `dr-dim${opens ? " is-clickable" : ""}` }, [
+          td(r.sheet), td(r.feature), td(r.kind, "mono"), td(drNum(r.value), "num"), td(r.tol || "—"), td(r.view || ""),
+        ]);
+        tr.__row = r;
+        if (opens) tr.onclick = () => { if (openRow && openRow.tr === tr) { closeForm(); return; } closeForm(); openForm(tr, r); };
+        rowEls.push(tr);
+      }
+      markTouched();
+      // One input above the table, placeholder Search… as the registers have
+      // it; matches Feature · Kind · Tol · View (§13.2).
+      const filter = el("input", { class: "up-text", type: "search", placeholder: "Search…", "aria-label": "Search dimensions" });
+      filter.oninput = () => {
+        const q = filter.value.trim().toLowerCase();
+        for (const tr of rowEls) {
+          const r = tr.__row;
+          const hit = !q || [r.feature, r.kind, r.tol, r.view].some((v) => String(v ?? "").toLowerCase().includes(q));
+          tr.style.display = hit ? "" : "none";
+          if (!hit && openRow && openRow.tr === tr) closeForm();
+        }
+      };
+      dimsNodes.push(
+        el("div", { class: "dr-dims-filter" }, filter),
+        el("div", { class: "dr-dims-wrap" }, el("table", { class: "dr-dims" }, [
+          el("thead", {}, el("tr", {}, ["Sheet", "Feature", "Kind", "Value (from STEP)", "Tol", "View"].map((h) => el("th", { class: h === "Value (from STEP)" ? "num" : null }, h)))),
+          el("tbody", {}, rowEls),
+        ])),
+      );
+    }
+
+    // ---- Patch (n): one line per difference between the latest snapshot and
+    // the accepted one (whatever the latest row's status: it is what the next
+    // Apply builds on and the next Render sends), × where ops put it back
+    const patchSlot = el("div", {});
+    const patchErr = el("div", { class: "dr-error", style: "display:none" });
+    const acceptedPatch = () => (spec?.patch && spec.patch.patch) || null;
+    const acceptedSeq = () => (spec?.patch ? Number(spec.patch.seq) || 0 : 0);
+    function paintPatch() {
+      if (!dims.length) { setChildren(patchSlot); return; }
+      const lines = parentSeq() > acceptedSeq() && state.latest?.patch ? drPendingLines(acceptedPatch(), state.latest.patch) : [];
+      let renderBtn = null;
+      if (editable) {
+        renderBtn = el("button", { class: "btn btn-xs btn-primary", type: "button", disabled: true, onclick: () => startIterate(renderBtn, patchErr) }, "Render");
+        state.renderButtons.add(renderBtn);
+      }
+      setChildren(patchSlot,
+        el("div", { class: "drawing-rail-head" }, [
+          el("h4", { class: "drawing-rail-h", style: "margin:0" }, `Patch (${lines.length})`),
+          el("span", { style: "flex:1" }),
+          renderBtn,
+        ].filter(Boolean)),
+        lines.length
+          ? el("div", { class: "dr-patch-lines" }, lines.map((l) => el("div", { class: "dr-patch-line" }, [
+              el("span", {}, l.text),
+              l.remove && editable
+                ? el("button", { class: "btn btn-xs", type: "button", "aria-label": "Remove", onclick: async (e) => {
+                    const b = e.currentTarget; b.disabled = true;
+                    if (!(await postOps(l.remove, patchErr))) b.disabled = false;
+                  } }, "×")
+                : null,
+            ].filter(Boolean))))
+          : null,
+        patchErr,
+      );
+      syncRender();
+    }
+
+    // ---- Spec (DRAWINGS_TAB_UX §13.5): Template · Patch · History, labels outside
+    const specSlot = el("div", {});
+    const dot = () => el("span", { class: "muted" }, "·");
+    const historyLine = (h) => el("div", { class: "dr-history-line" }, [
+      el("span", {}, [`#${h.seq}`, h.origin || "", drHistoryWords(h), drWhen(h.created_at)].filter(Boolean).join(" · ")),
+      drPatchStatusChip(h.status),
+    ]);
+    function paintSpec() {
+      if (!dims.length) { setChildren(specSlot); return; }
+      const t = spec?.template || null;
+      const acc = spec?.patch || null;
+      const rows = state.history.slice().sort((x, y) => Number(y.seq) - Number(x.seq));
+      const shown = rows.slice(0, 3);
+      setChildren(specSlot,
+        el("h4", { class: "drawing-rail-h" }, "Spec"),
+        el("dl", { class: "drawing-meta" }, [
+          el("dt", {}, "Template"),
+          el("dd", {}, t ? [`${t.name} v${t.version}`, t.drift && t.current_version != null
+              ? el("span", { class: "dr-refused", style: "margin-left:0.4rem" }, `v${t.current_version} available`) : null].filter(Boolean) : "—"),
+          el("dt", {}, "Patch"),
+          el("dd", {}, acc ? `#${acc.seq} · ${(state.history.find((h) => Number(h.seq) === Number(acc.seq))?.operations || []).length} ops` : "—"),
+          ...(rows.length ? [
+            el("dt", {}, "History"),
+            el("dd", {}, el("div", { class: "dr-history" }, [
+              ...shown.map(historyLine),
+              rows.length > shown.length
+                ? el("button", { class: "dr-link", type: "button", onclick: openHistory }, `all (${rows.length})`)
+                : null,
+            ].filter(Boolean))),
+          ] : []),
+        ]),
+      );
+    }
+    // The whole history: seq · origin · status · ops in words · time · Revert.
+    // A revert is a new seq whose ops rebuild the chosen snapshot, never a
+    // delete (DRAWINGS_TAB_UX §13.5); only the snapshots the server handed
+    // over (accepted, latest, open) can be rebuilt, and only when the
+    // vocabulary can say the change (drRevertOps) — otherwise the button is
+    // disabled and carries the reason as its title.
+    function openHistory() {
+      const snapshots = new Map();
+      for (const p of [spec?.patch, state.latest, ...(Array.isArray(spec?.open) ? spec.open : [])]) if (p && p.patch) snapshots.set(Number(p.seq), p.patch);
+      const rows = state.history.slice().sort((x, y) => Number(y.seq) - Number(x.seq));
+      const msg = el("div", { class: "dr-refused", style: "display:none;margin-top:0.5rem" });
+      let close = () => {};
+      const table = el("table", { class: "dr-dims dr-history-table" }, [
+        el("thead", {}, el("tr", {}, ["Seq", "Origin", "Status", "Ops", "Time", ""].map((h) => el("th", {}, h)))),
+        el("tbody", {}, rows.map((h) => {
+          const seq = Number(h.seq);
+          const isLatest = state.latest && Number(state.latest.seq) === seq;
+          let action = null;
+          if (!isLatest && editable && ["accepted", "discarded", "candidate", "failed"].includes(h.status)) {
+            const to = snapshots.get(seq);
+            const r = to ? drRevertOps(state.latest?.patch || null, to) : { refused: "snapshot not loaded" };
+            if (r.ops && r.ops.length) {
+              action = el("button", { class: "btn btn-xs", type: "button", onclick: async (e) => {
+                e.currentTarget.disabled = true;
+                if (await postOps(r.ops, msg)) close(); else e.currentTarget.disabled = false;
+              } }, "Revert");
+            } else action = el("button", { class: "btn btn-xs", type: "button", disabled: true, title: r.refused || "nothing to revert" }, "Revert");
+          }
+          const opsWords = (Array.isArray(h.operations) ? h.operations : []).map(drOpWords).filter(Boolean);
+          return el("tr", {}, [
+            el("td", { class: "num" }, `#${seq}`), el("td", {}, h.origin || ""), el("td", {}, drPatchStatusChip(h.status)),
+            el("td", { class: "wrap" }, opsWords.length ? opsWords.join(" · ") : el("span", { class: "muted" }, "—")),
+            el("td", {}, drWhen(h.created_at)), el("td", {}, action),
+          ]);
+        })),
+      ]);
+      close = openModal("History", el("div", { style: "min-width:min(720px,88vw)" }, [el("div", { class: "dr-dims-wrap dr-history-wrap" }, table), msg]));
+    }
+
+    // ---- Compare: current left, candidate right, the strip under both --------
+    async function mountCompare(job) {
+      if (!job || !filePane.isConnected) return;
+      const failed = job.status !== "done";
+      const cap = (txt) => el("div", { class: "drawing-split-cap" }, txt);
+      const candTarget = el("div", { class: "drawing-file-target" }, el("div", { class: "loading" }, "Loading the candidate…"));
+      const strip = el("div", { class: "dr-strip" }, el("div", { class: "loading" }, ""));
+      const left = el("div", { class: "drawing-split-pane" }, [cap(`Issue ${letter}`), fileTarget]);
+      const right = el("div", { class: "drawing-split-pane" }, [cap("Candidate"), candTarget]);
+      setChildren(filePane, failed ? fileTarget : el("div", { class: "drawing-split" }, [left, right]), strip);
+
+      let candDims = [];
+      if (!failed) {
+        try {
+          const art = await API.post(token, "getDrawingRenderArtifacts", { job_id: job.id });
+          if (art && art.pdf) {
+            const dispose = await window.PortalViewer.render(candTarget, {
+              name: `${drawing.drawing_number} candidate`, open_url: art.pdf, storage_path: "candidate.pdf",
+            });
+            if (ctx.onCandidateDispose) ctx.onCandidateDispose(dispose);
+          } else setChildren(candTarget, el("div", { class: "empty" }, "No candidate PDF."));
+          if (art && art.dimensions) candDims = await drFetchDims(art.dimensions);
+        } catch (ex) {
+          setChildren(candTarget, el("div", { class: "error" }, ex.message));
+        }
+      }
+      if (!filePane.isConnected) return;
+      const result = job.result || {};
+      const seg = (txt, warn) => el("span", { class: warn ? "is-warn" : null }, txt);
+      const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+      const head = [];
+      if (!failed) {
+        const c = core.diffDimensionLists(dims, candDims).counts;
+        head.push(seg(`${c.a} → ${c.b}`), dot(), seg(`${plural(c.tol_changed, "tolerance")} changed`), dot(), seg(`${plural(c.value_changed, "value")} changed`, c.value_changed > 0));
+        if (c.added || c.removed) head.push(dot(), seg(`+${c.added} added · ${c.removed} removed`, true));
+        const curGeo = spec?.issue_job?.result?.geometry_sha256 || null, candGeo = result.geometry_sha256 || null;
+        if (curGeo && candGeo) head.push(dot(), seg(curGeo === candGeo ? `geometry same as Issue ${letter}` : `geometry differs from Issue ${letter}`, curGeo !== candGeo));
+      }
+      const verify = drVerifyLines(result);
+      const unmatched = Array.isArray(result.unmatched_overrides) ? result.unmatched_overrides : [];
+      const stripErr = el("div", { class: "dr-error", style: "display:none" });
+      const busy = (b, on) => { for (const x of b) x.disabled = on; };
+      const finish = async (action, buttons) => {
+        busy(buttons, true); setMsg(stripErr, "");
+        try {
+          await API.post(token, action, { job_id: job.id });
+          _drSurfaceTouched.delete(drawing.id); _drSurfaceJobs.delete(drawing.id); _drSurfaceDismissed.delete(job.id);
+          await reload();
+        } catch (ex) {
+          // 409: kept or discarded meanwhile, or a later patch accepted — the
+          // surface repaints to what is true now.
+          if (ex.status === 409) { await reload(); return; }
+          setMsg(stripErr, ex.message, "error"); busy(buttons, false);
+        }
+      };
+      // Keep stands on every done job: the server admits each one
+      // (acceptDrawingIteration) and fails the job itself when verification
+      // failed; the amber lines are what drawset reports on a passing render
+      // (§13.4 — a failed job offers Discard · Edit only).
+      const buttons = [];
+      if (!failed) buttons.push(el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => finish("acceptDrawingIteration", buttons) }, "Keep"));
+      buttons.push(el("button", { class: "btn btn-sm", type: "button", onclick: () => finish("discardDrawingIteration", buttons) }, "Discard"));
+      // Edit: the pane closes, the candidate stays in the history, the next
+      // Apply builds on its seq.
+      buttons.push(el("button", { class: "btn btn-sm", type: "button", onclick: () => {
+        _drSurfaceDismissed.add(job.id);
+        if (ctx.onCandidateDispose) ctx.onCandidateDispose(null);
+        setChildren(filePane, fileTarget);
+      } }, "Edit"));
+      setChildren(strip,
+        head.length ? el("div", { class: "dr-strip-head" }, head) : null,
+        failed ? el("div", { class: "dr-error" }, drResultText(job)) : null,
+        verify.length
+          ? el("dl", { class: "drawing-meta" }, verify.flatMap((l) => [el("dt", {}, l.label), el("dd", { class: l.warn ? "is-warn" : null }, l.text)]))
+          : null,
+        unmatched.length ? el("div", { class: "is-warn" }, `Unmatched overrides (${unmatched.length})`) : null,
+        ...unmatched.map((u) => el("div", { class: "is-warn" }, `${u.kind || ""} on ${drAtWords(u.at)}`.trim())),
+        el("div", { class: "dr-strip-actions" }, buttons),
+        stripErr,
+      );
+    }
+
+    paintPatch(); paintSpec();
+    // After a 409 repaint: the interrupted form again with its values and the
+    // text in red; without a form (×, Revert) the text under the Patch lines.
+    const again = _drSurfaceReopen.get(drawing.id);
+    if (again) {
+      _drSurfaceReopen.delete(drawing.id);
+      const tr = again.form ? rowEls.find((x) => drDimKey(x.__row) === again.form.key) : null;
+      if (tr && canOpen(tr.__row)) openForm(tr, tr.__row, { tol: again.form.tol, name: again.form.name, error: again.error });
+      else setMsg(patchErr, again.error, "error");
+    }
+    return {
+      nodes: [...dimsNodes, patchSlot, specSlot],
+      fromCadButton,
+      setCadRev(rev) { state.cadRev = rev || null; syncRender(); },
+      setLive(on) { state.live = !!on; syncRender(); },
+      mountCompare,
+      get editable() { return editable; },
     };
   }
 
@@ -14973,15 +15669,32 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     // Every rendered file holds a blob URL. Swapping revisions without disposing
     // the last one leaks them for as long as the page lives.
     let disposeFile = () => {};
-    const disposeCurrent = () => { try { disposeFile(); } catch { /* already gone */ } disposeFile = () => {}; };
+    // The candidate of an iterate job has a blob URL of its own (compare mode).
+    let disposeCand = () => {};
+    const setCandDispose = (fn) => { try { disposeCand(); } catch { /* already gone */ } disposeCand = fn || (() => {}); };
+    const disposeCurrent = () => {
+      try { disposeFile(); } catch { /* already gone */ } disposeFile = () => {};
+      try { disposeCand(); } catch { /* already gone */ } disposeCand = () => {};
+    };
 
     const reload = async () => { await paint(); if (opts.onChange) await opts.onChange(); };
 
     async function paint(selectedRevisionId) {
       setChildren(host, el("div", { class: "loading" }, "Loading drawing…"));
+      // getDrawingSpec rides beside getDrawing (DYNAMIC_DRAWINGS §6): what
+      // governs the drawing — template version, patch chain, the current
+      // issue's render job and its signed sidecars. A 4xx/5xx leaves it null
+      // and the surface works as before, without layer 1.
+      const specP = role === "rushroom" && specCore()
+        ? API.post(token, "getDrawingSpec", { drawing_id: drawingId }).catch(() => null)
+        : Promise.resolve(null);
       let d;
       try { d = await API.post(token, "getDrawing", { drawing_id: drawingId }); }
       catch (ex) { setChildren(host, el("div", { class: "error" }, `Couldn't load: ${ex.message}`)); return; }
+      const spec = await specP;
+      // The current issue's dimension list (rows sheet · feature · kind · value ·
+      // text · tol · view · at) from the render's sidecar, when it has one.
+      const dims = spec && spec.artifacts && spec.artifacts.dimensions_url ? await drFetchDims(spec.artifacts.dimensions_url) : [];
 
       const { drawing, revisions = [], components = [] } = d;
       const ownerName = (components.find((c) => c.component_id === drawing.owner_component_id) || {}).name || "";
@@ -14992,8 +15705,12 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       };
 
       // ---- the file itself ------------------------------------------------
-      const filePane = el("div", { class: "drawing-file" },
+      // The file pane holds one target; in compare mode (an iterate job done)
+      // it splits into the current issue and the candidate with the diff strip
+      // under both (§6 "Compare, Keep, Discard"), and the target moves left.
+      const fileTarget = el("div", { class: "drawing-file-target" },
         el("div", { class: "loading" }, current ? "Loading the drawing…" : ""));
+      const filePane = el("div", { class: "drawing-file" }, fileTarget);
       if (!current) {
         setChildren(filePane, el("div", { class: "viewer-msg" }, [
           el("p", {}, "No revision has been added yet, so there is no file to show."),
@@ -15007,18 +15724,18 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       async function showRevision(rev) {
         if (!rev) return;
         disposeCurrent();
-        setChildren(filePane, el("div", { class: "loading" }, `Loading Issue ${rev.revision}…`));
+        setChildren(fileTarget, el("div", { class: "loading" }, `Loading Issue ${rev.revision}…`));
         try {
           const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: rev.id });
           // The file name carries the extension the renderer switches on; the
           // signed URL's query string would otherwise be read as one.
-          disposeFile = await window.PortalViewer.render(filePane, {
+          disposeFile = await window.PortalViewer.render(fileTarget, {
             name: `${drawing.drawing_number} Issue ${rev.revision}`,
             open_url: url,
             storage_path: rev.file_name || "",
           });
         } catch (ex) {
-          setChildren(filePane, el("div", { class: "viewer-msg" },
+          setChildren(fileTarget, el("div", { class: "viewer-msg" },
             el("p", { class: "error" }, `Couldn't open this revision: ${ex.message}`)));
         }
       }
@@ -15055,8 +15772,16 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const fromCadSlot = el("div", {});
       const jobSlot = el("div", {});
       const owner = components.find((c) => c.component_id === drawing.owner_component_id) || null;
+      // Layer 1 (DYNAMIC_DRAWINGS §4.1, §6): the Dimensions table, the Patch
+      // lines, the Spec line and the compare strip — only when getDrawingSpec
+      // answered and the shared vocabulary module is loaded.
+      const layer = role === "rushroom" && spec && specCore()
+        ? drawingSpecLayer({ token, drawing, current, currentRev, spec, dims, filePane, fileTarget, reload, onCandidateDispose: setCandDispose,
+            mountRenderJob: (job) => mountRenderJob(job) })
+        : null;
       const mountRenderJob = (job) => {
         _drSurfaceJobs.set(drawing.id, job);
+        if (layer) layer.setLive(drLive(job));
         const panel = drawingRenderJobPanel(token, { onDone: async (j) => { _drSurfaceJobs.set(drawing.id, j); await reload(); } });
         setChildren(jobSlot, panel.el);
         panel.watch(job);
@@ -15069,12 +15794,21 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           const rev = revs.find((rv) => rv.status === "released" && hasStep(rv))
             || revs.find((rv) => rv.revision === (r.cad_model?.current_revision || null) && hasStep(rv)) || null;
           if (!rev || !rev.id) return;
-          setChildren(fromCadSlot, el("button", { class: "btn btn-sm", type: "button", style: "width:100%",
-            onclick: () => drawingRenderModal(role, {
-              component_id: drawing.owner_component_id, part_number: owner?.part_number || "", component_name: owner?.name || "",
-              revision: rev, drawing_id: drawing.id,
-              drawings: [{ id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title, render_spec: drawing.render_spec || null }],
-            }, { onRequested: mountRenderJob }) }, "New issue from CAD"));
+          const openIssueModal = () => drawingRenderModal(role, {
+            component_id: drawing.owner_component_id, part_number: owner?.part_number || "", component_name: owner?.name || "",
+            revision: rev, drawing_id: drawing.id,
+            drawings: [{ id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title, render_spec: drawing.render_spec || null }],
+          }, { onRequested: mountRenderJob });
+          // The text states the letter before the click (§6 Entry, DRAWINGS_TAB_UX
+          // §13.1): a draft made by a render job is re-rendered in place (mode
+          // iterate, the letter stays); a released current issue gets the next
+          // letter; a hand-uploaded draft keeps today's text. An iteration
+          // renders from the issue's Made-from revision when it is recorded and
+          // still has a STEP, else the same revision as today.
+          const madeFrom = currentRev?.source_cad?.cad_revision
+            ? revs.find((rv) => rv.revision === currentRev.source_cad.cad_revision && hasStep(rv)) || null : null;
+          if (layer) { layer.setCadRev(madeFrom || rev); setChildren(fromCadSlot, layer.fromCadButton(openIssueModal)); return; }
+          setChildren(fromCadSlot, el("button", { class: "btn btn-sm", type: "button", style: "width:100%", onclick: openIssueModal }, "New issue from CAD"));
         }).catch(() => { /* no CAD model: no button */ });
       }
       if (role === "rushroom") {
@@ -15085,6 +15819,25 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           // The newest job for this drawing, live or just finished in this session.
           if (jobSlot.isConnected && (drLive(j) || (known && j && j.id === known.id))) mountRenderJob(j || known);
         }).catch(() => { /* no job: nothing to show */ });
+        // A candidate waiting for Keep / Discard (the patch row is `candidate`
+        // with its job), or the failed iterate job of this session not yet
+        // dismissed with Edit: the file pane splits and the strip is shown.
+        if (layer) {
+          // The newest candidate: the one this session just rendered when it is
+          // known and done, else the last of `open` (seq ascending) — an older
+          // candidate left by Edit never stands in front of a newer render.
+          const cands = (spec.open || []).filter((p) => p.status === "candidate" && p.job_id);
+          const cand = (known && known.status === "done" && cands.find((p) => p.job_id === known.id)) || cands[cands.length - 1] || null;
+          if (cand) {
+            if (!_drSurfaceDismissed.has(cand.job_id)) {
+              const sameJob = known && known.id === cand.job_id && known.status === "done" ? Promise.resolve(known)
+                : API.post(token, "getDrawingRenderJob", { job_id: cand.job_id }).then(drUnwrapJob).catch(() => null);
+              sameJob.then((job) => { if (job && job.status === "done" && filePane.isConnected) layer.mountCompare(job); });
+            }
+          } else if (known && known.mode === "iterate" && known.status === "failed" && !_drSurfaceDismissed.has(known.id)) {
+            layer.mountCompare(known);
+          }
+        }
       }
 
       const revisionList = revisions.length
@@ -15157,6 +15910,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           : null,
         role === "rushroom" ? fromCadSlot : null,
         role === "rushroom" ? jobSlot : null,
+        ...(layer ? layer.nodes : []),
         role === "rushroom" && !drawing.owner_component_id
           ? el("button", { class: "btn btn-sm", type: "button", style: "width:100%",
               onclick: () => adoptDrawingModal(drawing, role, reload) }, "Adopt onto a part")

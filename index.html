@@ -136,12 +136,20 @@
     import * as CostMath from "./supabase/functions/_shared/cost-math.mjs?v=321";
     window.PortalCostMath = CostMath;
   </script>
+  <!-- Dynamic drawings (docs/DYNAMIC_DRAWINGS.md §4.4, §6): the ops vocabulary,
+       the address rules and the dimension-list diff — one file for portal-api,
+       portal-ai, the tests and the browser. index.html only: a supplier never
+       sees a draft, a patch or a candidate. -->
+  <script type="module">
+    import * as SpecCore from "./supabase/functions/_shared/drawing-spec-core.mjs?v=467";
+    window.PortalSpecCore = SpecCore;
+  </script>
   <script src="./assets/cost-forms.js?v=321"></script>
   <script src="./assets/cost-view.js?v=321"></script>
   <script src="./assets/cost-ai.js?v=321"></script>
   <script src="./assets/cost-import.js?v=321"></script>
   <script src="./assets/cost-review-view.js?v=321"></script>
   <script src="https://cdn.jsdelivr.net/npm/online-3d-viewer@0.18.0/build/engine/o3dv.min.js"></script>
-  <script src="./assets/app.js?v=466"></script>
+  <script src="./assets/app.js?v=467"></script>
 </body>
 </html>

@@ -864,12 +864,58 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .drawing-rev.is-active { border-color: var(--accent); background: var(--panel); font-weight: 600; }
 .drawing-rev-name { font-weight: 600; }
 
+/* ---- dynamic drawings, layer 1 (docs/DYNAMIC_DRAWINGS.md §6) -------------
+   The Dimensions table, the one-row form under a clicked row, the Patch lines,
+   the Spec line, and the compare split with its strip. Amber is a warning
+   only: a row the patch touched, a changed value, a moved geometry, an
+   unmatched override, a refusal. Everything else copies the rail. */
+.drawing-file-target { min-width: 0; }
+.dr-dims-filter { display: flex; align-items: center; gap: 0.5rem; }
+.dr-dims-filter .up-text { min-height: 32px; padding: 0.2rem 0.5rem; flex: 1; min-width: 0; font-size: var(--fs-sm); }
+.dr-dims-wrap { max-height: 40vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.dr-dims { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+.dr-dims th, .dr-dims td { padding: 0.2rem 0.4rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.dr-dims th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; }
+.dr-dims .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dr-dims .wrap { white-space: normal; }
+.dr-dims .mono { font-family: var(--mono, monospace); }
+.dr-history { display: flex; flex-direction: column; gap: 0.2rem; align-items: flex-start; }
+.dr-history-line { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.dr-strip dd.is-warn { color: var(--amber); }
+.dr-dim.is-clickable { cursor: pointer; }
+.dr-dim.is-clickable:hover { background: var(--panel-2); }
+.dr-dim.is-open { background: var(--panel-2); }
+.dr-dim.is-touched td { color: var(--amber); }
+.dr-dim-form td { padding: 0.35rem 0.4rem; background: var(--panel-2); white-space: normal; }
+.dr-row { display: flex; align-items: flex-end; gap: 0.5rem; flex-wrap: wrap; }
+.dr-row .form-row { gap: 0.15rem; margin: 0; }
+.dr-row .up-text { min-height: 32px; padding: 0.2rem 0.5rem; width: 7rem; font-size: var(--fs-sm); }
+.dr-row .form-label { font-size: var(--fs-xs); white-space: nowrap; }
+.dr-row .btn-xs { min-height: 32px; }
+.dr-refused { color: var(--amber); font-size: var(--fs-xs); }
+.dr-error { color: var(--red); font-size: var(--fs-xs); }
+.dr-patch-lines { display: flex; flex-direction: column; gap: 0.2rem; font-size: var(--fs-xs); }
+.dr-patch-line { display: flex; align-items: center; gap: 0.4rem; }
+.dr-patch-line .btn-xs { margin-left: auto; min-height: 24px; padding: 0 0.45rem; }
+.dr-spec-line { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; font-size: var(--fs-sm); }
+.dr-link { background: none; border: 0; padding: 0; font: inherit; font-size: var(--fs-sm); color: var(--accent); cursor: pointer; text-decoration: underline; }
+.dr-history-wrap { max-height: 60vh; }
+.drawing-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5rem; }
+.drawing-split-pane { min-width: 0; }
+.drawing-split-pane .viewer-frame { height: 60vh; }
+.drawing-split-cap { font-size: var(--fs-sm); color: var(--muted); padding: 0.3rem 0.5rem 0; }
+.dr-strip { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.6rem 0.8rem; border-top: 1px solid var(--border); font-size: var(--fs-sm); }
+.dr-strip-head { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; font-weight: 600; }
+.dr-strip .is-warn { color: var(--amber); }
+.dr-strip-actions { display: flex; gap: 0.4rem; margin-top: 0.2rem; }
+
 @media (max-width: 900px) {
   /* The rail below the drawing, not beside it — a 300px column next to a
      shrinking viewer leaves neither usable. */
   .drawing-surface { grid-template-columns: minmax(0, 1fr); }
   .drawing-file { min-height: 45vh; }
   .drawing-file .viewer-frame { height: 55vh; }
+  .drawing-split { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Rendered Word document — light "paper" for readability */

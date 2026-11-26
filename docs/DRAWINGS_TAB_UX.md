@@ -359,3 +359,208 @@ One modal, three moments, no sentences:
 
 Context line at the top of steps 2 and 3: "Drawing for <part name>" or
 "Free drawing", as a plain label.
+
+## 13 Dynamic drawings, layer 1 — the Dimensions table, Render, Compare, Keep (contract, 2026-11-26)
+
+Decided by ziirvass (`docs/DYNAMIC_DRAWINGS.md` §4.1, §6, §7 Phase 3; the
+eleven §9 decisions as recommended). Layer 1 is one form writing one
+operation: pick a dimension row on a draft, set a tolerance or a name, render
+the same draft again, compare, keep. No AI, no viewer change, no new letter.
+Everything in this section is Rushroom only; §13.6 is the supplier's whole
+share of it. Server contract: `getDrawingSpec`, `applyDrawingSpecOps`,
+`requestDrawingRender { mode: "iterate" }`, `acceptDrawingIteration`,
+`discardDrawingIteration`, `getDrawingRenderArtifacts` in portal-api (commit
+e6e91cf). Frontend: `openDrawingSurface` in assets/app.js, styles.css, cache
+v467 on index.html and supplier.html.
+
+### 13.1 Entry — the one render button, text by status
+
+The rail keeps one button in the slot "New issue from CAD" held. Its text is
+decided by the current issue's status and stated before the click; the user
+never picks a letter.
+
+| Current issue | Button | Posts | Result |
+|---|---|---|---|
+| draft C with `render_job_id` | **Re-render Issue C (draft)** | `requestDrawingRender { component_id, cad_model_revision_id, drawing_id, mode: "iterate", spec_patch_id }` | the candidate replaces C's file on Keep; still C, still Draft |
+| released B (or superseded with a released current) | **New issue D from CAD** | `requestDrawingRender { …, mode: "issue", drawing_id }` as today | draft D; the accepted patch travels (origin `carry`) |
+| draft without `render_job_id` (hand-uploaded) | **New issue from CAD** as today | mode `issue` | unchanged behaviour |
+
+Rules: **Re-render** is enabled only while **Patch (n)** holds a proposed
+step (the server answers 409 "only a proposed patch renders" otherwise);
+`cad_model_revision_id` is the current issue's **Made from** revision when
+recorded, else the part's current CAD revision; `spec_patch_id` is the latest
+proposed seq. While a render job is open the button is disabled, as today.
+
+### 13.2 The Dimensions section
+
+Under **Issues** in the rail, heading **Dimensions (233)** — the count from
+the current issue's `dimensions.json` (`artifacts.dimensions_url` of
+`getDrawingSpec`). An issue without a sidecar (a render before Phase 1, a
+hand-uploaded PDF) shows **No dimensions.** and nothing else of §13.2–13.5.
+
+| Column | Source | Notes |
+|---|---|---|
+| Sheet | `row.sheet` | bare number |
+| Feature | `row.feature` | the drawset feature text ("Ø5 at (37, 58.5)") |
+| Kind | `row.kind` | mono |
+| Value (from STEP) | `row.value` | read-only; the label carries "from STEP" — the one place the no-typed-values rule is visible |
+| Tol | `row.tol` | "—" when none; the template or kind tolerance is **not** filled in here |
+| View | `row.view` | the view id |
+
+Filter: one input above the table, placeholder **Search…** (same as the
+registers), matching Feature · Kind · Tol · View; the heading count does
+not change with the filter.
+
+**The one-row form.** Clicking a row on a **draft** issue opens one row
+directly under it, labels above the controls, in this order:
+
+| Row kind | Form | Op posted |
+|---|---|---|
+| `dia` | **Tolerance** · **Name** · Apply · Cancel | `override_dimension { at, kind, tol?, name? }` |
+| `depth` · `groove_width` · `groove_depth` · `pocket_depth` | **Tolerance** · Apply · Cancel | `override_dimension { at, kind, tol }` |
+| any other kind in `TOLERANCE_KINDS` (`outline`, `hole_position`, `hole_depth`, `edge_bore_depth`, `counterbore_depth`, …) | **Tolerance for all pocket_depth** (the row's kind) · Apply · Cancel | `set_tolerance { kind, tol }` |
+| a kind in neither list | nothing opens | — |
+
+Tolerance is typed as drawset prints it (`±0.2`, `+0.5 -0`); the validator's
+`parseTolerance` is the only check and its refusal is the red line. Every op
+carries `reason` = the Patch line in words (§13.3). Apply posts
+`applyDrawingSpecOps { drawing_id, ops: [op], parent_seq, origin: "click" }`
+with `parent_seq` = the latest seq the surface loaded (0 when none).
+Cancel closes the row. One form open at a time. Clicking a row on a
+**released** or **superseded** issue opens nothing.
+
+| Answer | On screen |
+|---|---|
+| 200 `{ seq, patch, rejected, touched }` | the form closes; Patch (n) gains the line; `touched` rows turn amber |
+| 200 with `rejected[]` | the refusal reason in red under the form, the form stays |
+| 400 `parent_seq required` / "no governed spec yet" | the text in red under the form |
+| 409 stale parent | the surface repaints (`paint()`), the form reopens with its values, the text in red; from × or Revert (no form) the text stands under the Patch lines |
+
+### 13.3 Patch (n)
+
+Under the table, heading **Patch (3)** — what the latest snapshot holds on
+top of the accepted one: the diff of `getDrawingSpec.latest.patch` against
+`patch.patch`, keyed by kind (tolerances) and by `(at, kind)` (overrides).
+The server composes every new seq on the latest row whatever its status
+(`applyDrawingSpecOps`), so a candidate left by Edit, a failed render and a
+discarded step stay in the lines until × or Keep clears them — nothing rides
+into the next Render unseen. One line per difference in words, then **×**:
+
+| Op | Line |
+|---|---|
+| `override_dimension` tol | "depth tol +0.5 −0 on Ø5 at (37, 58.5)" |
+| `override_dimension` name | "name Hinge cup on Ø35 at (22, 100)" |
+| `set_tolerance` | "pocket_depth tol ±0.2 for all" |
+| `remove_override` | "remove depth tol on Ø5 at (37, 58.5)" |
+
+**×** never deletes a row (the chain is append-only): on an
+`override_dimension` line it posts `remove_override { at, kind }`, followed
+by the accepted override again when the accepted patch had one at that
+address (remove first: the server merges `override_dimension`); on a
+`set_tolerance` line it posts `set_tolerance { kind, tol }` with the kind's
+value from the accepted patch, or is absent when the accepted patch has none
+for that kind; on a "remove …" line (an accepted override the latest
+snapshot lacks) it posts that override again. A difference the one-row form
+cannot make (a hole rule, a pair, a datum) lists without ×. The rows a line touches stay amber until the next Keep or
+Discard. **Render** sits to the right of the heading and is the §13.1
+Re-render button's twin: same post, same job panel; the heading reads
+**Patch (0)** and Render is disabled when nothing is proposed.
+
+### 13.4 Render and Compare
+
+Render mounts the existing job panel (`drawingRenderJobPanel`,
+`_drSurfaceJobs` continuity) in the rail's job slot: Claim · Download ·
+Render · Verify · Upload · Register, the last reading **Candidate ready**
+when `job.mode = "iterate"`. On done the file pane splits in two iframes,
+captions as plain labels: **Issue C** (the current PDF) left, **Candidate**
+(`getDrawingRenderArtifacts { job_id }.pdf`) right. Under the pane, in this
+order:
+
+1. **The strip.** "233 → 233 · 2 tolerances changed · 0 values changed ·
+   geometry same as Issue C" — `diffDimensionLists(current, candidate)`
+   keyed `(at | feature) + kind` (`PortalDrawingSpecCore` loaded the way
+   `cost-math.mjs` is, else the copy in app.js naming the source);
+   `counts.a → counts.b`, `tol_changed`, `value_changed`; "1 tolerance
+   changed" in the singular; "+2 added · 1 removed" appended only when
+   non-zero. The issue named is the one on the left. Geometry:
+   `geometry_sha256` equal → "geometry same as Issue C"; different →
+   "geometry differs from Issue C" in amber. A non-zero `value_changed` is
+   amber: datums or the STEP moved, not a tolerance.
+2. **Verification**, a `dl` with labels outside, from `job.result.verify`:
+   Round trip (`round_trip`, "0 mismatches") · Completeness
+   (`completeness_missing`, "0 missing") · Wall flags (`wall_flags`, "none"
+   or the flags) · Regression (`regression`, "OK"). A non-zero, non-empty or
+   FAIL value is amber.
+3. **Unmatched overrides (n)**, amber, one line per `job.result.unmatched_overrides`
+   entry in the §13.3 words; absent when none.
+4. Buttons: **Keep** (`btn-primary`) · **Discard** · **Edit**. Keep stands
+   on every `done` job — an amber verification line (a wall flag, a mismatch)
+   is drawset's report on a passing render and never withholds it; only a
+   `failed` job has no Keep. The compare mounted is the **newest** candidate
+   (the job this session rendered when it is done, else the last of `open`);
+   Edit dismisses that job alone, so a later render still gets its strip.
+
+| Button | Posts | Then |
+|---|---|---|
+| Keep | `acceptDrawingIteration { job_id }` | `paint()`: the PDF reloads, **Made from** and the pins read the candidate, the letter and the Draft chip are unchanged, the history gains "#4 · click · 2 tolerances · 14:32", Patch (0) |
+| Discard | `discardDrawingIteration { job_id }` | the candidate's files are removed (`files_removed`), the history line keeps the seq with status Discarded, the pane closes, Patch (0) |
+| Edit | nothing | the pane closes; the candidate stays in the history as Candidate; the table's next Apply builds on its seq (`parent_seq` = its seq) |
+
+A job that failed verification (`status = failed`, the Verify step red)
+shows the strip, the verification lines and **Discard · Edit** only.
+Errors from Keep or Discard (409 "was kept meanwhile", "Patch seq 5 was
+accepted after this candidate") are the red line under the buttons; the
+surface repaints on 409.
+
+### 13.5 The Spec section
+
+A rail section **Spec**, a `dl` with labels outside the values, from
+`getDrawingSpec`:
+
+| Label | Value | Rule |
+|---|---|---|
+| Template | "flat_panel v2" (`template.name`, `template.version`) | "—" when `template` is null (a legacy name-only render) |
+| | "v3 available" amber after the version when `template.drift` | **Rebase** beside it is Phase 6 (a `carry` row on the new base); in v467 the amber text stands alone |
+| Patch | "#4 · 6 ops" (`patch.seq`, the op count of `patch.operations`) | "—" when no accepted patch |
+| History | one line per `history[]` row: "#4 · click · 2 tolerances · 14:32", then the status chip | origin words: click · dialogue · carry · hand; status words below |
+| | **Revert** on an accepted, discarded, candidate or failed row that is not the latest | a new seq, never a delete, whose ops — rebuilt in the browser from the two snapshots (`drRevertOps`: remove before re-add where the server merges) — remake that row's patch; posted as ordinary `click` ops. Only the snapshots the server handed over (`patch`, `latest`, `open`) can be rebuilt; where they cannot (snapshot not loaded, a tolerance / datum / edge name that must go away, views, sheets) the button is disabled and carries the reason as its title |
+
+Clicking Template shows the body read-only when the surface has it; v467
+has `body_sha256` only, so the line is text. History is collapsed to the
+last three lines with "all (12)" opening the rest.
+
+Patch status words, one chip set, the `drawingStatusChip` colours reused:
+**Proposed** (written, not rendered) · **Candidate** (rendered and verified,
+compare open or left by Edit) · **Accepted** (the draft's file) ·
+**Discarded** · **Failed** (render or verification failed; the draft
+untouched). Amber is used for `drift`, a changed value, a different
+geometry, a failed verification line and unmatched overrides — nothing else
+in §13.
+
+### 13.6 What a supplier sees
+
+Nothing. The supplier shell (`supplier.html`) renders its one register of
+released, supplier-visible issues (§4) and the released PDF through
+`supplierFileUrl`. No Dimensions section, no Patch, no Spec, no Render,
+no candidate, no PNG sheet, no sidecar: none of the §13 actions is in
+`SUPPLIER_ACTIONS`, each answers 403 "Rushroom only", and a draft, iterated
+or not, does not exist for a supplier. The `?v=467` bump on supplier.html is
+cache hygiene, not a feature.
+
+### 13.7 Vocabulary added
+
+| Word | Where |
+|---|---|
+| Dimensions (n) · Value (from STEP) · Tol · View | the table |
+| Tolerance · Name · Tolerance for all <kind> · Apply · Cancel | the form |
+| Patch (n) · Render · × | the patch list |
+| Re-render Issue C (draft) · New issue D from CAD | the entry button |
+| Candidate ready | the job panel's last step |
+| Issue C · Candidate | the split pane captions |
+| n → m · k tolerances changed · v values changed · geometry same as Issue C / geometry differs from Issue C | the strip |
+| Round trip · Completeness · Wall flags · Regression | verification |
+| Unmatched overrides (n) | the amber list |
+| Keep · Discard · Edit | compare buttons |
+| Spec · Template · Patch · History · v3 available · Rebase · Revert | the Spec section |
+| Proposed · Candidate · Accepted · Discarded · Failed | patch status chips |
+| No dimensions. | empty state |

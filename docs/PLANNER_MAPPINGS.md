@@ -191,6 +191,34 @@ Answers, status 200:
 - 400 for any other request shape, 401 for a wrong key, 503 when the key is not configured, 409 when two components share the number in different case, 502 when the data cannot be read.
 - The matching rules live in `supabase/functions/_shared/article-lookup-core.mjs` and are tested by `tests/article-lookup.test.mjs`.
 
+## Operations → PIM supplier article list (contract v1)
+
+Order Operations' purchase order form offers the articles bought from the supplier chosen on the order, so nobody types article numbers from memory (its `docs/integrations/gateway-article-lookup.md` describes the caller's side). Same endpoint, key and boundary as `lookupArticle`.
+
+Request, with no other keys:
+
+```json
+{ "action": "listSupplierArticles", "contract_version": 1 }
+```
+
+Answer, status 200: every article that names at least one supplier, sorted by article number.
+
+```json
+{ "contract_version": 1,
+  "articles": [
+    { "pim_component_id": "<bom_components.id>", "article_number": "RR-202609-EHA3V7FH", "name": "Adjustable Legs - Rekord TECH", "unit": "pcs",
+      "suppliers": [
+        { "name": "ITALIANA FERRAMENTA s.r.l.", "preferred": false, "supplier_article_number": null,
+          "price": { "amount": 0.76, "currency": "EUR", "kind": "actual" } } ] } ] }
+```
+
+- A supplier counts when it is the part's preferred supplier (`component_metadata.preferred_supplier_name`, with `supplier_part_number` as `supplier_article_number`) or the supplier of a price on file (`component_costs.supplier_name`). The two are one entry when their names match ignoring case; the preferred supplier is listed first.
+- `price` is the actual price when there is one, otherwise the estimate, as entered (unit cost before transport and customs), or null.
+- Supplier names are free text here. Order Operations matches them against its own supplier register; nothing about its suppliers or orders is sent here.
+- Product families, phantom assemblies and components without an article number are never listed.
+- 400 for any other request shape, 401 for a wrong key, 503 when the key is not configured, 502 when the data cannot be read.
+- The rules live in `supabase/functions/_shared/supplier-articles-core.mjs` and are tested by `tests/supplier-articles.test.mjs`.
+
 ## Operations → PIM pre-assemblies (contract v1)
 
 Order Operations builds eligible components ahead of orders (its item 0018). Two service actions, with the same endpoint, key and boundary as `lookupArticle`:

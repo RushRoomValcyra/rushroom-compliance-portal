@@ -115,7 +115,7 @@ Cache: app.js → v460; supplier.js → v460 (app.js v464 after the 2026-11-26 f
 ## 7 As built — 2026-11-25
 
 - **Deny-by-default.** portal-api refuses any action outside `SUPPLIER_ACTIONS`
-  for a supplier session (23 names: the page's reads, the compliance tabs'
+  for a supplier session (24 names: the page's reads, the compliance tabs'
   reads, and the writes `setStatus`, `uploadUrl`, `recordUpload`,
   `docUploadUrl`, `addDocument` plus the account's own MFA); the impersonation
   token gets the reads only. portal-ai serves no action to a supplier
@@ -186,4 +186,25 @@ actions are allowed but have no supplier UI; `uploads`, `docUploadUrl`,
 `addDocument` and `listRequirementLinksForDocumentVersions` are in
 `SUPPLIER_ACTIONS` but answer "Rushroom only" inside the handler; the two
 compliance tabs' signed URLs are not logged.
+
+## 9 Download all STEP — 2026-11-26
+
+Asked for by Postęp the day after going live: one download for all 51 STEP
+files. "Download all STEP (n)" on Parts & files (supplier.js v461, shown when
+at least one assigned part has a released STEP) calls
+`supplierBatchFileUrls { kind: cad | drawing }`, which walks the assignment in
+part-number order and issues every released file through `issueSupplierFile`
+— one call, one `supplier_file_events` row per file, inline-signed for ten
+minutes, a drawing linked to several assigned parts issued once — and signs
+nothing itself. The browser fetches four files at a time,
+counts them on the button, zips them with JSZip (CDN with a subresource-integrity hash, loaded
+before the server is asked so a blocked CDN never leaves phantom audit rows,
+deflate) together with `manifest.csv` (UTF-8 BOM; part number, name,
+revision, entry name; a leading = + - @ neutralised), and saves
+`<supplier>-STEP-<date>.zip`. Entry names are the file names, prefixed with
+the part number when they do not start with it, and made unique. A file the gate refuses is
+counted in `skipped` and left out; a fetch that fails is left out and the
+button reads "50 of 51 zipped" for a few seconds. No edge function holds the
+files; no storage path reaches the page. The admin preview may use it (a read),
+and its events carry the admin's user id as every preview fetch does.
 

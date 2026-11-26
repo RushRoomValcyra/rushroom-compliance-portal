@@ -1983,7 +1983,7 @@ Deno.serve(async (req) => {
   // this set is refused before its own gate is reached. The admin's preview
   // (adminViewAsSupplier, imp: true) gets the reads only.
   const SUPPLIER_ACTIONS = new Set([
-    "orgContext", "supplierHome", "supplierFileUrl", "listDrawings", "getDrawing", "drawingFileUrl",
+    "orgContext", "supplierHome", "supplierFileUrl", "supplierBatchFileUrls", "listDrawings", "getDrawing", "drawingFileUrl",
     "listSupplierComponents", "getSupplierBomRoots", "getBom", "getComponentDocuments",
     "data", "standards", "uploads", "listRequirementLinksForDocumentVersions",
     "setStatus", "uploadUrl", "recordUpload", "docUploadUrl", "addDocument",
@@ -5088,6 +5088,45 @@ Deno.serve(async (req) => {
     const r = await issueSupplierFile(tdb, session, scope, kind, id, { inline });
     if ("error" in r) return json({ error: r.error }, r.status);
     return json(r);
+  }
+
+  // --- Supplier portal: every released file of one kind, through the same gate.
+  //     Asked for by Postęp 2026-11-26: one download for all 51 STEPs. The
+  //     browser zips; the server only issues URLs — one issueSupplierFile call,
+  //     one supplier_file_events row, per file, exactly as a single Download.
+  if (action === "supplierBatchFileUrls") {
+    if (role !== "supplier") return json({ error: "Supplier only" }, 403);
+    const scope = await supplierScope(tdb, session);
+    if (!scope) return supplierNotLinked();
+    const kind = String(body.kind ?? "cad");
+    if (kind !== "cad" && kind !== "drawing") return json({ error: "kind must be cad or drawing" }, 400);
+    const [{ data: comps }, files] = await Promise.all([
+      scope.partIds.length
+        ? tdb("bom_components").select("id, part_number, name").in("id", scope.partIds)
+        : Promise.resolve({ data: [] }),
+      supplierPartFiles(tdb, scope.partIds),
+    ]);
+    const parts = ((comps || []) as any[])
+      .sort((a, b) => String(a.part_number).localeCompare(String(b.part_number), undefined, { numeric: true, sensitivity: "base" }));
+    const out: any[] = [];
+    let skipped = 0;
+    // A drawing linked to several assigned parts is one file: issued once,
+    // audited once, listed under the first part in part-number order.
+    const issued = new Set<string>();
+    for (const c of parts) {
+      const flags = scope.parts.get(c.id)!;
+      const wanted = kind === "cad"
+        ? (flags.cad && files.cadByPart.get(c.id) ? [{ id: files.cadByPart.get(c.id).cad_file_id, rev: files.cadByPart.get(c.id).revision }] : [])
+        : (flags.drawings ? (files.drawingsByPart.get(c.id) || []).map((d: any) => ({ id: d.drawing_revision_id, rev: d.issue, number: d.drawing_number })) : []);
+      for (const w of wanted) {
+        if (issued.has(w.id)) continue;
+        issued.add(w.id);
+        const r = await issueSupplierFile(tdb, session, scope, kind, w.id, { inline: true });
+        if ("error" in r) { skipped++; continue; }
+        out.push({ part_number: c.part_number, name: c.name, revision: w.rev, drawing_number: (w as any).number ?? null, file_name: r.file_name, url: r.url });
+      }
+    }
+    return json({ kind, files: out, skipped, expires_in: 600 });
   }
 
   // --- BOM: roots visible to suppliers (product_family / sub_assembly not yet

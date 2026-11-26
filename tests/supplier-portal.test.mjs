@@ -292,7 +292,7 @@ test("removeSupplierUser unlinks and disables, only inside the caller's organiza
 // ---------------------------------------------------------------------------
 const ai = read("supabase/functions/portal-ai/index.ts");
 // Every action the supplier page and its Documents/Standards tabs call.
-const SUPPLIER_READS = ["orgContext", "supplierHome", "supplierFileUrl", "listDrawings", "getDrawing", "drawingFileUrl",
+const SUPPLIER_READS = ["orgContext", "supplierHome", "supplierFileUrl", "supplierBatchFileUrls", "listDrawings", "getDrawing", "drawingFileUrl",
   "listSupplierComponents", "getSupplierBomRoots", "getBom", "getComponentDocuments",
   "data", "standards", "uploads", "listRequirementLinksForDocumentVersions"];
 const SUPPLIER_WRITES = ["setStatus", "uploadUrl", "recordUpload", "docUploadUrl", "addDocument",
@@ -452,3 +452,15 @@ test("getDrawing hands a supplier the drawing's identity only", () => {
   assert.ok(!/drawingOut[\s\S]{0,600}created_by/.test(block.slice(block.indexOf("const drawingOut"), block.indexOf("const drawingOut") + 700)), "created_by must not reach a supplier");
   assert.ok(block.includes("const payload: any = { drawing: drawingOut, revisions: shownRevisions, components };"));
 });
+
+test("supplierBatchFileUrls issues every file through issueSupplierFile and nothing else", () => {
+  const at = src.indexOf('if (action === "supplierBatchFileUrls")');
+  assert.ok(at > 0, "portal-api has no supplierBatchFileUrls");
+  const body = src.slice(at, src.indexOf('if (action === "getSupplierBomRoots")', at));
+  assert.ok(body.includes('if (role !== "supplier") return json({ error: "Supplier only" }, 403);'));
+  assert.ok(body.includes("await supplierScope(tdb, session)"));
+  assert.ok(body.includes("await issueSupplierFile(tdb, session, scope, kind, w.id, { inline: true })"), "every URL goes through the one gate (one audit row per file)");
+  assert.ok(!body.includes("createSignedUrl"), "the batch never signs a URL itself");
+  assert.ok(!body.includes(".insert(") && !body.includes(".update("), "a batch download is a read");
+});
+

@@ -198,6 +198,94 @@
     } finally { btn.disabled = false; }
   }
 
+  // Everything released of one kind in one zip — asked for by Postęp
+  // 2026-11-26 ("batch download for all STEPs"). The server issues one URL per
+  // file through the same gate as a single Download (supplierBatchFileUrls →
+  // issueSupplierFile, one supplier_file_events row each), so the audit reads
+  // exactly as 51 clicks would. The browser fetches the files and zips them
+  // (JSZip from the CDN, loaded on first use), so no edge function ever holds
+  // 50 files in memory and no storage path reaches this page.
+  const JSZIP_SRC = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
+  const JSZIP_SRI = "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG";
+  function loadJSZip() {
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    return new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = JSZIP_SRC; sc.async = true;
+      sc.integrity = JSZIP_SRI; sc.crossOrigin = "anonymous";
+      sc.onload = () => (window.JSZip ? resolve(window.JSZip) : reject(new Error("zip library did not load")));
+      sc.onerror = () => reject(new Error("zip library did not load"));
+      document.head.appendChild(sc);
+    });
+  }
+  // Letters of any alphabet stay (Postęp keeps its ę); separators and symbols become one underscore.
+  const safeStem = (t) => String(t || "files").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "files";
+  // A CSV cell: quoted, quotes doubled, and a leading = + - @ neutralised so a
+  // spreadsheet never runs a part name as a formula.
+  const csvCell = (v) => { const t = String(v ?? ""); return `"${(/^[=+\-@]/.test(t) ? "'" + t : t).replace(/"/g, '""')}"`; };
+  async function downloadAll(kind, home, btn) {
+    // The label is pinned once: a click while "Not available" is still showing
+    // must not adopt that text as the thing to restore.
+    const was = btn.dataset.label || (btn.dataset.label = btn.textContent); btn.disabled = true;
+    const say = (t) => { btn.textContent = t; };
+    const failed = [];
+    try {
+      say("Preparing…");
+      // The zip library first: the server audits every URL it issues, so no
+      // event may be written for a download that a blocked CDN then prevents.
+      const JSZip = await loadJSZip();
+      const r = await API.post(API.getToken(ROLE), "supplierBatchFileUrls", { kind });
+      const files = r.files || [];
+      const skipped = Number(r.skipped || 0);
+      if (!files.length) throw new Error("nothing released");
+      const zip = new JSZip();
+      // Entry names: the file name, prefixed with the part number when it does
+      // not already start with it, and made unique — a collision must never
+      // drop a part silently.
+      const used = new Set();
+      for (const f of files) {
+        let nm = String(f.file_name || "file.step");
+        if (f.part_number && !nm.startsWith(f.part_number)) nm = `${f.part_number} ${nm}`;
+        const dot = nm.lastIndexOf("."); const stem = dot > 0 ? nm.slice(0, dot) : nm; const ext = dot > 0 ? nm.slice(dot) : "";
+        for (let i = 2; used.has(nm); i++) nm = `${stem} (${i})${ext}`;
+        used.add(nm); f.entry = nm;
+      }
+      let done = 0;
+      const queue = files.slice();
+      // Four fetches at a time: the signed URLs live 10 minutes, the files are
+      // a few MB each, and the button counts them in.
+      const pull = async () => {
+        for (let f = queue.shift(); f; f = queue.shift()) {
+          try {
+            const res = await fetch(f.url);
+            if (!res.ok) throw new Error(String(res.status));
+            zip.file(f.entry, await res.arrayBuffer());
+          } catch { failed.push(f.file_name); }
+          done++; say(`${done} / ${files.length}`);
+        }
+      };
+      await Promise.all([pull(), pull(), pull(), pull()]);
+      const csv = ["part_number,name,revision,file_name"]
+        .concat(files.filter((f) => !failed.includes(f.file_name)).map((f) =>
+          [f.part_number, f.name, f.revision, f.entry].map(csvCell).join(",")));
+      // UTF-8 BOM so Excel on Windows reads the Polish and Swedish letters.
+      zip.file("manifest.csv", "\ufeff" + csv.join("\n") + "\n");
+      say("Zipping…");
+      const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
+      const stamp = new Date().toISOString().slice(0, 10);
+      const name = `${safeStem(home && home.supplier && home.supplier.name)}-${kind === "cad" ? "STEP" : "drawings"}-${stamp}.zip`;
+      const href = URL.createObjectURL(blob);
+      const a = el("a", { href, download: name, hidden: "" });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 60000);
+      const total = files.length + skipped;
+      if (failed.length || skipped) { say(`${files.length - failed.length} of ${total} zipped`); setTimeout(() => say(was), 4000); }
+      else say(was);
+    } catch (ex) {
+      say("Not available"); setTimeout(() => say(was), 2500);
+    } finally { btn.disabled = false; }
+  }
+
   // CAD preview: the shared 3D viewer (app.js openCadViewer, o3dv) on an
   // inline-signed URL. Without the viewer the file is downloaded instead.
   async function previewCad(part, c, btn) {
@@ -215,11 +303,17 @@
     const mount = $("#parts-panel");
     const parts = home.parts || [];
     const last = (home.updated_at || parts.map(newestRelease).filter(Boolean).sort().pop() || "");
+    const withCad = parts.filter((p) => p.cad).length;
+    const allStep = withCad
+      ? el("button", { class: "btn btn-sm", type: "button", title: "One zip with every released STEP file and a manifest" }, `Download all STEP (${withCad})`)
+      : null;
+    if (allStep) allStep.addEventListener("click", () => downloadAll("cad", home, allStep));
     const tools = el("div", { class: "row-tools" }, [
       el("span", { class: "updated" }, `${parts.length} ${parts.length === 1 ? "part" : "parts"}${last ? ` · last release ${fmtDate(last)}` : ""}`),
       el("span", { class: "spacer" }),
+      allStep,
       el("button", { class: "btn btn-sm", type: "button", onclick: refreshParts }, "Refresh"),
-    ]);
+    ].filter(Boolean));
     if (!parts.length) { setChildren(mount, tools, el("div", { class: "empty" }, "No parts assigned yet.")); return; }
 
     const drawingCell = (p) => {

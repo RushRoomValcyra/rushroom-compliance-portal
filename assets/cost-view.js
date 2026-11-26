@@ -343,6 +343,7 @@
         transport_pct: p.actual ? String(Number(p.actual.transport_pct || 0)) : "",
         customs_pct: p.actual ? String(Number(p.actual.customs_pct || 0)) : "",
         supplier_name: p.actual?.supplier_name || "",
+        supplier_id: p.actual?.supplier_id || null,
       }));
       const kindSel = el("select", { class: "up-text", "aria-label": "Kind" },
         [el("option", { value: "actual" }, "Save as Actual"), el("option", { value: "estimated" }, "Save as Estimated")]);
@@ -350,6 +351,8 @@
       const saveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Save filled rows");
 
       const makeRow = (r) => {
+        // Picked from the supplier register (0066), never typed.
+        r.picker = window.PortalSupplierPicker.create({ token, supplierId: r.supplier_id, supplierName: r.supplier_name, label: `${r.name || "Part"} supplier` });
         const inp = (key, type, extra = {}) => el("input", { class: "up-text", type, value: r[key], style: "width:100%;font-size:0.8125rem", ...extra,
           onchange: (ev) => { r[key] = ev.target.value; } });
         const curSel = el("select", { class: "up-text", style: "width:100%;font-size:0.8125rem", "aria-label": "Currency",
@@ -362,7 +365,7 @@
           curSel,
           inp("transport_pct", "number", { min: "0", max: "1000", step: "any", placeholder: "0" }),
           inp("customs_pct", "number", { min: "0", max: "1000", step: "any", placeholder: "0" }),
-          inp("supplier_name", "text", { maxlength: "200", placeholder: "Supplier" }),
+          r.picker.el,
         ]);
       };
 
@@ -380,7 +383,7 @@
               unit_currency: x.unit_currency,
               transport_pct: Number(x.transport_pct) || 0,
               customs_pct: Number(x.customs_pct) || 0,
-              supplier_name: x.supplier_name.trim() || null,
+              ...x.picker.value(),
             })),
           });
           editMode = false;

@@ -130,8 +130,8 @@ test("every cost save is kept: history by trigger, append-only, tenant-scoped (0
 
 test("the supplier is stored on each cost, from every save path (2026-10-10)", () => {
   assert.ok(/supplier_name/.test(handler.match(/const COST_COLS = "[^"]*"/)[0]), "supplier_name is not read");
-  assert.ok(/supplier_name: b\.supplier_name \?/.test(handler), "supplier_name is not written");
-  assert.ok(/supplier_name: supplier\.value\.trim\(\) \|\| null/.test(read("assets/cost-forms.js")), "the Cost tab does not save the supplier");
+  assert.ok(/supplier_name: who\.name, supplier_id: who\.id/.test(handler), "the supplier is not written");
+  assert.ok(/\.\.\.supplier\.value\(\)/.test(read("assets/cost-forms.js")), "the Cost tab does not save the supplier");
   assert.ok(/supplier_name: supplier\.value\.trim\(\) \|\| null/.test(read("assets/cost-ai.js")), "the quote reader does not save the supplier");
   assert.ok(/supplier_name: \(rows\.find\(\(f\) => f\.key === "preferred_supplier_name"\)/.test(read("assets/app.js")), "AI fill does not save the supplier");
 });

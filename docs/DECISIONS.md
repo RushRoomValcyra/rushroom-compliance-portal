@@ -1555,3 +1555,15 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/SUPPLIER_PORTAL.md`, `supabase/migrations/0065_suppliers.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/portal-api/index.ts`, `supabase/functions/portal-ai/index.ts`, `supplier.html`, `assets/supplier.js`, `assets/app.js`, `index.html`, `tests/supplier-portal.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
 
 ---
+
+## 2026-11-26 — One supplier register, in the Gateway
+
+**Decision (Matte, 2026-11-26):** The Gateway's `suppliers` table is the one supplier register. It holds who a supplier is (name, organisation number, country, currency), how it takes orders (email, web shop or other, with the address), its usual lead time and payment terms, and its contact; the portal logins of 0065 hang off the same row. A part's supplier (`component_metadata.preferred_supplier_id`) and a price's supplier (`component_costs.supplier_id`) point at it and are picked from a list with "+ New supplier…", never typed. Order Operations reads the register through the service action `listSupplierRegister` and keeps a copy for its purchase orders; it no longer adds or edits suppliers.
+
+**Why:** A supplier lived in four places: typed on each part, typed on each price, this register (logins only) and Order Operations' register (purchasing terms). They were matched by name, so "GQK" and "XIAMEN GQK Technology" were two suppliers, and Italiana Ferramenta was in SEK in Order Operations while its BOM price is in EUR. The Gateway defines the product and who it is bought from; Order Operations executes purchasing (decisions 0006 and 0012 there).
+
+**Consequences:** Migration 0066. Typed names stay on the rows: on a part the name follows the register, on a price it keeps what was typed (cost history is append-only). Names typed before the register are listed on Accounts → Suppliers for an admin to link once; the typed name becomes an alias so the quote reader, AI fill and cost import link it themselves next time. `listSupplierArticles` carries `supplier_id`. New actions: `listSupplierOptions`, `addSupplier`, `listTypedSupplierNames`, `linkTypedSupplierName`, `listSupplierRegister`.
+
+**Files changed:** `supabase/migrations/0066_supplier_register.sql`, `supabase/functions/_shared/supplier-register-core.mjs`, `supabase/functions/_shared/supplier-articles-core.mjs`, `supabase/functions/portal-api/index.ts`, `supabase/functions/portal-api/handlers/costs.ts`, `assets/supplier-picker.js`, `assets/app.js`, `assets/cost-forms.js`, `assets/cost-view.js`, `index.html`, `supplier.html`, `docs/PLANNER_MAPPINGS.md`, `tests/supplier-register.test.mjs`, `CLAUDE.md`.
+
+---

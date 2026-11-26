@@ -208,16 +208,43 @@ Answer, status 200: every article that names at least one supplier, sorted by ar
   "articles": [
     { "pim_component_id": "<bom_components.id>", "article_number": "RR-202609-EHA3V7FH", "name": "Adjustable Legs - Rekord TECH", "unit": "pcs",
       "suppliers": [
-        { "name": "ITALIANA FERRAMENTA s.r.l.", "preferred": false, "supplier_article_number": null,
+        { "supplier_id": "<suppliers.id or null>", "name": "Italiana Ferramenta s.r.l.", "preferred": false, "supplier_article_number": null,
           "price": { "amount": 0.76, "currency": "EUR", "kind": "actual" } } ] } ] }
 ```
 
 - A supplier counts when it is the part's preferred supplier (`component_metadata.preferred_supplier_name`, with `supplier_part_number` as `supplier_article_number`) or the supplier of a price on file (`component_costs.supplier_name`). The two are one entry when their names match ignoring case; the preferred supplier is listed first.
 - `price` is the actual price when there is one, otherwise the estimate, as entered (unit cost before transport and customs), or null.
-- Supplier names are free text here. Order Operations matches them against its own supplier register; nothing about its suppliers or orders is sent here.
+- `supplier_id` is the supplier in the Gateway's register (0066) when the part or price points at one, or its typed name matches a register name or alias; its `name` is then the register's. A supplier typed before the register and not linked yet has `supplier_id` null and its name as typed. Order Operations matches by `supplier_id` first and by name only for those; nothing about its orders is sent here.
 - Product families, phantom assemblies and components without an article number are never listed.
 - 400 for any other request shape, 401 for a wrong key, 503 when the key is not configured, 502 when the data cannot be read.
 - The rules live in `supabase/functions/_shared/supplier-articles-core.mjs` and are tested by `tests/supplier-articles.test.mjs`.
+
+## Operations → PIM supplier register (contract v1)
+
+The Gateway keeps the one supplier register (0066, decided 2026-11-26): who each supplier is, how it takes orders and its terms. Parts and prices point at it. Order Operations reads it, keeps a copy for its purchase orders and never edits it. Same endpoint, key and boundary as `lookupArticle`.
+
+Request, with no other keys:
+
+```json
+{ "action": "listSupplierRegister", "contract_version": 1 }
+```
+
+Answer, status 200: every supplier, active or not, sorted by name.
+
+```json
+{ "contract_version": 1,
+  "suppliers": [
+    { "id": "<suppliers.id>", "name": "Italiana Ferramenta s.r.l.", "active": true,
+      "org_number": null, "country": "IT", "currency": "EUR",
+      "ordering_method": "email", "order_email": "orders@example.it", "web_shop_url": null,
+      "contact_name": null, "contact_email": null, "phone": null,
+      "lead_time_days": 21, "payment_terms_days": 30, "notes": null } ] }
+```
+
+- `ordering_method` is `email`, `web_shop`, `other` or null (not set). When it is `email` there is an `order_email`; when `web_shop` a `web_shop_url`.
+- `currency` and `country` may be null until someone fills them in.
+- 400 for any other request shape, 401 for a wrong key, 503 when the key is not configured, 502 when the data cannot be read.
+- The rules live in `supabase/functions/_shared/supplier-register-core.mjs` and are tested by `tests/supplier-register.test.mjs`.
 
 ## Operations → PIM pre-assemblies (contract v1)
 

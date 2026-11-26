@@ -2708,6 +2708,7 @@
     const err = supplierErrLine();
     const box = el("div", { class: "loading" }, "Loading suppliers…");
     const eventsBox = el("div", { style: "margin-top:1rem" });
+    const typedNames = el("div");
     let suppliers = [];
     let selectedId = null;
 
@@ -2768,6 +2769,8 @@
         onclick: (ev) => { if (ev.target.closest("button, a, input, select")) return; showEvents(s); },
       }, [
         el("td", {}, [el("strong", {}, s.name), " ", supplierStatusChip(s.status)]),
+        el("td", {}, [ORDERING_LABELS[s.ordering_method || ""], s.ordering_method === "email" && s.order_email ? el("div", { class: "muted", style: "font-size:0.8125rem" }, s.order_email) : null]),
+        el("td", {}, s.currency || "—"),
         el("td", {}, [s.contact_name || "—", s.contact_email ? el("div", { class: "muted", style: "font-size:0.8125rem" }, s.contact_email) : null]),
         el("td", {}, String((s.users || []).length)),
         el("td", {}, String(s.parts_count ?? 0)),
@@ -2787,7 +2790,7 @@
       if (!suppliers.length) { box.replaceChildren(el("div", { class: "empty" }, "No suppliers yet.")); return; }
       box.className = "";
       box.replaceChildren(el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
-        el("thead", {}, el("tr", {}, ["Name", "Contact", "Users", "Parts", "Last activity", ""].map((h) => el("th", {}, h)))),
+        el("thead", {}, el("tr", {}, ["Name", "Orders by", "Currency", "Contact", "Portal users", "Portal parts", "Last activity", ""].map((h) => el("th", {}, h)))),
         el("tbody", {}, suppliers.map(row)),
       ])));
     };
@@ -2799,6 +2802,8 @@
         suppliers = (r.suppliers || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         box.className = "";
         paint();
+        typedNames.replaceChildren();
+        typedSupplierNamesPanel(token, suppliers, reload).then((panel) => { if (panel) typedNames.replaceChildren(panel); }).catch(fail);
         if (selectedId) { const s = suppliers.find((x) => x.id === selectedId); if (s) showEvents(s); else { selectedId = null; eventsBox.replaceChildren(); } }
       } catch (ex) { box.className = ""; box.replaceChildren(); fail(ex); }
     };
@@ -2810,6 +2815,7 @@
         actionBtn("New supplier", "plus", { primary: true, onClick: () => supplierFormModal(null, reload) }),
       ]),
       err,
+      typedNames,
       box,
       eventsBox,
     );
@@ -2817,40 +2823,119 @@
     return wrap;
   }
 
-  // New / Edit supplier — one row: Name · Contact name · Contact email · Save.
+  // New / Edit supplier — the one register (0066): who they are, how they take
+  // orders and the usual terms. Order Operations reads all of it.
+  const SUPPLIER_CURRENCIES = ["SEK", "EUR", "USD", "PLN"];
+  const ORDERING_LABELS = { "": "Not set", email: "Email", web_shop: "Web shop", other: "Other" };
   function supplierFormModal(supplier, onDone) {
     const token = API.getToken();
     const err = supplierErrLine();
-    const name = el("input", { class: "up-text", type: "text", value: supplier?.name || "", style: "min-width:200px" });
-    const contactName = el("input", { class: "up-text", type: "text", value: supplier?.contact_name || "", style: "min-width:180px" });
-    const contactEmail = el("input", { class: "up-text", type: "email", value: supplier?.contact_email || "", style: "min-width:220px" });
-    const status = supplier ? el("select", { class: "up-text" }, ["active", "inactive"].map((v) => el("option", { value: v, selected: (supplier.status || "active") === v ? "selected" : null }, v === "active" ? "Active" : "Inactive"))) : null;
-    const box = el("div");
-    const close = openModal(supplier ? "Edit supplier" : "New supplier", box);
+    const inp = (value, attrs = {}) => el("input", { class: "up-text", type: "text", value: value ?? "", style: "width:100%;box-sizing:border-box", ...attrs });
+    const sel = (value, options) => el("select", { class: "up-text", style: "width:100%" }, options.map(([v, label]) => el("option", { value: v, selected: (value ?? "") === v ? "selected" : null }, label)));
+    const f = {
+      name: inp(supplier?.name),
+      org_number: inp(supplier?.org_number),
+      country: inp(supplier?.country, { maxlength: "2", placeholder: "SE", style: "width:5rem;text-transform:uppercase" }),
+      currency: sel(supplier?.currency, [["", "—"], ...SUPPLIER_CURRENCIES.map((c) => [c, c])]),
+      ordering_method: sel(supplier?.ordering_method, Object.entries(ORDERING_LABELS)),
+      order_email: inp(supplier?.order_email, { type: "email" }),
+      web_shop_url: inp(supplier?.web_shop_url, { type: "url", placeholder: "https://" }),
+      contact_name: inp(supplier?.contact_name),
+      contact_email: inp(supplier?.contact_email, { type: "email" }),
+      phone: inp(supplier?.phone, { type: "tel" }),
+      lead_time_days: inp(supplier?.lead_time_days, { type: "number", min: "0", max: "365", style: "width:6rem" }),
+      payment_terms_days: inp(supplier?.payment_terms_days, { type: "number", min: "0", max: "180", style: "width:6rem" }),
+      notes: el("textarea", { class: "up-text", rows: "2", style: "width:100%;box-sizing:border-box" }, supplier?.notes || ""),
+    };
+    const status = supplier ? sel(supplier.status || "active", [["active", "Active"], ["inactive", "Inactive"]]) : null;
+    const box = el("div", { style: "min-width:min(640px,90vw)" });
+    const close = openModal(supplier ? `Edit supplier · ${supplier.name}` : "New supplier", box);
     const save = actionBtn("Save", "edit", { primary: true, onClick: async () => {
       err.textContent = "";
-      const n = name.value.trim();
-      if (!n) { err.textContent = "Name is required."; name.focus(); return; }
+      if (!f.name.value.trim()) { err.textContent = "Name is required."; f.name.focus(); return; }
       save.disabled = true;
       try {
-        const body = { name: n, contact_name: contactName.value.trim() || null, contact_email: contactEmail.value.trim() || null };
+        const body = Object.fromEntries(Object.entries(f).map(([k, input]) => [k, input.value.trim() === "" ? null : input.value.trim()]));
         if (supplier) { body.id = supplier.id; body.status = status.value; }
         await API.post(token, "saveSupplier", body);
+        if (window.PortalSupplierPicker) window.PortalSupplierPicker.forget();
         close();
         if (onDone) onDone();
       } catch (ex) { save.disabled = false; err.textContent = ex.message; }
     } });
-    const field = (label, input) => el("div", { class: "form-row" }, [el("span", { class: "form-label" }, label), input]);
+    const field = (label, input) => el("label", { class: "form-row", style: "display:flex;flex-direction:column;gap:0.2rem" }, [el("span", { class: "form-label" }, label), input]);
+    const grid = (kids) => el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem 0.9rem;margin-bottom:0.75rem" }, kids);
+    const head = (text) => el("strong", { style: "font-size:0.875rem;display:block;margin:0.25rem 0 0.4rem" }, text);
+    const syncOrdering = () => {
+      f.order_email.closest("label").style.display = f.ordering_method.value === "email" ? "" : "none";
+      f.web_shop_url.closest("label").style.display = f.ordering_method.value === "web_shop" ? "" : "none";
+    };
     box.append(
-      el("div", { style: "display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap" }, [
-        field("Name", name), field("Contact name", contactName), field("Contact email", contactEmail),
-        status ? field("Status", status) : null, save,
-      ]),
+      grid([field("Name", f.name), field("Organisation number", f.org_number), field("Country", f.country), field("Currency", f.currency)]),
+      head("Ordering"),
+      grid([field("Orders by", f.ordering_method), field("Order email", f.order_email), field("Web shop address", f.web_shop_url),
+        field("Lead time (days)", f.lead_time_days), field("Payment terms (days)", f.payment_terms_days)]),
+      head("Contact"),
+      grid([field("Contact name", f.contact_name), field("Contact email", f.contact_email), field("Phone", f.phone), status ? field("Status", status) : el("span")]),
+      field("Notes", f.notes),
+      el("div", { style: "display:flex;gap:0.6rem;align-items:center;margin-top:0.75rem" }, [save]),
       err,
     );
-    name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
-    contactEmail.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
-    setTimeout(() => name.focus(), 0);
+    f.ordering_method.addEventListener("change", syncOrdering);
+    syncOrdering();
+    f.name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
+    setTimeout(() => f.name.focus(), 0);
+  }
+
+  // Names typed on parts and prices before the register (0066). Each row links
+  // one name to a supplier: an existing one, or a new one created from it.
+  // Nothing changes until Link is pressed.
+  async function typedSupplierNamesPanel(token, suppliers, onLinked) {
+    const r = await API.post(token, "listTypedSupplierNames", {});
+    const names = r.names || [];
+    if (!names.length) return null;
+    const NEW = "__new__";
+    const active = suppliers.filter((s) => s.status !== "inactive");
+    const rows = names.map((n) => {
+      const err = el("div", { class: "up-status err", style: "margin:0.2rem 0 0", role: "alert" }, "");
+      const target = el("select", { class: "up-text", "aria-label": `Supplier for ${n.name}` }, [
+        el("option", { value: NEW }, "New supplier…"),
+        ...active.map((s) => el("option", { value: s.id }, s.name)),
+      ]);
+      target.value = n.suggested_supplier_id || NEW;
+      const newName = el("input", { class: "up-text", type: "text", value: n.suggested_name, "aria-label": "New supplier name", style: "min-width:14rem" });
+      const currency = el("select", { class: "up-text", "aria-label": "Currency" }, [el("option", { value: "" }, "—"), ...SUPPLIER_CURRENCIES.map((c) => el("option", { value: c }, c))]);
+      currency.value = n.suggested_currency || "";
+      const newBits = el("span", { style: "display:inline-flex;gap:0.35rem;align-items:center" }, [newName, currency]);
+      const sync = () => { newBits.style.display = target.value === NEW ? "inline-flex" : "none"; };
+      target.addEventListener("change", sync);
+      sync();
+      const link = el("button", { class: "btn btn-xs btn-primary", type: "button" }, "Link");
+      link.addEventListener("click", async () => {
+        err.textContent = "";
+        link.disabled = true;
+        try {
+          const body = { typed_name: n.name };
+          if (target.value === NEW) { body.new_name = newName.value.trim(); body.currency = currency.value || null; }
+          else body.supplier_id = target.value;
+          await API.post(token, "linkTypedSupplierName", body);
+          if (window.PortalSupplierPicker) window.PortalSupplierPicker.forget();
+          onLinked();
+        } catch (ex) { link.disabled = false; err.textContent = ex.message; }
+      });
+      const used = [n.parts ? `${n.parts} part${n.parts === 1 ? "" : "s"}` : "", n.prices ? `${n.prices} price${n.prices === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+      return el("tr", {}, [
+        el("td", {}, [el("strong", {}, n.name), el("div", { class: "muted", style: "font-size:0.8125rem" }, used)]),
+        el("td", {}, [el("div", { style: "display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap" }, [target, newBits, link]), err]),
+      ]);
+    });
+    return el("div", { style: "margin:0 0 1.25rem;padding:0.75rem 0.9rem;border:1px solid var(--border,#e2e8f0);border-radius:8px" }, [
+      el("div", { class: "form-label", style: "margin-bottom:0.4rem" }, `Typed supplier names to link · ${names.length}`),
+      el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
+        el("thead", {}, el("tr", {}, ["Typed on parts and prices", "Belongs to"].map((h) => el("th", {}, h)))),
+        el("tbody", {}, rows),
+      ])),
+    ]);
   }
 
   // Parts a supplier may see — the full set is sent on Save (setSupplierParts
@@ -9007,7 +9092,7 @@
           metaGrid(
             metaRow("Manufacturer",          metaFld(meta.manufacturer_name)),
             metaRow("OEM number",            metaFld(meta.manufacturer_part_number)),
-            metaRow("Supplier",              metaFld(meta.preferred_supplier_name)),
+            metaRow("Supplier",              metaFld(meta.preferred_supplier_name && !meta.preferred_supplier_id ? `${meta.preferred_supplier_name} (not in the supplier register)` : meta.preferred_supplier_name)),
             metaRow("Supplier part no.",     metaFld(meta.supplier_part_number)),
             metaRow("Lead time",             meta.lead_time_days != null ? meta.lead_time_days + " days" : "—"),
             metaRow("MOQ",                   meta.moq != null ? String(meta.moq) : "—"),
@@ -9149,7 +9234,8 @@
         const fr  = metaInp(meta.flame_retardant_class,  "e.g. V-0");
         const mfr = metaInp(meta.manufacturer_name,        "Manufacturer name");
         const mfp = metaInp(meta.manufacturer_part_number, "OEM number");
-        const ps  = metaInp(meta.preferred_supplier_name,  "Supplier / distributor name");
+        // Picked from the supplier register (0066), never typed.
+        const ps  = window.PortalSupplierPicker.create({ token, supplierId: meta.preferred_supplier_id || null, supplierName: meta.preferred_supplier_name || "", label: "Supplier" });
         const spn = metaInp(meta.supplier_part_number,     "Supplier's order number");
         const ltd = metaInp(meta.lead_time_days,           "calendar days",             "number");
         const moqI= metaInp(meta.moq,                     "units",                     "number");
@@ -9209,7 +9295,8 @@
           flame_retardant_class:      fr.value.trim()  || null,
           manufacturer_name:          mfr.value.trim() || null,
           manufacturer_part_number:   mfp.value.trim() || null,
-          preferred_supplier_name:    ps.value.trim()  || null,
+          preferred_supplier_id:      ps.value().supplier_id,
+          preferred_supplier_name:    ps.value().supplier_name,
           supplier_part_number:       spn.value.trim() || null,
           lead_time_days:             ltd.value !== "" ? parseInt(ltd.value)  : null,
           moq:                        moqI.value !== "" ? parseInt(moqI.value): null,
@@ -9230,7 +9317,7 @@
           el("strong", { style: "font-size:0.875rem;display:block;margin-bottom:0.5rem" }, "Procurement"),
           el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem" }, [
             metaFldRow("Manufacturer", mfr), metaFldRow("OEM number", mfp),
-            metaFldRow("Supplier", ps), metaFldRow("Supplier part no.", spn),
+            metaFldRow("Supplier", ps.el), metaFldRow("Supplier part no.", spn),
             metaFldRow("Lead time (days)", ltd), metaFldRow("MOQ (units)", moqI),
             ...csRowsFor("procurement"),
             ...(looseRows.length ? [el("div", { style: "grid-column:1/3;font-size:0.8125rem;font-weight:700;color:var(--muted,#8b93a1);margin-top:0.4rem" }, "Custom specs — clear a value to remove it"), ...looseRows] : []),

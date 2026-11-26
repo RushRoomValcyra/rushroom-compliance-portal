@@ -7,6 +7,7 @@
 // Rushroom role only — every action checks it. supplier.html loads the same
 // app.js, and costs must never reach a supplier (or Order Operations).
 import { json } from "../../_shared/http.ts";
+import { supplierForTypedName } from "../../_shared/supplier-register-core.mjs";
 
 export const COST_ACTIONS = new Set([
   "getCostView", "getComponentCost", "setComponentCost", "setComponentCosts",
@@ -20,7 +21,7 @@ const RATE_CURRENCIES = ["EUR", "USD", "PLN"];   // SEK is always 1
 const MAX_DEPTH = 10;
 const MAX_BASELINE_LINES = 2000;
 const KINDS = ["actual", "estimated"];   // PROP-073: from documents / our planning cost
-const COST_COLS = "component_id, kind, unit_cost, unit_currency, transport_pct, customs_pct, supplier_name, quoted_on, source_note, source_document_version_id, evidence, updated_at";
+const COST_COLS = "component_id, kind, unit_cost, unit_currency, transport_pct, customs_pct, supplier_name, supplier_id, quoted_on, source_note, source_document_version_id, evidence, updated_at";
 // 0049: every save, kept by a trigger on component_costs.
 const HISTORY_COLS = "id, kind, event, unit_cost, unit_currency, transport_pct, customs_pct, supplier_name, quoted_on, source_note, source_document_version_id, saved_at, saved_by";
 const HISTORY_LIMIT = 100;
@@ -248,6 +249,24 @@ function validateCost(b: any): string | null {
   return null;
 }
 
+// Who a price is from (0066). A supplier picked from the register gives its id
+// and its name; a typed name (AI fill, quote reader, cost import) links itself
+// when it matches a register name or alias, and otherwise stays typed for an
+// admin to link on the Suppliers tab.
+export async function costSupplier(tdb: (t: string) => any, b: any): Promise<{ id: string | null; name: string | null } | { error: string; status: number }> {
+  const sid = typeof b.supplier_id === "string" ? b.supplier_id.trim() : "";
+  if (sid) {
+    const { data } = await tdb("suppliers").select("id, name").eq("id", sid).maybeSingle();
+    if (!data) return { error: "Supplier not found", status: 404 };
+    return { id: data.id, name: data.name };
+  }
+  const typed = b.supplier_name ? String(b.supplier_name).trim().slice(0, 200) : "";
+  if (!typed) return { id: null, name: null };
+  const { data: register } = await tdb("suppliers").select("id, name, aliases");
+  const match = supplierForTypedName(typed, register || []);
+  return { id: match?.id ?? null, name: typed };
+}
+
 async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): Promise<{ error?: string; status?: number }> {
   const bad = validateCost(b);
   if (bad) return { error: bad };
@@ -267,10 +286,12 @@ async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): P
     const unit = num(b.unit_cost), transport = b.transport_pct === undefined ? 0 : num(b.transport_pct);
     const customs = b.customs_pct === undefined ? 0 : num(b.customs_pct);
     const uc = String(b.unit_currency || "SEK").toUpperCase();
+    const who = await costSupplier(tdb, b);
+    if ("error" in who) return who;
     const { error } = await tdb("component_costs").upsert({
       component_id: id, kind, unit_cost: unit, unit_currency: uc, transport_pct: transport,
       customs_pct: customs, quoted_on: b.quoted_on || null,
-      supplier_name: b.supplier_name ? String(b.supplier_name).trim().slice(0, 200) || null : null,
+      supplier_name: who.name, supplier_id: who.id,
       source_note: b.source_note ? String(b.source_note).slice(0, 500) : null,
       source_document_version_id: b.source_document_version_id || null,
       evidence: Array.isArray(b.evidence) ? b.evidence.map((x: unknown) => String(x).slice(0, 300)).slice(0, 10) : null,
@@ -278,7 +299,7 @@ async function writeCost(tdb: (t: string) => any, uid: string | null, b: any): P
     }, { onConflict: "organization_id,component_id,kind" });
     if (error) return { error: error.message };
     note = `${label} set to ${unit} ${uc}` + (transport ? `, ${transport} % transport` : "") + (customs ? `, ${customs} % customs` : "")
-      + (b.supplier_name ? ` from ${String(b.supplier_name).trim().slice(0, 200)}` : "")
+      + (who.name ? ` from ${who.name}` : "")
       + (b.source_document_version_id ? " (read from a document)" : "");
   }
   try {

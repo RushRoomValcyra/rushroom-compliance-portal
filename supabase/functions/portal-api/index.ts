@@ -2676,7 +2676,14 @@ Deno.serve(async (req) => {
     const { data: row } = await tdb("steps").select("audience").eq("step", step).maybeSingle();
     if (!row) return json({ error: "Unknown step" }, 404);
     if (role === "supplier" && !isSupplierStep(row.audience)) return json({ error: "Not allowed for this step" }, 403);
-    const by = role === "supplier" ? `supplier${body.supplierLabel ? ` (${String(body.supplierLabel).slice(0, 60)})` : ""}` : "rushroom";
+    // A supplier's change names the company and the account, not a typed label.
+    let by = "rushroom";
+    if (role === "supplier") {
+      const { data: sup } = typeof session.sid === "string" && session.sid
+        ? await tdb("suppliers").select("name").eq("id", session.sid).maybeSingle() : { data: null };
+      const who = [sup?.name, session.email].filter(Boolean).join(" · ");
+      by = who ? `supplier (${who.slice(0, 120)})` : "supplier";
+    }
     const { error } = await tdb("steps").update({ status, updated_at: new Date().toISOString(), updated_by: by }).eq("step", step);
     if (error) return json({ error: error.message }, 500);
     return json({ ok: true, step, status });
@@ -2760,10 +2767,14 @@ Deno.serve(async (req) => {
     if (!path || !fileName) return json({ error: "path and fileName required" }, 400);
     // Defence-in-depth: a recorded file must live under this tenant's prefix.
     if (!path.startsWith(orgPrefix)) return json({ error: "Invalid upload path for this organization" }, 400);
+    // Who sent it comes from the signed session (migration 0066), never from
+    // the free-text "Your company" label — that stays as what the sender typed.
     const { error } = await tdb("uploads").insert({
       step: body.step ? Number(body.step) : null,
       uploaded_role: role,
       supplier_label: String(body.supplierLabel ?? "").slice(0, 120),
+      supplier_id: role === "supplier" && typeof session.sid === "string" && session.sid ? session.sid : null,
+      user_id: typeof session.uid === "string" && session.uid ? session.uid : null,
       file_path: path,
       file_name: fileName.slice(0, 200),
       note: String(body.note ?? "").slice(0, 500),
@@ -3211,10 +3222,23 @@ Deno.serve(async (req) => {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const { data, error } = await tdb("uploads").select("*").order("created_at", { ascending: false }).limit(200);
     if (error) return json({ error: error.message }, 500);
+    // Name the sender: the supplier row and the account behind the upload (0066).
+    const supIds = [...new Set((data ?? []).map((u) => u.supplier_id).filter(Boolean))];
+    const userIds = [...new Set((data ?? []).map((u) => u.user_id).filter(Boolean))];
+    const supNames = new Map<string, string>();
+    if (supIds.length) {
+      const { data: sups } = await tdb("suppliers").select("id, name").in("id", supIds);
+      for (const x of sups ?? []) supNames.set(x.id, x.name);
+    }
+    const userEmails = new Map<string, string>();
+    if (userIds.length) {
+      const { data: us } = await db.from("users").select("id, email").in("id", userIds);
+      for (const x of us ?? []) userEmails.set(x.id, x.email);
+    }
     // Attach short-lived signed download links
     const withUrls = await Promise.all((data ?? []).map(async (u) => {
       const { data: signed } = await db.storage.from(BUCKET).createSignedUrl(u.file_path, 60 * 30);
-      return { ...u, download_url: signed?.signedUrl ?? "" };
+      return { ...u, download_url: signed?.signedUrl ?? "", supplier_name: supNames.get(u.supplier_id) ?? "", uploaded_by_email: userEmails.get(u.user_id) ?? "" };
     }));
     return json({ uploads: withUrls });
   }

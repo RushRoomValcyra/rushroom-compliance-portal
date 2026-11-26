@@ -19,11 +19,11 @@
   <header class="site-header">
     <div class="wrap header-row">
       <div>
-        <span class="badge">VALCYRA · Rushroom AB</span>
+        <span id="r-badge" class="badge">VALCYRA · Rushroom AB</span>
         <h1>Engineering &amp; Compliance Platform</h1>
         <p class="tagline">Set your password</p>
       </div>
-      <nav aria-label="Views"><a id="r-back" class="btn btn-sm" href="./index.html">Back to portal →</a></nav>
+      <nav aria-label="Views"><a id="r-back" class="btn btn-sm" href="./index.html">Back to sign in →</a></nav>
     </div>
   </header>
 
@@ -45,10 +45,10 @@
     </section>
   </main>
 
-  <footer class="site-footer"><div class="wrap">Internal compliance overview for Rushroom AB ·</div></footer>
+  <footer class="site-footer"><div class="wrap" id="r-footer">Internal compliance overview for Rushroom AB ·</div></footer>
 
   <script src="./assets/config.js?v=310"></script>
-  <script src="./assets/api.js?v=310"></script>
+  <script src="./assets/api.js?v=432"></script>
   <script>
     (function () {
       var form = document.getElementById("r-form");
@@ -62,8 +62,15 @@
       var params = new URLSearchParams(location.search);
       var token = params.get("token");
       // Supplier users were sent here with &to=supplier: every way back leads to supplier.html.
-      var home = params.get("to") === "supplier" ? "./supplier.html" : "./index.html";
+      var supplier = params.get("to") === "supplier";
+      var home = supplier ? "./supplier.html" : "./index.html";
       document.getElementById("r-back").setAttribute("href", home);
+      if (supplier) {
+        // The first page a supplier ever sees is the supplier portal's, not the internal one.
+        document.getElementById("r-badge").textContent = "Rushroom AB · Supplier portal";
+        document.getElementById("r-footer").textContent = "Rushroom AB · Supplier portal";
+        document.title = "Set your password · Rushroom Supplier portal";
+      }
 
       function fail(text) {
         form.hidden = true;
@@ -83,7 +90,7 @@
           .then(function () {
             form.hidden = true;
             title.textContent = "Password set ✓";
-            msg.className = "ok"; msg.textContent = "Your password is set and your email is confirmed. You can now sign in.";
+            msg.className = "ok"; msg.textContent = "Your password is set and your email is confirmed. Sign in with your email and this password.";
             actions.innerHTML = '<a class="btn btn-primary" href="' + home + '">Go to sign in</a>';
           })
           .catch(function (ex) { submit.disabled = false; err.textContent = ex.message || "This link is invalid or has expired."; });

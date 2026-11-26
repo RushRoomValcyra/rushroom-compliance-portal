@@ -923,7 +923,7 @@
             versions.length > 1 ? fileActionBtn("Changes", "diff", { title: "Highlight what changed vs the previous version", onClick: () => openVersionDiff({ title: `Changes — v${versions.length} vs v${versions.length - 1}`, oldUrl: versions[1].open_url, oldHint: versions[1].file_name || d.name, newUrl: current.open_url, newHint: current.file_name || d.name }) }) : null,
             opts.manage && opts.onEditVersion && d.id ? fileActionBtn("Edit", "edit", { onClick: () => opts.onEditVersion(d, current), title: "Edit this version → save as a new version" }) : null,
           ])
-        : el("div", { class: "std-current muted" }, "No file uploaded yet.");
+        : el("div", { class: "std-current muted" }, (d.open_url || d.url || d.storage_path) ? "Single file — no version history yet." : "No file uploaded yet.");
       const history = versions.length
         ? el("details", { class: "std-history" }, [
             el("summary", {}, `Version history (${versions.length})`),
@@ -992,7 +992,7 @@
             window.PortalViewer ? viewChip(() => openViewer(d)) : null,
             openInAppLink(link, d.name, d.storage_path || d.name),
           ].filter(Boolean))
-        : el("span", { class: "pending" }, "link pending");
+        : (opts.manage ? el("span", { class: "pending" }, "link pending") : null);
       const actions = [
         opts.manage && opts.onNewVersion && d.id ? actionBtn("New version", "plus", { primary: true, onClick: () => opts.onNewVersion(d) }) : null,
         opts.manage && opts.onDraft && d.id && (d.kind || "template") === "operational" ? actionBtn("AI draft", "sparkles", { onClick: () => opts.onDraft(d) }) : null,
@@ -1001,7 +1001,7 @@
         opts.manage && opts.onDeleteDocument && d.id ? actionBtn("Delete", "trash", { danger: true, onClick: () => opts.onDeleteDocument(d) }) : null,
       ].filter(Boolean);
       return el("div", { class: "doc doc-op" }, [
-        el("div", {}, [el("div", { class: "name" }, [el("span", {}, d.name), fileTypeChip((current && (current.file_name || current.storage_path)) || d.storage_path || d.url || d.name)]), el("div", { class: "audience" }, `For: ${(d.audience || []).join(", ") || "—"}`)]),
+        el("div", {}, [el("div", { class: "name" }, [el("span", {}, d.name), fileTypeChip((current && (current.file_name || current.storage_path)) || d.storage_path || d.url || d.name)]), opts.manage ? el("div", { class: "audience" }, `For: ${(d.audience || []).join(", ") || "—"}`) : null].filter(Boolean)),
         currentRow,
         linkBox,
         // Paragraph-level linking for the current version (Rushroom only).
@@ -1329,7 +1329,10 @@
   }
 
   function uploadCard(role, steps) {
-    const zone = uploadZone(role, "uploads", { ariaLabel: "Choose a file to upload", processing: true });
+    // portal-ai serves no supplier action, so a supplier's upload has no AI-read
+    // phase: the bar completes on upload and the card never promises a read.
+    const aiRead = role !== "supplier";
+    const zone = uploadZone(role, "uploads", { ariaLabel: "Choose a file to upload", processing: aiRead });
     const stepSel = el("select", { class: "up-step", "aria-label": "Related action (optional)" }, [
       el("option", { value: "" }, "— related action (optional) —"),
       ...steps.map((s) => el("option", { value: String(s.step) }, `#${s.step} · ${s.action.slice(0, 60)}`)),
@@ -1340,7 +1343,7 @@
     const note = el("input", { type: "text", class: "up-note", placeholder: "Note (optional)", "aria-label": "Note" });
     const status = el("p", { class: "up-status", role: "status", "aria-live": "polite" }, "");
     const btn = el("button", { class: "btn btn-primary", type: "button" }, "Upload");
-    aiAutofill(role, { zone, statusEl: status, onFill: (meta) => {
+    if (aiRead) aiAutofill(role, { zone, statusEl: status, onFill: (meta) => {
       if (meta.summary && !note.value.trim()) note.value = meta.summary;
     } });
     zone.register(btn);
@@ -1359,7 +1362,7 @@
     return el("div", { class: "card upload-card" }, [
       el("h3", {}, "Upload a document"),
       el("p", { class: "muted", style: "margin:0.25rem 0 1rem" }, role === "supplier"
-        ? "Submit your signed declaration, test reports, datasheets, or RoHS/REACH declarations. The AI reads the file and suggests a note automatically."
+        ? "Submit your signed declaration, test reports, datasheets, or RoHS/REACH declarations. Rushroom reviews every file you send."
         : "Attach a file to the technical file or a specific action. The AI reads the file and suggests a note automatically."),
       zone.el,
       el("div", { class: "upload-fields", style: "margin-top:0.6rem" }, [stepSel, who, note].filter(Boolean)),
@@ -2053,7 +2056,7 @@
             ? el("button", { class: "linklike", type: "button", onclick: () => window.PortalViewer.open({ name: u.file_name, open_url: u.download_url, storage_path: u.file_name }) }, u.file_name)
             : (u.download_url ? el("a", { href: u.download_url, target: "_blank", rel: "noopener" }, u.file_name) : el("span", {}, u.file_name)),
           fileTypeChip(u.file_name),
-          el("span", { class: "muted" }, ` — ${u.supplier_label || u.uploaded_role}${u.step ? ` · action #${u.step}` : ""}${u.note ? ` · ${u.note}` : ""}`),
+          el("span", { class: "muted" }, ` — ${u.supplier_name || u.supplier_label || u.uploaded_role}${u.uploaded_by_email ? ` · ${u.uploaded_by_email}` : ""}${u.step ? ` · action #${u.step}` : ""}${u.note ? ` · ${u.note}` : ""}`),
           canView ? el("span", { class: "muted" }, [" · ", el("a", { href: u.download_url, target: "_blank", rel: "noopener" }, "download")]) : null,
           u.id ? el("span", {}, [" · ", el("button", { class: "linklike std-del", type: "button", onclick: () => onDelete(u) }, "delete")]) : null,
         ]));
@@ -2329,10 +2332,10 @@
         ? buildStandardsBrowser(standards, role, reload, typeSel.value, jurSel.value)
         : el("div", { class: "empty" }, role === "rushroom" ? "No standards yet — add one in the Add standard tab." : "No standards shared with you yet."));
       typeSel.addEventListener("change", rebuild); jurSel.addEventListener("change", rebuild);
-      wrap.append(
-        standards.length ? el("div", { class: "std-filters" }, [el("span", { class: "form-label", style: "margin:0" }, "Filter"), typeSel, jurSel]) : null,
-        bmount,
-      );
+      // No filter row without standards — and never append(null): the DOM
+      // would print the literal text "null" above the empty state.
+      if (standards.length) wrap.append(el("div", { class: "std-filters" }, [el("span", { class: "form-label", style: "margin:0" }, "Filter"), typeSel, jurSel]));
+      wrap.append(bmount);
       rebuild();
       return wrap;
     };

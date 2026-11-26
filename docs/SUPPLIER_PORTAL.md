@@ -86,7 +86,7 @@ Open renders the PDF inline with `window.PortalViewer` (the same viewer the engi
 
 Supplier Documents and Standards & Regulations keep today's content (steps with audience supplier, the document library filtered to supplier, the standards flagged supplier). The declaration-upload card stays if `supplierUploadUrl` is configured. Footer: "Rushroom AB · Supplier portal". The "governed by Google Drive sharing" sentence goes.
 
-Admin preview: the Accounts tab's "View as supplier" stores the impersonation token in `sessionStorage` under `pim_supplier_preview` and opens `supplier.html`; `supplier.js` uses that token when present (and shows a thin amber bar "Viewing as <supplier> · <admin>") and otherwise the supplier's own session from `localStorage`. The old "Open the supplier portal (admin)" link on index.html goes.
+Admin preview: the Accounts tab's "View as supplier" stores the impersonation token in `sessionStorage` under `pim_supplier_preview` and opens `supplier.html`; `supplier.js` uses that token when present (and shows a thin amber bar "Viewing as <supplier> · <admin>") and otherwise the supplier's own session from `sessionStorage` (api.js keeps every session there: closing the tab signs the supplier out, the token itself lasts 8 hours). The old "Open the supplier portal (admin)" link on index.html goes.
 
 ## 5 Admin — Accounts tab, a "Suppliers" section (app.js)
 
@@ -110,7 +110,7 @@ Labels outside boxes, no explanatory text, single-row forms, the neighbouring st
 6. The impersonation token is role `supplier` with `imp: true`, expires in 30 minutes, and cannot call Rushroom-only actions.
 7. Tenant: the three new tables are in `TENANT_TABLES`; `users.supplier_id` is checked against a supplier of the same organization when set.
 
-Cache: app.js → v460; supplier.js → v460.
+Cache: app.js → v460; supplier.js → v460 (app.js v464 after the 2026-11-26 fixes below).
 
 ## 7 As built — 2026-11-25
 
@@ -143,3 +143,47 @@ Cache: app.js → v460; supplier.js → v460.
   hand a supplier 60-minute signed URLs for supplier-audience documents
   without a `supplier_file_events` row — company-level documents, outside the
   per-part model; the events table's kind is `drawing | cad`.
+
+## 8 Walked through as Postęp — 2026-11-26
+
+The page was opened through "View as supplier" and every screen read; four
+readers went through supplier.js, portal-api, this document and production.
+What Szymon sees: three tabs — Parts & files (51 rows, each Rev B released
+STEP with Preview and Download; one drawing, Side Panel Left Issue B; 50 rows
+"—" under Drawing), Supplier Documents (four supplier-audience documents and
+the Upload a document card), Standards & Regulations (empty: no standard is
+tagged supplier). He had not signed in: `users.password` was NULL, the
+set-password link lives one hour and the one from 2026-11-25 had expired; the
+four `supplier_file_events` rows were the admin's previews. Mail is
+configured (Resend), so "Forgot password?" delivers.
+
+Fixed the same day (migration 0066, portal-api, app.js v464, reset.html):
+
+- **Upload card.** A supplier's upload no longer calls `suggestFileMetadata`
+  (portal-ai refuses supplier sessions, so every upload ended on a red
+  "Couldn't read the file automatically: Not available to supplier accounts");
+  the bar completes on upload and the copy no longer promises an AI read.
+- **Standards tab** printed a literal "null" above "No standards shared with
+  you yet." (`Element.append(null)` in the register tab). Gone.
+- **Who sent it.** `uploads.supplier_id` and `uploads.user_id` (0066) are
+  written from the signed session on `recordUpload`; the free-text "Your
+  company" label is kept as what was typed. Documents → Supplier uploads names
+  the company and the account. `setStatus` by a supplier writes
+  `updated_by = "supplier (<company> · <email>)"`.
+- **Document card** for an external reader: no "For: internal, supplier"
+  audience line; a legacy single-file document reads "Single file — no version
+  history yet." instead of "No file uploaded yet."; a document with no file no
+  longer shows the internal "link pending" placeholder.
+- **reset.html** with `to=supplier` is badged and footed "Rushroom AB ·
+  Supplier portal", its back link reads "Back to sign in", and it loads the
+  same api.js as supplier.html.
+
+Still as designed, recorded: no acknowledgement of a release exists (the file
+event is a one-way fetch log); the five supplier-audience steps render into
+the hidden `#steps-panel` and `setStatus` stays reachable only by API; the
+upload card's related-action dropdown shows the steps' internal wording; MFA
+actions are allowed but have no supplier UI; `uploads`, `docUploadUrl`,
+`addDocument` and `listRequirementLinksForDocumentVersions` are in
+`SUPPLIER_ACTIONS` but answer "Rushroom only" inside the handler; the two
+compliance tabs' signed URLs are not logged.
+

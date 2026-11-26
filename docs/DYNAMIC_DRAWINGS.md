@@ -601,7 +601,7 @@ refused without a file; a released issue is immutable with its pins.
 In dependency order. Days are one engineer; the first user-visible value lands
 at the end of Phase 3.
 
-### Phase 0 — drawset under version control; the CLI stops speaking prose (1 day)
+### Phase 0 — drawset under version control; the CLI stops speaking prose (1 day) — BUILT 2026-11-26
 
 Goal: a reversible drawset and a machine-readable gate before anything grows.
 
@@ -617,7 +617,7 @@ Verify: render Side Panel Left Rev B through today's modal: job done,
 regression OK. A forced completeness failure exits 3 and the job fails on the
 `verify` step with the missing list.
 
-### Phase 1 — drawset learns patch, overrides and the sidecars (4 days)
+### Phase 1 — drawset learns patch, overrides and the sidecars (4 days) — BUILT 2026-11-26, all six proofs hold (ROADMAP)
 
 Goal: everything the portal will ever ask drawset to do exists and is proved
 on the Mac, with no portal change.

@@ -367,7 +367,7 @@ eleven §9 decisions as recommended). Layer 1 is one form writing one
 operation: pick a dimension row on a draft, set a tolerance or a name, render
 the same draft again, compare, keep. No AI, no viewer change, no new letter.
 Everything in this section is Rushroom only; §13.6 is the supplier's whole
-share of it. Server contract: `getDrawingSpec`, `applyDrawingSpecOps`,
+share of it; §13.8 (Phase 4) adds the sheet as the second way in. Server contract: `getDrawingSpec`, `applyDrawingSpecOps`,
 `requestDrawingRender { mode: "iterate" }`, `acceptDrawingIteration`,
 `discardDrawingIteration`, `getDrawingRenderArtifacts` in portal-api (commit
 e6e91cf). Frontend: `openDrawingSurface` in assets/app.js, styles.css, cache
@@ -560,7 +560,40 @@ cache hygiene, not a feature.
 | n → m · k tolerances changed · v values changed · geometry same as Issue C / geometry differs from Issue C | the strip |
 | Round trip · Completeness · Wall flags · Regression | verification |
 | Unmatched overrides (n) | the amber list |
+| 1 · 2 · 3 · Fit · 100% · Plain PDF · Sheets | the sheet bar (§13.8) |
+| n selected · kind ×k · <face> face, x a–b, y c–d · × | the selection chips (§13.8) |
 | Keep · Discard · Edit | compare buttons |
 | Spec · Template · Patch · History · v3 available · Rebase · Revert | the Spec section |
 | Proposed · Candidate · Accepted · Discarded · Failed | patch status chips |
 | No dimensions. | empty state |
+
+### 13.8 The sheet — PNG sheets, the overlay, the marquee (Phase 4, 2026-11-26, v469)
+
+The second way to the same control (`DYNAMIC_DRAWINGS.md` §6 "The sheet",
+§7 Phase 4). When the **current** issue was made by a render job and its job
+left sheet PNGs and an entities sidecar (`getDrawingSpec.artifacts.png_urls`,
+`entities_url`), the file pane shows the PNGs instead of the PDF iframe:
+`PortalViewer.renderSheets` in `assets/viewer.js`. Any other file — an older
+issue, a hand-uploaded PDF, a render before Phase 1 — takes the iframe path
+unchanged. The PDF stays the artefact of record; **⤓ Download** still hands
+it out.
+
+| Element | Rule |
+|---|---|
+| Bar | tabs **1 · 2 · 3 · 4** (one per sheet), then **Fit** / **100%** (one button, the zoom it switches to on the next click is not stated; the active state marks 100%), then **Plain PDF** |
+| Plain PDF | the iframe as before with one button **Sheets** above it; the choice is kept per drawing for the session |
+| Overlay | an SVG in paper mm over the PNG (`viewBox` = `size_mm`, y flipped, strokes do not scale); the frame drawset draws at (20, 10) → (W−10, H−10) is drawn faintly on every sheet as the calibration box |
+| Box | one rect per sidecar entity; a box with linked rows (`features` non-empty) outlines faintly and takes the pointer; hover outlines it in the accent and shows its text (native title); an unlinked box shows its text on hover and nothing else |
+| Click | selects the box's linked rows (`row.entity` = the entity's index on `row.sheet`): the table narrows to them, the first scrolls into view and, on a draft, opens the §13.2 form — the same form, the same op |
+| Shift-click | adds the box's rows to the selection; no form moves |
+| Marquee | a drag draws a dashed rectangle; on release every box it touches is selected and the rectangle is kept, mapped through the sheet's face view to model coordinates |
+| Chips | under the Search box: "4 selected · pos_y ×4", then the model rectangle "inside face, x 40–120, y 300–380" when the marquee crossed a face view, then **×** (clears; the table widens again) |
+| Row → sheet | clicking a table row lights its box (and turns the sheet to it) whether or not the row opens a form |
+| Touched | a box whose rows the patch touched is amber, like its rows |
+| Compare | when the current issue shows sheets, **Candidate** shows the candidate's PNGs with the same overlay from the candidate's sidecar, the touched boxes amber; the two panes turn to the same sheet together; a candidate box selects its rows in the one table. A candidate without PNGs falls back to its PDF as in §13.4 |
+
+The marquee's model rectangle is drawset's inverse of its own face-view
+transform (`REC.view`: paper x = ox + (sx·x − p0)·s, paper y = oy +
+(y − ya)·s); a marquee on a sheet with no face view, or outside its bbox,
+keeps no rectangle. Nothing of this is in `SUPPLIER_ACTIONS` or
+`supplier.html` (§13.6); the `?v=469` on supplier.html is cache hygiene.

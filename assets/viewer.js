@@ -125,7 +125,7 @@
       } else if (ext === "xlsx" || ext === "xls" || ext === "csv") {
         const buf = await fetchBytes(url);
         await loadScript(CDN.xlsx);
-        renderSheets(target, window.XLSX.read(new Uint8Array(buf), { type: "array" }));
+        renderWorkbook(target, window.XLSX.read(new Uint8Array(buf), { type: "array" }));
       } else {
         fallback([
           h("p", {}, `No inline preview for \u201c.${ext}\u201d files.`),
@@ -171,7 +171,7 @@
     return res.arrayBuffer();
   }
 
-  function renderSheets(body, wb) {
+  function renderWorkbook(body, wb) {
     const names = wb.SheetNames || [];
     if (!names.length) { body.replaceChildren(h("div", { class: "viewer-msg" }, "Empty workbook.")); return; }
     const sheetWrap = h("div", { class: "sheet-render" });
@@ -187,5 +187,186 @@
     show(names[0]);
   }
 
-  window.PortalViewer = { open, render };
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  /**
+   * Dynamic drawings, Phase 4 (docs/DYNAMIC_DRAWINGS.md §6 "The sheet"): the
+   * render's sheet PNGs with the entities sidecar drawn over them as SVG in
+   * paper millimetres. drawset draws every sheet on a matplotlib figure whose
+   * axes span exactly [0, W] × [0, H] mm with the origin bottom-left, so the
+   * PNG maps linearly: viewBox "0 0 W H", y flipped. No pdf.js, no CDN; the
+   * PDF stays the artefact of record and the iframe path stays for files
+   * without a sidecar.
+   *
+   * opts: { pngs: [url per sheet], entities: { sheets: [...] } (the sidecar),
+   *         name, tools: [nodes for the bar], onSelect({ sheet, ids, add,
+   *         region }), onHover(id | null), onSheet(n) }.
+   * Returns { dispose, showSheet(n), sheet, setSelected(ids), setTouched(ids),
+   *           setLinked(fn) } — ids are "sheet:index" strings.
+   */
+  function renderSheets(target, opts) {
+    const pngs = Array.isArray(opts.pngs) ? opts.pngs : [];
+    const sheets = (opts.entities && Array.isArray(opts.entities.sheets) ? opts.entities.sheets : []).slice()
+      .sort((a, b) => Number(a.sheet) - Number(b.sheet));
+    const idOf = (sheet, idx) => `${sheet}:${idx}`;
+    let selected = new Set(), touched = new Set(), hover = null;
+    let fit = true, currentSheet = sheets.length ? Number(sheets[0].sheet) : 1;
+    const rects = new Map();           // id → rect node (current sheet only)
+    const paint = () => {
+      for (const [id, r] of rects) {
+        r.classList.toggle("is-selected", selected.has(id));
+        r.classList.toggle("is-touched", touched.has(id));
+        r.classList.toggle("is-hover", hover === id);
+      }
+    };
+
+    const stage = h("div", { class: "sheet-stage" });
+    const tabs = h("div", { class: "sheet-tabs sheet-bar", role: "tablist" });
+    const fitBtn = h("button", { class: "sheet-tab", type: "button", onclick: () => { fit = !fit; applyZoom(); } }, "Fit");
+    const applyZoom = () => {
+      fitBtn.textContent = fit ? "Fit" : "100%";
+      fitBtn.classList.toggle("active", !fit);
+      const page = stage.querySelector(".sheet-page");
+      if (page) page.classList.toggle("is-fit", fit);
+    };
+
+    function showSheet(n) {
+      currentSheet = Number(n);
+      for (const b of tabs.querySelectorAll("[data-sheet]")) b.classList.toggle("active", Number(b.dataset.sheet) === currentSheet);
+      rects.clear();
+      const sh = sheets.find((x) => Number(x.sheet) === currentSheet) || null;
+      const url = pngs[currentSheet - 1] || null;
+      if (!url) { stage.replaceChildren(h("div", { class: "viewer-msg" }, `No PNG for sheet ${currentSheet}.`)); return; }
+      const [W, H] = sh && Array.isArray(sh.size_mm) ? sh.size_mm : [420, 297];
+      const img = h("img", { class: "sheet-img", src: url, alt: `${opts.name || "Drawing"} sheet ${currentSheet}`, draggable: "false" });
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("class", "sheet-svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      svg.setAttribute("preserveAspectRatio", "none");
+      // Paper mm (origin bottom-left) → SVG user units (origin top-left).
+      const toSvg = (box) => ({ x: box[0], y: H - box[3], w: box[2] - box[0], h: box[3] - box[1] });
+      const rect = (cls, box) => {
+        const b = toSvg(box);
+        const r = document.createElementNS(SVG_NS, "rect");
+        r.setAttribute("class", cls);
+        r.setAttribute("x", b.x); r.setAttribute("y", b.y); r.setAttribute("width", Math.max(b.w, 0.01)); r.setAttribute("height", Math.max(b.h, 0.01));
+        r.setAttribute("vector-effect", "non-scaling-stroke");
+        return r;
+      };
+      // The sheet frame drawset draws at (20, 10) → (W−10, H−10): the one box
+      // that must sit on its line on every sheet, so a misread size shows at once.
+      svg.appendChild(rect("sheet-frame", [20, 10, W - 10, H - 10]));
+      const ents = sh && Array.isArray(sh.entities) ? sh.entities : [];
+      ents.forEach((e, idx) => {
+        if (!Array.isArray(e.box_mm) || e.box_mm.length !== 4) return;
+        const id = idOf(currentSheet, idx);
+        const linked = Array.isArray(e.features) && e.features.length > 0;
+        const r = rect(`sheet-ent${linked ? " is-linked" : ""}`, e.box_mm);
+        r.dataset.id = id;
+        const title = document.createElementNS(SVG_NS, "title");
+        title.textContent = e.text || "";
+        r.appendChild(title);
+        r.addEventListener("pointerenter", () => { hover = id; paint(); if (opts.onHover) opts.onHover(id); });
+        r.addEventListener("pointerleave", () => { if (hover === id) { hover = null; paint(); if (opts.onHover) opts.onHover(null); } });
+        rects.set(id, r);
+        svg.appendChild(r);
+      });
+
+      // Click selects one box (shift adds); a drag draws a marquee that selects
+      // every box it touches and reports the rectangle, mapped through the
+      // sheet's face view to model coordinates when it crosses one.
+      const marquee = document.createElementNS(SVG_NS, "rect");
+      marquee.setAttribute("class", "sheet-marquee"); marquee.setAttribute("vector-effect", "non-scaling-stroke");
+      marquee.style.display = "none";
+      svg.appendChild(marquee);
+      const mm = (ev) => {
+        const b = svg.getBoundingClientRect();
+        return [((ev.clientX - b.left) / b.width) * W, H - ((ev.clientY - b.top) / b.height) * H];
+      };
+      let down = null, dragging = false;
+      svg.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0) return;
+        down = { p: mm(ev), x: ev.clientX, y: ev.clientY, shift: ev.shiftKey, target: ev.target };
+        dragging = false;
+        svg.setPointerCapture(ev.pointerId);
+      });
+      svg.addEventListener("pointermove", (ev) => {
+        if (!down) return;
+        if (!dragging && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) < 4) return;
+        dragging = true;
+        const q = mm(ev);
+        const box = [Math.min(down.p[0], q[0]), Math.min(down.p[1], q[1]), Math.max(down.p[0], q[0]), Math.max(down.p[1], q[1])];
+        const b = toSvg(box);
+        marquee.setAttribute("x", b.x); marquee.setAttribute("y", b.y); marquee.setAttribute("width", b.w); marquee.setAttribute("height", b.h);
+        marquee.style.display = "";
+        marquee.__box = box;
+      });
+      const up = (ev) => {
+        if (!down) return;
+        const d = down; down = null;
+        try { svg.releasePointerCapture(ev.pointerId); } catch { /* not captured */ }
+        if (dragging) {
+          const box = marquee.__box; marquee.style.display = "none"; dragging = false;
+          if (!box || !opts.onSelect) return;
+          const hit = [];
+          ents.forEach((e, idx) => {
+            const b = e.box_mm; if (!Array.isArray(b)) return;
+            if (b[0] <= box[2] && b[2] >= box[0] && b[1] <= box[3] && b[3] >= box[1]) hit.push(idOf(currentSheet, idx));
+          });
+          opts.onSelect({ sheet: currentSheet, ids: hit, add: d.shift, region: regionOf(sh, box) });
+          return;
+        }
+        const id = d.target && d.target.dataset ? d.target.dataset.id : null;
+        if (!opts.onSelect) return;
+        if (id) opts.onSelect({ sheet: currentSheet, ids: [id], add: d.shift, region: null });
+        else if (!d.shift) opts.onSelect({ sheet: currentSheet, ids: [], add: false, region: null });
+      };
+      svg.addEventListener("pointerup", up);
+      svg.addEventListener("pointercancel", () => { down = null; dragging = false; marquee.style.display = "none"; });
+
+      const page = h("div", { class: "sheet-page" }, [img, svg]);
+      stage.replaceChildren(page);
+      applyZoom(); paint();
+      if (opts.onSheet) opts.onSheet(currentSheet);
+    }
+
+    // A marquee in paper mm → the face view's model rectangle: drawset maps
+    // paper x = ox + (sx·x − p0)·s and paper y = oy + (y − ya)·s (REC.view).
+    function regionOf(sh, box) {
+      const v = sh && Array.isArray(sh.views) ? sh.views.find((x) => x.kind === "face" && x.s) : null;
+      if (!v) return null;
+      // The dimension stacks stand beside the face view, so a marquee counts
+      // as "on" the view when it shares its x range or its y range; one far
+      // from it on both axes (the title block) keeps no rectangle.
+      const bb = Array.isArray(v.bbox_mm) ? v.bbox_mm : null;
+      if (bb && !(bb[0] <= box[2] && bb[2] >= box[0]) && !(bb[1] <= box[3] && bb[3] >= box[1])) return null;
+      const sx = v.sx || 1;
+      const X = (px) => ((px - v.ox) / v.s + (v.p0 || 0)) / sx;
+      const Y = (py) => (py - v.oy) / v.s + (v.ya || 0);
+      const xs = [X(box[0]), X(box[2])].sort((a, b) => a - b);
+      const ys = [Y(box[1]), Y(box[3])].sort((a, b) => a - b);
+      return { face: v.face || "", view: v.id || "face", x: xs, y: ys };
+    }
+
+    const n = Math.max(pngs.length, sheets.length);
+    for (let i = 1; i <= n; i++) {
+      tabs.appendChild(h("button", { class: "sheet-tab", type: "button", role: "tab", "data-sheet": String(i), onclick: () => showSheet(i) }, String(i)));
+    }
+    tabs.appendChild(h("span", { class: "spacer" }));
+    tabs.appendChild(fitBtn);
+    for (const t of opts.tools || []) tabs.appendChild(t);
+    target.replaceChildren(h("div", { class: "sheet-viewer" }, [tabs, stage]));
+    showSheet(currentSheet);
+
+    return {
+      dispose() { rects.clear(); },
+      showSheet,
+      get sheet() { return currentSheet; },
+      setSelected(ids) { selected = new Set(ids || []); paint(); },
+      setTouched(ids) { touched = new Set(ids || []); paint(); },
+      ids(sheet) { return (sheets.find((x) => Number(x.sheet) === Number(sheet))?.entities || []).map((_, i) => idOf(sheet, i)); },
+    };
+  }
+
+  window.PortalViewer = { open, render, renderSheets };
 })();

@@ -909,12 +909,38 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .dr-strip .is-warn { color: var(--amber); }
 .dr-strip-actions { display: flex; gap: 0.4rem; margin-top: 0.2rem; }
 
+/* ---- the sheet (Phase 4, DYNAMIC_DRAWINGS §6 "The sheet") ----------------
+   The render's PNG per sheet with the entities sidecar as an SVG overlay in
+   paper mm (viewBox = the sheet size; strokes do not scale). Linked boxes
+   outline faintly, hover and selection in the accent, a touched box amber. */
+.sheet-viewer { display: flex; flex-direction: column; min-width: 0; }
+.sheet-bar { align-items: center; padding: 0.4rem 0.6rem 0; }
+.sheet-bar .spacer { flex: 1; }
+.sheet-stage { overflow: auto; background: var(--panel-2); height: 70vh; }
+.drawing-split-pane .sheet-stage { height: 60vh; }
+.sheet-page { position: relative; display: inline-block; line-height: 0; }
+.sheet-page.is-fit { display: block; width: 100%; }
+.sheet-img { display: block; user-select: none; -webkit-user-drag: none; }
+.sheet-page.is-fit .sheet-img { width: 100%; height: auto; }
+.sheet-svg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+.sheet-frame { fill: none; stroke: var(--accent); stroke-opacity: 0.35; stroke-width: 1px; pointer-events: none; }
+.sheet-ent { fill: transparent; stroke: transparent; stroke-width: 1px; }
+.sheet-ent.is-linked { stroke: rgba(94, 224, 143, 0.4); cursor: pointer; }
+.sheet-ent.is-hover { stroke: var(--accent); fill: rgba(94, 224, 143, 0.12); }
+.sheet-ent.is-selected { stroke: var(--accent); stroke-width: 2px; fill: rgba(94, 224, 143, 0.2); }
+.sheet-ent.is-touched { stroke: var(--amber); stroke-width: 2px; fill: rgba(255, 201, 77, 0.2); }
+.sheet-marquee { fill: rgba(94, 224, 143, 0.1); stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 2; pointer-events: none; }
+.dr-selection { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-size: var(--fs-xs); }
+.dr-selection .btn-xs { min-height: 24px; padding: 0 0.45rem; }
+.dr-dim.is-selected td { background: rgba(94, 224, 143, 0.1); }
+
 @media (max-width: 900px) {
   /* The rail below the drawing, not beside it — a 300px column next to a
      shrinking viewer leaves neither usable. */
   .drawing-surface { grid-template-columns: minmax(0, 1fr); }
   .drawing-file { min-height: 45vh; }
   .drawing-file .viewer-frame { height: 55vh; }
+  .drawing-file .sheet-stage { height: 55vh; }
   .drawing-split { grid-template-columns: minmax(0, 1fr); }
 }
 

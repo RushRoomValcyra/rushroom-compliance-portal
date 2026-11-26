@@ -14578,6 +14578,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
   const _drSurfaceTouched = new Map();
   const _drSurfaceDismissed = new Set();
   const _drSurfaceReopen = new Map();
+  // Drawings whose file pane the user switched from the sheet PNGs to the PDF (Phase 4).
+  const _drSurfacePlain = new Set();
 
   // Mirror of _shared/status-core.mjs nextRevisionLetter for one letter: length
   // first, then text, so Z → AA; no letter yet → A.
@@ -14813,6 +14815,27 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     return { ops };
   }
 
+  /** A JSON sidecar at a signed url, or null. */
+  async function drFetchJson(url) {
+    if (!url) return null;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+  /** The entity id a dimension row links to in the entities sidecar
+   *  ("sheet:index", the viewer's key), or null when drawset found no text for it. */
+  const drEntId = (r) => (r && r.entity != null && r.sheet != null ? `${r.sheet}:${r.entity}` : null);
+  /** A marquee's model rectangle in words: "inside face, x 40–120, y 300–380". */
+  function drRegionWords(region) {
+    if (!region || !Array.isArray(region.x) || !Array.isArray(region.y)) return "";
+    const n = (v) => String(Math.round(v));
+    // drawset's face name already reads "inner face" / "outer face".
+    const face = region.face ? (/face$/i.test(region.face) ? region.face : `${region.face} face`) : (region.view || "face");
+    return `${face}, x ${n(region.x[0])}–${n(region.x[1])}, y ${n(region.y[0])}–${n(region.y[1])}`;
+  }
+
   /** The dimension rows of a sidecar at a signed url: a list, or an object
    *  holding one under rows / dimensions (the same reading the server does). */
   async function drFetchDims(url) {
@@ -14857,6 +14880,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
    */
   function drawingSpecLayer(ctx) {
     const { token, drawing, current, currentRev, spec, dims, filePane, fileTarget, reload, mountRenderJob } = ctx;
+    const ents = ctx.ents && Array.isArray(ctx.ents.sheets) && ctx.ents.sheets.length ? ctx.ents : null;
+    const pngs = Array.isArray(ctx.pngs) ? ctx.pngs.filter(Boolean) : [];
     const core = specCore();
     const state = {
       latest: spec?.latest || null,
@@ -14864,6 +14889,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       cadRev: null, live: false,
       touched: _drSurfaceTouched.get(drawing.id) || new Set(),
       renderButtons: new Set(),
+      // Phase 4: the sheet viewers (current issue, candidate) and the selection
+      // the sheet made — row keys (drDimKey) and the marquee's model rectangle.
+      sheets: null, cand: null, sel: new Set(), region: null,
     };
     _drSurfaceTouched.set(drawing.id, state.touched);
     const letter = currentRev ? currentRev.revision : "";
@@ -14955,8 +14983,14 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     // ---- Dimensions (n): Sheet · Feature · Kind · Value (from STEP) · Tol · View
     const rowEls = [];
     let openRow = null;
+    let applyFilter = null, dimsWrap = null;
+    const selSlot = el("div", {});
     const closeForm = () => { if (openRow) { openRow.formTr.remove(); openRow.tr.classList.remove("is-open"); openRow = null; } };
-    const markTouched = () => { for (const tr of rowEls) tr.classList.toggle("is-touched", state.touched.has(drDimKey(tr.__row))); };
+    const touchedIds = (rows) => rows.map((r) => (state.touched.has(drDimKey(r)) ? drEntId(r) : null)).filter(Boolean);
+    const markTouched = () => {
+      for (const tr of rowEls) tr.classList.toggle("is-touched", state.touched.has(drDimKey(tr.__row)));
+      if (state.sheets) state.sheets.setTouched(touchedIds(dims));
+    };
     const isOverrideRow = (r) => core.OVERRIDE_KINDS.includes(r.kind) && !!r.at && typeof r.at === "object";
     // A row opens the form only when the vocabulary has an op for it (§13.2):
     // an override kind with an address, or a kind with a kind-level tolerance.
@@ -15016,29 +15050,116 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           td(r.sheet), td(r.feature), td(r.kind, "mono"), td(drNum(r.value), "num"), td(r.tol || "—"), td(r.view || ""),
         ]);
         tr.__row = r;
-        if (opens) tr.onclick = () => { if (openRow && openRow.tr === tr) { closeForm(); return; } closeForm(); openForm(tr, r); };
+        tr.onclick = () => {
+          // The row's box lights on the sheet (and the sheet turns to it) whether
+          // or not the row opens a form.
+          if (state.sheets && drEntId(r)) { if (Number(state.sheets.sheet) !== Number(r.sheet)) state.sheets.showSheet(r.sheet); state.sheets.setSelected([drEntId(r)]); }
+          if (!opens) return;
+          if (openRow && openRow.tr === tr) { closeForm(); return; }
+          closeForm(); openForm(tr, r);
+        };
         rowEls.push(tr);
       }
       markTouched();
       // One input above the table, placeholder Search… as the registers have
       // it; matches Feature · Kind · Tol · View (§13.2).
       const filter = el("input", { class: "up-text", type: "search", placeholder: "Search…", "aria-label": "Search dimensions" });
-      filter.oninput = () => {
+      // The search and the sheet's selection both narrow the table (§6 "The
+      // sheet": the chips filter the table); the heading count never changes.
+      applyFilter = () => {
         const q = filter.value.trim().toLowerCase();
         for (const tr of rowEls) {
           const r = tr.__row;
-          const hit = !q || [r.feature, r.kind, r.tol, r.view].some((v) => String(v ?? "").toLowerCase().includes(q));
+          const key = drDimKey(r);
+          const hit = (!q || [r.feature, r.kind, r.tol, r.view].some((v) => String(v ?? "").toLowerCase().includes(q))) && (!state.sel.size || state.sel.has(key));
           tr.style.display = hit ? "" : "none";
+          tr.classList.toggle("is-selected", state.sel.has(key));
           if (!hit && openRow && openRow.tr === tr) closeForm();
         }
       };
+      filter.oninput = applyFilter;
+      dimsWrap = el("div", { class: "dr-dims-wrap" });
       dimsNodes.push(
         el("div", { class: "dr-dims-filter" }, filter),
-        el("div", { class: "dr-dims-wrap" }, el("table", { class: "dr-dims" }, [
+        selSlot,
+        dimsWrap,
+      );
+      setChildren(dimsWrap, el("table", { class: "dr-dims" }, [
           el("thead", {}, el("tr", {}, ["Sheet", "Feature", "Kind", "Value (from STEP)", "Tol", "View"].map((h) => el("th", { class: h === "Value (from STEP)" ? "num" : null }, h)))),
           el("tbody", {}, rowEls),
-        ])),
-      );
+        ]));
+    }
+
+    // ---- The sheet (Phase 4, §6 "The sheet"): the render's PNGs with the
+    // entity boxes over them; a box is the second way to the same one-row form,
+    // a marquee selects every box it touches and keeps its model rectangle.
+    const byEnt = new Map();
+    for (const r of dims) { const id = drEntId(r); if (id) { if (!byEnt.has(id)) byEnt.set(id, []); byEnt.get(id).push(r); } }
+    const selIds = (rows) => rows.map((r) => (state.sel.has(drDimKey(r)) ? drEntId(r) : null)).filter(Boolean);
+    // Rows chosen on a sheet: `keys` replace (or with `add` extend) the selection,
+    // the table narrows to them, the first row scrolls into view and — on a
+    // single click — opens its form. The chips say what is selected and where.
+    function selectRows(keys, { add = false, region = null, openOne = false } = {}) {
+      if (!add) state.sel = new Set();
+      for (const k of keys) state.sel.add(k);
+      state.region = region || (add ? state.region : null);
+      if (applyFilter) applyFilter();
+      paintSelection();
+      if (state.sheets) state.sheets.setSelected(selIds(dims));
+      if (state.cand && state.candDims) state.cand.setSelected(selIds(state.candDims));
+      const first = keys.length ? rowEls.find((tr) => drDimKey(tr.__row) === keys[0]) : null;
+      if (first && dimsWrap) dimsWrap.scrollTop = Math.max(0, first.offsetTop - dimsWrap.clientHeight / 2);
+      if (openOne) {
+        const tr = keys.map((k) => rowEls.find((x) => drDimKey(x.__row) === k)).find((x) => x && canOpen(x.__row));
+        closeForm();
+        if (tr) openForm(tr, tr.__row);
+      }
+    }
+    const clearSelection = () => { state.sel = new Set(); state.region = null; if (applyFilter) applyFilter(); paintSelection(); if (state.sheets) state.sheets.setSelected([]); if (state.cand) state.cand.setSelected([]); };
+    function paintSelection() {
+      const rows = dims.filter((r) => state.sel.has(drDimKey(r)));
+      if (!rows.length && !state.region) { setChildren(selSlot); return; }
+      const kinds = new Map();
+      for (const r of rows) kinds.set(r.kind, (kinds.get(r.kind) || 0) + 1);
+      const kindText = [...kinds.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).map(([k, n]) => `${k} ×${n}`).join(", ");
+      setChildren(selSlot, el("div", { class: "dr-selection" }, [
+        el("span", {}, [`${rows.length} selected`, kindText ? ` · ${kindText}` : ""].join("")),
+        state.region ? el("span", { class: "muted" }, drRegionWords(state.region)) : null,
+        el("button", { class: "btn btn-xs", type: "button", "aria-label": "Clear selection", onclick: clearSelection }, "×"),
+      ].filter(Boolean)));
+    }
+    // What a sheet viewer reports: `rows` maps its entity ids to dimension rows
+    // (the current issue's, or the candidate's — the keys are the same rows).
+    const onSheetSelect = (rowsOf) => ({ ids, add, region }) => {
+      const keys = [];
+      for (const id of ids) for (const r of rowsOf(id)) { const k = drDimKey(r); if (!keys.includes(k)) keys.push(k); }
+      if (!ids.length && !region) { if (!add) clearSelection(); return; }
+      selectRows(keys, { add, region, openOne: ids.length === 1 && !add && !region });
+    };
+    const sheetsAvailable = fromJob && pngs.length > 0 && !!ents;
+    // The file pane for one issue: the sheets for the current issue made by a
+    // render job (unless the user chose Plain PDF), the PDF otherwise.
+    // `renderPdf(target)` is the iframe path, untouched; `reshow()` repaints
+    // the file after a toggle. Returns the disposer.
+    async function showFile(target, rev, renderPdf, reshow) {
+      const sheetsOk = sheetsAvailable && !!rev && !!current && rev.id === current.id && viewingCurrent;
+      if (!sheetsOk) return renderPdf(target);
+      if (_drSurfacePlain.has(drawing.id)) {
+        const inner = el("div", { class: "drawing-file-target" });
+        setChildren(target, el("div", { class: "sheet-tabs sheet-bar" }, [
+          el("span", { class: "spacer" }),
+          el("button", { class: "sheet-tab", type: "button", onclick: () => { _drSurfacePlain.delete(drawing.id); reshow(); } }, "Sheets"),
+        ]), inner);
+        return renderPdf(inner);
+      }
+      const plain = el("button", { class: "sheet-tab", type: "button", onclick: () => { _drSurfacePlain.add(drawing.id); reshow(); } }, "Plain PDF");
+      state.sheets = window.PortalViewer.renderSheets(target, {
+        pngs, entities: ents, name: `${drawing.drawing_number} Issue ${rev.revision}`, tools: [plain],
+        onSelect: onSheetSelect((id) => byEnt.get(id) || []),
+        onSheet: (n) => { if (state.cand && Number(state.cand.sheet) !== Number(n)) state.cand.showSheet(n); },
+      });
+      state.sheets.setTouched(touchedIds(dims)); state.sheets.setSelected(selIds(dims));
+      return () => { if (state.sheets) state.sheets.dispose(); state.sheets = null; };
     }
 
     // ---- Patch (n): one line per difference between the latest snapshot and
@@ -15165,13 +15286,29 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       if (!failed) {
         try {
           const art = await API.post(token, "getDrawingRenderArtifacts", { job_id: job.id });
-          if (art && art.pdf) {
+          if (art && art.dimensions) candDims = await drFetchDims(art.dimensions);
+          const candPngs = art && Array.isArray(art.pngs) ? art.pngs.filter(Boolean) : [];
+          const candEnts = state.sheets && candPngs.length && art.entities ? await drFetchJson(art.entities) : null;
+          if (state.sheets && candPngs.length && candEnts && Array.isArray(candEnts.sheets) && candEnts.sheets.length) {
+            // The candidate's sheets beside the current issue's, same sheet, the
+            // same overlay; the boxes the patch touched amber (§6 Compare).
+            const candByEnt = new Map();
+            for (const r of candDims) { const id = drEntId(r); if (id) { if (!candByEnt.has(id)) candByEnt.set(id, []); candByEnt.get(id).push(r); } }
+            state.candDims = candDims;
+            state.cand = window.PortalViewer.renderSheets(candTarget, {
+              pngs: candPngs, entities: candEnts, name: `${drawing.drawing_number} candidate`,
+              onSelect: onSheetSelect((id) => candByEnt.get(id) || []),
+              onSheet: (n) => { if (state.sheets && Number(state.sheets.sheet) !== Number(n)) state.sheets.showSheet(n); },
+            });
+            state.cand.setTouched(touchedIds(candDims)); state.cand.setSelected(selIds(candDims));
+            if (Number(state.cand.sheet) !== Number(state.sheets.sheet)) state.cand.showSheet(state.sheets.sheet);
+            if (ctx.onCandidateDispose) ctx.onCandidateDispose(() => { if (state.cand) state.cand.dispose(); state.cand = null; state.candDims = null; });
+          } else if (art && art.pdf) {
             const dispose = await window.PortalViewer.render(candTarget, {
               name: `${drawing.drawing_number} candidate`, open_url: art.pdf, storage_path: "candidate.pdf",
             });
             if (ctx.onCandidateDispose) ctx.onCandidateDispose(dispose);
           } else setChildren(candTarget, el("div", { class: "empty" }, "No candidate PDF."));
-          if (art && art.dimensions) candDims = await drFetchDims(art.dimensions);
         } catch (ex) {
           setChildren(candTarget, el("div", { class: "error" }, ex.message));
         }
@@ -15248,6 +15385,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       setCadRev(rev) { state.cadRev = rev || null; syncRender(); },
       setLive(on) { state.live = !!on; syncRender(); },
       mountCompare,
+      showFile,
       get editable() { return editable; },
     };
   }
@@ -15696,7 +15834,13 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const spec = await specP;
       // The current issue's dimension list (rows sheet · feature · kind · value ·
       // text · tol · view · at) from the render's sidecar, when it has one.
-      const dims = spec && spec.artifacts && spec.artifacts.dimensions_url ? await drFetchDims(spec.artifacts.dimensions_url) : [];
+      const art = spec && spec.artifacts ? spec.artifacts : null;
+      const [dims, ents] = await Promise.all([
+        art && art.dimensions_url ? drFetchDims(art.dimensions_url) : [],
+        // Phase 4: the entities sidecar (text boxes in paper mm per sheet) that
+        // puts the dimension rows on the sheet PNGs.
+        art && art.entities_url && Array.isArray(art.png_urls) && art.png_urls.length ? drFetchJson(art.entities_url) : null,
+      ]);
 
       const { drawing, revisions = [], components = [] } = d;
       const ownerName = (components.find((c) => c.component_id === drawing.owner_component_id) || {}).name || "";
@@ -15728,14 +15872,20 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         disposeCurrent();
         setChildren(fileTarget, el("div", { class: "loading" }, `Loading Issue ${rev.revision}…`));
         try {
-          const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: rev.id });
-          // The file name carries the extension the renderer switches on; the
-          // signed URL's query string would otherwise be read as one.
-          disposeFile = await window.PortalViewer.render(fileTarget, {
-            name: `${drawing.drawing_number} Issue ${rev.revision}`,
-            open_url: url,
-            storage_path: rev.file_name || "",
-          });
+          const renderPdf = async (target) => {
+            const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: rev.id });
+            // The file name carries the extension the renderer switches on; the
+            // signed URL's query string would otherwise be read as one.
+            return window.PortalViewer.render(target, {
+              name: `${drawing.drawing_number} Issue ${rev.revision}`,
+              open_url: url,
+              storage_path: rev.file_name || "",
+            });
+          };
+          // Phase 4: the current issue made by a render job shows its sheet PNGs
+          // with the entity overlay (Plain PDF switches back); every other file
+          // takes the iframe path as before.
+          disposeFile = layer ? await layer.showFile(fileTarget, rev, renderPdf, () => showRevision(rev)) : await renderPdf(fileTarget);
         } catch (ex) {
           setChildren(fileTarget, el("div", { class: "viewer-msg" },
             el("p", { class: "error" }, `Couldn't open this revision: ${ex.message}`)));
@@ -15778,7 +15928,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       // lines, the Spec line and the compare strip — only when getDrawingSpec
       // answered and the shared vocabulary module is loaded.
       const layer = role === "rushroom" && spec && specCore()
-        ? drawingSpecLayer({ token, drawing, current, currentRev, spec, dims, filePane, fileTarget, reload, onCandidateDispose: setCandDispose,
+        ? drawingSpecLayer({ token, drawing, current, currentRev, spec, dims, ents, pngs: art ? art.png_urls : [], filePane, fileTarget, reload, onCandidateDispose: setCandDispose,
             mountRenderJob: (job) => mountRenderJob(job) })
         : null;
       const mountRenderJob = (job) => {

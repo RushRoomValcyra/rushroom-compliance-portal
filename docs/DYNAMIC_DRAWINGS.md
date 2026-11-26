@@ -711,7 +711,7 @@ Render → ~25 s → strip reads "233 → 233 · 1 tolerance changed · geometry
 as Issue B", Keep → PDF shows the new tolerance, issue still C, still draft;
 history shows #1 · click. Clicking a row on released Issue B opens nothing.
 
-### Phase 4 — the sheet: PNG sheets, overlay, marquee (3 days)
+### Phase 4 — the sheet: PNG sheets, overlay, marquee (3 days) — BUILT and proven live 2026-11-26 (v469; DRAWINGS_TAB_UX §13.8; ROADMAP)
 
 Goal: the sheet becomes the second way to reach the same control, and a
 region can be marked for the dialogue.

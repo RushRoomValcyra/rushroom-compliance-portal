@@ -19,7 +19,7 @@ const surface = app.slice(app.indexOf("async function openDrawingSurface("), app
 
 test("the viewer can render into any element, not only its own modal", () => {
   assert.ok(/async function render\(target, doc\)/.test(viewer), "render(target, doc) was not extracted");
-  assert.ok(/window\.PortalViewer = \{ open, render \}/.test(viewer), "render is not exported");
+  assert.ok(/window\.PortalViewer = \{ open, render, renderSheets \}/.test(viewer), "render is not exported");
   // open() must go through the same path, or the two renderers drift.
   assert.ok(/cleanup = await render\(body, doc\)/.test(viewer), "open() no longer delegates to render()");
 });
@@ -48,8 +48,11 @@ test("opened from a part, the drawing replaces the panel instead of stacking", (
 
 test("switching revisions disposes the previous file", () => {
   assert.ok(/disposeCurrent\(\)/.test(surface), "no disposal on revision switch");
-  assert.ok(/disposeFile = await window\.PortalViewer\.render\(/.test(surface),
-    "the surface does not keep the disposer returned by render()");
+  // Phase 4: the layer decides between the sheet PNGs and the iframe; both
+  // hand their disposer back to the same slot.
+  assert.ok(/disposeFile = layer \? await layer\.showFile\(fileTarget, rev, renderPdf/.test(surface),
+    "the surface does not keep the disposer returned by the file renderer");
+  assert.ok(/return window\.PortalViewer\.render\(target, \{/.test(surface), "the iframe path no longer goes through PortalViewer.render");
 });
 
 test("the file column grows and the rail stays fixed, stacking when narrow", () => {

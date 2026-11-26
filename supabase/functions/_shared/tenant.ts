@@ -67,6 +67,9 @@ export const TENANT_TABLES = new Set([
   // 0062, docs/DRAWING_RENDER.md): the job log the worker polls per org, and
   // the spec catalogue it registers.
   "drawing_render_jobs", "drawing_render_specs",
+  // Dynamic drawings (migration 0068, docs/DYNAMIC_DRAWINGS.md §5.5): the
+  // template bodies, the per-drawing patch chain, and every dialogue turn.
+  "drawing_spec_versions", "drawing_spec_patches", "drawing_spec_turns",
   // Supplier portal (migration 0065, docs/SUPPLIER_PORTAL.md): the supplier
   // company, its per-part access, and the audit of every file URL it was given.
   "suppliers", "supplier_components", "supplier_file_events",

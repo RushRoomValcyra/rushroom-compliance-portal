@@ -154,7 +154,12 @@ export function normaliseSpecName(name) {
 }
 
 /** One registered spec row from what the worker sent, or null when the name
- *  is unusable. part_numbers keeps strings only; parts a non-negative integer. */
+ *  is unusable. part_numbers keeps strings only; parts a non-negative integer.
+ *  Since DYNAMIC_DRAWINGS §3.2 the worker also sends `template` (the YAML is
+ *  a template, not a per-part spec) and `body` (the parsed YAML). `template`
+ *  is kept as a boolean; `body` is kept only when it is a plain object — it is
+ *  NOT a column of drawing_render_specs (registerDrawingSpecs lifts it into
+ *  drawing_spec_versions and drops it before the upsert). */
 export function normaliseSpec(spec) {
   const name = normaliseSpecName(spec && spec.name);
   if (!name) return null;
@@ -162,12 +167,19 @@ export function normaliseSpec(spec) {
   const part_numbers = Array.isArray(spec.part_numbers)
     ? [...new Set(spec.part_numbers.map((p) => String(p ?? "").trim().toUpperCase()).filter(Boolean))].slice(0, 200)
     : [];
-  return {
+  const out = {
     name,
     title: spec.title != null ? String(spec.title).slice(0, 200) : null,
     parts: Number.isInteger(partsN) && partsN >= 0 ? partsN : null,
     part_numbers,
   };
+  // Only when the worker sent them: a worker from before §3.2 registers the
+  // same row it always did.
+  if (spec.template !== undefined) out.template = spec.template === true;
+  if (spec.body !== undefined) {
+    out.body = spec.body && typeof spec.body === "object" && !Array.isArray(spec.body) ? spec.body : null;
+  }
+  return out;
 }
 
 /** The newest updated_at among spec rows, or null. */

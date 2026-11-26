@@ -1577,3 +1577,51 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/DYNAMIC_DRAWINGS.md` (§9 marked decided), `docs/ROADMAP.md`, `docs/DECISIONS.md`.
 
 ---
+
+## 2026-11-26 — An iterated draft keeps its letter: the file moves, the identity does not
+
+**Decision:** A render in mode `iterate` targets the drawing's current issue, which must be `draft`, and produces a **candidate**; nothing on `drawing_revisions` changes until the engineer presses Keep. Keep calls `replaceDraftRevisionFile` — the second and last writer of a `drawing_revisions` row's file beside `insertDrawingRevision` — which re-checks draft and current, swaps `storage_path`, `file_name`, `source_cad_file_id`, `source_sha256` and the pins, and writes audit `drawing_draft_file_replaced`. The letter stays. The source facts move with the file: a draft rendered from CAD Rev B may be re-rendered from Rev C and "Made from" then says Rev C. On a released or superseded issue the only action is New issue from CAD → next letter, carrying the accepted patch (DYNAMIC_DRAWINGS §3.7).
+
+**Why:** A letter is release-facing identity; a patch seq is editing history. Minting a letter per iteration would give the supplier-facing register twenty drafts for one drawing and leave non-current orphans that §5.1 could never release. Rendering straight into the draft was rejected too: the draft row is what the release modal, the BOM history and "Made from" describe, and a verification-passing but wrong proposal must never be "the drawing", even for the twenty seconds before the engineer looks. One extra click buys a row that is never half-true and a previous file that survives a wrong patch. It is the drawing counterpart of STATUS_MODEL §5.2 bullet 4 (a draft CAD revision's file is replaced by the next send).
+
+**Consequences:** `drawing_render_jobs.mode` (`issue` · `iterate`), `replaces_revision_id`; `acceptDrawingIteration` / `discardDrawingIteration`; `tests/drawing-render.test.mjs` asserts statically that iterate never inserts a letter and that exactly two helpers write a revision's file. STATUS_MODEL §5.2 gains the bullet. A release while an iteration is open is a warning, not a block (§9 decision 7).
+
+**Files changed:** `docs/DYNAMIC_DRAWINGS.md`, `docs/STATUS_MODEL.md`, `docs/DRAWING_RENDER.md`, `supabase/migrations/0068_drawing_spec_governance.sql`, `supabase/functions/portal-api/index.ts`, `tests/drawing-render.test.mjs`, `docs/DECISIONS.md`.
+
+---
+
+## 2026-11-26 — Spec truth lives in the portal: immutable template versions plus an append-only patch
+
+**Decision:** The portal owns the drawing spec as a governed document; the Mac owns only the function that renders it. Every distinct YAML body the worker registers is kept as an immutable row of `drawing_spec_versions` (name, version, body, body_sha256; no UPDATE path), and the catalogue row only points at what the Mac offers now (`current_version_id`). The per-drawing edits are an overlay stored as a snapshot per step in `drawing_spec_patches` (`seq`, `parent_id`, `operations`, `patch`, `patch_sha256`, `origin`, `status`), linear per drawing, never a full spec; `drawings.spec_patch_id` is the accepted one. A render job is handed the body and the patch from these rows — never a name — and the issue pins `spec_version_id`, `spec_patch_id`, `render_job_id`, `dimension_list_sha256` and `geometry_sha256`. The patch is composed in the portal and merged in drawset; the portal never materialises an effective spec. A new template version never moves a drawing by itself: Rebase is an explicit `carry` row per drawing.
+
+**Why:** The YAML was on one laptop, not in git, and `registerDrawingSpecs` deletes catalogue rows the Mac stops offering — a controlled document needs an owner with history, tenancy and audit, which the portal already has and the Mac does not. OCP cannot run in an edge function, so drawset stays on the Mac. Materialising the merge in JavaScript would be a second copy of `derive_template` and `feature_rule` that drifts. A template edit is a potential mass change across 51 drawings and must be a visible decision, not a side effect of restarting the worker. The stale-worker guard follows from the same rule: a worker that cannot echo `patch_sha256` renders the unpatched template as a silent no-op, so `finishDrawingRender` fails such a job with "worker predates spec patches; restart it".
+
+**Consequences:** Migration 0068 (three tables, pins on revisions and jobs, `current_version_id` / `template` on the catalogue); `_shared/drawing-spec-core.mjs` (`validateOps`, `applySpecOps`, `canonicalSha`, `parseTolerance`, `diffDimensionLists`, `touchedEntities`) shared by portal-api, portal-ai and the tests; `registerDrawingSpecs` carries bodies; `pollDrawingRenderJob` hands canonical JSON strings and their shas, the worker echoes them. Template versions have no Draft/Released of their own (§9 decision 6). Artefacts live under `drawings/<drawing_id>/renders/<job_id>/` in `DOC_BUCKET`.
+
+**Files changed:** `docs/DYNAMIC_DRAWINGS.md`, `docs/DRAWING_RENDER.md`, `supabase/migrations/0068_drawing_spec_governance.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/_shared/drawing-spec-core.mjs`, `supabase/functions/portal-api/index.ts`, `tools/drawing-worker/worker.py`, `tests/drawing-spec-core.test.mjs`, `tests/tenant-tables.test.mjs`, `docs/DECISIONS.md`.
+
+---
+
+## 2026-11-26 — One template plus a patch per drawing, not one spec per part
+
+**Decision:** Every new drawing is `flat_panel` (or a later template) at a pinned version plus a patch that holds only what that drawing differs in; the legacy per-part specs (`side_panel_left`, `_right`, `_shared`) register as versions with `kind = part_spec`, keep working untouched, and migrate to template + patch one at a time, each at its next issue (§9 decision 5). A patch may hold no printed value: tolerance fields are strings in the house grammar (`±n`, `+n -n`, `+n -0`, `0 -n`; `ISO 2768-[fmcv]` for `general`), a bare number in a tolerance or name field is refused, unknown keys are refused by name, and `title` / `drawing_number` / `issue` / `date` / `set_name` are portal facts the patch may not carry. The only numbers allowed are selectors and thresholds drawset already owns (`D`, `pos`, `only_at`, `cc`, `within`, `offset`, `scale`, `y_range` …); drawset prints what it measures in the STEP. Ops in, snapshot out: the operations are what the dialogue, the audit and the diff speak; the snapshot is what the worker needs and what an issue cites by sha; ops are never replayed.
+
+**Why:** "The spec should be a simple template, one per part is unreasonable" (ziirvass, 2026-11-26, after the Spec box offered side_panel_left to a fixed back panel). A full spec per drawing is 51 copies of the house content that drift apart; a patch is the diff an engineer actually means and a reviewer can read in one screen. Keeping values out of the patch keeps the invariant the whole engine rests on: drawset verifies every dimension against the STEP, so there is no field in which a wrong number could be typed and printed. `side_panel_left.patch.json` over `flat_panel` already equals the legacy spec in `geometry_sha256` with zero value changes (Phase 1 proof e).
+
+**Consequences:** `drawing_render_specs.template`; `SPEC_VOCAB` in `drawing-spec-core.mjs` is the closed set of operations the validator admits and the AI schema's enum is generated from; `OVERRIDE_KINDS` = dia, depth, groove_width, groove_depth, pocket_depth (no per-hole position tolerance in v1, §9 decision 3); scales ∈ {1, 2, 5, 10, 20}. A render modal offers templates to every part, marked "(template)".
+
+**Files changed:** `docs/DYNAMIC_DRAWINGS.md`, `docs/DRAWING_RENDER.md`, `supabase/functions/_shared/drawing-spec-core.mjs`, `supabase/migrations/0068_drawing_spec_governance.sql`, `tests/drawing-spec-core.test.mjs`, `docs/DECISIONS.md`.
+
+---
+
+## 2026-11-26 — A dimension is addressed by its geometry, never by its index
+
+**Decision:** "Change the tolerance on one certain measurement" needs an address for one dimension, and `H12` is not one: it is a TopExp enumeration index that renumbers when the CAD changes. The address is geometric, the convention `features[].only_at` already uses — hole `{ type: "hole", axis, D, pos: [p0, p1] }` matched ±0.01 mm, groove `{ type: "groove", axis, offset }`, pocket `{ type: "pocket", at: [x, y] }` (floor centre) — plus a `kind`. drawset emits `at` on every dimension-list row and every entity in the sidecar; the browser resolves a clicked row or box to an address without ever showing `H12`; `diffDimensionLists` keys rows by `(at, kind)`. An override whose feature is no longer where it was is **reported as unmatched and the render still succeeds**. `at` travels in the sidecars, not in the hashed fields: `dimension_list_sha256` over the seven existing fields is unchanged (Issue B's a38c2186 stays the regression oracle), and `geometry_sha256` over sorted `(feature, kind, value)` is written beside it so "same geometry, different annotation" is a claim the diff can make.
+
+**Why:** A patch must survive a CAD revision as long as the feature is still there, and must say so plainly when it is not — after a CAD change the first render has to produce a new dimension list so the engineer has something to re-target against; failing the render there would leave nothing to click. Two fingerprints are needed because tol and text are hashed in the first, so it stops meaning "same drawing" the moment a tolerance is edited.
+
+**Consequences:** `dimensions.json` and `entities.json` sidecars on every render, uploaded by the worker and pinned via `render_job_id`; `unmatched_overrides` on the job result and, in Phase 6, on the release preview; `drawing_dimensions` stays unwritten (§9 decision 4) — the sidecar is the dimension record until a consumer exists; `touchedEntities(ops, dims)` shows the blast radius of a patch before the job runs.
+
+**Files changed:** `docs/DYNAMIC_DRAWINGS.md`, `docs/DRAWING_RENDER.md`, `supabase/functions/_shared/drawing-spec-core.mjs`, `supabase/functions/portal-api/index.ts`, `tools/drawing-worker/worker.py`, `docs/DECISIONS.md`.
+
+---

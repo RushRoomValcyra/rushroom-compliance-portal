@@ -60,7 +60,7 @@ and never describe unexercised code as working. Run `/status` to see where every
                               plus "Discovered While Building" for ideas found mid-build
 - docs/DECISIONS.md         — architectural decisions log (Claude appends after /ship)
 
-## Database — 29 tables across 7 domains
+## Database — 32 tables across 7 domains
 Action plan: steps
 Documents: documents, document_versions, uploads
 Standards: standards, standard_versions
@@ -77,6 +77,10 @@ Links (PROP-011): requirement_links, document_statements
 Categories (PROP-038): part_categories
 Drawings (PROP-045): drawings, drawing_revisions,
         drawing_components, drawing_dimensions
+Spec governance (dynamic drawings, 0068): drawing_spec_versions,
+        drawing_spec_patches, drawing_spec_turns
+        (docs/DYNAMIC_DRAWINGS.md; template + patch pinned on every issue;
+         an iterated draft keeps its letter, STATUS_MODEL §5.2)
 Custom fields (PROP-040): custom_spec_fields
 Manufacturing (PROP-030): family_routing_steps, work_orders,
         work_order_steps, work_order_components

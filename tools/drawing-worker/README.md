@@ -25,28 +25,62 @@ out to for drawset and, when `pyyaml` is not importable, for YAML.
 
 Every `poll_seconds`: `pollDrawingRenderJob`. On a job: `download` →
 `render` → `verify` → `upload` → `finishDrawingRender`, each step reported
-before and after. `verify` reads drawset's `DRAWSET_SUMMARY` line
-(exit code 3 = rendered, verification failed, the summary names the first
-reason; `geometry_sha256` travels with `dimension_list_sha256`) and falls
-back to the prose block for a drawset without it. On start and every 5 min: `registerDrawingSpecs` from
-`specs/*.yaml` (name = file stem, title, number of parts, the RR numbers in
-the parts' STEP file names). Specs with more than one part are registered
-but refused at render ("spec has N parts; a render job draws one part").
+before and after. A job has a `mode`: `issue` (a new letter, as always) or
+`iterate` (a candidate for the current draft; nothing on the drawing changes
+until the engineer presses Keep — `docs/DYNAMIC_DRAWINGS.md` §3.7).
+
+- `render` takes the spec body from the job (`spec_body`, the portal's copy
+  of the template or spec as a JSON string, `docs/DYNAMIC_DRAWINGS.md` §3.2)
+  and no longer opens `specs/<name>.yaml` — the file is read only for a
+  portal that sends no body. `build_temp_spec` overlays the STEP path and
+  the title-block facts as before; the job's `spec_patch` (a JSON string or
+  null) is written under `patch:` in the temp YAML and merged by drawset
+  after `derive_template`. drawset runs with `--png <tmp>/png` so sheet PNGs
+  exist. The exact `spec_body` and `spec_patch` strings are sha256-hashed as
+  received and echoed; the worker never canonicalises JSON and interprets
+  nothing in the patch.
+- `verify` reads drawset's `DRAWSET_SUMMARY` line (exit code 3 = rendered,
+  verification failed, the summary names the first reason; `geometry_sha256`
+  travels with `dimension_list_sha256`), records `summary.artifacts` (local
+  pdf, pngs, `<set>_dimensions.json`, `<set>_entities.json`) and
+  `unmatched_overrides`, and falls back to the prose block for a drawset
+  without a summary. A patched job on a drawset that prints no summary fails
+  here ("drawset predates spec patches") rather than rendering the unpatched
+  template as a silent no-op.
+- `upload`: mode `issue` uploads the PDF through `docUploadUrl` as today
+  (that path stays the revision's `storage_path`) **and** uploads the PDF,
+  every sheet PNG, `dimensions.json` and `entities.json` through
+  `drawingRenderUploadUrl { job_id, file_name }` into
+  `drawings/<drawing_id>/renders/<job_id>/`. Mode `iterate` does only the
+  `renders/` uploads; the candidate PDF's `renders/` path is what
+  `finishDrawingRender` receives as `storage_path`.
+- `finishDrawingRender.result` carries `pages`, `drawset_version`,
+  `verify_ok`, `dimension_list_sha256`, `geometry_sha256`,
+  `spec_body_sha256`, `patch_sha256` (echoed), `verify { round_trip,
+  completeness_missing, wall_flags, regression }`, `unmatched_overrides` and
+  `artifacts { pdf, pngs[], dimensions, entities }` (storage paths).
+
+On start and every 5 min: `registerDrawingSpecs` from `specs/*.yaml` (name =
+file stem, title, number of parts, the RR numbers in the parts' STEP file
+names, `template`, and `body` = the parsed YAML as a JSON object; the portal
+keeps every distinct body as an immutable version and computes
+`body_sha256` itself). Specs with more than one part are registered but
+refused at render ("spec has N parts; a render job draws one part").
 
 ## Writes
 
 | where | what |
 |---|---|
 | `tools/drawing-worker/worker.log` | every poll error, claim, step, finish; drawset's stdout/stderr at DEBUG (gitignored) |
-| `$TMPDIR/drawing-worker-*/` | the STEP, the temp spec, `out/` with the PDF and `.sources.json`, `drawset.stdout.txt` / `drawset.stderr.txt`. Removed when the job is done; kept when it fails (the log names the folder) |
-| the portal | the PDF under the documents bucket (`docUploadUrl`), the issue on the drawing (`finishDrawingRender`), the spec catalogue |
+| `$TMPDIR/drawing-worker-*/` | the STEP, the temp spec (with `patch:` when the job carries one), `out/` with the PDF, `.sources.json`, `<set>_dimensions.json` and `<set>_entities.json`, `png/` with one PNG per sheet, `drawset.stdout.txt` / `drawset.stderr.txt`. Removed when the job is done; kept when it fails (the log names the folder) |
+| the portal | mode `issue`: the PDF under the documents bucket (`docUploadUrl`) and the issue on the drawing (`finishDrawingRender`); every mode: the PDF, the sheet PNGs, `dimensions.json` and `entities.json` under `drawings/<drawing_id>/renders/<job_id>/` (`drawingRenderUploadUrl`); the spec catalogue with bodies (`registerDrawingSpecs`) |
 
 Nothing is written into the drawset folder.
 
 ## Check without the portal
 
 ```
-python3 worker.py --catalogue                    # the registerDrawingSpecs body, from the real specs
+python3 worker.py --catalogue                    # the registerDrawingSpecs body (with each spec's parsed body), from the real specs
 python3 worker.py --dry-spec side_panel_left     # the temp spec that spec would render with
 python3 worker.py --dry-spec doors_m             # "would fail at render: spec has 2 parts; ..."
 ```

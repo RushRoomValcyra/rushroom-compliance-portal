@@ -49,6 +49,9 @@ import {
   normaliseSpec, normaliseSteps as normaliseRenderSteps, setStep as setRenderStep,
   skipRemaining as skipRemainingRenderSteps, timeoutPatch as renderTimeoutPatch, titleBlock,
 } from "../_shared/render-job-core.mjs";
+import {
+  applySpecOps, canonicalJson, canonicalSha, diffDimensionLists, emptyPatch, touchedEntities, validateOps,
+} from "../_shared/drawing-spec-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
 import { COST_REVIEW_ACTIONS, handleCostReviewAction } from "./handlers/cost-review.ts";
@@ -1277,12 +1280,15 @@ async function withCadTestContext(tdb: any, runs: any[]): Promise<any[]> {
  *                      letter that already exists is refused by the unique index.
  *  opts.storage_path, opts.file_name — the PDF already in DOC_BUCKET.
  *  opts.notes, opts.source_cad_file_id, opts.source_sha256 — optional facts.
+ *  opts.supplier_revision, opts.supplier_file_name — a hand upload's facts
+ *                      (createDrawingWithRevision, Issue A of a new drawing).
  * Returns { id, revision, audit } or { error, status } to answer with.
  */
 async function insertDrawingRevision(
   tdb: any, session: any, drawing: any,
   opts: { revision?: string; storage_path: string; file_name: string; notes?: string | null;
-          source_cad_file_id?: string | null; source_sha256?: string | null },
+          source_cad_file_id?: string | null; source_sha256?: string | null;
+          supplier_revision?: string | null; supplier_file_name?: string | null },
 ): Promise<{ id: string; revision: string; audit: { audited: number; bumped: string[] } } | { error: string; status: number }> {
   const drawing_id = String(drawing.id);
   const existing = (await loadDrawingRevisions(tdb, [drawing_id]))[drawing_id] || [];
@@ -1304,6 +1310,8 @@ async function insertDrawingRevision(
     // .sources.json) — lets statusSummary say "not from the released CAD".
     source_cad_file_id: String(opts.source_cad_file_id ?? "").trim() || null,
     source_sha256: opts.source_sha256 ? String(opts.source_sha256).trim().toLowerCase().slice(0, 64) : null,
+    supplier_revision: opts.supplier_revision ? String(opts.supplier_revision).slice(0, 40) : null,
+    supplier_file_name: opts.supplier_file_name ? String(opts.supplier_file_name).slice(0, 500) : null,
     created_by: session.uid || null,
   }).select("id").maybeSingle();
   if (error) {
@@ -1326,6 +1334,228 @@ async function insertDrawingRevision(
   return { id: inserted?.id, revision, audit };
 }
 
+/**
+ * The ONLY other writer of a drawing_revisions row's file (DYNAMIC_DRAWINGS
+ * §3.7): an iterated draft keeps its letter and takes the candidate's file.
+ * Re-checks here, not at request, that the issue is still `draft` AND still
+ * the drawing's current one — the release modal and "Made from" describe this
+ * row, so it is never half-true. Swaps storage_path, file_name, the source-CAD
+ * facts and the spec pins; writes platform_audit `drawing_draft_file_replaced`
+ * and one bom_component_history line per linked part (no revision bump: the
+ * letter did not move, STATUS_MODEL §5.2).
+ * Returns { id, revision, previous_storage_path, audit } or { error, status }.
+ */
+async function replaceDraftRevisionFile(
+  tdb: any, session: any, drawing: any, revision: any,
+  opts: { storage_path: string; file_name: string; source_cad_file_id?: string | null; source_sha256?: string | null;
+          pins: { spec_version_id?: string | null; spec_patch_id?: string | null; render_job_id?: string | null;
+                  dimension_list_sha256?: string | null; geometry_sha256?: string | null };
+          reason?: string | null },
+): Promise<{ id: string; revision: string; previous_storage_path: string | null; audit: { audited: number; bumped: string[] } } | { error: string; status: number }> {
+  const drawing_id = String(drawing.id);
+  const existing = (await loadDrawingRevisions(tdb, [drawing_id]))[drawing_id] || [];
+  const fresh = existing.find((r: any) => r.id === revision.id);
+  if (!fresh) return { error: `Issue ${revision.revision ?? "?"} no longer exists`, status: 404 };
+  if (fresh.status !== "draft") return { error: `Issue ${fresh.revision} is ${fresh.status}; only a draft takes a new file`, status: 409 };
+  const current = deriveObject(existing).current;
+  if (!current || current.id !== fresh.id) {
+    return { error: `Issue ${fresh.revision} is not the current issue (${current?.revision ?? "none"} is)`, status: 409 };
+  }
+  const patch: Record<string, unknown> = {
+    storage_path: opts.storage_path, file_name: String(opts.file_name).slice(0, 200),
+    source_cad_file_id: String(opts.source_cad_file_id ?? "").trim() || null,
+    source_sha256: opts.source_sha256 ? String(opts.source_sha256).trim().toLowerCase().slice(0, 64) : null,
+    spec_version_id: opts.pins.spec_version_id ?? null,
+    spec_patch_id: opts.pins.spec_patch_id ?? null,
+    render_job_id: opts.pins.render_job_id ?? null,
+    dimension_list_sha256: opts.pins.dimension_list_sha256 ?? null,
+    geometry_sha256: opts.pins.geometry_sha256 ?? null,
+  };
+  // Guarded by status = draft once more at the write, so two Keeps or a release
+  // racing this one cannot both win.
+  const { data: upd, error } = await tdb("drawing_revisions").update(patch)
+    .eq("id", fresh.id).eq("status", "draft").select("id");
+  if (error) return { error: error.message, status: 400 };
+  if (!upd?.length) return { error: `Issue ${fresh.revision} changed under this request; reload`, status: 409 };
+  try {
+    await db.from("platform_audit").insert({
+      actor_user_id: session.uid ?? null, actor_email: session.email ?? null,
+      action: "drawing_draft_file_replaced", target_organization_id: (session.org as string) || RUSHROOM_ORG_ID,
+      detail: {
+        drawing_id, drawing_number: drawing.drawing_number, issue: fresh.revision,
+        previous: { storage_path: fresh.storage_path, file_name: fresh.file_name, source_cad_file_id: fresh.source_cad_file_id ?? null, source_sha256: fresh.source_sha256 ?? null },
+        next: patch, reason: opts.reason ?? null,
+      },
+    });
+  } catch { /* the history line below is the second trace */ }
+  // The same fan-out as a new issue, without the bump: the drawing's file
+  // changed, the letter did not. change_type stays within the 0067 CHECK.
+  const audit = await recordDrawingEvent(tdb, session, drawing_id, "drawing_revised",
+    `Drawing ${drawing.drawing_number} ${drawing.title} Issue ${fresh.revision} (draft) re-rendered: file replaced${opts.reason ? ` — ${opts.reason}` : ""}`,
+    { bump: false });
+  return { id: fresh.id, revision: fresh.revision, previous_storage_path: fresh.storage_path ?? null, audit };
+}
+
+// ---------------------------------------------------------------------------
+// Drawing spec governance (docs/DYNAMIC_DRAWINGS.md §3, §5.1): the template
+// body is a versioned row, the per-drawing patch an append-only chain. The
+// pure rules (vocabulary, validation, canonical form, hashing) live in
+// _shared/drawing-spec-core.mjs; this section only loads and writes rows.
+// ---------------------------------------------------------------------------
+
+const SPEC_PATCH_FIELDS =
+  "id, drawing_id, seq, parent_id, spec_version_id, patch, patch_sha256, operations, origin, prompt, selection, proposal, "
+  + "turn_id, status, job_id, created_by, created_at";
+const SPEC_VERSION_FIELDS = "id, name, version, kind, body, body_sha256, registered_by, created_at";
+const SPEC_PATCH_ORIGINS = ["click", "dialogue", "carry", "hand"];
+const RENDER_ARTIFACT_KEYS = ["pdf", "dimensions", "entities"];
+
+/** Where a job's render artefacts live in DOC_BUCKET (every artefact kind). */
+const renderArtifactPrefix = (job: { drawing_id: string; id: string }) => `drawings/${job.drawing_id}/renders/${job.id}/`;
+
+/** The patch chain of one drawing, seq ascending. */
+async function loadSpecPatches(tdb: any, drawingId: string): Promise<any[]> {
+  const { data } = await tdb("drawing_spec_patches").select(SPEC_PATCH_FIELDS)
+    .eq("drawing_id", drawingId).order("seq", { ascending: true });
+  return (data || []) as any[];
+}
+
+/** One spec version row, or null. */
+async function loadSpecVersion(tdb: any, versionId: string | null | undefined): Promise<any | null> {
+  if (!versionId) return null;
+  const { data } = await tdb("drawing_spec_versions").select(SPEC_VERSION_FIELDS).eq("id", versionId).maybeSingle();
+  return data || null;
+}
+
+/** result.artifacts as the worker reported it, kept only when every path sits
+ *  under this job's render folder — a path elsewhere could name another
+ *  drawing's file and a later discard would remove it. */
+function normaliseRenderArtifacts(job: any, raw: unknown): { pdf: string | null; pngs: string[]; dimensions: string | null; entities: string | null } {
+  const prefix = renderArtifactPrefix(job);
+  const ok = (p: unknown) => typeof p === "string" && p.startsWith(prefix) && !p.includes("..") ? p : null;
+  const a = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+  return {
+    pdf: ok(a.pdf), dimensions: ok(a.dimensions), entities: ok(a.entities),
+    pngs: Array.isArray(a.pngs) ? a.pngs.map(ok).filter((p): p is string => !!p).slice(0, 50) : [],
+  };
+}
+
+/** Signed URLs (1 h) for a finished job's artefacts; a missing artefact is null. */
+async function signRenderArtifacts(result: any): Promise<{ pdf: string | null; pngs: string[]; dimensions: string | null; entities: string | null; expires_in: number }> {
+  const a = result && result.artifacts && typeof result.artifacts === "object" ? result.artifacts : {};
+  const sign = async (path: unknown): Promise<string | null> => {
+    if (!path || typeof path !== "string") return null;
+    const { data } = await db.storage.from(DOC_BUCKET).createSignedUrl(path, 3600);
+    return data?.signedUrl ?? null;
+  };
+  const pngs: string[] = [];
+  for (const p of Array.isArray(a.pngs) ? a.pngs : []) { const u = await sign(p); if (u) pngs.push(u); }
+  return { pdf: await sign(a.pdf), pngs, dimensions: await sign(a.dimensions), entities: await sign(a.entities), expires_in: 3600 };
+}
+
+/** getDrawingSpec's artefact block in the shape §5.1 names (dimensions_url,
+ *  entities_url, png_urls[], plus pdf_url and expires_in); null → every url
+ *  null. getDrawingRenderArtifacts keeps the storage-key names (pdf, pngs,
+ *  dimensions, entities) since its caller reads paths beside the urls. */
+function specArtifactUrls(signed: { pdf: string | null; pngs: string[]; dimensions: string | null; entities: string | null; expires_in: number } | null) {
+  return {
+    pdf_url: signed?.pdf ?? null, png_urls: signed?.pngs ?? [],
+    dimensions_url: signed?.dimensions ?? null, entities_url: signed?.entities ?? null,
+    expires_in: signed?.expires_in ?? 0,
+  };
+}
+
+/** The dimension rows of a finished job's sidecar (artifacts.dimensions), or
+ *  [] when the job has none — the sidecar is a list, or an object holding
+ *  one under `rows` / `dimensions`. */
+async function loadJobDimensions(result: any): Promise<any[]> {
+  const path = result?.artifacts?.dimensions;
+  if (!path || typeof path !== "string") return [];
+  try {
+    const { data, error } = await db.storage.from(DOC_BUCKET).download(path);
+    if (error || !data) return [];
+    const parsed = JSON.parse(await data.text());
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object") {
+      if (Array.isArray(parsed.rows)) return parsed.rows;
+      if (Array.isArray(parsed.dimensions)) return parsed.dimensions;
+    }
+  } catch { /* an unreadable sidecar means no blast radius, not a failure */ }
+  return [];
+}
+
+/** Every object under a job's render folder removed (best effort; the paths
+ *  the result names are always included even when the listing fails). */
+async function removeRenderArtifacts(job: any): Promise<number> {
+  const prefix = renderArtifactPrefix(job);
+  const paths = new Set<string>();
+  const a = job?.result?.artifacts;
+  if (a && typeof a === "object") {
+    for (const k of RENDER_ARTIFACT_KEYS) if (typeof a[k] === "string" && a[k].startsWith(prefix)) paths.add(a[k]);
+    for (const p of Array.isArray(a.pngs) ? a.pngs : []) if (typeof p === "string" && p.startsWith(prefix)) paths.add(p);
+  }
+  try {
+    const { data: listed } = await db.storage.from(DOC_BUCKET).list(prefix.slice(0, -1), { limit: 200 });
+    for (const o of (listed || []) as any[]) if (o?.name) paths.add(prefix + o.name);
+  } catch { /* fall back to the named paths */ }
+  if (!paths.size) return 0;
+  const { error } = await db.storage.from(DOC_BUCKET).remove([...paths]);
+  return error ? 0 : paths.size;
+}
+
+/** The spec version a drawing's patches build on: the latest patch's base,
+ *  else the current issue's render job's version, else the catalogue's current
+ *  version of drawings.render_spec. Null when the drawing has no governed spec. */
+async function resolveDrawingSpecVersion(tdb: any, drawing: any, patches: any[]): Promise<any | null> {
+  const latest = patches.length ? patches[patches.length - 1] : null;
+  if (latest) return await loadSpecVersion(tdb, latest.spec_version_id);
+  if (drawing.current_revision_id) {
+    const { data: rev } = await tdb("drawing_revisions").select("id, spec_version_id, render_job_id").eq("id", drawing.current_revision_id).maybeSingle();
+    if (rev?.spec_version_id) return await loadSpecVersion(tdb, rev.spec_version_id);
+    if (rev?.render_job_id) {
+      const { data: job } = await tdb("drawing_render_jobs").select("spec_version_id").eq("id", rev.render_job_id).maybeSingle();
+      if (job?.spec_version_id) return await loadSpecVersion(tdb, job.spec_version_id);
+    }
+  }
+  if (drawing.render_spec) {
+    const { data: specRow } = await tdb("drawing_render_specs").select("current_version_id").eq("name", drawing.render_spec).maybeSingle();
+    if (specRow?.current_version_id) return await loadSpecVersion(tdb, specRow.current_version_id);
+  }
+  return null;
+}
+
+/** The catalogue with each row's current version attached (version,
+ *  body_sha256, kind) — what the modal and the rail show. */
+async function listSpecsWithVersions(tdb: any): Promise<any[]> {
+  const { data: specs } = await tdb("drawing_render_specs").select("*").order("name");
+  const rows = (specs || []) as any[];
+  const ids = [...new Set(rows.map((r) => r.current_version_id).filter(Boolean))];
+  const byId: Record<string, any> = {};
+  if (ids.length) {
+    const { data: versions } = await tdb("drawing_spec_versions").select("id, name, version, kind, body_sha256, created_at").in("id", ids);
+    for (const v of (versions || []) as any[]) byId[v.id] = v;
+  }
+  return rows.map((r) => {
+    const v = r.current_version_id ? byId[r.current_version_id] : null;
+    return { ...r, template: r.template === true, version: v?.version ?? null, body_sha256: v?.body_sha256 ?? null, kind: v?.kind ?? null };
+  });
+}
+
+/** The render job behind a drawing's current issue (render_job_id on the
+ *  revision, else the newest done issue-mode job for that letter), or null. */
+async function currentIssueRenderJob(tdb: any, drawing: any): Promise<any | null> {
+  if (!drawing?.current_revision_id) return null;
+  const { data: rev } = await tdb("drawing_revisions").select("id, revision, render_job_id").eq("id", drawing.current_revision_id).maybeSingle();
+  if (!rev) return null;
+  if (rev.render_job_id) {
+    const { data: job } = await tdb("drawing_render_jobs").select("*").eq("id", rev.render_job_id).maybeSingle();
+    if (job) return job;
+  }
+  const { data: jobs } = await tdb("drawing_render_jobs").select("*").eq("drawing_id", drawing.id).eq("status", "done")
+    .eq("mode", "issue").eq("issue", rev.revision).order("finished_at", { ascending: false }).limit(1);
+  return (jobs || [])[0] || null;
+}
+
 // ---------------------------------------------------------------------------
 // Drawing from CAD — render jobs (docs/DRAWING_RENDER.md). The step rules live
 // in _shared/render-job-core.mjs; this section only loads rows and writes jobs.
@@ -1336,7 +1566,16 @@ async function insertDrawingRevision(
 
 const RENDER_JOB_LIST_FIELDS =
   "id, component_id, cad_model_revision_id, cad_file_id, drawing_id, created_drawing, spec, issue, status, "
+  + "mode, spec_version_id, spec_patch_id, replaces_revision_id, "
   + "requested_by, requested_at, claimed_at, claimed_by, finished_at, steps, result, error, created_at";
+
+/** A patch row this job was rendering, closed with the job: `candidate` when
+ *  the render verified, `failed` otherwise. Only a row still `proposed` moves
+ *  (an accepted or discarded row is history). */
+async function closeJobPatch(tdb: any, job: any, status: "candidate" | "failed" | "accepted"): Promise<void> {
+  if (!job?.spec_patch_id) return;
+  await tdb("drawing_spec_patches").update({ status }).eq("id", job.spec_patch_id).in("status", ["proposed", "candidate"]);
+}
 
 /** A drawing this job created that still has no issue is deleted again, so
  *  no half-made drawing is left (DRAWING_RENDER.md §3). drawing_id on the job
@@ -1360,7 +1599,7 @@ async function removeEmptyRenderDrawing(tdb: any, session: any, job: any): Promi
  *  job that expires cleans up the drawing it created, as a failure does. */
 async function expireDrawingRenderJobs(tdb: any, session: any): Promise<any[]> {
   const { data: open } = await tdb("drawing_render_jobs")
-    .select("id, status, requested_at, claimed_at, steps, drawing_id, created_drawing, component_id")
+    .select("id, status, requested_at, claimed_at, steps, drawing_id, created_drawing, component_id, mode, spec_patch_id")
     .in("status", ["requested", "running"]).order("requested_at", { ascending: true });
   const now = Date.now();
   const still: any[] = [];
@@ -1368,7 +1607,11 @@ async function expireDrawingRenderJobs(tdb: any, session: any): Promise<any[]> {
     const patch = renderTimeoutPatch(job, now);
     if (!patch) { still.push(job); continue; }
     const { data: upd } = await tdb("drawing_render_jobs").update(patch).eq("id", job.id).eq("status", job.status).select("id");
-    if (upd?.length) await removeEmptyRenderDrawing(tdb, session, job);
+    if (upd?.length) {
+      await removeEmptyRenderDrawing(tdb, session, job);
+      // The patch the job was rendering did not become a candidate.
+      await closeJobPatch(tdb, job, "failed");
+    }
   }
   // The jobs still open, oldest first — the poll and the one-per-drawing check
   // read this list instead of selecting again (one query on the idle path).
@@ -6491,21 +6734,24 @@ Deno.serve(async (req) => {
     if (error) return json({ error: error.message }, 400);
     const drawingId = created?.id;
 
-    const { data: rev, error: revErr } = await tdb("drawing_revisions").insert({
-      drawing_id: drawingId, revision: "A",
-      storage_path, file_name: file_name.slice(0, 200),
-      supplier_revision: body.supplier_revision ? String(body.supplier_revision).slice(0, 40) : null,
-      supplier_file_name: file_name.slice(0, 500),
-      notes: body.notes ? String(body.notes).slice(0, 1000) : null,
-      created_by: session.uid || null,
-    }).select("id").maybeSingle();
-    if (revErr) {
+    // Issue A goes through insertDrawingRevision like every other issue
+    // (DYNAMIC_DRAWINGS §5.1: two file writers only) — the letter rule, the
+    // current-revision pointer and syncDrawingStatus cannot drift from a
+    // hand-added or rendered issue. The audit fan-out finds no linked part
+    // yet; the "Drawing created" line below is this action's own trace.
+    const drawing = { id: drawingId, drawing_number, title };
+    const rev = await insertDrawingRevision(tdb, session, drawing, {
+      revision: "A", storage_path, file_name,
+      notes: body.notes ? String(body.notes) : null,
+      supplier_revision: body.supplier_revision ? String(body.supplier_revision) : null,
+      supplier_file_name: file_name,
+    });
+    if ("error" in rev) {
       // The drawing row without its file is worse than nothing — it is a record
       // that looks complete and is not. Roll it back rather than leave a stub.
       await tdb("drawings").delete().eq("id", drawingId);
-      return json({ error: revErr.message }, 400);
+      return json({ error: rev.error }, rev.status);
     }
-    await tdb("drawings").update({ current_revision_id: rev?.id }).eq("id", drawingId);
 
     let audited = 0;
     if (ownerId) {
@@ -7197,12 +7443,51 @@ Deno.serve(async (req) => {
       owner ? statusSummary({ drawings, cad: model ? summaryCad(cadRevs) : null }).warnings : [];
     const cadDerived = model ? deriveObject(cadRevs) : null;
     const extMatch = /\.([A-Za-z0-9]+)$/.exec(String(rev.file_name || ""));
+    // The spec facts (DYNAMIC_DRAWINGS §5.1): what template version and patch
+    // this issue was rendered with, how its dimension list differs from the
+    // issue it supersedes, whether the geometry moved. A legacy name-only
+    // render warns `spec_not_recorded`; an open proposed/candidate row warns
+    // `iteration_open`. Neither blocks the release.
+    const specFacts: Record<string, unknown> = { spec: null, dimensions_vs_superseded: null, geometry_same: null, unmatched_overrides: [], warnings: [] as string[] };
+    try {
+      const specWarnings = specFacts.warnings as string[];
+      const { data: pins } = await tdb("drawing_revisions")
+        .select("id, spec_version_id, spec_patch_id, render_job_id, dimension_list_sha256, geometry_sha256").eq("id", rev.id).maybeSingle();
+      const sup = supersedesOf(revisions, rev);
+      const { data: supPins } = sup ? await tdb("drawing_revisions")
+        .select("id, render_job_id, dimension_list_sha256, geometry_sha256").eq("id", sup.id).maybeSingle() : { data: null };
+      if (pins?.spec_version_id) {
+        const version = await loadSpecVersion(tdb, pins.spec_version_id);
+        const { data: pr } = pins.spec_patch_id ? await tdb("drawing_spec_patches").select("id, seq, operations, origin").eq("id", pins.spec_patch_id).maybeSingle() : { data: null };
+        specFacts.spec = version ? {
+          template: `${version.name}@${version.version}`, name: version.name, version: version.version, kind: version.kind,
+          patch_seq: pr?.seq ?? null, patch_ops: Array.isArray(pr?.operations) ? pr.operations.length : 0, patch_origin: pr?.origin ?? null,
+          dimension_list_sha8: sha8(pins.dimension_list_sha256), geometry_sha8: sha8(pins.geometry_sha256),
+        } : null;
+      } else if (rev.storage_path) {
+        specWarnings.push("spec_not_recorded");
+      }
+      if (pins?.render_job_id) {
+        const { data: job } = await tdb("drawing_render_jobs").select("id, result").eq("id", pins.render_job_id).maybeSingle();
+        const unmatched = job?.result?.unmatched_overrides;
+        if (Array.isArray(unmatched)) specFacts.unmatched_overrides = unmatched;
+        if (supPins?.render_job_id) {
+          const { data: supJob } = await tdb("drawing_render_jobs").select("id, result").eq("id", supPins.render_job_id).maybeSingle();
+          const [a, b] = await Promise.all([loadJobDimensions(supJob?.result), loadJobDimensions(job?.result)]);
+          if (a.length || b.length) specFacts.dimensions_vs_superseded = diffDimensionLists(a, b).counts ?? null;
+        }
+      }
+      if (pins?.geometry_sha256 && supPins?.geometry_sha256) specFacts.geometry_same = pins.geometry_sha256 === supPins.geometry_sha256;
+      const { data: openPatches } = await tdb("drawing_spec_patches").select("id").eq("drawing_id", drawing.id).in("status", ["proposed", "candidate"]).limit(1);
+      if ((openPatches || []).length) specWarnings.push("iteration_open");
+    } catch { /* the spec facts never block a release */ }
     return json({
       kind, word,
       object: {
         id: drawing.id, part_number: component?.part_number ?? null, component_name: component?.name ?? null,
         drawing_number: drawing.drawing_number, title: drawing.title ?? null,
       },
+      ...specFacts,
       revision: revisionOut(rev, rev.storage_path
         ? [{ format: extMatch ? extMatch[1].toLowerCase() : null, file_name: rev.file_name ?? null, sha8: null, fusion_version: null }]
         : []),
@@ -7600,17 +7885,23 @@ Deno.serve(async (req) => {
   // ==========================================================================
 
   // --- request: validate part / CAD rev / STEP / spec / drawing, queue the job
+  // mode `issue` (default) reserves the next letter as before; mode `iterate`
+  // (DYNAMIC_DRAWINGS §3.7) re-renders the drawing's current DRAFT issue with a
+  // proposed patch and mints no letter — the candidate waits for Keep.
   if (action === "requestDrawingRender") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const component_id = String(body.component_id ?? "").trim();
     const cad_model_revision_id = String(body.cad_model_revision_id ?? "").trim();
-    const spec = String(body.spec ?? "").trim();
+    let spec = String(body.spec ?? "").trim();
     const wantDrawingId = String(body.drawing_id ?? "").trim();
     const title = String(body.title ?? "").trim();
-    if (!component_id || !cad_model_revision_id || !spec) {
+    const mode = body.mode === "iterate" ? "iterate" : "issue";
+    const wantPatchId = String(body.spec_patch_id ?? "").trim();
+    if (!component_id || !cad_model_revision_id || (!spec && mode === "issue")) {
       return json({ error: "component_id, cad_model_revision_id and spec required" }, 400);
     }
-    if (!wantDrawingId && !title) return json({ error: "drawing_id or title required" }, 400);
+    if (mode === "issue" && !wantDrawingId && !title) return json({ error: "drawing_id or title required" }, 400);
+    if (mode === "iterate" && (!wantDrawingId || !wantPatchId)) return json({ error: "iterate needs drawing_id and spec_patch_id" }, 400);
 
     const { data: component } = await tdb("bom_components").select("id, part_number, name").eq("id", component_id).maybeSingle();
     if (!component) return json({ error: "Component not found" }, 404);
@@ -7626,12 +7917,34 @@ Deno.serve(async (req) => {
     const stepFile = (stepFiles || [])[0];
     if (!stepFile) return json({ error: `Rev ${rev.revision} has no STEP file` }, 400);
 
+    // An iteration renders the base its patch was composed on — the patch row
+    // names the version; the spec name follows from it.
+    let patchRow: any = null;
+    let specVersion: any = null;
+    if (mode === "iterate") {
+      const { data: pr } = await tdb("drawing_spec_patches").select(SPEC_PATCH_FIELDS).eq("id", wantPatchId).maybeSingle();
+      if (!pr) return json({ error: "Patch not found" }, 404);
+      if (pr.drawing_id !== wantDrawingId) return json({ error: "The patch belongs to another drawing" }, 400);
+      if (pr.status !== "proposed") return json({ error: `Patch seq ${pr.seq} is ${pr.status}; only a proposed patch renders` }, 409);
+      patchRow = pr;
+      specVersion = await loadSpecVersion(tdb, pr.spec_version_id);
+      if (!specVersion) return json({ error: "The patch's spec version no longer exists" }, 400);
+      if (spec && spec !== specVersion.name) return json({ error: `Patch seq ${pr.seq} is on ${specVersion.name}, not ${spec}` }, 400);
+      spec = specVersion.name;
+    }
+
     // The spec must be one a worker has registered; a multi-part spec is
     // refused here rather than by the worker, so no job is queued that cannot
-    // be drawn (a render job draws one part, §6).
-    const { data: specRow } = await tdb("drawing_render_specs").select("name, parts").eq("name", spec).maybeSingle();
+    // be drawn (a render job draws one part, §6). Since §3.2 the job is handed
+    // the body of a stored version, never a name: a catalogue row without one
+    // comes from a worker that predates bodies.
+    const { data: specRow } = await tdb("drawing_render_specs").select("name, parts, current_version_id, template").eq("name", spec).maybeSingle();
     if (!specRow) return json({ error: `Spec ${spec} is not registered by any drawing worker` }, 400);
     if (Number(specRow.parts) > 1) return json({ error: `Spec ${spec} has ${specRow.parts} parts; a render job draws one part` }, 400);
+    if (mode === "issue") {
+      specVersion = await loadSpecVersion(tdb, specRow.current_version_id);
+      if (!specVersion) return json({ error: `Spec ${spec} has no stored body yet — restart the drawing worker so it registers one` }, 400);
+    }
 
     // Timeouts first, so a stale open job does not block the drawing.
     await expireDrawingRenderJobs(tdb, session);
@@ -7639,7 +7952,7 @@ Deno.serve(async (req) => {
     let drawing: any = null;
     let created_drawing = false;
     if (wantDrawingId) {
-      const { data: drw } = await tdb("drawings").select("id, drawing_number, title, owner_component_id, drawing_type")
+      const { data: drw } = await tdb("drawings").select("id, drawing_number, title, owner_component_id, drawing_type, current_revision_id, spec_patch_id")
         .eq("id", wantDrawingId).maybeSingle();
       if (!drw) return json({ error: "Drawing not found" }, 404);
       // The drawing must depict the part: the owner link or a depicts link.
@@ -7682,21 +7995,59 @@ Deno.serve(async (req) => {
       created_drawing = true;
     }
 
-    // The letter is reserved now: A for a new drawing, else the next one.
     const existing = (await loadDrawingRevisions(tdb, [drawing.id]))[drawing.id] || [];
-    const issue = nextRevisionLetter(existing.map((r: any) => r.revision));
+    let issue: string;
+    let replaces_revision_id: string | null = null;
+    let spec_patch_id: string | null = null;
+    if (mode === "iterate") {
+      // The target is the current issue and it must be a draft: a released or
+      // superseded issue only ever gets "New issue from CAD" (§3.7).
+      const current = deriveObject(existing).current;
+      if (!current) return json({ error: `Drawing ${drawing.drawing_number} has no issue to iterate; render an issue first` }, 400);
+      if (current.status !== "draft") return json({ error: `Issue ${current.revision} is ${current.status}; only a draft issue can be iterated — make a new issue instead` }, 409);
+      issue = current.revision;
+      replaces_revision_id = current.id;
+      spec_patch_id = patchRow.id;
+    } else {
+      // The letter is reserved now: A for a new drawing, else the next one.
+      issue = nextRevisionLetter(existing.map((r: any) => r.revision));
+      // A drawing with an accepted patch carries it onto this base as a new
+      // `carry` row (§3.2: a new template version never moves a drawing by
+      // itself; this request is the explicit act).
+      if (drawing.spec_patch_id) {
+        const patches = await loadSpecPatches(tdb, drawing.id);
+        const accepted = patches.find((p) => p.id === drawing.spec_patch_id);
+        if (accepted) {
+          const carried = { ...(accepted.patch || emptyPatch(null)), v: 1, base: { name: specVersion.name, version: specVersion.version } };
+          const seq = (patches.length ? Math.max(...patches.map((p) => Number(p.seq) || 0)) : 0) + 1;
+          const { data: carry, error: carryErr } = await tdb("drawing_spec_patches").insert({
+            drawing_id: drawing.id, seq, parent_id: accepted.id, spec_version_id: specVersion.id,
+            patch: carried, patch_sha256: await canonicalSha(carried), operations: [],
+            origin: "carry", status: "proposed", created_by: session.uid || null,
+          }).select("id").maybeSingle();
+          if (carryErr) return json({ error: `The accepted patch could not be carried: ${carryErr.message}` }, 400);
+          spec_patch_id = carry?.id ?? null;
+        }
+      }
+    }
 
     const { data: job, error } = await tdb("drawing_render_jobs").insert({
       component_id, cad_model_revision_id: rev.id, cad_file_id: stepFile.id,
       drawing_id: drawing.id, created_drawing, spec, issue, status: "requested",
+      mode, spec_version_id: specVersion.id, spec_patch_id, replaces_revision_id,
       requested_by: session.uid || null, steps: newRenderSteps(),
     }).select("*").maybeSingle();
     if (error) {
       // The partial unique index holds one-per-drawing when two requests arrive together.
       if (created_drawing) await tdb("drawings").delete().eq("id", drawing.id);
+      // A carry row made for this job has nothing to render; it goes with the job.
+      if (mode === "issue" && spec_patch_id) await tdb("drawing_spec_patches").delete().eq("id", spec_patch_id).eq("status", "proposed");
       if (/duplicate key|unique/i.test(error.message)) return json({ error: `A render is already requested or running for drawing ${drawing.drawing_number}` }, 400);
       return json({ error: error.message }, 400);
     }
+    // The patch row says which job is rendering it (the CHECK has no
+    // `rendering` status; the job id carries that fact, §5.5).
+    if (spec_patch_id) await tdb("drawing_spec_patches").update({ job_id: job.id }).eq("id", spec_patch_id);
     const [out] = await withRenderJobContext(tdb, [job]);
     return json({ job: out });
   }
@@ -7743,6 +8094,17 @@ Deno.serve(async (req) => {
     if (!upd?.length) return json({ error: "Job was claimed before it could be cancelled" }, 409);
     // A drawing the job created with no issue goes with it.
     const removed = await removeEmptyRenderDrawing(tdb, session, upd[0]);
+    // The patch row the job was rendering is closed with it, as the fail path
+    // and the timeouts do: a carry row made for this request (origin carry, no
+    // operations) has nothing left to render and is deleted, as the insert-
+    // error path of requestDrawingRender does; any other row goes to `failed`
+    // so neither previewRelease nor getDrawingSpec keeps it open forever.
+    if (upd[0].spec_patch_id) {
+      const { data: pr } = await tdb("drawing_spec_patches").select("id, origin, operations, status").eq("id", upd[0].spec_patch_id).maybeSingle();
+      const emptyCarry = pr && pr.origin === "carry" && pr.status === "proposed" && (!Array.isArray(pr.operations) || pr.operations.length === 0);
+      if (emptyCarry) await tdb("drawing_spec_patches").delete().eq("id", pr.id).eq("status", "proposed");
+      else await closeJobPatch(tdb, upd[0], "failed");
+    }
     const [out] = await withRenderJobContext(tdb, [{ ...upd[0], drawing_id: removed ? null : upd[0].drawing_id }]);
     return json({ job: removed ? { ...out, drawing_number: removed } : out });
   }
@@ -7791,6 +8153,36 @@ Deno.serve(async (req) => {
       if (failed?.length) await removeEmptyRenderDrawing(tdb, session, failed[0]);
       return json({ job: null });
     }
+    // The spec body and the patch travel as canonical JSON STRINGS (DYNAMIC_
+    // DRAWINGS §5.3): the worker hashes exactly the strings it received and
+    // echoes the shas; it never computes a canonical form. The sha of the
+    // string sent must be the sha the row was stored under — if the jsonb
+    // round trip ever changed the canonical form the job fails here, loudly,
+    // instead of the finish guard blaming the worker.
+    let spec_body: string | null = null, spec_body_sha256: string | null = null;
+    let spec_patch: string | null = null, patch_sha256: string | null = null;
+    const closeAs = async (reason: string) => {
+      const patch = renderFailPatch(job.steps, reason, at);
+      const { data: failed } = await tdb("drawing_render_jobs").update(patch).eq("id", job.id).eq("status", "running").select("*");
+      if (failed?.length) { await removeEmptyRenderDrawing(tdb, session, failed[0]); await closeJobPatch(tdb, job, "failed"); }
+      return json({ job: null });
+    };
+    if (job.spec_version_id) {
+      const version = await loadSpecVersion(tdb, job.spec_version_id);
+      if (!version) return await closeAs("the spec version no longer exists");
+      spec_body = canonicalJson(version.body);
+      spec_body_sha256 = await canonicalSha(spec_body);
+      if (version.body_sha256 && spec_body_sha256 !== version.body_sha256) {
+        return await closeAs(`spec body ${version.name} v${version.version} does not hash to its stored sha`);
+      }
+    }
+    if (job.spec_patch_id) {
+      const { data: pr } = await tdb("drawing_spec_patches").select("id, patch, patch_sha256, status").eq("id", job.spec_patch_id).maybeSingle();
+      if (!pr) return await closeAs("the patch no longer exists");
+      spec_patch = canonicalJson(pr.patch);
+      patch_sha256 = await canonicalSha(spec_patch);
+      if (pr.patch_sha256 && patch_sha256 !== pr.patch_sha256) return await closeAs("the patch does not hash to its stored sha");
+    }
     const [out] = await withRenderJobContext(tdb, [job]);
     return json({
       job: {
@@ -7800,8 +8192,33 @@ Deno.serve(async (req) => {
         cad_sha256: stepFile.sha256 ?? null,
         title_block: titleBlock({ drawing, job, component, revision: rev, file: stepFile, at }),
         spec: job.spec,
+        mode: job.mode || "issue",
+        drawing_id: job.drawing_id,
+        spec_body, spec_body_sha256, spec_patch, patch_sha256,
+        png: true,
       },
     });
+  }
+
+  // --- the worker asks where to put an artefact (pdf, png, the two sidecars) -
+  // Every artefact of a job lives under drawings/<drawing_id>/renders/<job_id>/
+  // in DOC_BUCKET (§5.3), so a discard can remove the folder and nothing else.
+  // The issue PDF of a mode=issue job is ALSO uploaded through docUploadUrl as
+  // today; that path stays the revision's storage_path.
+  if (action === "drawingRenderUploadUrl") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    const file_name = safeName(String(body.file_name ?? "").trim());
+    if (!job_id || !body.file_name) return json({ error: "job_id and file_name required" }, 400);
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: job } = await tdb("drawing_render_jobs").select("id, status, drawing_id").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    if (job.status !== "running") return json({ error: `Job is ${job.status}, not running` }, 409);
+    if (!job.drawing_id) return json({ error: "the drawing no longer exists" }, 409);
+    const path = `${renderArtifactPrefix(job)}${file_name}`;
+    const { data, error } = await db.storage.from(DOC_BUCKET).createSignedUploadUrl(path);
+    if (error) return json({ error: error.message }, 500);
+    return json({ signedUrl: data.signedUrl, token: data.token, path });
   }
 
   // --- the worker reports a step as it happens (download · render · verify · upload)
@@ -7832,6 +8249,11 @@ Deno.serve(async (req) => {
   }
 
   // --- the worker is done: register the issue (or record the failure) -------
+  // mode=issue registers the reserved letter through insertDrawingRevision and
+  // pins the spec version, patch, job and both fingerprints on it. mode=iterate
+  // touches no drawing_revisions row: the artefacts and hashes go on the job,
+  // the patch row becomes a `candidate`, and Keep (acceptDrawingIteration)
+  // moves the file (DYNAMIC_DRAWINGS §3.7, §5.1).
   if (action === "finishDrawingRender") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const job_id = String(body.job_id ?? "").trim();
@@ -7841,23 +8263,29 @@ Deno.serve(async (req) => {
     if (!job) return json({ error: "Render job not found" }, 404);
     if (job.status !== "running") return json({ error: `Job is ${job.status}, not running` }, 409);
     const at = new Date().toISOString();
+    const mode = job.mode === "iterate" ? "iterate" : "issue";
 
     // One path closes a job as failed: the step the worker was on fails with
     // the reason, the rest are skipped, a drawing this job created and that
-    // has no issue is deleted again.
+    // has no issue is deleted again, and the patch the job was rendering is
+    // marked failed (the draft keeps its file and pins).
     const fail = async (reason: string, steps: any[] = job.steps) => {
       const patch = renderFailPatch(steps, reason, at);
       const { data: upd, error } = await tdb("drawing_render_jobs").update(patch).eq("id", job_id).eq("status", "running").select("*");
       if (error) return json({ error: error.message }, 400);
       if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
       const removed = await removeEmptyRenderDrawing(tdb, session, upd[0]);
+      await closeJobPatch(tdb, job, "failed");
       const [out] = await withRenderJobContext(tdb, [{ ...upd[0], drawing_id: removed ? null : upd[0].drawing_id }]);
       return json({ job: removed ? { ...out, drawing_number: removed } : out });
     };
 
     if (body.error != null && body.error !== "") return await fail(String(body.error));
 
-    const storage_path = String(body.storage_path ?? "").trim();
+    const result = body.result && typeof body.result === "object" && !Array.isArray(body.result) ? body.result : {};
+    const artifacts = normaliseRenderArtifacts(job, result.artifacts);
+    // mode=iterate has no docUploadUrl copy: the candidate PDF under renders/ is the file.
+    const storage_path = String(body.storage_path ?? "").trim() || (mode === "iterate" ? artifacts.pdf ?? "" : "");
     const file_name = String(body.file_name ?? "").trim();
     const sha256 = String(body.sha256 ?? "").trim().toLowerCase();
     // The STEP sha the worker actually rendered from (it verified the download
@@ -7867,7 +8295,44 @@ Deno.serve(async (req) => {
     if (!storage_path || !file_name || !sha256) {
       return json({ error: "storage_path, file_name and sha256 required (or error)" }, 400);
     }
-    const result = body.result && typeof body.result === "object" && !Array.isArray(body.result) ? body.result : {};
+
+    // Guard: a job that carried a patch must come back with that patch's sha.
+    // An old worker renders the unpatched template as a silent no-op; the
+    // echoed sha is the only proof the patch reached drawset.
+    const hex64 = (v: unknown) => /^[0-9a-f]{64}$/i.test(String(v ?? "")) ? String(v).toLowerCase() : null;
+    const echoedPatchSha = hex64(result.patch_sha256);
+    const echoedBodySha = hex64(result.spec_body_sha256);
+    if (job.spec_patch_id) {
+      const { data: pr } = await tdb("drawing_spec_patches").select("id, patch_sha256").eq("id", job.spec_patch_id).maybeSingle();
+      if (!echoedPatchSha || !pr || echoedPatchSha !== String(pr.patch_sha256).toLowerCase()) {
+        return await fail("worker predates spec patches; restart it");
+      }
+    }
+    if (job.spec_version_id && echoedBodySha) {
+      const version = await loadSpecVersion(tdb, job.spec_version_id);
+      if (version?.body_sha256 && echoedBodySha !== String(version.body_sha256).toLowerCase()) {
+        return await fail(`worker rendered another body of ${version.name} than v${version.version}`);
+      }
+    }
+    // drawset's own verdict (exit 3 → the worker reports error; this is the
+    // belt to that brace).
+    const verify = result.verify && typeof result.verify === "object" && !Array.isArray(result.verify) ? result.verify : null;
+    if (result.verify_ok === false || (verify && String(verify.regression ?? "OK").toUpperCase() === "FAIL")) {
+      return await fail("drawset verification failed");
+    }
+    const unmatched = Array.isArray(result.unmatched_overrides) ? result.unmatched_overrides.slice(0, 200) : [];
+    const facts = {
+      ...result, file_name, sha256, mode, storage_path,
+      dimension_list_sha256: hex64(result.dimension_list_sha256),
+      geometry_sha256: hex64(result.geometry_sha256),
+      spec_body_sha256: echoedBodySha, patch_sha256: echoedPatchSha,
+      verify, unmatched_overrides: unmatched, artifacts,
+      // The STEP this render was made from travels with the result (§3.7: the
+      // source facts move WITH the file on Keep) — acceptDrawingIteration pins
+      // it on the draft; the file row's sha fills in below when the worker
+      // sent none.
+      source_sha256: renderedFrom ?? hex64(result.source_sha256),
+    };
 
     const [{ data: drawing }, { data: rev }, { data: stepFile }] = await Promise.all([
       tdb("drawings").select("id, drawing_number, title").eq("id", job.drawing_id).maybeSingle(),
@@ -7876,14 +8341,32 @@ Deno.serve(async (req) => {
     ]);
     if (!drawing) return await fail("the drawing no longer exists");
     let steps = setRenderStep(job.steps, "register", "running", null, at);
-    // The same rule addDrawingRevision uses: letter = the one reserved at
-    // request. An issue added meanwhile makes that letter a duplicate (or
-    // below the current) and the insert is refused — the job fails with it.
     // A STEP registered before shas were recorded gets the worker's: the
     // drawing's "made from" and the file now agree.
     if (stepFile && !stepFile.sha256 && renderedFrom) {
       await tdb("cad_model_files").update({ sha256: renderedFrom }).eq("id", stepFile.id);
     }
+    if (!facts.source_sha256 && stepFile?.sha256) facts.source_sha256 = hex64(stepFile.sha256);
+
+    if (mode === "iterate") {
+      // No revision change. The draft this candidate would replace must still
+      // be there; Keep re-checks draft + current when the engineer decides.
+      const { data: target } = await tdb("drawing_revisions").select("id, revision, status").eq("id", job.replaces_revision_id).maybeSingle();
+      if (!target) return await fail("the draft issue this iteration targets no longer exists", steps);
+      await closeJobPatch(tdb, job, "candidate");
+      steps = setRenderStep(steps, "register", "passed", `Candidate for Issue ${target.revision} · ${file_name} (awaiting Keep)`, at,
+        { drawing_revision_id: target.id, candidate: true });
+      const patch = { status: "done", finished_at: at, error: null, steps, result: { ...facts, drawing_revision_id: target.id, candidate: true } };
+      const { data: upd, error } = await tdb("drawing_render_jobs").update(patch).eq("id", job_id).eq("status", "running").select("*");
+      if (error) return json({ error: error.message }, 400);
+      if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
+      const [out] = await withRenderJobContext(tdb, upd);
+      return json({ job: out });
+    }
+
+    // The same rule addDrawingRevision uses: letter = the one reserved at
+    // request. An issue added meanwhile makes that letter a duplicate (or
+    // below the current) and the insert is refused — the job fails with it.
     const r = await insertDrawingRevision(tdb, session, drawing, {
       revision: job.issue, storage_path, file_name,
       notes: `Rendered from CAD Rev ${rev?.revision ?? "?"} by drawset`,
@@ -7891,12 +8374,23 @@ Deno.serve(async (req) => {
       source_sha256: renderedFrom ?? stepFile?.sha256 ?? null,
     });
     if ("error" in r) return await fail(r.error, steps);
-
-    await tdb("drawings").update({ render_spec: job.spec }).eq("id", drawing.id);
+    // The pins (§3.4): which template version, which patch, which job, both
+    // fingerprints. A released issue is immutable with them.
+    await tdb("drawing_revisions").update({
+      spec_version_id: job.spec_version_id ?? null, spec_patch_id: job.spec_patch_id ?? null, render_job_id: job.id,
+      dimension_list_sha256: facts.dimension_list_sha256, geometry_sha256: facts.geometry_sha256,
+    }).eq("id", r.id);
+    // A carry row rendered into a new issue is the drawing's accepted patch now.
+    if (job.spec_patch_id) {
+      await closeJobPatch(tdb, job, "accepted");
+      await tdb("drawings").update({ render_spec: job.spec, spec_patch_id: job.spec_patch_id }).eq("id", drawing.id);
+    } else {
+      await tdb("drawings").update({ render_spec: job.spec }).eq("id", drawing.id);
+    }
     steps = setRenderStep(steps, "register", "passed", `Issue ${r.revision} · ${file_name}`, at, { drawing_revision_id: r.id });
     const patch = {
       status: "done", finished_at: at, error: null, steps,
-      result: { ...result, drawing_revision_id: r.id, file_name, sha256 },
+      result: { ...facts, drawing_revision_id: r.id },
     };
     const { data: upd, error } = await tdb("drawing_render_jobs").update(patch).eq("id", job_id).eq("status", "running").select("*");
     if (error) return json({ error: error.message }, 400);
@@ -7906,6 +8400,11 @@ Deno.serve(async (req) => {
   }
 
   // --- the worker registers its spec catalogue (on start, every 10 min) -----
+  // Since DYNAMIC_DRAWINGS §3.2 each spec comes with its parsed YAML body: a
+  // body the portal has not seen becomes an immutable drawing_spec_versions
+  // row (version = max + 1 per name) and the catalogue row points at it. The
+  // catalogue delete rule is unchanged; versions are never deleted — a job is
+  // handed a body, never a name, so a removed catalogue row orphans nothing.
   if (action === "registerDrawingSpecs") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const agent = String(body.agent ?? "").trim().slice(0, 200) || "drawing worker";
@@ -7913,11 +8412,38 @@ Deno.serve(async (req) => {
     const at = new Date().toISOString();
     const rows: any[] = [];
     const seen = new Set<string>();
+    const versions_added: string[] = [];
     for (const s of body.specs) {
       const n = normaliseSpec(s);
       if (!n || seen.has(n.name)) continue;
       seen.add(n.name);
-      rows.push({ ...n, agent, updated_at: at });
+      const { body: specBody, template, ...row } = n as any;
+      const out: any = { ...row, agent, updated_at: at };
+      if (template !== undefined) out.template = template === true;
+      if (specBody) {
+        const kind = template === true ? "template" : "part_spec";
+        const body_sha256 = await canonicalSha(specBody);
+        let { data: have } = await tdb("drawing_spec_versions").select("id, version").eq("name", n.name).eq("body_sha256", body_sha256).maybeSingle();
+        if (!have) {
+          const { data: latest } = await tdb("drawing_spec_versions").select("version").eq("name", n.name).order("version", { ascending: false }).limit(1);
+          const version = (Number((latest || [])[0]?.version) || 0) + 1;
+          const { data: ins, error: vErr } = await tdb("drawing_spec_versions").insert({
+            name: n.name, version, kind, body: specBody, body_sha256, registered_by: agent,
+          }).select("id, version").maybeSingle();
+          if (vErr) {
+            // Two workers registering the same body at once: the unique key
+            // holds; the row the other one made is the one to point at.
+            if (!/duplicate key|unique/i.test(vErr.message)) return json({ error: vErr.message }, 400);
+            const { data: again } = await tdb("drawing_spec_versions").select("id, version").eq("name", n.name).eq("body_sha256", body_sha256).maybeSingle();
+            have = again;
+          } else {
+            have = ins;
+            versions_added.push(`${n.name} v${version}`);
+          }
+        }
+        if (have) out.current_version_id = have.id;
+      }
+      rows.push(out);
     }
     if (rows.length) {
       const { error } = await tdb("drawing_render_specs").upsert(rows, { onConflict: "organization_id,name" });
@@ -7928,18 +8454,225 @@ Deno.serve(async (req) => {
     if (rows.length) dq = dq.not("name", "in", `(${rows.map((r) => `"${r.name.replace(/"/g, "")}"`).join(",")})`);
     const { data: removed, error: dErr } = await dq.select("name");
     if (dErr) return json({ error: dErr.message }, 400);
-    const { data: specs } = await tdb("drawing_render_specs").select("*").order("name");
-    return json({ ok: true, specs: specs || [], last_seen: specsLastSeen(specs || []), removed: (removed || []).map((r: any) => r.name) });
+    const specs = await listSpecsWithVersions(tdb);
+    return json({ ok: true, specs, last_seen: specsLastSeen(specs), removed: (removed || []).map((r: any) => r.name), versions_added });
   }
 
   // --- the modal's spec list ------------------------------------------------
   if (action === "listDrawingSpecs") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
-    const { data: specs, error } = await tdb("drawing_render_specs").select("*").order("name");
-    if (error) return json({ error: error.message }, 500);
-    return json({ specs: specs || [], last_seen: specsLastSeen(specs || []) });
+    const specs = await listSpecsWithVersions(tdb);
+    return json({ specs, last_seen: specsLastSeen(specs) });
   }
 
+  // --- what governs one drawing: template version, accepted patch, chain -----
+  if (action === "getDrawingSpec") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "").trim();
+    if (!drawing_id) return json({ error: "drawing_id required" }, 400);
+    const { data: drawing } = await tdb("drawings").select("id, drawing_number, title, render_spec, current_revision_id, spec_patch_id")
+      .eq("id", drawing_id).maybeSingle();
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+    const patches = await loadSpecPatches(tdb, drawing_id);
+    const accepted = patches.find((p) => p.id === drawing.spec_patch_id) || null;
+    const latest = patches.length ? patches[patches.length - 1] : null;
+    const pinned = await resolveDrawingSpecVersion(tdb, drawing, patches);
+    let template: any = null;
+    if (pinned) {
+      const { data: cat } = await tdb("drawing_render_specs").select("name, current_version_id, template").eq("name", pinned.name).maybeSingle();
+      const currentVersion = cat?.current_version_id ? await loadSpecVersion(tdb, cat.current_version_id) : null;
+      template = {
+        name: pinned.name, version: pinned.version, kind: pinned.kind, body_sha256: pinned.body_sha256, spec_version_id: pinned.id,
+        current_version: currentVersion?.version ?? null, current_version_id: currentVersion?.id ?? null,
+        drift: !!currentVersion && currentVersion.id !== pinned.id,
+        registered: !!cat,
+      };
+    }
+    const issueJob = await currentIssueRenderJob(tdb, drawing);
+    const patchOut = (p: any) => p ? ({
+      patch_id: p.id, seq: p.seq, patch: p.patch, patch_sha256: p.patch_sha256, status: p.status, origin: p.origin, job_id: p.job_id,
+      spec_version_id: p.spec_version_id,
+    }) : null;
+    return json({
+      drawing: { id: drawing.id, drawing_number: drawing.drawing_number, title: drawing.title, render_spec: drawing.render_spec ?? null },
+      template,
+      patch: patchOut(accepted),
+      latest: patchOut(latest),
+      open: patches.filter((p) => p.status === "proposed" || p.status === "candidate").map(patchOut),
+      history: patches.map((p) => ({
+        patch_id: p.id, seq: p.seq, origin: p.origin, status: p.status, operations: p.operations, patch_sha256: p.patch_sha256,
+        spec_version_id: p.spec_version_id, created_by: p.created_by, created_at: p.created_at, job_id: p.job_id, turn_id: p.turn_id,
+      })),
+      issue_job: issueJob ? { id: issueJob.id, issue: issueJob.issue, status: issueJob.status, result: issueJob.result ?? null } : null,
+      artifacts: specArtifactUrls(issueJob?.result ? await signRenderArtifacts(issueJob.result) : null),
+    });
+  }
+
+  // --- ops in, snapshot out: one new patch row on the drawing's chain -------
+  if (action === "applyDrawingSpecOps") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "").trim();
+    const ops = Array.isArray(body.ops) ? body.ops : null;
+    const origin = String(body.origin ?? "click").trim();
+    const turn_id = String(body.turn_id ?? "").trim() || null;
+    if (!drawing_id || !ops) return json({ error: "drawing_id and ops[] required" }, 400);
+    if (!SPEC_PATCH_ORIGINS.includes(origin)) return json({ error: `origin must be one of: ${SPEC_PATCH_ORIGINS.join(", ")}` }, 400);
+    if (!ops.length) return json({ error: "ops is empty" }, 400);
+    if (ops.length > 200) return json({ error: "at most 200 ops per step" }, 400);
+    const { data: drawing } = await tdb("drawings").select("id, drawing_number, title, render_spec, current_revision_id, spec_patch_id")
+      .eq("id", drawing_id).maybeSingle();
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+
+    // The validator admits; nothing outside the vocabulary gets a row.
+    const checked = validateOps(ops);
+    const rejected: any[] = [...(checked.rejected || [])];
+    if (!checked.ok.length) return json({ error: "no operation was admitted", rejected }, 400);
+
+    // Linear chain: the caller names the seq it built on; a stale parent is a
+    // second engineer on the same draft, not something to merge silently.
+    const patches = await loadSpecPatches(tdb, drawing_id);
+    const latest = patches.length ? patches[patches.length - 1] : null;
+    const latestSeq = latest ? Number(latest.seq) : 0;
+    // Required, never defaulted: a caller that omits it would always append to
+    // the head and the 409 below would guard nothing (§5.1).
+    if (body.parent_seq == null || body.parent_seq === "") {
+      return json({ error: "parent_seq required: the seq this step builds on (0 when the drawing has no patch yet)", latest_seq: latestSeq }, 400);
+    }
+    const parent_seq = Number(body.parent_seq);
+    if (!Number.isInteger(parent_seq) || parent_seq !== latestSeq) {
+      return json({ error: `parent_seq ${body.parent_seq} is not the latest (${latestSeq}); reload the drawing`, latest_seq: latestSeq }, 409);
+    }
+    const version = await resolveDrawingSpecVersion(tdb, drawing, patches);
+    if (!version) return json({ error: "The drawing has no governed spec yet; render an issue from a registered template first" }, 400);
+    const basePatch = latest ? latest.patch : emptyPatch({ name: version.name, version: version.version });
+    const applied = applySpecOps(basePatch, checked.ok);
+    for (const r of applied.rejected || []) rejected.push(r);
+    const patch = applied.patch;
+    const patch_sha256 = await canonicalSha(patch);
+    const { data: row, error } = await tdb("drawing_spec_patches").insert({
+      drawing_id, seq: latestSeq + 1, parent_id: latest?.id ?? null, spec_version_id: version.id,
+      patch, patch_sha256, operations: checked.ok, origin, turn_id,
+      prompt: body.prompt != null ? String(body.prompt).slice(0, 4000) : null,
+      selection: body.selection && typeof body.selection === "object" ? body.selection : null,
+      proposal: body.proposal && typeof body.proposal === "object" ? body.proposal : null,
+      status: "proposed", created_by: session.uid || null,
+    }).select(SPEC_PATCH_FIELDS).maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) return json({ error: `seq ${latestSeq + 1} was taken meanwhile; reload the drawing`, latest_seq: latestSeq }, 409);
+      return json({ error: error.message }, 400);
+    }
+    // The blast radius before the 20 s job: the rows of the current issue's
+    // dimension list these ops would change.
+    const issueJob = await currentIssueRenderJob(tdb, drawing);
+    const dims = issueJob?.result?.artifacts?.dimensions ? await loadJobDimensions(issueJob.result) : [];
+    const touched = dims.length ? touchedEntities(checked.ok, dims) : [];
+    return json({ patch_id: row?.id, seq: row?.seq, patch, patch_sha256, rejected, touched, base: { name: version.name, version: version.version } });
+  }
+
+  // --- Keep: the candidate becomes the draft's file; the letter stays -------
+  if (action === "acceptDrawingIteration") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    if (!job_id) return json({ error: "job_id required" }, 400);
+    const { data: job } = await tdb("drawing_render_jobs").select("*").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    if (job.mode !== "iterate") return json({ error: "Only an iterate job has a candidate to keep" }, 400);
+    if (job.status !== "done") return json({ error: `Job is ${job.status}; only a done job has a candidate` }, 409);
+    if (!job.spec_patch_id || !job.replaces_revision_id || !job.drawing_id) return json({ error: "The job lost its patch, its target issue or its drawing" }, 409);
+    const result = job.result || {};
+    const storage_path = String(result.artifacts?.pdf ?? result.storage_path ?? "").trim();
+    if (!storage_path) return json({ error: "The job has no candidate PDF" }, 409);
+    const { data: pr } = await tdb("drawing_spec_patches").select(SPEC_PATCH_FIELDS).eq("id", job.spec_patch_id).maybeSingle();
+    if (!pr) return json({ error: "Patch not found" }, 404);
+    if (pr.status !== "candidate") return json({ error: `Patch seq ${pr.seq} is ${pr.status}, not a candidate` }, 409);
+    // A later patch accepted since would be undone by this one: refused.
+    const { data: drawing } = await tdb("drawings").select("id, drawing_number, title, spec_patch_id, current_revision_id").eq("id", job.drawing_id).maybeSingle();
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+    const patches = await loadSpecPatches(tdb, drawing.id);
+    const laterAccepted = patches.find((p) => p.status === "accepted" && Number(p.seq) > Number(pr.seq));
+    if (laterAccepted) return json({ error: `Patch seq ${laterAccepted.seq} was accepted after this candidate (seq ${pr.seq}); render it again on the new base` }, 409);
+    const { data: target } = await tdb("drawing_revisions").select(DRAWING_REV_FIELDS).eq("id", job.replaces_revision_id).maybeSingle();
+    if (!target) return json({ error: "The draft issue this candidate targets no longer exists" }, 404);
+    // The patch row moves FIRST, guarded by status = candidate: of a Keep and a
+    // Discard racing on one candidate only one flips the row, and the loser
+    // stops here before any file moves. The file swap follows; if it is
+    // refused the row goes back to candidate so revision, patch and the
+    // drawing's pointer never disagree.
+    const { data: flipped, error: pErr } = await tdb("drawing_spec_patches").update({ status: "accepted" }).eq("id", pr.id).eq("status", "candidate").select("id");
+    if (pErr) return json({ error: pErr.message }, 400);
+    if (!flipped?.length) return json({ error: `Patch seq ${pr.seq} changed under this request (discarded or kept meanwhile); reload the drawing` }, 409);
+    const r = await replaceDraftRevisionFile(tdb, session, drawing, target, {
+      storage_path, file_name: String(result.file_name ?? target.file_name ?? "drawing.pdf"),
+      source_cad_file_id: job.cad_file_id, source_sha256: result.source_sha256 ?? null,
+      pins: {
+        spec_version_id: job.spec_version_id ?? null, spec_patch_id: pr.id, render_job_id: job.id,
+        dimension_list_sha256: result.dimension_list_sha256 ?? null, geometry_sha256: result.geometry_sha256 ?? null,
+      },
+      reason: `patch seq ${pr.seq} (${pr.origin}) kept`,
+    });
+    if ("error" in r) {
+      await tdb("drawing_spec_patches").update({ status: "candidate" }).eq("id", pr.id).eq("status", "accepted");
+      return json({ error: r.error }, r.status);
+    }
+    await tdb("drawings").update({ spec_patch_id: pr.id }).eq("id", drawing.id);
+    // The file the draft had before is orphaned now unless another issue still
+    // names it (a hand upload reused) or it is the artefact of another job.
+    let previous_file_removed = false;
+    if (r.previous_storage_path && r.previous_storage_path !== storage_path && !/\/renders\//.test(r.previous_storage_path)) {
+      const { data: others } = await tdb("drawing_revisions").select("id").eq("storage_path", r.previous_storage_path).limit(1);
+      if (!(others || []).length) {
+        const { error: rmErr } = await db.storage.from(DOC_BUCKET).remove([r.previous_storage_path]);
+        previous_file_removed = !rmErr;
+      }
+    }
+    return json({ ok: true, revision_id: r.id, revision: r.revision, patch_id: pr.id, seq: pr.seq, previous_file_removed, ...r.audit });
+  }
+
+  // --- Discard: the candidate's files go, the row stays as history ---------
+  if (action === "discardDrawingIteration") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    if (!job_id) return json({ error: "job_id required" }, 400);
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: job } = await tdb("drawing_render_jobs").select("*").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    if (job.mode !== "iterate") return json({ error: "Only an iterate job has a candidate to discard" }, 400);
+    if (job.status === "requested" || job.status === "running") return json({ error: `Job is ${job.status}; cancel it or wait for it` }, 409);
+    if (!job.spec_patch_id) return json({ error: "The job has no patch row" }, 409);
+    const { data: pr } = await tdb("drawing_spec_patches").select("id, seq, status").eq("id", job.spec_patch_id).maybeSingle();
+    if (!pr) return json({ error: "Patch not found" }, 404);
+    if (pr.status === "accepted") return json({ error: `Patch seq ${pr.seq} was kept; it cannot be discarded` }, 409);
+    // The candidate's folder is the draft's file once Keep has run: an issue
+    // that names this job, or whose file sits under the job's renders folder,
+    // makes the files un-removable whatever the patch row says.
+    if (job.drawing_id) {
+      const prefix = renderArtifactPrefix(job);
+      const { data: issues } = await tdb("drawing_revisions").select("id, revision, storage_path, render_job_id").eq("drawing_id", job.drawing_id);
+      const holder = ((issues || []) as any[]).find((r) => r.render_job_id === job.id || String(r.storage_path ?? "").startsWith(prefix));
+      if (holder) return json({ error: `Issue ${holder.revision} carries this candidate's file; it was kept and cannot be discarded` }, 409);
+    }
+    // Only the request that moved the row (or a row already discarded) removes
+    // the files: a Keep that flipped the row meanwhile matches zero rows here
+    // and the draft's new file stays.
+    if (pr.status !== "discarded") {
+      const { data: moved, error } = await tdb("drawing_spec_patches").update({ status: "discarded" }).eq("id", pr.id).in("status", ["proposed", "candidate", "failed"]).select("id");
+      if (error) return json({ error: error.message }, 400);
+      if (!moved?.length) return json({ error: `Patch seq ${pr.seq} changed under this request (kept meanwhile?); reload the drawing` }, 409);
+    }
+    const files_removed = job.drawing_id ? await removeRenderArtifacts(job) : 0;
+    return json({ ok: true, patch_id: pr.id, seq: pr.seq, status: "discarded", files_removed });
+  }
+
+  // --- the artefacts of one job, signed for an hour -------------------------
+  if (action === "getDrawingRenderArtifacts") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const job_id = String(body.job_id ?? "").trim();
+    if (!job_id) return json({ error: "job_id required" }, 400);
+    const { data: job } = await tdb("drawing_render_jobs").select("id, status, mode, drawing_id, issue, result").eq("id", job_id).maybeSingle();
+    if (!job) return json({ error: "Render job not found" }, 404);
+    const signed = await signRenderArtifacts(job.result);
+    return json({ job_id: job.id, status: job.status, mode: job.mode, issue: job.issue, ...signed, paths: job.result?.artifacts ?? null });
+  }
 
   // ==========================================================================
   // PROP-015: Configure-to-Order Variant BOM actions

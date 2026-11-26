@@ -12,19 +12,32 @@ Every poll_seconds: pollDrawingRenderJob. On a job, in order, each step
 reported running before and passed after:
 
   download  GET step_url to a temp dir as step_file_name; sha256 == cad_sha256
-  render    specs/<spec>.yaml (one part only) -> temp spec with the absolute
-            STEP path and the portal's title-block facts -> drawset.py
-  verify    drawset's "=== VERIFICATION ===" block, "=== PASS ===" and the
-            "5 regression ... OK" line; the .sources.json sidecar carries the
-            dimension-list sha and the STEP sha (must equal cad_sha256)
-  upload    docUploadUrl "<drawing_number> Issue <L>.pdf" + PUT
+  render    the job's spec_body (the template/spec body the portal holds as a
+            JSON string; specs/<spec>.yaml only for a portal without it) ->
+            temp spec with the absolute STEP path, the portal's title-block
+            facts and the job's spec_patch under "patch:" -> drawset.py --png
+            The exact spec_body / spec_patch strings are sha256-hashed and
+            echoed; the worker never canonicalises anything itself.
+  verify    drawset's DRAWSET_SUMMARY line (exit 3 = rendered, verification
+            failed), falling back to the prose block; the .sources.json
+            sidecar carries the dimension-list sha, the geometry sha and the
+            STEP sha (must equal cad_sha256); summary.artifacts names the
+            local pdf, pngs, dimensions.json, entities.json
+  upload    mode issue:   docUploadUrl "<drawing_number> Issue <L>.pdf" + PUT
+                          (the revision's file, as today) AND every artefact
+                          through drawingRenderUploadUrl { job_id, file_name }
+            mode iterate: drawingRenderUploadUrl only (a candidate, no issue)
   finishDrawingRender { storage_path, file_name, sha256, result }
+            result carries dimension_list_sha256, geometry_sha256,
+            spec_body_sha256, patch_sha256, verify, unmatched_overrides and
+            artifacts { pdf, pngs[], dimensions, entities } (storage paths)
 
 Any failure -> finishDrawingRender { job_id, error }; the portal marks the
 running step failed and the rest skipped. A 409 from a report means the
 portal closed the job (cancelled, timed out): the worker stops that job and
-does not finish it. On start and every 10 min: registerDrawingSpecs from
-specs/*.yaml.
+does not finish it. On start and every 5 min: registerDrawingSpecs from
+specs/*.yaml, each with its parsed body (the portal versions the bodies,
+DYNAMIC_DRAWINGS.md §3.2).
 
 The loop runs on the system python3 with the standard library only. The
 venv python (OCP, matplotlib, pyyaml ...) is shelled out to for drawset and,
@@ -185,6 +198,44 @@ def sha256_of(path: str) -> str:
     return h.hexdigest()
 
 
+def sha256_text(text: str) -> str:
+    """sha256 of a string exactly as received (utf-8). The portal hands the
+    spec body and the patch as canonical JSON strings and compares this hash
+    with its own; the worker must not re-serialise them."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def jsonable(obj):
+    """The object as json.dumps(default=str) would send it: YAML dates become
+    strings, tuples lists. What registerDrawingSpecs carries as `body`."""
+    return json.loads(json.dumps(obj, default=str))
+
+
+def job_json(job: dict, key: str, sha_key: str):
+    """(parsed, sha) for a poll field that is a canonical JSON string (spec_body,
+    spec_patch), or (None, None) when the field is absent or null.
+
+    The contract is a string: it is hashed byte for byte. A portal that sends
+    the object instead cannot be hashed faithfully here, so its own sha
+    (sha_key) is echoed and a warning is logged."""
+    raw = job.get(key)
+    if raw is None:
+        return None, None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text or text == "null":
+            return None, None
+        try:
+            parsed = json.loads(text)
+        except ValueError as exc:
+            raise StepFailed("%s is not JSON: %s" % (key, exc))
+        if parsed is None:
+            return None, None
+        return parsed, sha256_text(raw)
+    log.warning("%s arrived as %s, not a string: echoing the portal's %s", key, type(raw).__name__, sha_key)
+    return raw, (str(job.get(sha_key) or "") or None)
+
+
 # ----------------------------------------------------------------- yaml via venv
 
 _YAML_LOAD = (
@@ -233,8 +284,11 @@ def specs_dir(cfg: dict) -> str:
 
 
 def spec_catalogue(cfg: dict) -> list[dict]:
-    """[{ name, title, parts, part_numbers }] for specs/*.yaml — the
-    registerDrawingSpecs body. A spec that does not parse is logged and left out."""
+    """[{ name, title, parts, part_numbers, template, body }] for specs/*.yaml —
+    the registerDrawingSpecs body. `body` is the parsed YAML as a JSON object:
+    the portal keeps every distinct body as an immutable drawing_spec_versions
+    row and computes body_sha256 itself (canonical JSON is the portal's, not
+    ours). A spec that does not parse is logged and left out."""
     out = []
     for path in sorted(glob.glob(os.path.join(specs_dir(cfg), "*.yaml"))):
         name = os.path.splitext(os.path.basename(path))[0]
@@ -253,7 +307,8 @@ def spec_catalogue(cfg: dict) -> list[dict]:
         title = spec.get("title")
         # a template (template: <kind>, no parts) is registered with no part numbers: it applies to any part
         out.append({"name": name, "title": str(title) if title is not None else None,
-                    "parts": len(parts), "part_numbers": numbers, "template": bool(spec.get("template"))})
+                    "parts": len(parts), "part_numbers": numbers, "template": bool(spec.get("template")),
+                    "body": jsonable(spec)})
     return out
 
 
@@ -263,7 +318,7 @@ def register_specs(portal: Portal, cfg: dict, agent: str) -> None:
         return
     specs = spec_catalogue(cfg)
     portal.call("registerDrawingSpecs", agent=agent, specs=specs)
-    log.info("registered %d specs: %s", len(specs), ", ".join(s["name"] for s in specs) or "-")
+    log.info("registered %d specs (with bodies): %s", len(specs), ", ".join(s["name"] for s in specs) or "-")
 
 
 # ----------------------------------------------------------------- temp spec
@@ -353,6 +408,42 @@ def _tail(text: str, n: int = 5) -> str:
     return " | ".join(l.strip() for l in lines[-n:])
 
 
+ARTIFACT_KINDS = ("pdf", "dimensions", "entities")      # one file each; "pngs" is a list
+
+
+def local_artifacts(summary, pdf_path: str, set_name: str, png_dir: str) -> dict:
+    """{ pdf, pngs: [...], dimensions, entities } as local paths: drawset's
+    summary.artifacts when it carries them, else the files drawset writes
+    beside the PDF (<set>_dimensions.json, <set>_entities.json, <set>_s<N>.png
+    in the --png folder). Only files that exist are listed; the PDF always is."""
+    out: dict = {"pdf": pdf_path, "pngs": [], "dimensions": None, "entities": None}
+    art = (summary or {}).get("artifacts") if isinstance(summary, dict) else None
+    if isinstance(art, dict):
+        for k in ("dimensions", "entities"):
+            p = art.get(k)
+            if p and os.path.exists(str(p)):
+                out[k] = str(p)
+        out["pngs"] = [str(p) for p in (art.get("pngs") or []) if p and os.path.exists(str(p))]
+        if art.get("pdf") and os.path.exists(str(art["pdf"])):
+            out["pdf"] = str(art["pdf"])
+    out_dir = os.path.dirname(pdf_path)
+    if not out["dimensions"]:
+        p = os.path.join(out_dir, "%s_dimensions.json" % set_name)
+        out["dimensions"] = p if os.path.exists(p) else None
+    if not out["entities"]:
+        p = os.path.join(out_dir, "%s_entities.json" % set_name)
+        out["entities"] = p if os.path.exists(p) else None
+    if not out["pngs"] and png_dir and os.path.isdir(png_dir):
+        pngs = glob.glob(os.path.join(png_dir, "%s_s*.png" % glob.escape(set_name)))
+
+        def sheet_no(p: str) -> int:
+            m = re.search(r"_s(\d+)\.png$", p)
+            return int(m.group(1)) if m else 0
+
+        out["pngs"] = sorted(pngs, key=sheet_no)
+    return out
+
+
 def _parse_summary(stdout: str):
     """drawset's machine-readable verdict (Phase 0 of DYNAMIC_DRAWINGS.md): the last DRAWSET_SUMMARY line, or None."""
     for line in reversed(stdout.splitlines()):
@@ -408,10 +499,13 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
     number = str(tb.get("drawing_number") or "").strip()
     issue = str(tb.get("issue") or job.get("issue") or "").strip()
     short = job_id[:8]
+    mode = str(job.get("mode") or "issue").strip().lower()
+    legacy_portal = "spec_body" not in job      # a portal before DYNAMIC_DRAWINGS Phase 2: no body, no patch, no artefact uploads
     tmp = tempfile.mkdtemp(prefix="drawing-worker-")
     st: dict = {}
-    log.info("job %s: claimed · %s Issue %s · %s · spec %s · from CAD Rev %s",
-             short, number or "?", issue or "?", tb.get("part_number") or "?", job.get("spec"), tb.get("cad_revision") or "?")
+    log.info("job %s: claimed · mode %s · %s Issue %s · %s · spec %s%s · from CAD Rev %s",
+             short, mode, number or "?", issue or "?", tb.get("part_number") or "?", job.get("spec"),
+             " + patch" if job.get("spec_patch") not in (None, "", "null") else "", tb.get("cad_revision") or "?")
 
     def report(key: str, status: str, detail=None, data=None) -> None:
         kwargs = {"job_id": job_id, "key": key, "status": status}
@@ -472,19 +566,45 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         spec_name = str(job.get("spec") or "").strip()
         if not spec_name or spec_name != os.path.basename(spec_name) or spec_name.startswith("."):
             raise StepFailed("job carries no valid spec name")
-        spec_path = os.path.join(specs_dir(cfg), spec_name + ".yaml")
-        if not os.path.exists(spec_path):
-            raise StepFailed("spec %s.yaml not found in %s" % (spec_name, specs_dir(cfg)))
-        spec = load_yaml(spec_path, cfg)
-        st["spec_sha256"] = sha256_of(spec_path)
+        # The spec body: the portal's copy (drawing_spec_versions, a canonical JSON
+        # string) when the poll carries one; the Mac's specs/<name>.yaml only for a
+        # portal that predates spec governance. The string is hashed as received.
+        spec, body_sha = job_json(job, "spec_body", "spec_body_sha256")
+        if spec is not None:
+            if not isinstance(spec, dict):
+                raise StepFailed("spec_body is not a JSON object")
+            st["spec_body_sha256"] = body_sha
+            st["spec_sha256"] = body_sha
+            source = "portal body %s" % ((body_sha or "?")[:8])
+        else:
+            if not legacy_portal:
+                raise StepFailed("job carries no spec_body (spec %s has no stored version)" % spec_name)
+            spec_path = os.path.join(specs_dir(cfg), spec_name + ".yaml")
+            if not os.path.exists(spec_path):
+                raise StepFailed("spec %s.yaml not found in %s" % (spec_name, specs_dir(cfg)))
+            spec = load_yaml(spec_path, cfg)
+            st["spec_sha256"] = sha256_of(spec_path)
+            source = "specs/%s.yaml" % spec_name
+        patch, patch_sha = job_json(job, "spec_patch", "patch_sha256")
+        if patch is not None:
+            if not isinstance(patch, dict):
+                raise StepFailed("spec_patch is not a JSON object")
+            st["patch_sha256"] = patch_sha
         today = datetime.date.today().isoformat()
         temp = build_temp_spec(spec, st["step_path"], tb, st["step_sha256"], today)
-        temp_path = os.path.join(tmp, spec_name + ".yaml")
+        temp.pop("patch", None)             # the body must not smuggle one; the job's patch is the only patch
+        if patch is not None:
+            temp["patch"] = patch           # merged by drawset after derive_template (DYNAMIC_DRAWINGS.md §3.3, §5.4)
+        temp_path = os.path.join(tmp, (safe_set_name(spec_name) or "spec") + ".yaml")
         with open(temp_path, "w", encoding="utf-8") as f:
             f.write(dump_yaml(temp, cfg))
         out_dir = os.path.join(tmp, "out")
+        png_dir = os.path.join(tmp, "png")
         os.makedirs(out_dir, exist_ok=True)
-        cmd = [cfg["python"], "drawset.py", temp_path, "--out", out_dir]
+        os.makedirs(png_dir, exist_ok=True)
+        st["png_dir"] = png_dir
+        # --png always: the sheet PNGs are an artefact the portal shows (poll says png: true)
+        cmd = [cfg["python"], "drawset.py", temp_path, "--out", out_dir, "--png", png_dir]
         log.info("job %s: %s (cwd %s)", short, " ".join(cmd), cfg["drawset_dir"])
         t0 = time.time()
         try:
@@ -516,13 +636,25 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             raise StepFailed("drawset produced no PDF: %s" % _tail(st["stdout"]))
         pages = count_pdf_pages(pdf) or len(spec.get("sheets") or [])
         st["pdf_path"], st["pages"], st["temp_spec"] = pdf, pages, temp
-        return ("%s · %d pages · %.0f s" % (os.path.basename(pdf), pages, elapsed),
-                {"pdf": os.path.basename(pdf), "pages": pages, "seconds": round(elapsed, 1), "set_name": temp["set_name"]})
+        data = {"pdf": os.path.basename(pdf), "pages": pages, "seconds": round(elapsed, 1), "set_name": temp["set_name"],
+                "spec_source": source}
+        if st.get("spec_body_sha256"):
+            data["spec_body_sha256"] = st["spec_body_sha256"]
+        if patch is not None:
+            data["patch_sha256"] = st.get("patch_sha256")
+            data["patch"] = True
+        return ("%s · %d pages · %.0f s · %s%s" % (os.path.basename(pdf), pages, elapsed, source,
+                                                  " · patch %s" % ((st.get("patch_sha256") or "?")[:8]) if patch is not None else ""),
+                data)
 
     def step_verify():
         out = st["stdout"]
         summary = _parse_summary(out)
         st["summary"] = summary
+        if summary is None and st.get("patch_sha256"):
+            # A drawset before Phase 0 prints no summary and before Phase 1 ignores
+            # "patch:": it would render the unpatched template as a silent no-op.
+            raise StepFailed("drawset predates spec patches (no DRAWSET_SUMMARY); update the drawset folder")
         if summary is not None:
             if st.get("returncode") == 3 or not summary.get("pass"):
                 raise StepFailed(_summary_reason(summary))
@@ -554,27 +686,74 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         st["dimension_list_sha256"] = dl
         st["geometry_sha256"] = str(src.get("geometry_sha256") or "")
         st["product_id"] = steps[0].get("product_id")
-        data = {"dimension_list_sha256": dl, "step_sha256": shas[0], "product_id": st["product_id"]}
+        # the artefacts (local paths) and the unmatched overrides, from the summary when it has them
+        st["local_artifacts"] = local_artifacts(summary, st["pdf_path"], st["temp_spec"]["set_name"], st.get("png_dir") or "")
+        st["unmatched_overrides"] = list((summary or {}).get("unmatched_overrides") or []) if isinstance(summary, dict) else []
+        if not legacy_portal:
+            missing = [k for k in ("dimensions", "entities") if not st["local_artifacts"].get(k)]
+            if missing:
+                raise StepFailed("drawset wrote no %s sidecar beside the PDF; update the drawset folder" % " / ".join(missing))
+            if not st["local_artifacts"]["pngs"]:
+                raise StepFailed("drawset wrote no sheet PNGs in the --png folder")
+        data = {"dimension_list_sha256": dl, "step_sha256": shas[0], "product_id": st["product_id"],
+                "pngs": len(st["local_artifacts"]["pngs"]), "unmatched_overrides": st["unmatched_overrides"]}
         if st["geometry_sha256"]:
             data["geometry_sha256"] = st["geometry_sha256"]
         if summary is not None:
             data["verify"] = {"round_trip": summary.get("round_trip"), "completeness_missing": summary.get("completeness_missing"),
                               "wall_flags": summary.get("wall_flags"), "regression": summary.get("regression")}
-        return ("PASS · dimension list %s · geometry %s · STEP %s" % (dl[:8], (st["geometry_sha256"] or "—")[:8], shas[0][:8]), data)
+        unmatched = " · %d unmatched override%s" % (len(st["unmatched_overrides"]), "" if len(st["unmatched_overrides"]) == 1 else "s") \
+            if st["unmatched_overrides"] else ""
+        return ("PASS · dimension list %s · geometry %s · STEP %s · %d PNG%s" % (
+            dl[:8], (st["geometry_sha256"] or "—")[:8], shas[0][:8], len(st["local_artifacts"]["pngs"]), unmatched), data)
+
+    def upload_artifact(file_name: str, path: str, content_type: str) -> str:
+        """One render artefact into drawings/<drawing_id>/renders/<job_id>/<file_name>; the storage path."""
+        r = portal.call("drawingRenderUploadUrl", job_id=job_id, file_name=file_name)
+        if not r.get("signedUrl") or not r.get("path"):
+            raise StepFailed("drawingRenderUploadUrl answered without signedUrl/path for %s" % file_name)
+        put_file(r["signedUrl"], path, content_type)
+        return str(r["path"])
 
     def step_upload():
         if not number or not issue:
             raise StepFailed("title_block lacks drawing_number or issue")
+        if mode not in ("issue", "iterate"):
+            raise StepFailed("unknown job mode %r" % mode)
         file_name = "%s Issue %s.pdf" % (number, issue)
-        r = portal.call("docUploadUrl", fileName=file_name)
-        if not r.get("signedUrl") or not r.get("path"):
-            raise StepFailed("docUploadUrl answered without signedUrl/path")
-        put_file(r["signedUrl"], st["pdf_path"], "application/pdf")
-        st["storage_path"], st["file_name"] = r["path"], file_name
+        st["file_name"] = file_name
         st["pdf_sha256"] = sha256_of(st["pdf_path"])
         size = os.path.getsize(st["pdf_path"])
-        return ("%s · %d bytes · %s" % (file_name, size, st["pdf_sha256"][:8]),
-                {"storage_path": r["path"], "file_name": file_name, "bytes": size, "sha256": st["pdf_sha256"]})
+        data = {"file_name": file_name, "bytes": size, "sha256": st["pdf_sha256"], "mode": mode}
+        if mode == "issue":
+            # the revision's file, as today: docUploadUrl path = drawing_revisions.storage_path
+            r = portal.call("docUploadUrl", fileName=file_name)
+            if not r.get("signedUrl") or not r.get("path"):
+                raise StepFailed("docUploadUrl answered without signedUrl/path")
+            put_file(r["signedUrl"], st["pdf_path"], "application/pdf")
+            st["storage_path"] = r["path"]
+            data["storage_path"] = r["path"]
+        if legacy_portal:
+            # a portal without drawingRenderUploadUrl: the issue PDF is the only upload
+            if mode != "issue":
+                raise StepFailed("mode iterate from a portal without spec_body")
+            return ("%s · %d bytes · %s" % (file_name, size, st["pdf_sha256"][:8]), data)
+        # every artefact under renders/<job_id>/ — the PDF, each sheet PNG, the two sidecars
+        local = st["local_artifacts"]
+        art = {"pdf": upload_artifact(file_name, local["pdf"], "application/pdf"), "pngs": [],
+               "dimensions": None, "entities": None}
+        for p in local["pngs"]:
+            art["pngs"].append(upload_artifact(os.path.basename(p), p, "image/png"))
+        art["dimensions"] = upload_artifact("dimensions.json", local["dimensions"], "application/json")
+        art["entities"] = upload_artifact("entities.json", local["entities"], "application/json")
+        st["artifacts"] = art
+        if mode == "iterate":
+            # a candidate: the renders/ PDF is the file Keep (acceptDrawingIteration) moves onto the draft
+            st["storage_path"] = art["pdf"]
+            data["storage_path"] = art["pdf"]
+        data["artifacts"] = art
+        return ("%s · %d bytes · %s · %d PNGs + sidecars under renders/%s" % (file_name, size, st["pdf_sha256"][:8], len(art["pngs"]), short),
+                data)
 
     bodies = {"download": step_download, "render": step_render, "verify": step_verify, "upload": step_upload}
 
@@ -609,22 +788,38 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         }
         if st.get("geometry_sha256"):
             result["geometry_sha256"] = st["geometry_sha256"]
+        # echoed hashes: the portal compares them with its own and fails a patched
+        # job whose worker echoes none ("worker predates spec patches")
+        if st.get("spec_body_sha256"):
+            result["spec_body_sha256"] = st["spec_body_sha256"]
+        if st.get("patch_sha256"):
+            result["patch_sha256"] = st["patch_sha256"]
         if st.get("summary") is not None:
             sm = st["summary"]
             result["verify"] = {"round_trip": sm.get("round_trip"), "completeness_missing": sm.get("completeness_missing"),
                                 "wall_flags": sm.get("wall_flags"), "regression": sm.get("regression")}
-            result["unmatched_overrides"] = sm.get("unmatched_overrides") or []
+        result["unmatched_overrides"] = st.get("unmatched_overrides") or []
+        if st.get("artifacts"):
+            result["artifacts"] = st["artifacts"]
+        # the STEP sha this render was made from, inside result as well as the
+        # top-level source_sha256: Keep pins it on the draft from the job's result
+        if st.get("want_sha"):
+            result["source_sha256"] = st["want_sha"]
         fin = portal.call("finishDrawingRender", job_id=job_id, storage_path=st["storage_path"],
                           file_name=st["file_name"], sha256=st["pdf_sha256"], result=result,
                           source_sha256=st.get("want_sha"))
         j = fin.get("job") if isinstance(fin, dict) else None
         if j and j.get("status") != "done":
-            # The portal refused the issue (a letter added meanwhile, a vanished
-            # drawing): the PDF was not registered. Keep the folder for a look.
-            log.error("job %s: the portal did not register the issue — %s; files kept in %s",
-                      short, j.get("error") or j.get("status"), tmp)
+            # The portal refused the result (a letter added meanwhile, a vanished
+            # drawing, a stale-worker guard): nothing was registered. Keep the folder for a look.
+            log.error("job %s: the portal did not accept the %s — %s; files kept in %s",
+                      short, "candidate" if mode == "iterate" else "issue", j.get("error") or j.get("status"), tmp)
             return fin
-        log.info("job %s: done — %s Issue %s registered", short, number, issue)
+        if mode == "iterate":
+            log.info("job %s: done — candidate for %s Issue %s rendered (patch %s); the draft is untouched until Keep",
+                     short, number, issue, (st.get("patch_sha256") or "none")[:8])
+        else:
+            log.info("job %s: done — %s Issue %s registered", short, number, issue)
         shutil.rmtree(tmp, ignore_errors=True)
         return fin
     except JobClosed as exc:

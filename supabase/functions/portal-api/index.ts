@@ -32,6 +32,7 @@ import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_
 import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
 import { ARTICLE_LOOKUP_MAX_LENGTH, exactIlikePattern, matchArticle, normaliseArticleNumber } from "../_shared/article-lookup-core.mjs";
+import { supplierArticles } from "../_shared/supplier-articles-core.mjs";
 import { articleOf, canBeEligibleType, expandAssemblyInputs, preAssemblyEligibility } from "../_shared/assembly-inputs-core.mjs";
 import { sidePanelRole } from "../_shared/side-panel-role-core.mjs";
 import {
@@ -1318,6 +1319,31 @@ Deno.serve(async (req) => {
     return json(result.status === "found"
       ? { contract_version: 1, status: "found", article: result.article }
       : { contract_version: 1, status: "not_found" });
+  }
+
+  // --- Operations → PIM supplier article list (service authentication only) -
+  // Order Operations' purchase order form offers the chosen supplier's
+  // articles: every article whose preferred supplier or price on file names a
+  // supplier, with the supplier's article number and that price (contract v1,
+  // docs/PLANNER_MAPPINGS.md). Same key and seed org as lookupArticle; the
+  // caller matches its own supplier names, nothing is sent back or stored here.
+  if (action === "listSupplierArticles") {
+    const refusal = operationsServiceRefusal(req, "Supplier article list is not configured");
+    if (refusal) return refusal;
+    const allowedKeys = new Set(["action", "contract_version"]);
+    if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "listSupplierArticles accepts only contract_version" }, 400);
+    if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
+    const supTdb = makeTdb(RUSHROOM_ORG_ID);
+    const [componentRes, metaRes, costRes] = await Promise.all([
+      supTdb("bom_components").select("id, part_number, name, type, unit_of_measure"),
+      supTdb("component_metadata").select("component_id, preferred_supplier_name, supplier_part_number"),
+      supTdb("component_costs").select("component_id, supplier_name, unit_cost, unit_currency, kind"),
+    ]);
+    if (componentRes.error || metaRes.error || costRes.error) return json({ error: "PIM supplier data is unavailable" }, 502);
+    return json({
+      contract_version: 1,
+      articles: supplierArticles({ components: componentRes.data || [], metadata: metaRes.data || [], costs: costRes.data || [] }),
+    });
   }
 
   // --- Operations → PIM pre-assemblies (service authentication only) ------

@@ -204,9 +204,20 @@ const verifyLinkFor = async (uid: string) =>
   `${APP_BASE}/verify.html?token=${encodeURIComponent(await signData({ uid, purpose: "verify", exp: Math.floor(Date.now() / 1000) + 7 * 24 * 3600 }))}`;
 // `to` names the page the person belongs on afterwards: a supplier user lands
 // on supplier.html, everyone else on the portal.
-const resetLinkFor = async (uid: string, to: "supplier" | null = null) =>
-  `${APP_BASE}/reset.html?token=${encodeURIComponent(await signData({ uid, purpose: "setpw", exp: Math.floor(Date.now() / 1000) + 3600 }))}`
+// A reset for an account that already signs in lives an hour. An invitation —
+// the first link of an account with no password yet — lives a week: it goes to
+// a person outside the company who reads mail at their own pace (Postęp's
+// contact missed the one-hour link on 2026-11-25 and had no way back in).
+const RESET_TTL = 3600;
+const INVITE_TTL = 7 * 24 * 3600;
+// An invitation token carries invite: true, and setPassword refuses it once the
+// account has a password: a week-long link must not stay a bearer credential
+// after the first use (a forwarded mail or the admin's copy could otherwise
+// overwrite the password for the rest of the week).
+const resetLinkFor = async (uid: string, to: "supplier" | null = null, ttl: number = RESET_TTL, invite = false) =>
+  `${APP_BASE}/reset.html?token=${encodeURIComponent(await signData({ uid, purpose: "setpw", exp: Math.floor(Date.now() / 1000) + ttl, ...(invite ? { invite: true } : {}) }))}`
   + (to === "supplier" ? "&to=supplier" : "");
+const ttlText = (ttl: number) => ttl >= 24 * 3600 ? `${Math.round(ttl / 86400)} days` : `${Math.round(ttl / 3600)} hour${ttl >= 7200 ? "s" : ""}`;
 
 // Best-effort transactional email via Resend (optional — set RESEND_API_KEY).
 async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
@@ -225,9 +236,9 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
 const sendVerificationEmail = (to: string, name: string, url: string) =>
   sendEmail(to, "Verify your Rushroom Engineering & Compliance Platform registration",
     `<p>Hi ${name || "there"},</p><p>Thanks for registering for the Rushroom AB Engineering & Compliance Platform. Please confirm your email address:</p><p><a href="${url}">Verify my email</a></p><p>This link expires in 7 days. If you didn't request this, you can ignore it.</p>`);
-const sendPasswordEmail = (to: string, name: string, url: string) =>
+const sendPasswordEmail = (to: string, name: string, url: string, expires: string = "1 hour") =>
   sendEmail(to, "Set your Rushroom Engineering & Compliance Platform password",
-    `<p>Hi ${name || "there"},</p><p>Use the link below to set a new password for the Rushroom AB Engineering & Compliance Platform:</p><p><a href="${url}">Set my password</a></p><p>This link expires in 1 hour. If you didn't request this, you can ignore it.</p>`);
+    `<p>Hi ${name || "there"},</p><p>Use the link below to set a new password for the Rushroom AB Engineering & Compliance Platform:</p><p><a href="${url}">Set my password</a></p><p>This link expires in ${expires}. If you didn't request this, you can ignore it.</p>`);
 
 // ---- AI deviation monitoring (Claude) ----
 // Insert a document_versions row, tolerating the optional provenance columns
@@ -1641,6 +1652,13 @@ Deno.serve(async (req) => {
     }
     const password = String(body.password ?? "");
     if (password.length < 8) return json({ error: "Choose a password of at least 8 characters." }, 400);
+    // An invitation is single-use: once a password exists, the week-long link
+    // is dead and the way back in is "Forgot password?" (a one-hour link).
+    if (data.invite === true) {
+      const { data: u } = await db.from("users").select("password").eq("id", data.uid).maybeSingle();
+      if (!u) return json({ error: "This link is invalid or has expired. Request a new one." }, 400);
+      if (u.password) return json({ error: "This invitation has already been used. Use “Forgot password?” on the sign-in page to get a new link." }, 400);
+    }
     const hash = await hashPassword(password);
     // Receiving the emailed link also proves the address, so confirm it.
     const { error } = await db.from("users").update({ password: hash, email_verified: true, updated_at: new Date().toISOString() }).eq("id", data.uid);
@@ -2310,7 +2328,7 @@ Deno.serve(async (req) => {
     const supplier = await supplierInOrg(String(body.supplier_id ?? ""));
     if (!supplier) return json({ error: "Supplier not found" }, 404);
     const [{ data: userRows }, { data: assignRows }, { data: eventRows }] = await Promise.all([
-      db.from("users").select("id, name, email, status, email_verified, created_at").eq("supplier_id", supplier.id).order("name"),
+      db.from("users").select("id, name, email, status, email_verified, created_at, password").eq("supplier_id", supplier.id).order("name"),
       tdb("supplier_components").select("id, component_id, drawings, cad, notes, created_at").eq("supplier_id", supplier.id),
       tdb("supplier_file_events").select("id, user_id, kind, drawing_revision_id, cad_file_id, file_name, at")
         .eq("supplier_id", supplier.id).order("at", { ascending: false }).limit(100),
@@ -2383,7 +2401,9 @@ Deno.serve(async (req) => {
         drawing_revision_id: e.drawing_revision_id, cad_file_id: e.cad_file_id,
       };
     });
-    return json({ supplier, users: userRows || [], parts, events: eventsOut });
+    // Whether a password is set — the hash itself never leaves the function.
+    const users = ((userRows || []) as any[]).map(({ password, ...u }) => ({ ...u, has_password: !!password }));
+    return json({ supplier, users, parts, events: eventsOut });
   }
 
   if (action === "addSupplierUser") {
@@ -2423,9 +2443,32 @@ Deno.serve(async (req) => {
       { organization_id: organizationId, user_id: user.id, role: membershipRoleFor("supplier"), status: "active", updated_at: new Date().toISOString() },
       { onConflict: "organization_id,user_id" });
     if (mem.error) return json({ error: mem.error.message }, 500);
-    const set_password_url = await resetLinkFor(user.id, "supplier");
-    const emailed = await sendPasswordEmail(user.email, user.name, set_password_url);
-    return json({ user: stripUser(user), emailed, set_password_url });
+    // No password yet = an invitation (a week, single-use); an account that
+    // already signs in gets a one-hour reset instead.
+    const invite = !user.password;
+    const ttl = invite ? INVITE_TTL : RESET_TTL;
+    const set_password_url = await resetLinkFor(user.id, "supplier", ttl, invite);
+    const emailed = await sendPasswordEmail(user.email, user.name, set_password_url, ttlText(ttl));
+    return json({ user: stripUser(user), emailed, set_password_url, invite, expires: ttlText(ttl) });
+  }
+
+  // A fresh set-password link for a supplier user, from the Users modal: the
+  // first link was missed (it lived an hour until 2026-11-26) or has expired.
+  // No password yet = still an invitation → a week; a reset otherwise → an
+  // hour. The link is always returned so the admin can forward it by hand.
+  if (action === "supplierUserResetLink") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const user_id = String(body.user_id ?? "");
+    if (!user_id) return json({ error: "user_id required" }, 400);
+    const { data: u } = await db.from("users").select("id, name, email, role, status, supplier_id, password").eq("id", user_id).maybeSingle();
+    // Only a supplier user of THIS organization's supplier; anything else is "not found".
+    if (!u || u.role !== "supplier" || !u.supplier_id || !(await supplierInOrg(u.supplier_id))) return json({ error: "User not found" }, 404);
+    if (u.status === "disabled") return json({ error: "That account is disabled — add the user again to re-enable it." }, 409);
+    const invite = !u.password;
+    const ttl = invite ? INVITE_TTL : RESET_TTL;
+    const set_password_url = await resetLinkFor(u.id, "supplier", ttl, invite);
+    const emailed = await sendPasswordEmail(u.email, u.name, set_password_url, ttlText(ttl));
+    return json({ ok: true, set_password_url, emailed, invite, expires: ttlText(ttl) });
   }
 
   if (action === "removeSupplierUser") {

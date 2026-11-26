@@ -27,7 +27,7 @@ const tenant = read("supabase/functions/_shared/tenant.ts");
 
 const TABLES = ["suppliers", "supplier_components", "supplier_file_events"];
 const SUPPLIER_ACTIONS = ["supplierHome", "supplierFileUrl"];
-const ADMIN_ACTIONS = ["listSuppliers", "saveSupplier", "setSupplierParts", "getSupplier", "addSupplierUser", "removeSupplierUser", "adminViewAsSupplier"];
+const ADMIN_ACTIONS = ["listSuppliers", "saveSupplier", "setSupplierParts", "getSupplier", "addSupplierUser", "removeSupplierUser", "supplierUserResetLink", "adminViewAsSupplier"];
 // Existing supplier-reachable actions the contract scopes to the assignment.
 const SCOPED_ACTIONS = ["listDrawings", "getDrawing", "drawingFileUrl", "listSupplierComponents", "getBom", "getSupplierBomRoots", "getComponentDocuments"];
 
@@ -109,7 +109,7 @@ test("the admin supplier actions sit after adminUserResetLink, the supplier ones
 });
 
 test("every admin supplier action reads the supplier through the tenant-scoped client", () => {
-  for (const action of ["saveSupplier", "setSupplierParts", "getSupplier", "addSupplierUser", "removeSupplierUser", "adminViewAsSupplier"]) {
+  for (const action of ["saveSupplier", "setSupplierParts", "getSupplier", "addSupplierUser", "removeSupplierUser", "supplierUserResetLink", "adminViewAsSupplier"]) {
     assert.ok(/supplierInOrg\(/.test(actionBlock(action)), `${action} does not resolve the supplier in the caller's org`);
   }
   assert.match(src, /const supplierInOrg = async[\s\S]*?tdb\("suppliers"\)/);
@@ -276,9 +276,10 @@ test("addSupplierUser creates or links a supplier account, refuses other roles w
   assert.ok(block.includes('if (assigned !== "supplier") return json({ error: "That email belongs to an account with another role." }, 409);'));
   assert.match(block, /requested_role: "supplier", role: "supplier", status: "approved",\s*email_verified: true, supplier_id: supplier\.id/);
   // The set-password link lands a supplier on supplier.html (&to=supplier).
-  assert.ok(block.includes('const set_password_url = await resetLinkFor(user.id, "supplier");'));
-  assert.ok(block.includes("await sendPasswordEmail(user.email, user.name, set_password_url)"));
-  assert.ok(block.includes("return json({ user: stripUser(user), emailed, set_password_url })"));
+  assert.ok(block.includes("const invite = !user.password;"), "an invitation only while no password is set");
+  assert.ok(block.includes('const set_password_url = await resetLinkFor(user.id, "supplier", ttl, invite);'), "an invitation lives a week and is marked single-use");
+  assert.ok(block.includes("await sendPasswordEmail(user.email, user.name, set_password_url, ttlText(ttl))"));
+  assert.ok(block.includes("return json({ user: stripUser(user), emailed, set_password_url, invite, expires: ttlText(ttl) })"));
 });
 
 test("removeSupplierUser unlinks and disables, only inside the caller's organization", () => {
@@ -464,3 +465,24 @@ test("supplierBatchFileUrls issues every file through issueSupplierFile and noth
   assert.ok(!body.includes(".insert(") && !body.includes(".update("), "a batch download is a read");
 });
 
+test("supplierUserResetLink: a week for an account without a password, an hour otherwise, always the link", () => {
+  const block = actionBlock("supplierUserResetLink");
+  assert.ok(block.includes('u.role !== "supplier" || !u.supplier_id || !(await supplierInOrg(u.supplier_id))'), "only this org's supplier users");
+  assert.ok(block.includes("const invite = !u.password;"));
+  assert.ok(block.includes("const ttl = invite ? INVITE_TTL : RESET_TTL;"));
+  assert.ok(block.includes('await resetLinkFor(u.id, "supplier", ttl, invite)'));
+  // The week-long invitation is single-use: setPassword refuses it once a password exists.
+  const sp = actionBlock("setPassword");
+  assert.ok(sp.includes("if (data.invite === true) {"), "setPassword must recognise an invitation token");
+  assert.ok(sp.includes("if (u.password) return json({ error: \"This invitation has already been used."), "a used invitation is refused");
+  assert.ok(sp.indexOf("data.invite === true") < sp.indexOf("await hashPassword(password)"), "the check sits before the hash is written");
+  // The one-hour resets are untouched: no invite flag, default TTL.
+  for (const a of ["requestPasswordReset", "adminUserResetLink"]) {
+    assert.ok(!/resetLinkFor\([^)]*INVITE_TTL/.test(actionBlock(a)), `${a} must not mint a week-long link`);
+  }
+  assert.ok(block.includes("return json({ ok: true, set_password_url, emailed, invite, expires: ttlText(ttl) })"), "the link is always returned");
+  assert.match(src, /const INVITE_TTL = 7 \* 24 \* 3600;/);
+  assert.match(src, /const RESET_TTL = 3600;/);
+  const gs = actionBlock("getSupplier");
+  assert.ok(gs.includes("({ password, ...u }) => ({ ...u, has_password: !!password })"), "getSupplier says whether a password is set and never returns the hash");
+});

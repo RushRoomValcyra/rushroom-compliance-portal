@@ -64,7 +64,8 @@ Rushroom role (admin or internal):
 | `saveSupplier` | `{ id?, name, contact_name?, contact_email?, notes?, status? }` | `{ supplier }` — create or update; name required, unique per org (409) |
 | `setSupplierParts` | `{ supplier_id, parts: [{ component_id, drawings, cad }] }` | `{ ok, count }` — replaces the assignment set (insert new, update flags, delete missing), writes `bom_component_history` "updated" on every added/removed part: "Supplier <name> given access (drawings[, CAD])" / "Supplier <name> access removed" |
 | `getSupplier` | `{ supplier_id }` | `{ supplier, users, parts: [{ component_id, part_number, name, drawings, cad, released_drawings: n, released_cad: "B" \| null }], events: last 100 of supplier_file_events with user name and file name }` |
-| `addSupplierUser` | `{ supplier_id, email, name }` | `{ user, emailed, set_password_url }` — creates the `users` row (role supplier, status approved, email_verified true, supplier_id) or links an existing user with role supplier and no supplier; sends the set-password email through `resetLinkFor` + `sendPasswordEmail`; returns the link too so the admin can hand it over when mail is not configured. An existing user with another role → 409. |
+| `addSupplierUser` | `{ supplier_id, email, name }` | `{ user, emailed, set_password_url, expires }` — creates the `users` row (role supplier, status approved, email_verified true, supplier_id) or links an existing user with role supplier and no supplier; sends the set-password email through `resetLinkFor` + `sendPasswordEmail` with the invitation lifetime (7 days since 2026-11-26); always returns the link so the admin can forward it. An existing user with another role → 409. |
+| `supplierUserResetLink` | `{ user_id }` | `{ ok, set_password_url, emailed, invite, expires }` — a fresh link for a supplier user of this organization's supplier (anything else 404; a disabled account 409). An account with no password yet is still an invitation → 7 days; one that signs in already → 1 hour. Emailed when mail is configured; the link is always returned. |
 | `removeSupplierUser` | `{ user_id }` | `{ ok }` — sets `supplier_id` null and `status` disabled |
 | `adminViewAsSupplier` | `{ supplier_id }` | `{ token, supplier }` — a session `{ role: "supplier", sid, imp: true, actor: <admin email>, uid: <admin uid> }` with a 30-minute TTL. File events written under this session carry the admin's `user_id`. |
 
@@ -94,7 +95,7 @@ Above the users list, Rushroom admins only (`isPlatformOwner` or org admin, the 
 
 - A table: Name · Contact · Users · Parts · Last activity · actions **Parts** · **Users** · **View as supplier** · Edit. "+ New supplier" opens a one-row modal: Name · Contact name · Contact email · Save.
 - **Parts** opens a modal: search box over the active parts (part number + name), a list with one row per part: checkbox (assigned) · part number · name · released drawing issue(s) · released CAD letter · a **CAD** checkbox (enabled when assigned). Save calls `setSupplierParts` with the full set.
-- **Users** opens a modal listing the supplier's users (name, email, status, verified) with **Remove**, and a one-row form Email · Name · **Add** → `addSupplierUser`; the answer's set-password link is shown with a copy button when it was not emailed.
+- **Users** opens a modal listing the supplier's users (name, email, status, password set or not) with **Resend link** (an invitation, 7 days, while no password is set; **Reset link**, 1 hour, once one is) and **Remove**, and a one-row form Email · Name · **Add** → `addSupplierUser`. Every link is shown with a copy button whether or not it was emailed, with its validity, so the admin can forward it in their own mail.
 - **View as supplier** → `adminViewAsSupplier`, opens the supplier page in a new tab as above.
 - Below the table, when a supplier row is selected: the last 100 file events (when · user · part · file) from `getSupplier`.
 
@@ -207,4 +208,19 @@ counted in `skipped` and left out; a fetch that fails is left out and the
 button reads "50 of 51 zipped" for a few seconds. No edge function holds the
 files; no storage path reaches the page. The admin preview may use it (a read),
 and its events carry the admin's user id as every preview fetch does.
+
+## 10 Invitation links — 2026-11-26
+
+Szymon missed the set-password email of 2026-11-25 and the admin had no way
+to send another: the link lived one hour, the Users modal hid it once it was
+emailed, and the only re-issue (Add user again, or the platform owner's Reset
+link under All users) was not discoverable. Changed: an invitation — the first
+link of an account with no password — lives 7 days (`INVITE_TTL`); a reset for
+an account that already signs in stays 1 hour (`RESET_TTL`); the email states
+which. `supplierUserResetLink` and a **Resend link** / **Reset link** button
+per user in the Users modal, which also shows whether a password is set
+(`has_password` from `getSupplier`, the hash never leaves the function). The
+link is always shown with Copy, emailed or not. An invitation token carries
+`invite: true` and `setPassword` refuses it once the account has a password,
+so the week-long link is single-use; the one-hour reset is unchanged.
 

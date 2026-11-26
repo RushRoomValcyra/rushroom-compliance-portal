@@ -2951,6 +2951,26 @@
     const listBox = el("div", { class: "loading" }, "Loading users…");
     const linkBox = el("div");
     const changed = () => { if (onDone) onDone(); };
+    // The link is always shown with Copy, emailed or not: a missed or spammed
+    // email is the normal case with an outside company, and the admin forwards
+    // the link in their own mail. The validity comes from the server.
+    const showLink = (addr, r) => {
+      const url = r.set_password_url || "";
+      const urlInput = el("input", { class: "up-text", type: "text", readonly: true, value: url, style: "flex:1;min-width:260px;font-family:var(--mono, monospace);font-size:0.8125rem" });
+      const copy = el("button", { class: "btn btn-xs", type: "button" }, "Copy");
+      copy.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(url); copy.textContent = "Copied ✓"; setTimeout(() => { copy.textContent = "Copy"; }, 1500); }
+        catch { urlInput.select(); }
+      });
+      linkBox.replaceChildren(
+        el("div", { class: "up-status " + (r.emailed ? "ok" : "warn"), style: "margin:0.4rem 0 0" },
+          r.emailed ? `Set-password email sent to ${addr}${r.expires ? ` · link valid ${r.expires}` : ""}.` : `The email was not sent — copy the link and send it to ${addr} yourself${r.expires ? ` · valid ${r.expires}` : ""}.`),
+        el("div", { class: "form-row", style: "margin-top:0.4rem" }, [
+          el("span", { class: "form-label" }, `Set-password link · ${addr}`),
+          el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [urlInput, copy]),
+        ]),
+      );
+    };
 
     const load = async () => {
       try {
@@ -2959,18 +2979,31 @@
         listBox.className = "";
         listBox.replaceChildren(users.length
           ? el("div", { class: "table-wrap" }, el("table", { class: "data-table" }, [
-              el("thead", {}, el("tr", {}, ["Name", "Email", "Status", "Verified", ""].map((h) => el("th", {}, h)))),
-              el("tbody", {}, users.map((u) => el("tr", {}, [
-                el("td", {}, u.name || "—"),
-                el("td", {}, u.email),
-                el("td", {}, el("span", { class: "rl-status " + (u.status === "approved" ? "rl-s-accepted" : u.status === "disabled" ? "rl-s-suspended" : "rl-s-proposed") }, u.status || "—")),
-                el("td", {}, u.email_verified ? "Yes" : "No"),
-                el("td", { style: "text-align:right" }, el("button", { class: "btn btn-xs doc-del", type: "button", onclick: async () => {
-                  err.textContent = "";
-                  try { await API.post(token, "removeSupplierUser", { user_id: u.id }); changed(); await load(); }
+              el("thead", {}, el("tr", {}, ["Name", "Email", "Status", "Password", ""].map((h) => el("th", {}, h)))),
+              el("tbody", {}, users.map((u) => {
+                const resend = el("button", { class: "btn btn-xs", type: "button", title: u.has_password ? "Email a one-hour reset link" : "Email a new invitation link, valid 7 days" }, u.has_password ? "Reset link" : "Resend link");
+                resend.addEventListener("click", async () => {
+                  err.textContent = ""; resend.disabled = true;
+                  try { showLink(u.email, await API.post(token, "supplierUserResetLink", { user_id: u.id })); }
                   catch (ex) { err.textContent = ex.message; }
-                } }, "Remove")),
-              ]))),
+                  resend.disabled = false;
+                });
+                return el("tr", {}, [
+                  el("td", {}, u.name || "—"),
+                  el("td", {}, u.email),
+                  el("td", {}, el("span", { class: "rl-status " + (u.status === "approved" ? "rl-s-accepted" : u.status === "disabled" ? "rl-s-suspended" : "rl-s-proposed") }, u.status || "—")),
+                  el("td", {}, u.has_password === true ? "Set" : u.has_password === false ? el("span", { class: "muted" }, "Not set") : "—"),
+                  el("td", { style: "text-align:right;white-space:nowrap" }, [
+                    resend,
+                    " ",
+                    el("button", { class: "btn btn-xs doc-del", type: "button", onclick: async () => {
+                      err.textContent = "";
+                      try { await API.post(token, "removeSupplierUser", { user_id: u.id }); changed(); await load(); }
+                      catch (ex) { err.textContent = ex.message; }
+                    } }, "Remove"),
+                  ]),
+                ]);
+              })),
             ]))
           : el("div", { class: "empty" }, "No users yet."));
       } catch (ex) { listBox.className = ""; listBox.replaceChildren(); err.textContent = ex.message; }
@@ -2988,20 +3021,7 @@
         const r = await API.post(token, "addSupplierUser", { supplier_id: supplier.id, email: e, name: n });
         changed();
         email.value = ""; name.value = "";
-        if (r.set_password_url && !r.emailed) {
-          const urlInput = el("input", { class: "up-text", type: "text", readonly: true, value: r.set_password_url, style: "flex:1;min-width:260px;font-family:var(--mono, monospace);font-size:0.8125rem" });
-          const copy = el("button", { class: "btn btn-xs", type: "button" }, "Copy");
-          copy.addEventListener("click", async () => {
-            try { await navigator.clipboard.writeText(r.set_password_url); copy.textContent = "Copied ✓"; setTimeout(() => { copy.textContent = "Copy"; }, 1500); }
-            catch { urlInput.select(); }
-          });
-          linkBox.replaceChildren(el("div", { class: "form-row", style: "margin-top:0.6rem" }, [
-            el("span", { class: "form-label" }, `Set-password link · ${e}`),
-            el("div", { style: "display:flex;gap:0.5rem;align-items:center" }, [urlInput, copy]),
-          ]));
-        } else if (r.emailed) {
-          linkBox.replaceChildren(el("div", { class: "up-status ok", style: "margin:0.4rem 0 0" }, `Set-password email sent to ${e}.`));
-        }
+        if (r.set_password_url) showLink(e, r);
         await load();
       } catch (ex) { err.textContent = ex.message; }
       add.disabled = false;

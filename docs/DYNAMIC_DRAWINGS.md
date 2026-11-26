@@ -806,7 +806,7 @@ main`; the worker must be restarted after Phase 2.
 | Scope creep: refusals become ad-hoc vocabulary | refusals are recorded with a category and go to ROADMAP as drawset items; the vocabulary changes only by a drawset change plus a `SPEC_VOCAB` change plus the static test |
 | The 47 parts still have no drawing | the first-issue path is unchanged except for pins; rendering real issues is not blocked by any phase after 2 |
 
-## 9 Open decisions for the user
+## 9 Open decisions for the user — all eleven decided as recommended, 2026-11-26 (DECISIONS.md)
 
 1. **Batch layer-1 edits before rendering?** Apply-renders-immediately costs
    one ~25 s job per click; staging ops into one seq with "3 pending changes ·

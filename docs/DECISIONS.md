@@ -1555,3 +1555,25 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/SUPPLIER_PORTAL.md`, `supabase/migrations/0065_suppliers.sql`, `supabase/functions/_shared/tenant.ts`, `supabase/functions/portal-api/index.ts`, `supabase/functions/portal-ai/index.ts`, `supplier.html`, `assets/supplier.js`, `assets/app.js`, `index.html`, `tests/supplier-portal.test.mjs`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SYSTEM_OVERVIEW.html`, `CLAUDE.md`.
 
 ---
+
+## 2026-11-26 — CAD and drawings can be deleted by an admin, with rules by state and a trace
+
+**Feature:** `previewDelete` / `deleteObject { kind: drawing | drawing_revision | cad_model | cad_revision, id, confirm }` and a Delete dialog on the issue group, the revision group, the CAD model and the drawing surface.
+**Decision:** Deletion is admin-only. A draft goes on a click; a released or superseded revision, or one a supplier has fetched, goes only after its letter is typed back (the drawing number for a whole drawing, DELETE for a whole model). The storage objects are removed first, the current pointer is handed on by the release rule, and one `platform_audit` row plus one history line per part record every letter, file name and sha. A whole drawing a surgery template points at is refused.
+**Why:** Until today nothing could be deleted and every removal was SQL by hand. The status model treated a released revision as immutable because it is what the supplier holds; that is right with auditors and wrong for a company of one in its first month. The typed letter keeps the pause where it matters and the audit keeps the trace the immutability was protecting; the preview states what the supplier will see afterwards so the retraction is a decision, not an accident.
+**Consequences:** No migration. `docs/STATUS_MODEL.md` §5.5. The supplier's file events survive the file (FK SET NULL). A drawing issue made from a deleted CAD file keeps its issue and loses its "Made from" pointer, which the dialog says before the click.
+**Files changed:** `supabase/functions/portal-api/index.ts`, `assets/app.js` (v466), `tests/cad-drawing-delete.test.mjs`, `docs/STATUS_MODEL.md`, `docs/ROADMAP.md`.
+
+---
+
+## 2026-11-26 — Dynamic drawings: the eleven open decisions, settled as recommended
+
+**Decision:** ziirvass took every recommendation of `docs/DYNAMIC_DRAWINGS.md` §9 as decided ("Yes, all eleven"): (1) layer-1 edits are staged into one patch seq and rendered on an explicit Render, the pending count visible, the seq shown as `proposed`; (2) views and sheets are addressed by the derived id in v1, validated against the last render's `derived`, with class matching later; (3) hole-position tolerance stays per kind — the house rule — and a per-hole ask is a refusal until it recurs; (4) `drawing_dimensions` stays unwritten, the sidecar is the dimension record until a consumer exists; (5) the legacy per-part specs migrate to `flat_panel` + patch one at a time, each at its next issue; (6) template versions are immutable registrations with no Draft/Released of their own; (7) a release while an iteration is open is warned, not blocked; (8) template drift at release is an amber fact, not a block; (9) `--png-dpi` is added and the portal uses 150 only if Phase 4 shows misses; (10) any Rushroom user may accept an iteration until roles exist; (11) the model pin follows CLAUDE.md (claude-opus-4-8) and is not a drawing-engine decision.
+
+**Why:** Each recommendation keeps the smallest surface that still holds the invariant the design rests on — the spec holds no value, drawset verifies every render, the engineer decides last — and defers what has no consumer or no second person yet (a dimensions table nobody reads, template approval in a company of one, per-hole position tolerance that would change the stack layout).
+
+**Consequences:** Phase 1 (drawset: patch, overrides, sidecars) starts; Phase 0 was built the same day (fusion_scripts under git, `DRAWSET_SUMMARY`, exit 3, `geometry_sha256`). Decision 5 means Side Panel Left's next issue is the proof case of §7 Phase 1 (e).
+
+**Files changed:** `docs/DYNAMIC_DRAWINGS.md` (§9 marked decided), `docs/ROADMAP.md`, `docs/DECISIONS.md`.
+
+---

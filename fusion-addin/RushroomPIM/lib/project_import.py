@@ -5,9 +5,12 @@ portal in one pass — the 51-file workflow after the documents were renamed to
 
 For each document whose name starts with a part number:
   1. open it (or use it if already open; skipped when it has unsaved changes)
-  2. find the portal component by part number (exact), stamp the root
-     component with pim_component_id / pim_part_number if not stamped yet,
-     and link the document (linkCadDocument); a new stamp is saved as a version
+  2. find the portal component by part number (exact), write the identity on
+     the root component — pim_component_id / pim_part_number attributes, Part
+     Number = part number, Description = PIM name, the single body named like
+     the document — and link the document (linkCadDocument); a changed identity
+     is saved as a version (a Description-only change does not dirty the
+     document on its own, see exports.ensure_modified)
   3. export the requested formats, upload each, registerCadRevision — all on
      one letter (the portal picks it: next letter, or the current draft)
   4. optionally releaseCadRevision when every format registered
@@ -33,8 +36,8 @@ import adsk.core
 import adsk.fusion
 
 from .exports import (
-    cleanup_tmpdir, export_formats, get_fusion_version, get_stamp,
-    parse_revision_label, set_stamp,
+    cleanup_tmpdir, ensure_modified, export_formats, get_fusion_version,
+    name_single_body, parse_revision_label, set_stamp,
 )
 from .portal import call, sha256_of, upload_file
 
@@ -128,14 +131,16 @@ def import_file(df, part_number: str, formats=DEFAULT_FORMATS, release: bool = F
         design = adsk.fusion.Design.cast(doc.products.itemByProductType("DesignProductType"))
         root = design.rootComponent
 
-        # 2. stamp + link
-        stamp = get_stamp(root)
-        if stamp.get("pim_component_id") != comp["id"]:
-            set_stamp(root, comp["id"], part_number)
+        # 2. identity + link: attributes, Part Number, Description = PIM name,
+        #    single body named like the document. Saved only when something changed.
+        changed = set_stamp(root, comp["id"], part_number, comp.get("name"))
+        changed += name_single_body(root, df.name)
+        if changed:
+            ensure_modified(doc, root)
             v0 = df.versionNumber
-            doc.save("Stamped with portal identity %s" % part_number)
+            doc.save("Stamped with portal identity %s (%s)" % (part_number, ", ".join(changed)))
             _wait_version(doc, v0)
-            res["stamped"] = True
+            res["stamped"] = changed
         try:
             project_id = df.parentProject.id
         except Exception:

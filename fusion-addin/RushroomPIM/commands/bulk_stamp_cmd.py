@@ -26,7 +26,7 @@ import adsk.core
 import adsk.fusion
 
 from lib.auth import get_token
-from lib.exports import ATTR_GROUP, ATTR_COMPONENT_ID, ATTR_PART_NUMBER
+from lib.exports import ATTR_GROUP, ATTR_COMPONENT_ID, ATTR_PART_NUMBER, ensure_modified, set_stamp
 from lib.pending_stamps import merge as merge_pending, load as load_pending, count as pending_count
 from lib.portal import call
 
@@ -69,9 +69,9 @@ def _get_stamp(comp: adsk.fusion.Component) -> dict:
     return {"pim_component_id": _v(ATTR_COMPONENT_ID), "pim_part_number": _v(ATTR_PART_NUMBER)}
 
 
-def _set_stamp(comp: adsk.fusion.Component, cid: str, pn: str) -> None:
-    comp.attributes.add(ATTR_GROUP, ATTR_COMPONENT_ID, cid)
-    comp.attributes.add(ATTR_GROUP, ATTR_PART_NUMBER, pn)
+def _set_stamp(comp: adsk.fusion.Component, cid: str, pn: str, name: str = "") -> list:
+    """Whole identity (attributes, Part Number, Description) — one writer, lib.exports.set_stamp."""
+    return set_stamp(comp, cid, pn, name or None)
 
 
 def _scan() -> list:
@@ -242,7 +242,8 @@ class _PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     fc = by_name.get(row.get("fusion_name"))
                     if fc and row.get("portal_id"):
                         try:
-                            _set_stamp(fc, row["portal_id"], row.get("portal_pn", ""))
+                            if _set_stamp(fc, row["portal_id"], row.get("portal_pn", ""), row.get("portal_name", "")):
+                                ensure_modified(design.parentDocument, fc)
                             stamped += 1
                         except Exception as ex:
                             errors.append(f"{row['fusion_name']}: {ex}")

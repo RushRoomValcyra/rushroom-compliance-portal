@@ -60,7 +60,7 @@ This archive is the single feed for every derivative: Blender imports `cad/<comp
 
 ### 4. How files move
 
-- **Phase 1 — Fusion script, same signed-URL path as drawings.** A small Fusion add-in (Python, Fusion API) run on a released document: reads the Part Number property, exports the three formats, calls portal-api `cadUploadUrl` (sibling of `docUploadUrl`) and `registerCadRevision`. One click per release. The script can also stamp the Part Number / Description from the PIM (`getComponent`) so the stamping is never typed by hand.
+- **Phase 1 — Fusion script, same signed-URL path as drawings.** A small Fusion add-in (Python, Fusion API) run on a released document: reads the Part Number property, exports the three formats, calls portal-api `cadUploadUrl` (sibling of `docUploadUrl`) and `registerCadRevision`. One click per release. The script can also stamp the Part Number / Description from the PIM (`getComponent`) so the stamping is never typed by hand. Since 2026-11-26 every stamp path (project import, Stamp, Bulk stamp) writes all three — attributes, Part Number, Description — and the project import also names the single body like the document; a Description-only change does not mark a Fusion document modified, so the import dirties it before saving (`exports.ensure_modified`), otherwise `doc.save()` silently creates no version.
 - **Phase 2 — server-side pull through Autodesk Platform Services** (Data Management API, OAuth on the team hub): the PIM lists a document's versions and fetches exports without anyone in Fusion. Heavier (APS app, hub admin consent); worth it once releases are frequent.
 
 ### 5. Rules

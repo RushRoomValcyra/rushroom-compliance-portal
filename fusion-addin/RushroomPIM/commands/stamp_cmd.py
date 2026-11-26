@@ -13,7 +13,7 @@ import adsk.core
 import traceback
 
 from lib.auth import get_token
-from lib.exports import get_active_component, get_doc_info, get_stamp, set_stamp
+from lib.exports import ensure_modified, get_active_component, get_doc_info, get_stamp, set_stamp
 from lib.portal import call
 
 BUTTON_ID = "RushroomPIM_Stamp"
@@ -135,8 +135,11 @@ class _ExecuteHandler(adsk.core.CommandEventHandler):
             comp = get_active_component()
             doc_info = get_doc_info()
 
-            # 1. Write PIM attributes onto the Fusion component.
-            set_stamp(comp, chosen["id"], chosen.get("part_number", ""))
+            # 1. Write the PIM identity onto the Fusion component
+            #    (attributes, Part Number, Description = PIM name).
+            if set_stamp(comp, chosen["id"], chosen.get("part_number", ""), chosen.get("name")):
+                # a Description-only change does not dirty the document; make sure the user's save lands
+                ensure_modified(adsk.core.Application.get().activeDocument, comp)
 
             # 2. Register this Fusion document as the CAD source in the portal.
             link_result = call(

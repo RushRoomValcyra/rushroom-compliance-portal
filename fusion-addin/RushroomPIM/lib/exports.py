@@ -181,11 +181,56 @@ def get_stamp(component: adsk.fusion.Component) -> dict:
     }
 
 
-def set_stamp(component: adsk.fusion.Component, pim_component_id: str, pim_part_number: str) -> None:
-    """Write PIM identity attributes on the component."""
+def set_stamp(component: adsk.fusion.Component, pim_component_id: str, pim_part_number: str,
+              pim_name: str | None = None) -> list[str]:
+    """Write the PIM identity on the component (docs/CAD-FILE-REPOSITORY.md):
+    the RushroomPIM attributes, Fusion's own Part Number property = the PIM part
+    number, and Description = the PIM name when one is given. Returns the list
+    of fields that actually changed, so a caller knows whether to save.
+
+    Note: Fusion does not flag a document as modified when only Description or
+    an attribute changes, so doc.save() after such a change is a no-op (it
+    returns True and creates no version). Callers that must persist use
+    ensure_modified() before saving."""
+    changed = []
     attrs = component.attributes
-    attrs.add(ATTR_GROUP, ATTR_COMPONENT_ID, pim_component_id)
-    attrs.add(ATTR_GROUP, ATTR_PART_NUMBER, pim_part_number)
+    cur = get_stamp(component)
+    if cur["pim_component_id"] != pim_component_id:
+        attrs.add(ATTR_GROUP, ATTR_COMPONENT_ID, pim_component_id); changed.append("pim_component_id")
+    if cur["pim_part_number"] != pim_part_number:
+        attrs.add(ATTR_GROUP, ATTR_PART_NUMBER, pim_part_number); changed.append("pim_part_number")
+    if pim_part_number and component.partNumber != pim_part_number:
+        component.partNumber = pim_part_number; changed.append("partNumber")
+    if pim_name:
+        want = " ".join(pim_name.split())
+        if component.description != want:
+            component.description = want; changed.append("description")
+    return changed
+
+
+def name_single_body(component: adsk.fusion.Component, name: str) -> list[str]:
+    """A part document holds one body; name it like the document
+    ("<part number> <name>") so the body reads right in STEP viewers and in
+    the Fusion browser. Assemblies and multi-body parts are left alone."""
+    if not name or component.bRepBodies.count != 1 or component.occurrences.count:
+        return []
+    body = component.bRepBodies.item(0)
+    if body.name == name:
+        return []
+    body.name = name
+    return ["body"]
+
+
+def ensure_modified(doc: adsk.core.Document, component: adsk.fusion.Component) -> bool:
+    """Make sure doc.save() will create a version. Description and attribute
+    writes do not set doc.isModified; renaming the part number to itself with a
+    trailing space and back does, and leaves the model as it was."""
+    if doc.isModified:
+        return True
+    pn = component.partNumber
+    component.partNumber = pn + " "
+    component.partNumber = pn
+    return doc.isModified
 
 
 def safe_file_stem(name: str, limit: int = 120) -> str:

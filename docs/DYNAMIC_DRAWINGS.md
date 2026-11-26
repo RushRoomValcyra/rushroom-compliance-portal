@@ -226,7 +226,12 @@ clicked row or box to an address without ever showing `H12`, and a patch
 survives a CAD revision as long as the feature is still where it was. When it
 is not, the override is **reported as unmatched and the render still
 succeeds** (§5.4): after a CAD change the first render must produce a new
-dimension list so the engineer has something to re-target against.
+dimension list so the engineer has something to re-target against. The same
+report covers an override that matches a feature but has no number to act on
+(2026-11-26): a depth row that reads `through` or `into the Ø2` is a relation
+to another feature, so drawset marks the row `relation: true` in the sidecar,
+the rail opens no form on it, and a depth override aimed at it is listed with
+the unmatched ones with its reason, never applied silently.
 
 ### 3.6 Two fingerprints
 
@@ -420,7 +425,7 @@ Worker → `finishDrawingRender.result`:
 | `dimension_list_sha256`, `geometry_sha256` | from `.sources.json` |
 | `spec_body_sha256`, `patch_sha256` | echoed from the poll |
 | `verify` | `{ round_trip: { n, mismatches }, completeness_missing: [], wall_flags: [], regression: "OK" }` from `DRAWSET_SUMMARY` |
-| `unmatched_overrides` | `[ { at, kind } ]` from `DRAWSET_SUMMARY` |
+| `unmatched_overrides` | `[ { at, kind, reason } ]` from `DRAWSET_SUMMARY` — no such feature in the STEP, or a relation row (`through`, `into the Ø…`) with no number to tolerance |
 | `artifacts` | `{ pdf, pngs: [], dimensions, entities }` — storage paths under `drawings/<drawing_id>/renders/<job_id>/` in `DOC_BUCKET` |
 
 `step_verify` parses the `DRAWSET_SUMMARY` line when present and falls back to

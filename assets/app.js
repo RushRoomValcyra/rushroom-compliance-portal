@@ -14960,8 +14960,10 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const isOverrideRow = (r) => core.OVERRIDE_KINDS.includes(r.kind) && !!r.at && typeof r.at === "object";
     // A row opens the form only when the vocabulary has an op for it (§13.2):
     // an override kind with an address, or a kind with a kind-level tolerance.
-    // A kind in neither list opens nothing.
-    const canOpen = (r) => editable && (isOverrideRow(r) || !!drToleranceKindFor(r));
+    // A kind in neither list opens nothing. A relation row ("through",
+    // "into the Ø2") prints no number, so no tolerance can sit on it: drawset
+    // marks it `relation` in the sidecar and it opens nothing either.
+    const canOpen = (r) => editable && !r.relation && (isOverrideRow(r) || !!drToleranceKindFor(r));
     // `prefill` ({ tol, name, error }) brings a form back after a 409 repaint.
     function openForm(tr, r, prefill) {
       const isOverride = isOverrideRow(r);
@@ -15224,7 +15226,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           ? el("dl", { class: "drawing-meta" }, verify.flatMap((l) => [el("dt", {}, l.label), el("dd", { class: l.warn ? "is-warn" : null }, l.text)]))
           : null,
         unmatched.length ? el("div", { class: "is-warn" }, `Unmatched overrides (${unmatched.length})`) : null,
-        ...unmatched.map((u) => el("div", { class: "is-warn" }, `${u.kind || ""} on ${drAtWords(u.at)}`.trim())),
+        ...unmatched.map((u) => el("div", { class: "is-warn" }, `${u.kind || ""} on ${drAtWords(u.at)}${u.reason ? ` — ${u.reason}` : ""}`.trim())),
         el("div", { class: "dr-strip-actions" }, buttons),
         stripErr,
       );

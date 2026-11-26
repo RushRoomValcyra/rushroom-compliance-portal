@@ -93,6 +93,6 @@ Component types (PROP-058): part | raw_material | sub_assembly |
         phantom_assembly (structural only) | finished_good | spare_part | product_family
 
 ## Current state
-Frontend cache version: ?v=467 (app.js)
+Frontend cache version: ?v=468 (app.js)
 Last SYSTEM_OVERVIEW audit: 2026-09-24
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

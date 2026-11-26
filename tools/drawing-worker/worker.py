@@ -251,8 +251,9 @@ def spec_catalogue(cfg: dict) -> list[dict]:
                 if m not in numbers:
                     numbers.append(m)
         title = spec.get("title")
+        # a template (template: <kind>, no parts) is registered with no part numbers: it applies to any part
         out.append({"name": name, "title": str(title) if title is not None else None,
-                    "parts": len(parts), "part_numbers": numbers})
+                    "parts": len(parts), "part_numbers": numbers, "template": bool(spec.get("template"))})
     return out
 
 
@@ -285,7 +286,12 @@ def build_temp_spec(spec: dict, step_path: str, title_block: dict, cad_sha256: s
     downloaded STEP and the title-block facts from the portal. Multi-part
     specs are refused — a render job draws one part."""
     parts = spec.get("parts") or []
-    if len(parts) != 1:
+    template = bool(spec.get("template"))
+    if template:
+        # a template names no part: the job's STEP is the part, the job's title block names it
+        if parts:
+            raise StepFailed("template %s must not list parts" % spec.get("template"))
+    elif len(parts) != 1:
         raise StepFailed("spec has %d parts; a render job draws one part" % len(parts))
     tb = title_block or {}
     number = str(tb.get("drawing_number") or "").strip()
@@ -296,16 +302,21 @@ def build_temp_spec(spec: dict, step_path: str, title_block: dict, cad_sha256: s
     sha8 = str(tb.get("cad_sha8") or cad_sha256[:8])
     rev = str(tb.get("cad_revision") or "?")
     out = dict(spec)
-    part = dict(parts[0])
+    part = dict(parts[0]) if parts else {"label": str(tb.get("part_name") or tb.get("part_number") or "Part")}
     part["step"] = os.path.abspath(step_path)
     out["parts"] = [part]
+    if template or not out.get("title"):
+        title = str(tb.get("title") or tb.get("part_name") or tb.get("part_number") or "").strip()
+        if not title:
+            raise StepFailed("template render: title_block lacks title and part_name")
+        out["title"] = title
     out["drawing_number"] = number
     out["issue"] = issue
     out["date"] = date
     out["set_name"] = safe_set_name(number)
     out["change"] = ["From CAD Rev %s · %s" % (rev, sha8), "Rendered by drawset", date]
-    # title stays what the spec says; title_block (when the spec has none) is
-    # built by drawset from title + the part's size
+    # a spec's title stays what the spec says; a template takes the job's drawing title (else the
+    # part name); title_block (when the spec has none) is built by drawset from title + the part's size
     return out
 
 

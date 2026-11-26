@@ -14406,15 +14406,16 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
    *           drawings: [{ id, drawing_number, title, role?, render_spec? }], drawing_id? }
    * opts.onRequested(job) — the caller shows the job where it belongs.
    *
-   * Spec list: only the specs whose part_numbers name this part (the worker
-   * reads them from the STEP file names in each spec). A spec for another part
+   * Spec list: the specs whose part_numbers name this part (the worker reads
+   * them from the STEP file names in each spec) and the templates, which name
+   * no part and apply to any (flat_panel, 2026-11-26). A spec for another part
    * is never offered — the catalogue used to be shown whole, and a fixed back
    * panel was preselected side_panel_left (found 2026-11-26). Specs with more
-   * than one part are listed disabled with "(set)". No spec names the part →
+   * than one part are listed disabled with "(set)". Nothing applies →
    * "No spec for this part"; no worker for 10 minutes → "No drawing worker";
    * Render stays disabled in both cases.
    * Spec preselection: the drawing's render_spec, else the spec of its newest
-   * job, else the first spec with one part.
+   * job, else a spec that names the part, else the first template.
    */
   function drawingRenderModal(role, preset, opts = {}) {
     const token = API.getToken(role);
@@ -14455,8 +14456,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const d = drawings.find((x) => x.id === drawingSel.value) || null;
       const single = specs.filter((s) => !(s.parts > 1));
       const remembered = d && (d.render_spec || specByDrawing[d.id]);
+      const named = single.filter((s) => (s.part_numbers || []).length);
       const want = (remembered && single.some((s) => s.name === remembered) ? remembered : null)
-        || (single[0] || {}).name;
+        || (named[0] || single[0] || {}).name;
       if (want && single.some((s) => s.name === want)) specSel.value = want;
     };
     drawingSel.addEventListener("change", () => { syncTitle(); preselect(); });
@@ -14473,13 +14475,13 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         notice("No drawing worker");
         return;
       }
-      specs = all.filter((s) => (s.part_numbers || []).includes(preset.part_number));
+      specs = all.filter((s) => (s.part_numbers || []).length ? s.part_numbers.includes(preset.part_number) : true);
       if (!specs.length) {
         notice("No spec for this part");
         return;
       }
       specSel.replaceChildren(...specs.map((s) => el("option", { value: s.name, disabled: s.parts > 1, title: s.title || "" },
-        s.parts > 1 ? `${s.name} (set)` : s.name)));
+        s.parts > 1 ? `${s.name} (set)` : ((s.part_numbers || []).length ? s.name : `${s.name} (template)`))));
       try {
         const jobs = drUnwrapJobs(await API.post(token, "listDrawingRenderJobs", { component_id: preset.component_id, limit: 20 }));
         for (const j of jobs) if (j.drawing_id && j.spec && !specByDrawing[j.drawing_id]) specByDrawing[j.drawing_id] = j.spec;

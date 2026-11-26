@@ -14406,11 +14406,15 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
    *           drawings: [{ id, drawing_number, title, role?, render_spec? }], drawing_id? }
    * opts.onRequested(job) — the caller shows the job where it belongs.
    *
+   * Spec list: only the specs whose part_numbers name this part (the worker
+   * reads them from the STEP file names in each spec). A spec for another part
+   * is never offered — the catalogue used to be shown whole, and a fixed back
+   * panel was preselected side_panel_left (found 2026-11-26). Specs with more
+   * than one part are listed disabled with "(set)". No spec names the part →
+   * "No spec for this part"; no worker for 10 minutes → "No drawing worker";
+   * Render stays disabled in both cases.
    * Spec preselection: the drawing's render_spec, else the spec of its newest
-   * job, else the first spec whose part_numbers include the part number, else
-   * the first spec with one part. Specs with more than one part are listed
-   * disabled with "(set)". No worker for 10 minutes → "No drawing worker" and
-   * Render stays disabled.
+   * job, else the first spec with one part.
    */
   function drawingRenderModal(role, preset, opts = {}) {
     const token = API.getToken(role);
@@ -14452,7 +14456,6 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const single = specs.filter((s) => !(s.parts > 1));
       const remembered = d && (d.render_spec || specByDrawing[d.id]);
       const want = (remembered && single.some((s) => s.name === remembered) ? remembered : null)
-        || (single.find((s) => (s.part_numbers || []).includes(preset.part_number)) || {}).name
         || (single[0] || {}).name;
       if (want && single.some((s) => s.name === want)) specSel.value = want;
     };
@@ -14463,10 +14466,16 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       let res;
       try { res = await API.post(token, "listDrawingSpecs", {}); }
       catch (ex) { error(ex.message); return; }
-      specs = res?.specs || [];
+      const all = res?.specs || [];
       const seen = res?.last_seen ? Date.parse(res.last_seen) : 0;
-      if (!specs.length || !seen || Date.now() - seen > DR_WORKER_STALE_MS) {
-        specSlot.replaceChildren(el("span", { style: "font-size:0.8125rem;color:#b45309;font-weight:600;white-space:nowrap" }, "No drawing worker"));
+      const notice = (txt) => specSlot.replaceChildren(el("span", { style: "font-size:0.8125rem;color:#b45309;font-weight:600;white-space:nowrap" }, txt));
+      if (!all.length || !seen || Date.now() - seen > DR_WORKER_STALE_MS) {
+        notice("No drawing worker");
+        return;
+      }
+      specs = all.filter((s) => (s.part_numbers || []).includes(preset.part_number));
+      if (!specs.length) {
+        notice("No spec for this part");
         return;
       }
       specSel.replaceChildren(...specs.map((s) => el("option", { value: s.name, disabled: s.parts > 1, title: s.title || "" },

@@ -33,6 +33,7 @@ import { startTimer } from "../_shared/timing.ts";
 import { resolvePlannerGraph } from "../_shared/planner-resolver-core.mjs";
 import { ARTICLE_LOOKUP_MAX_LENGTH, exactIlikePattern, matchArticle, normaliseArticleNumber } from "../_shared/article-lookup-core.mjs";
 import { supplierArticles } from "../_shared/supplier-articles-core.mjs";
+import { orderingAddressMissing, supplierForOperations, supplierForTypedName, supplierPatch, typedSupplierNames } from "../_shared/supplier-register-core.mjs";
 import { articleOf, canBeEligibleType, expandAssemblyInputs, preAssemblyEligibility } from "../_shared/assembly-inputs-core.mjs";
 import { sidePanelRole } from "../_shared/side-panel-role-core.mjs";
 import {
@@ -1829,16 +1830,35 @@ Deno.serve(async (req) => {
     if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "listSupplierArticles accepts only contract_version" }, 400);
     if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
     const supTdb = makeTdb(RUSHROOM_ORG_ID);
-    const [componentRes, metaRes, costRes] = await Promise.all([
+    const [componentRes, metaRes, costRes, supplierRes] = await Promise.all([
       supTdb("bom_components").select("id, part_number, name, type, unit_of_measure"),
-      supTdb("component_metadata").select("component_id, preferred_supplier_name, supplier_part_number"),
-      supTdb("component_costs").select("component_id, supplier_name, unit_cost, unit_currency, kind"),
+      supTdb("component_metadata").select("component_id, preferred_supplier_id, preferred_supplier_name, supplier_part_number"),
+      supTdb("component_costs").select("component_id, supplier_id, supplier_name, unit_cost, unit_currency, kind"),
+      supTdb("suppliers").select("id, name, aliases"),
     ]);
-    if (componentRes.error || metaRes.error || costRes.error) return json({ error: "PIM supplier data is unavailable" }, 502);
+    if (componentRes.error || metaRes.error || costRes.error || supplierRes.error) return json({ error: "PIM supplier data is unavailable" }, 502);
     return json({
       contract_version: 1,
-      articles: supplierArticles({ components: componentRes.data || [], metadata: metaRes.data || [], costs: costRes.data || [] }),
+      articles: supplierArticles({ components: componentRes.data || [], metadata: metaRes.data || [], costs: costRes.data || [], suppliers: supplierRes.data || [] }),
     });
+  }
+
+  // --- Operations → PIM supplier register (service authentication only) ----
+  // The one supplier register (0066, decided by Matte 2026-11-26). Order
+  // Operations keeps a copy for its purchase orders and never edits it; who a
+  // supplier is, how it takes orders and its terms are edited here (contract
+  // v1, docs/PLANNER_MAPPINGS.md). Inactive suppliers are included, marked.
+  if (action === "listSupplierRegister") {
+    const refusal = operationsServiceRefusal(req, "Supplier register is not configured");
+    if (refusal) return refusal;
+    const allowedKeys = new Set(["action", "contract_version"]);
+    if (Object.keys(body).some((key) => !allowedKeys.has(key))) return json({ error: "listSupplierRegister accepts only contract_version" }, 400);
+    if (body.contract_version !== 1) return json({ error: "contract_version 1 is required" }, 400);
+    const { data, error } = await makeTdb(RUSHROOM_ORG_ID)("suppliers")
+      .select("id, name, status, org_number, country, currency, ordering_method, order_email, web_shop_url, contact_name, contact_email, phone, lead_time_days, payment_terms_days, notes")
+      .order("name");
+    if (error) return json({ error: "PIM supplier register is unavailable" }, 502);
+    return json({ contract_version: 1, suppliers: (data || []).map(supplierForOperations) });
   }
 
   // --- Operations → PIM pre-assemblies (service authentication only) ------
@@ -2172,13 +2192,38 @@ Deno.serve(async (req) => {
     return json({ ok: true, resetUrl: url, emailed });
   }
 
+  // The register as a pick list for parts and prices (0066). Everyone at
+  // Rushroom picks a supplier; adding and editing one is the admin's.
+  if (action === "listSupplierOptions") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const { data, error } = await tdb("suppliers").select("id, name, currency, status").order("name");
+    if (error) return json({ error: error.message }, 500);
+    return json({ suppliers: data || [] });
+  }
+
+  // "+ New supplier" right where a part or price needs one: a name and the
+  // currency it invoices in. Everything else is filled in on the Suppliers tab.
+  if (action === "addSupplier") {
+    if (role !== "rushroom") return json({ error: "Not authorised" }, 403);
+    const checked = supplierPatch({ name: body.name, currency: body.currency ?? "", country: body.country ?? "" });
+    if ("error" in checked) return json({ error: checked.error }, 400);
+    const { data, error } = await tdb("suppliers").insert({ ...checked.patch, created_by: session.uid ?? null })
+      .select("id, name, currency, status").maybeSingle();
+    if (error) {
+      const isDup = /duplicate key|unique/i.test(error.message || "");
+      return json({ error: isDup ? `${checked.patch.name} is already in the register. Pick it from the list.` : error.message }, isDup ? 409 : 500);
+    }
+    return json({ supplier: data });
+  }
+
   // ================= Supplier portal: the admin side ========================
   // docs/SUPPLIER_PORTAL.md §3 (Rushroom role). Gate: isAdmin — the platform
   // owner or a tenant's own org admin, each inside their own organization
   // (tdb scopes every read and write). The users list on the Accounts tab is
   // platform-owner-only because users are global; suppliers are tenant rows,
   // so the broader Stage 3 org-admin gate is the right one here.
-  const SUPPLIER_FIELDS = "id, name, contact_name, contact_email, notes, status, created_at, created_by";
+  const SUPPLIER_FIELDS = "id, name, contact_name, contact_email, notes, status, created_at, created_by, "
+    + "org_number, country, currency, ordering_method, order_email, web_shop_url, phone, lead_time_days, payment_terms_days, aliases, updated_at";
   const supplierInOrg = async (id: string) => {
     if (!id) return null;
     const { data } = await tdb("suppliers").select(SUPPLIER_FIELDS).eq("id", id).maybeSingle();
@@ -2209,7 +2254,7 @@ Deno.serve(async (req) => {
     const partsCount: Record<string, number> = {};
     for (const p of parts) partsCount[p.supplier_id] = (partsCount[p.supplier_id] || 0) + 1;
     const suppliers = list.map((s, i) => ({
-      id: s.id, name: s.name, contact_name: s.contact_name, contact_email: s.contact_email, status: s.status,
+      ...s,
       users: users.filter((u) => u.supplier_id === s.id).map(({ supplier_id: _s, ...u }) => u),
       parts_count: partsCount[s.id] || 0, last_activity_at: lastActivity[i], created_at: s.created_at,
     }));
@@ -2219,30 +2264,80 @@ Deno.serve(async (req) => {
   if (action === "saveSupplier") {
     if (!isAdmin) return json({ error: "Admin only" }, 403);
     const id = String(body.id ?? "").trim();
-    const name = String(body.name ?? "").trim().slice(0, 160);
-    if (!name) return json({ error: "Name required" }, 400);
-    const patch: Record<string, unknown> = { name };
-    if (body.contact_name !== undefined) patch.contact_name = String(body.contact_name ?? "").trim().slice(0, 160) || null;
-    if (body.contact_email !== undefined) {
-      const ce = String(body.contact_email ?? "").trim().toLowerCase().slice(0, 200);
-      if (ce && !emailOk(ce)) return json({ error: "Enter a valid contact email." }, 400);
-      patch.contact_email = ce || null;
-    }
-    if (body.notes !== undefined) patch.notes = String(body.notes ?? "").slice(0, 2000) || null;
-    if (body.status !== undefined) {
-      if (!["active", "inactive"].includes(String(body.status))) return json({ error: "Invalid status" }, 400);
-      patch.status = String(body.status);
-    }
+    const checked = supplierPatch({ ...body, id });
+    if ("error" in checked) return json({ error: checked.error }, 400);
+    const patch: Record<string, unknown> = { ...checked.patch, updated_at: new Date().toISOString() };
+    const before = id ? await supplierInOrg(id) : null;
+    if (id && !before) return json({ error: "Supplier not found" }, 404);
+    const missing = orderingAddressMissing({ ...(before || {}), ...patch });
+    if (missing) return json({ error: missing }, 400);
+    const name = String(patch.name ?? before?.name ?? "");
     const dup = (e: any) => /duplicate key|unique/i.test(e?.message || "");
     if (id) {
-      if (!(await supplierInOrg(id))) return json({ error: "Supplier not found" }, 404);
       const { data, error } = await tdb("suppliers").update(patch).eq("id", id).select(SUPPLIER_FIELDS).maybeSingle();
       if (error) return json({ error: dup(error) ? `Supplier ${name} already exists` : error.message }, dup(error) ? 409 : 500);
+      // Parts show their supplier's name: a rename follows on every linked part.
+      if (patch.name && patch.name !== before.name) {
+        await tdb("component_metadata").update({ preferred_supplier_name: patch.name }).eq("preferred_supplier_id", id);
+      }
       return json({ supplier: data });
     }
     const { data, error } = await tdb("suppliers").insert({ ...patch, created_by: session.uid ?? null }).select(SUPPLIER_FIELDS).maybeSingle();
     if (error) return json({ error: dup(error) ? `Supplier ${name} already exists` : error.message }, dup(error) ? 409 : 500);
     return json({ supplier: data });
+  }
+
+  // Supplier names typed on parts and prices before the register (0066), not
+  // linked to a supplier yet, with a suggestion for each.
+  if (action === "listTypedSupplierNames") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const [metaRes, costRes, supRes] = await Promise.all([
+      tdb("component_metadata").select("component_id, preferred_supplier_id, preferred_supplier_name").not("preferred_supplier_name", "is", null),
+      tdb("component_costs").select("component_id, supplier_id, supplier_name, unit_currency").not("supplier_name", "is", null),
+      tdb("suppliers").select("id, name, aliases"),
+    ]);
+    const err = metaRes.error || costRes.error || supRes.error;
+    if (err) return json({ error: err.message }, 500);
+    return json({ names: typedSupplierNames({ metadata: metaRes.data || [], costs: costRes.data || [], suppliers: supRes.data || [] }) });
+  }
+
+  // Links one typed name to a supplier, new or existing: every part and price
+  // carrying exactly that name points at the supplier, and the name becomes an
+  // alias so a later save with it (AI fill, quote reader) links itself. Prices
+  // keep the name as typed; it is part of their history.
+  if (action === "linkTypedSupplierName") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const typed = String(body.typed_name ?? "").trim();
+    if (!typed) return json({ error: "typed_name required" }, 400);
+    let supplier: any = null;
+    if (body.supplier_id) {
+      supplier = await supplierInOrg(String(body.supplier_id));
+      if (!supplier) return json({ error: "Supplier not found" }, 404);
+    } else {
+      const checked = supplierPatch({ name: body.new_name, currency: body.currency ?? "", country: body.country ?? "" });
+      if ("error" in checked) return json({ error: checked.error }, 400);
+      const { data, error } = await tdb("suppliers").insert({ ...checked.patch, created_by: session.uid ?? null }).select(SUPPLIER_FIELDS).maybeSingle();
+      if (error) {
+        const isDup = /duplicate key|unique/i.test(error.message || "");
+        return json({ error: isDup ? `Supplier ${checked.patch.name} already exists. Pick it from the list instead.` : error.message }, isDup ? 409 : 500);
+      }
+      supplier = data;
+    }
+    const aliases: string[] = Array.isArray(supplier.aliases) ? supplier.aliases : [];
+    if (typed !== supplier.name && !aliases.includes(typed)) {
+      const { error } = await tdb("suppliers").update({ aliases: [...aliases, typed].slice(-50), updated_at: new Date().toISOString() }).eq("id", supplier.id);
+      if (error) return json({ error: error.message }, 500);
+    }
+    const [metaRes, costRes] = await Promise.all([
+      tdb("component_metadata").update({ preferred_supplier_id: supplier.id, preferred_supplier_name: supplier.name, updated_at: new Date().toISOString() })
+        .eq("preferred_supplier_name", typed).is("preferred_supplier_id", null).select("component_id"),
+      tdb("component_costs").update({ supplier_id: supplier.id }).eq("supplier_name", typed).is("supplier_id", null).select("component_id"),
+    ]);
+    if (metaRes.error || costRes.error) return json({ error: (metaRes.error || costRes.error).message }, 500);
+    for (const row of (metaRes.data || []) as any[]) {
+      await writeBomHistory(tdb, session, row.component_id, "updated", `Supplier "${typed}" linked to ${supplier.name} in the supplier register`);
+    }
+    return json({ ok: true, supplier_id: supplier.id, parts: (metaRes.data || []).length, prices: (costRes.data || []).length });
   }
 
   if (action === "setSupplierParts") {
@@ -8387,6 +8482,30 @@ Deno.serve(async (req) => {
     ];
     const payload: Record<string, any> = { component_id, organization_id: organizationId, updated_at: new Date().toISOString() };
     for (const k of allowed) { if (k in fields) payload[k] = fields[k]; }
+    // The part's supplier (0066): picked from the register by id, and the name
+    // follows the register. A typed name (AI fill, an older client) links
+    // itself when it matches a register name or alias, else it stays typed for
+    // an admin to link on the Suppliers tab.
+    if ("preferred_supplier_id" in fields || "preferred_supplier_name" in fields) {
+      const sid = typeof fields.preferred_supplier_id === "string" ? fields.preferred_supplier_id.trim() : "";
+      if (sid) {
+        const { data: sup } = await tdb("suppliers").select("id, name").eq("id", sid).maybeSingle();
+        if (!sup) return json({ error: "Supplier not found" }, 404);
+        payload.preferred_supplier_id = sup.id;
+        payload.preferred_supplier_name = sup.name;
+      } else {
+        const typed = typeof fields.preferred_supplier_name === "string" ? fields.preferred_supplier_name.trim().slice(0, 200) : "";
+        if (typed) {
+          const { data: register } = await tdb("suppliers").select("id, name, aliases");
+          const match = supplierForTypedName(typed, register || []);
+          payload.preferred_supplier_id = match?.id ?? null;
+          payload.preferred_supplier_name = match ? match.name : typed;
+        } else {
+          payload.preferred_supplier_id = null;
+          payload.preferred_supplier_name = null;
+        }
+      }
+    }
     const { error } = await tdb("component_metadata")
       .upsert(payload, { onConflict: "component_id" });
     if (error) return json({ error: error.message }, 400);

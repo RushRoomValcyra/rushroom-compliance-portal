@@ -61,7 +61,8 @@
       const trans = el("input", { class: "up-text", type: "number", min: "0", max: "1000", step: "any", value: c.transport_pct ?? "", "aria-label": `${title} transport %`, style: "width:6rem" });
       const customs = el("input", { class: "up-text", type: "number", min: "0", max: "100", step: "any", value: c.customs_pct ?? "", "aria-label": `${title} customs %`, style: "width:6rem" });
       const quoted = el("input", { class: "up-text", type: "date", value: c.quoted_on || "", "aria-label": `${title} date` });
-      const supplier = el("input", { class: "up-text", type: "text", maxlength: "200", value: c.supplier_name || "", placeholder: "e.g. Häfele", "aria-label": `${title} supplier`, style: "width:100%;box-sizing:border-box" });
+      // Picked from the supplier register (0066), never typed.
+      const supplier = window.PortalSupplierPicker.create({ token, supplierId: c.supplier_id || null, supplierName: c.supplier_name || "", label: `${title} supplier` });
       const note = el("input", { class: "up-text", type: "text", maxlength: "500", value: c.source_note || "", placeholder: "e.g. quote no. 4711, line 3", style: "width:100%;box-sizing:border-box" });
       // The answer the inputs exist for: landed unit cost in SEK, with the
       // arithmetic shown line by line, so nobody has to work it out.
@@ -98,7 +99,7 @@
           await post(token, "setComponentCost", {
             component_id: comp.id, kind, unit_cost: unit.value, unit_currency: unitCur.value,
             transport_pct: trans.value || 0, customs_pct: customs.value || 0,
-            quoted_on: quoted.value || null, supplier_name: supplier.value.trim() || null, source_note: note.value.trim() || null,
+            quoted_on: quoted.value || null, ...supplier.value(), source_note: note.value.trim() || null,
           });
           msg.textContent = "Saved.";
           refreshHistory();   // the save is now the newest line of the history
@@ -121,7 +122,7 @@
         ]),
         preview,
         el("div", { style: "display:grid;grid-template-columns:1fr 1.6fr;gap:0.6rem;margin-top:0.5rem" }, [
-          el("label", { style: LBL }, ["Supplier", supplier]),
+          el("label", { style: LBL }, ["Supplier", supplier.el]),
           el("label", { style: LBL }, ["Source", note]),
         ]),
         c.source_document_version_id ? el("div", { style: `font-size:0.75rem;${MUTED}` }, "Read from a document — see Documents. " + (Array.isArray(c.evidence) && c.evidence[0] ? `“${c.evidence[0]}”` : "")) : null,

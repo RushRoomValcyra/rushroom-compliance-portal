@@ -43,7 +43,7 @@ test("a price's supplier and the preferred supplier both count, merged by name i
   });
   assert.deepEqual(leg, {
     pim_component_id: "c1", article_number: "RR-LEG", name: "Adjustable leg", unit: "pcs",
-    suppliers: [{ name: "Italiana Ferramenta", preferred: true, supplier_article_number: "IF-77", price: { amount: 0.76, currency: "EUR", kind: "actual" } }],
+    suppliers: [{ supplier_id: null, name: "Italiana Ferramenta", preferred: true, supplier_article_number: "IF-77", price: { amount: 0.76, currency: "EUR", kind: "actual" } }],
   });
   assert.equal(hinge.unit, "ea");
   assert.deepEqual(hinge.suppliers.map((s) => [s.name, s.preferred, s.price?.amount ?? null]), [["HETTICH", true, null], ["Häfele", false, 12.5]]);
@@ -57,7 +57,7 @@ test("the price really paid wins over the estimate", () => {
       { component_id: "c1", supplier_name: "gqk", unit_cost: 7, unit_currency: "USD", kind: "actual" },
     ],
   });
-  assert.deepEqual(leg.suppliers, [{ name: "gqk", preferred: false, supplier_article_number: null, price: { amount: 7, currency: "USD", kind: "actual" } }]);
+  assert.deepEqual(leg.suppliers, [{ supplier_id: null, name: "gqk", preferred: false, supplier_article_number: null, price: { amount: 7, currency: "USD", kind: "actual" } }]);
 });
 
 test("leaves out articles without a supplier, families and components without a number", () => {
@@ -67,4 +67,22 @@ test("leaves out articles without a supplier, families and components without a 
     costs: [{ component_id: "c3", supplier_name: "  ", unit_cost: 1, unit_currency: "SEK", kind: "actual" }],
   });
   assert.deepEqual(list, []);
+});
+
+test("a part or price linked to the register is listed under the register's id and name", () => {
+  const suppliers = [{ id: "s-if", name: "Italiana Ferramenta s.r.l.", aliases: [] }, { id: "s-gqk", name: "Xiamen GQK Technology", aliases: ["GQK"] }];
+  const [hinge, leg] = supplierArticles({
+    components,
+    suppliers,
+    metadata: [
+      { component_id: "c1", preferred_supplier_id: "s-if", preferred_supplier_name: "Italiana Ferramenta s.r.l.", supplier_part_number: "IF-77" },
+      { component_id: "c2", preferred_supplier_name: "GQK" },
+    ],
+    costs: [
+      { component_id: "c1", supplier_id: "s-if", supplier_name: "ITALIANA FERRAMENTA s.r.l.", unit_cost: 0.76, unit_currency: "EUR", kind: "actual" },
+      { component_id: "c2", supplier_name: "XIAMEN GQK Technology", unit_cost: 3, unit_currency: "USD", kind: "actual" },
+    ],
+  });
+  assert.deepEqual(leg.suppliers, [{ supplier_id: "s-if", name: "Italiana Ferramenta s.r.l.", preferred: true, supplier_article_number: "IF-77", price: { amount: 0.76, currency: "EUR", kind: "actual" } }]);
+  assert.deepEqual(hinge.suppliers.map((s) => [s.supplier_id, s.name, s.preferred, s.price?.amount ?? null]), [["s-gqk", "Xiamen GQK Technology", true, 3]]);
 });

@@ -4968,6 +4968,7 @@ Deno.serve(async (req) => {
       "created", "updated",
       "document_revised",
       "drawing_linked", "drawing_revised", "drawing_released", "drawing_adopted",
+      "drawing_deleted", "cad_deleted",   // §5.5: a retraction is an event in the part's life
     ];
     const [histRes, verRes, docRes] = await Promise.all([
       tdb("bom_component_history")
@@ -6841,6 +6842,213 @@ Deno.serve(async (req) => {
   // loaders getComponentCad / cadTestSnapshot read with. Nothing is written:
   // "after" is releasedView over the loaded rows, fed to statusSummary and the
   // supplier view.
+  // ================= Deleting CAD and drawings (admin) ======================
+  // docs/STATUS_MODEL.md §5.5 (2026-11-26). Nothing could be deleted before;
+  // every removal was done by hand in SQL. The rules: an admin only; a draft
+  // goes freely; a released or superseded revision, or one a supplier has
+  // fetched, goes only after the admin types its letter; nothing goes
+  // silently — one platform_audit row with every file name and sha, one
+  // history line per part, the storage objects removed in the same call.
+  // previewDelete computes the facts with the rules deleteObject applies, so
+  // the dialog shows what will happen (the previewRelease pattern).
+  const DELETE_KINDS = ["drawing", "drawing_revision", "cad_model", "cad_revision"];
+  const describeDeletion = async (kind: string, id: string): Promise<any | null> => {
+    const sha8 = (v: unknown) => (v ? String(v).slice(0, 8) : null);
+    const out: any = {
+      kind, id, object: {}, revisions: [], parts: [], files: 0, storage_paths: [] as string[],
+      supplier_fetches: { count: 0, last_at: null as string | null, suppliers: [] as string[] },
+      made_from: [] as any[], render_jobs: 0, current_goes: false, after: { released_revision: null as string | null },
+      warnings: [] as string[], confirm_with: null as string | null, blocked: null as string | null,
+    };
+    let partIds: string[] = [];
+    let eventFilter: { column: string; ids: string[] } = { column: "drawing_revision_id", ids: [] };
+    if (kind === "drawing" || kind === "drawing_revision") {
+      let drawingId = id;
+      if (kind === "drawing_revision") {
+        const { data: rv } = await tdb("drawing_revisions").select("id, drawing_id").eq("id", id).maybeSingle();
+        if (!rv) return null;
+        drawingId = rv.drawing_id;
+      }
+      const { data: d } = await tdb("drawings").select("id, drawing_number, title, current_revision_id, owner_component_id, drawing_type").eq("id", drawingId).maybeSingle();
+      if (!d) return null;
+      const all = ((await loadDrawingRevisions(tdb, [d.id]))[d.id] || []).slice();
+      const going = kind === "drawing" ? all : all.filter((r: any) => r.id === id);
+      if (kind === "drawing_revision" && !going.length) return null;
+      const staying = all.filter((r: any) => !going.some((g: any) => g.id === r.id));
+      out.object = {
+        drawing_id: d.id, drawing_number: d.drawing_number, title: d.title,
+        label: kind === "drawing" ? `${d.drawing_number} ${d.title || ""}`.trim() : `${d.drawing_number} Issue ${going[0].revision}`,
+      };
+      out.revisions = going.map((r: any) => ({
+        id: r.id, revision: r.revision, status: r.status, released_at: r.released_at ?? null,
+        // A drawing PDF carries no sha of its own (source_sha256 is the CAD it was made from).
+        files: r.storage_path ? [{ format: "pdf", file_name: r.file_name, sha8: null, made_from_sha8: sha8(r.source_sha256), storage_path: r.storage_path }] : [],
+      }));
+      out.current_goes = kind === "drawing" || going.some((r: any) => r.id === d.current_revision_id);
+      out.after.released_revision = deriveObject(staying).released?.revision ?? null;
+      const { data: links } = await tdb("drawing_components").select("component_id").eq("drawing_id", d.id);
+      partIds = [...new Set([d.owner_component_id, ...((links || []) as any[]).map((l) => l.component_id)].filter(Boolean))] as string[];
+      eventFilter = { column: "drawing_revision_id", ids: going.map((r: any) => r.id) };
+      if (kind === "drawing") {
+        const { data: tpl } = await tdb("surgery_templates").select("id, code").eq("drawing_id", d.id);
+        if ((tpl || []).length) out.blocked = `Surgery template ${(tpl as any[]).map((t) => t.code).join(", ")} points at this drawing. Delete the template first.`;
+        const { data: jobs } = await tdb("drawing_render_jobs").select("id").eq("drawing_id", d.id);
+        out.render_jobs = (jobs || []).length;
+      }
+    } else if (kind === "cad_model" || kind === "cad_revision") {
+      let modelId = id;
+      if (kind === "cad_revision") {
+        const { data: rv } = await tdb("cad_model_revisions").select("id, cad_model_id").eq("id", id).maybeSingle();
+        if (!rv) return null;
+        modelId = rv.cad_model_id;
+      }
+      const { data: m } = await tdb("cad_models").select("id, component_id, fusion_document_name, current_revision_id").eq("id", modelId).maybeSingle();
+      if (!m) return null;
+      const all = await loadCadRevisions(tdb, m.id);
+      const going = kind === "cad_model" ? all : all.filter((r: any) => r.id === id);
+      if (kind === "cad_revision" && !going.length) return null;
+      const staying = all.filter((r: any) => !going.some((g: any) => g.id === r.id));
+      out.object = {
+        cad_model_id: m.id, fusion_document_name: m.fusion_document_name || "",
+        label: kind === "cad_model" ? (m.fusion_document_name || "CAD model") : `${m.fusion_document_name || "CAD"} Rev ${going[0].revision}`,
+      };
+      out.revisions = going.map((r: any) => ({
+        id: r.id, revision: r.revision, status: r.status, released_at: r.released_at ?? null,
+        files: (r.files || []).map((f: any) => ({ id: f.id, format: f.format, file_name: f.file_name, sha8: sha8(f.sha256), sha256: f.sha256 || null, storage_path: f.storage_path })),
+      }));
+      out.current_goes = kind === "cad_model" || going.some((r: any) => r.id === m.current_revision_id);
+      out.after.released_revision = deriveObject(staying).released?.revision ?? null;
+      partIds = m.component_id ? [m.component_id] : [];
+      const fileIds = going.flatMap((r: any) => (r.files || []).map((f: any) => f.id));
+      eventFilter = { column: "cad_file_id", ids: fileIds };
+      // Drawings made from these files lose their "made from" pointer (SET NULL).
+      if (fileIds.length) {
+        const { data: made } = await tdb("drawing_revisions").select("id, drawing_id, revision, status").in("source_cad_file_id", fileIds);
+        const madeRows = (made || []) as any[];
+        if (madeRows.length) {
+          const { data: dws } = await tdb("drawings").select("id, drawing_number").in("id", [...new Set(madeRows.map((x) => x.drawing_id))]);
+          const num = new Map(((dws || []) as any[]).map((x) => [x.id, x.drawing_number]));
+          out.made_from = madeRows.map((x) => ({ drawing_number: num.get(x.drawing_id) || "", revision: x.revision, status: x.status }));
+        }
+        const { data: jobs } = await tdb("drawing_render_jobs").select("id").in("cad_file_id", fileIds);
+        out.render_jobs = (jobs || []).length;
+      }
+    } else {
+      return null;
+    }
+    out.storage_paths = out.revisions.flatMap((r: any) => r.files.map((f: any) => f.storage_path)).filter(Boolean);
+    out.files = out.storage_paths.length;
+    if (partIds.length) {
+      const { data: comps } = await tdb("bom_components").select("id, organization_id, part_number, oem_number, name, description, type, lifecycle_status").in("id", partIds);
+      out.parts = (comps || []) as any[];
+    }
+    if (eventFilter.ids.length) {
+      const { data: ev } = await tdb("supplier_file_events").select("supplier_id, at").in(eventFilter.column, eventFilter.ids);
+      const rows = (ev || []) as any[];
+      if (rows.length) {
+        const supIds = [...new Set(rows.map((e) => e.supplier_id).filter(Boolean))];
+        const { data: sups } = supIds.length ? await tdb("suppliers").select("id, name").in("id", supIds) : { data: [] };
+        out.supplier_fetches = {
+          count: rows.length,
+          last_at: rows.map((e) => e.at).sort().pop() ?? null,
+          suppliers: ((sups || []) as any[]).map((x) => x.name),
+        };
+      }
+    }
+    // The rules. A draft goes freely; anything released or superseded, or
+    // fetched by a supplier, needs the letter typed back.
+    const governed = out.revisions.some((r: any) => r.status === "released" || r.status === "superseded");
+    if (governed || out.supplier_fetches.count) {
+      out.confirm_with = kind === "drawing" ? String(out.object.drawing_number || "") : kind === "cad_model" ? "DELETE" : String(out.revisions[0]?.revision || "");
+    }
+    if (out.supplier_fetches.count) out.warnings.push(`${out.supplier_fetches.suppliers.join(", ") || "A supplier"} downloaded this ${out.supplier_fetches.count} time${out.supplier_fetches.count === 1 ? "" : "s"}.`);
+    if (governed && out.revisions.some((r: any) => r.status === "released")) out.warnings.push("A released revision is what the supplier builds from.");
+    if (out.current_goes && (kind === "drawing_revision" || kind === "cad_revision")) {
+      out.warnings.push(out.after.released_revision
+        ? `${kind === "cad_revision" ? "Rev" : "Issue"} ${out.after.released_revision} stays released and the supplier keeps it.`
+        : "No released revision remains: the supplier will see nothing for this part until the next release.");
+    }
+    if (out.made_from.length) out.warnings.push(`${out.made_from.map((x: any) => `${x.drawing_number} Issue ${x.revision}`).join(", ")} ${out.made_from.length === 1 ? "was" : "were"} made from this CAD; their "Made from" goes blank.`);
+    if (out.render_jobs) out.warnings.push(kind === "drawing"
+      ? `${out.render_jobs} render job${out.render_jobs === 1 ? "" : "s"} keep${out.render_jobs === 1 ? "s" : ""} its record and loses the drawing.`
+      : `${out.render_jobs} render job${out.render_jobs === 1 ? "" : "s"} referencing these files will be removed.`);
+    return out;
+  };
+
+  if (action === "previewDelete") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const kind = String(body.kind ?? ""), id = String(body.id ?? "");
+    if (!DELETE_KINDS.includes(kind) || !id) return json({ error: "kind (drawing | drawing_revision | cad_model | cad_revision) and id required" }, 400);
+    const facts = await describeDeletion(kind, id);
+    if (!facts) return json({ error: "Not found" }, 404);
+    const { storage_paths: _sp, ...shown } = facts;
+    shown.revisions = shown.revisions.map((r: any) => ({ ...r, files: r.files.map(({ storage_path: _p, ...f }: any) => f) }));
+    return json(shown);
+  }
+
+  if (action === "deleteObject") {
+    if (!isAdmin) return json({ error: "Admin only" }, 403);
+    const kind = String(body.kind ?? ""), id = String(body.id ?? "");
+    if (!DELETE_KINDS.includes(kind) || !id) return json({ error: "kind (drawing | drawing_revision | cad_model | cad_revision) and id required" }, 400);
+    const facts = await describeDeletion(kind, id);
+    if (!facts) return json({ error: "Not found" }, 404);
+    if (facts.blocked) return json({ error: facts.blocked }, 409);
+    if (facts.confirm_with && String(body.confirm ?? "").trim() !== facts.confirm_with) {
+      return json({ error: `Type ${facts.confirm_with} to confirm.` }, 400);
+    }
+    // 1. The storage objects first: a row without its file is worse than a
+    //    file without its row (the audit below names every path either way).
+    let files_removed = 0;
+    if (facts.storage_paths.length) {
+      const { error: rmErr } = await db.storage.from(DOC_BUCKET).remove(facts.storage_paths);
+      if (rmErr) return json({ error: `Could not remove the files: ${rmErr.message}` }, 500);
+      files_removed = facts.storage_paths.length;
+    }
+    // 2. The rows. A revision that is current hands the pointer to the one
+    //    that remains (the same rule syncCadModel applies), then goes.
+    if (kind === "drawing") {
+      const { error } = await tdb("drawings").delete().eq("id", facts.object.drawing_id);
+      if (error) return json({ error: error.message }, 500);
+    } else if (kind === "drawing_revision") {
+      if (facts.current_goes) {
+        const all = ((await loadDrawingRevisions(tdb, [facts.object.drawing_id]))[facts.object.drawing_id] || []).filter((r: any) => r.id !== id);
+        const next = deriveObject(all).current;
+        const { error: e1 } = await tdb("drawings").update({ current_revision_id: next?.id ?? null }).eq("id", facts.object.drawing_id);
+        if (e1) return json({ error: e1.message }, 500);
+      }
+      const { error } = await tdb("drawing_revisions").delete().eq("id", id);
+      if (error) return json({ error: error.message }, 500);
+    } else if (kind === "cad_model") {
+      const { error } = await tdb("cad_models").delete().eq("id", facts.object.cad_model_id);
+      if (error) return json({ error: error.message }, 500);
+    } else {
+      const { error } = await tdb("cad_model_revisions").delete().eq("id", id);
+      if (error) return json({ error: error.message }, 500);
+      await syncCadModel(tdb, facts.object.cad_model_id);
+    }
+    // 3. The trace: who, when, what — every letter, file name and sha.
+    const summary = facts.revisions.map((r: any) => `${kind.startsWith("cad") ? "Rev" : "Issue"} ${r.revision} (${r.status}${r.files.length ? `, ${r.files.map((f: any) => `${f.format.toUpperCase()}${f.sha8 ? " " + f.sha8 : ""}`).join(" ")}` : ""})`).join(", ");
+    const fetched = facts.supplier_fetches.count ? ` — ${facts.supplier_fetches.suppliers.join(", ") || "a supplier"} had downloaded it ${facts.supplier_fetches.count} time${facts.supplier_fetches.count === 1 ? "" : "s"}` : "";
+    try {
+      await db.from("platform_audit").insert({
+        actor_user_id: session.uid ?? null, actor_email: session.email ?? null,
+        action: kind.startsWith("cad") ? "cad_deleted" : "drawing_deleted", target_organization_id: organizationId,
+        detail: { kind, id, label: facts.object.label, revisions: facts.revisions, supplier_fetches: facts.supplier_fetches, made_from: facts.made_from, render_jobs: facts.render_jobs, files_removed, confirm: facts.confirm_with },
+      });
+    } catch { /* the history line below is the second trace */ }
+    const history_errors: string[] = [];
+    for (const c of facts.parts) {
+      const { error: hErr } = await tdb("bom_component_history").insert({
+        organization_id: c.organization_id, component_id: c.id, changed_at: new Date().toISOString(), changed_by: session.uid || null,
+        change_type: kind.startsWith("cad") ? "cad_deleted" : "drawing_deleted",   // CHECK widened by 0067
+        part_number: c.part_number, oem_number: c.oem_number, name: c.name, description: c.description, type: c.type, lifecycle_status: c.lifecycle_status,
+        notes: `Deleted ${facts.object.label}: ${summary}${fetched}`,
+      });
+      if (hErr) history_errors.push(`${c.part_number}: ${hErr.message}`);
+    }
+    return json({ ok: true, kind, label: facts.object.label, revisions: facts.revisions.length, files_removed, after: facts.after, history_errors });
+  }
+
   if (action === "previewRelease") {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const kind = body.kind === "cad" || body.kind === "drawing" ? body.kind as "cad" | "drawing" : "";

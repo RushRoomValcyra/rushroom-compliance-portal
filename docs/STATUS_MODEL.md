@@ -141,6 +141,42 @@ Computed in one pure function, `statusSummary(drawingsOfPart, cadModelWithRevisi
 
 Returned by `getComponentCad` as `summary` and shown on the part card and in the CAD Models tab. Warnings are information, never blocks: a supplier package is a human decision.
 
+### 5.5 Deleting (2026-11-26)
+
+Nothing could be deleted before this date: no action, no button; every removal
+of a drawing, an issue or a CAD revision was done by hand in SQL with the
+storage objects removed and an audit row written by the person at the
+keyboard. For a company of one in its first month that is the wrong default:
+a wrong upload has to go, and the person who can release must be able to
+retract.
+
+Deletion is an **admin** act, one dialog for four objects — an issue, a whole
+drawing, a CAD revision, a whole CAD model — with rules by state and never
+silent:
+
+| object | goes freely when | needs the letter typed back when |
+|---|---|---|
+| draft issue / draft CAD revision | always | a supplier has fetched it |
+| released or superseded issue / revision | never | always (the letter; `DELETE` for a whole model; the drawing number for a whole drawing) |
+| whole drawing / whole CAD model | every revision in it passes the row above | any revision needs it |
+
+What always happens, in this order: the storage objects are removed (a row
+without its file is worse than a file without its row); the rows go (a
+revision that is current hands `current_revision_id` to the one that remains,
+by the same rule that sets it on release); one `platform_audit` row
+(`drawing_deleted` / `cad_deleted`) keeps every letter, status, file name and
+sha, the supplier fetch count and what was typed; one `bom_component_history`
+line per part says the same in words.
+
+What is refused: a whole drawing that a surgery template still points at
+(delete the template first). What is stated before the click: who downloaded
+it and when, whether a released revision remains for the supplier or nothing
+does, which drawing issues were made from the CAD files and lose their
+"Made from" pointer, how many render jobs go with it.
+
+The supplier's file events keep their rows and lose only the pointer, so the
+record that a supplier fetched the file survives its deletion.
+
 ## 6 API
 
 | Action | Change |

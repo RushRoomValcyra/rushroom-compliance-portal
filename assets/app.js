@@ -8288,9 +8288,12 @@
           drawing_revised:  ["#0ea5e920", "#0ea5e9"],
           drawing_released: ["#15803d20", "#15803d"],
           drawing_adopted:  ["#a855f720", "#a855f7"],
+          // §5.5 — a deletion is the one red event: a release retracted.
+          drawing_deleted:  ["#e0545420", "#e05454"],
+          cad_deleted:      ["#e0545420", "#e05454"],
         };
         const [bg, fg] = BADGE_COLORS[entry.change_type] || ["#8b93a120", "#8b93a1"];
-        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document", document_revised: "doc revision", drawing_linked: "drawing", drawing_revised: "drawing rev", drawing_released: "drawing released", drawing_adopted: "drawing adopted" }[entry.change_type] || entry.change_type;
+        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document", document_revised: "doc revision", drawing_linked: "drawing", drawing_revised: "drawing rev", drawing_released: "drawing released", drawing_adopted: "drawing adopted", drawing_deleted: "drawing deleted", cad_deleted: "CAD deleted" }[entry.change_type] || entry.change_type;
 
         let changeCell;
         if (diffs.length) {
@@ -13010,6 +13013,10 @@
                   ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
                       onclick: () => releaseModal("cad", rev.id, { onDone: () => reloadCadModels({ silent: true }) }) }, "Release")
                   : null;
+                const deleteRevBtn = API.isAdmin() && rev.id
+                  ? el("button", { type: "button", class: "btn btn-xs doc-del", style: "flex-shrink:0",
+                      onclick: () => deleteModal("cad_revision", rev.id, { onDone: () => reloadCadModels({ silent: true }) }) }, "Delete")
+                  : null;
                 const head = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.45rem 0 0.2rem" }, [
                   el("span", { style: "font-weight:700;white-space:nowrap" }, `Rev ${rev.revision}`),
                   statusChip(rev.status),
@@ -13019,6 +13026,7 @@
                   el("span", { style: "flex:1" }),
                   fromCadBtn,
                   releaseRevBtn,
+                  deleteRevBtn,
                 ].filter(Boolean));
                 const fileRows = files.length ? files.map((f) => {
                   const fc = FMT_COLOR[f.format] || "#888";
@@ -13038,7 +13046,13 @@
                 if (rev.id) mountRenderJob(rev, jobSlot);
                 return el("div", { style: "border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:0.2rem" }, [head, ...fileRows, jobSlot]);
               });
-              detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0 0.2rem" }, groupEls));
+              const modelId = m.id || m.cad_model_id || null;
+              const modelFooter = API.isAdmin() && modelId
+                ? el("div", { style: "display:flex;justify-content:flex-end;padding:0.4rem 0 0.1rem" },
+                    el("button", { type: "button", class: "btn btn-xs doc-del",
+                      onclick: () => deleteModal("cad_model", modelId, { onDone: () => reloadCadModels({ silent: true }) }) }, "Delete CAD model"))
+                : null;
+              detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0 0.2rem" }, [...groupEls, modelFooter].filter(Boolean)));
             }
             detailLoaded = true;
           } catch (ex) {
@@ -13256,6 +13270,10 @@
               ? el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
                   onclick: () => releaseModal("drawing", rev.id, { onDone: () => load({ silent: true }) }) }, "Release")
               : null;
+            const deleteIssueBtn = API.isAdmin()
+              ? el("button", { type: "button", class: "btn btn-xs doc-del", style: "flex-shrink:0",
+                  onclick: () => deleteModal("drawing_revision", rev.id, { onDone: () => load({ silent: true }) }) }, "Delete")
+              : null;
             return el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.35rem 0;border-bottom:1px solid var(--border,#e2e8f0)" }, [
               el("span", { style: "font-weight:700;white-space:nowrap" }, `Issue ${rev.revision}`),
               drawingStatusChip(rev.status || "draft"),
@@ -13266,6 +13284,7 @@
               releaseBtn,
               el("button", { type: "button", class: "btn btn-xs", style: "flex-shrink:0",
                 onclick: () => openSurface(d, rev.id) }, `Open Issue ${rev.revision}`),
+              deleteIssueBtn,
             ].filter(Boolean));
           });
           detailTd.replaceChildren(el("div", { style: "padding:0.2rem 0" }, lines));
@@ -14717,6 +14736,95 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     return close;
   }
 
+  // Deleting CAD and drawings (docs/STATUS_MODEL.md §5.5): admin only, one
+  // dialog for an issue, a whole drawing, a CAD revision or a whole model.
+  // The facts come from previewDelete, computed with the rules deleteObject
+  // applies: a draft goes on a click; a released or superseded revision, or one
+  // a supplier has fetched, goes only after its letter (or number) is typed
+  // back. What the supplier will see afterwards is stated before the click.
+  function deleteModal(kind, id, opts = {}) {
+    const token = API.getToken("rushroom");
+    const word = kind.startsWith("cad") ? "Rev" : "Issue";
+    const line = (kids) => el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap" }, kids.filter(Boolean));
+    const lines = (items) => el("div", { style: "display:flex;flex-direction:column;gap:0.25rem" }, items);
+    const mono = (txt) => el("span", { style: "font-family:var(--mono,monospace);font-size:0.6875rem;color:var(--muted,#8b93a1);white-space:nowrap" }, txt);
+    const date = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB") : "");
+    const errEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.5rem" });
+    const error = (msg) => { errEl.textContent = msg || ""; errEl.style.display = msg ? "" : "none"; };
+    const body = el("div", { style: "min-width:min(640px,88vw)" }, el("div", { class: "loading" }, "Loading…"));
+    const close = openModal("Delete", body);
+    const setTitle = (txt) => { const h = body.closest(".viewer-dialog")?.querySelector(".viewer-title"); if (h) h.textContent = txt; };
+
+    function render(p) {
+      setTitle(`Delete ${p.object?.label || word}`);
+      const revs = Array.isArray(p.revisions) ? p.revisions : [];
+      const revisionsCell = revs.length
+        ? lines(revs.map((r) => line([
+            el("span", { style: "font-weight:700;white-space:nowrap" }, `${word} ${r.revision}`),
+            drawingStatusChip(r.status || "draft"),
+            r.released_at ? el("span", { class: "muted", style: "font-size:0.75rem" }, `released ${date(r.released_at)}`) : null,
+            ...(r.files || []).map((f) => line([
+              el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:3px;background:#8b93a118;color:#8b93a1;font-weight:700;white-space:nowrap" }, String(f.format || "file").toUpperCase()),
+              el("span", { style: "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.8125rem" }, f.file_name || "—"),
+              f.sha8 ? mono(f.sha8) : null,
+            ])),
+          ])))
+        : el("span", { class: "muted" }, "none");
+      const parts = (p.parts || []).map((c) => `${c.part_number || ""} ${c.name || ""}`.trim()).filter(Boolean);
+      const partsCell = parts.length ? el("span", {}, parts.join(" · ")) : el("span", { class: "muted" }, "—");
+      const sf = p.supplier_fetches || { count: 0 };
+      const fetchedCell = sf.count
+        ? el("span", { style: "color:#b45309;font-weight:600" }, `${sf.suppliers?.length ? sf.suppliers.join(", ") : "A supplier"} · ${sf.count} time${sf.count === 1 ? "" : "s"} · last ${date(sf.last_at)}`)
+        : el("span", { class: "muted" }, "never");
+      const afterCell = p.current_goes
+        ? (p.after?.released_revision ? el("span", {}, `${word} ${p.after.released_revision} stays released`) : el("span", { style: "color:#b45309;font-weight:600" }, "nothing released for this part"))
+        : el("span", { class: "muted" }, "unchanged");
+      const warnings = (p.warnings || []).map((w) => el("div", { style: "color:#b45309;font-size:0.8125rem" }, w));
+      const warningsCell = warnings.length ? lines(warnings) : el("span", { class: "muted" }, "none");
+
+      const dl = el("dl", { class: "drawing-meta" }, [
+        el("dt", {}, "Goes"), el("dd", {}, revisionsCell),
+        el("dt", {}, "Part"), el("dd", {}, partsCell),
+        el("dt", {}, "Supplier fetched"), el("dd", {}, fetchedCell),
+        el("dt", {}, "Supplier will see"), el("dd", {}, afterCell),
+        el("dt", {}, "Warnings"), el("dd", {}, warningsCell),
+      ]);
+
+      const needs = p.confirm_with || null;
+      const confirmInp = needs ? el("input", { class: "up-text", type: "text", placeholder: needs, "aria-label": `Type ${needs} to confirm`, style: "max-width:220px" }) : null;
+      const deleteBtn = el("button", { type: "button", class: "btn btn-sm doc-del", disabled: needs ? "" : null }, "Delete");
+      const cancelBtn = el("button", { type: "button", class: "btn btn-sm", onclick: () => close() }, "Cancel");
+      if (confirmInp) confirmInp.addEventListener("input", () => { deleteBtn.disabled = confirmInp.value.trim() !== needs; });
+      const blocked = p.blocked ? el("span", { style: "font-size:0.8125rem;color:#b45309;font-weight:600" }, p.blocked) : null;
+      const buttons = el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:1rem" }, [
+        blocked,
+        needs && !blocked ? el("span", { class: "form-label", style: "margin:0" }, `Type ${needs} to confirm`) : null,
+        needs && !blocked ? confirmInp : null,
+        el("span", { style: "flex:1" }), cancelBtn, blocked ? null : deleteBtn,
+      ].filter(Boolean));
+
+      deleteBtn.onclick = async () => {
+        error(""); deleteBtn.disabled = true; cancelBtn.disabled = true;
+        try {
+          await API.post(token, "deleteObject", { kind, id, confirm: confirmInp ? confirmInp.value.trim() : "" });
+          close();
+          if (opts.onDone) await opts.onDone();
+        } catch (ex) {
+          error(ex.message); deleteBtn.disabled = false; cancelBtn.disabled = false;
+        }
+      };
+      body.replaceChildren(dl, errEl, buttons);
+    }
+
+    (async () => {
+      let p;
+      try { p = await API.post(token, "previewDelete", { kind, id }); }
+      catch (ex) { body.replaceChildren(el("div", { class: "error" }, `Couldn't load: ${ex.message}`)); return; }
+      render(p || {});
+    })();
+    return close;
+  }
+
   /** Upload a new revision. Shared by the register and the part panel, so the
    *  consequence is stated identically wherever the user happens to be. */
   function addDrawingRevisionModal(drawing, role, onDone) {
@@ -14927,6 +15035,18 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         ? [el("button", { class: "btn btn-xs", type: "button",
             onclick: () => releaseModal("drawing", currentRev.id, { onDone: reload }) }, "Release")]
         : [];
+      // Deleting the whole drawing (§5.5): the surface it was shown on closes
+      // or reads "Drawing deleted", and the register behind it reloads.
+      if (role === "rushroom" && API.isAdmin()) {
+        statusActions.push(el("button", { class: "btn btn-xs doc-del", type: "button",
+          onclick: () => deleteModal("drawing", drawing.id, { onDone: async () => {
+            disposeCurrent();
+            if (!mount) close();
+            else if (opts.onBack) opts.onBack.go();
+            else setChildren(host, el("div", { class: "empty" }, "Drawing deleted."));
+            if (opts.onChange) await opts.onChange();
+          } }) }, "Delete drawing"));
+      }
 
       // Drawing from CAD (docs/DRAWING_RENDER.md §2): "New issue from CAD" when
       // the owner part has a CAD revision with a STEP file — the released one,

@@ -25,7 +25,10 @@ out to for drawset and, when `pyyaml` is not importable, for YAML.
 
 Every `poll_seconds`: `pollDrawingRenderJob`. On a job: `download` →
 `render` → `verify` → `upload` → `finishDrawingRender`, each step reported
-before and after. On start and every 5 min: `registerDrawingSpecs` from
+before and after. `verify` reads drawset's `DRAWSET_SUMMARY` line
+(exit code 3 = rendered, verification failed, the summary names the first
+reason; `geometry_sha256` travels with `dimension_list_sha256`) and falls
+back to the prose block for a drawset without it. On start and every 5 min: `registerDrawingSpecs` from
 `specs/*.yaml` (name = file stem, title, number of parts, the RR numbers in
 the parts' STEP file names). Specs with more than one part are registered
 but refused at render ("spec has N parts; a render job draws one part").

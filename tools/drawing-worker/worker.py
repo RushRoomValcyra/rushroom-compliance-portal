@@ -353,6 +353,37 @@ def _tail(text: str, n: int = 5) -> str:
     return " | ".join(l.strip() for l in lines[-n:])
 
 
+def _parse_summary(stdout: str):
+    """drawset's machine-readable verdict (Phase 0 of DYNAMIC_DRAWINGS.md): the last DRAWSET_SUMMARY line, or None."""
+    for line in reversed(stdout.splitlines()):
+        if line.startswith("DRAWSET_SUMMARY "):
+            try:
+                return json.loads(line[len("DRAWSET_SUMMARY "):])
+            except ValueError:
+                return None
+    return None
+
+
+def _summary_reason(summary: dict) -> str:
+    """The one line to show for a failed verdict, from the summary itself."""
+    rt = summary.get("round_trip") or {}
+    if rt.get("mismatches"):
+        return "round trip: %d of %d dimensions differ from the STEP" % (rt["mismatches"], rt.get("n", 0))
+    missing = summary.get("completeness_missing") or []
+    if missing:
+        shown = ", ".join("%s %s" % (m[0], m[1]) for m in missing[:4])
+        return "completeness: %d features without a dimension (%s%s)" % (len(missing), shown, ", …" if len(missing) > 4 else "")
+    dup = summary.get("duplicate_callouts") or {}
+    if dup:
+        return "holes with other than one callout: %s" % ", ".join(sorted(dup))
+    for f in summary.get("fusion") or []:
+        if not f.get("ok", True):
+            return "Fusion cross-check (%s): %d differences" % (f.get("part"), len(f.get("differences") or []))
+    if summary.get("regression") != "OK":
+        return "regression: the same STEP rendered twice gave different dimension lists"
+    return "verification failed"
+
+
 def _verify_reason(stdout: str) -> str:
     """The line to show for a FAIL: the first failing check line, else the summary."""
     lines = stdout.splitlines()
@@ -470,7 +501,9 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         log.debug("job %s: drawset stdout\n%s", short, st["stdout"])
         if st["stderr"].strip():
             log.debug("job %s: drawset stderr\n%s", short, st["stderr"])
-        if proc.returncode != 0:
+        st["returncode"] = proc.returncode
+        # exit 3 = rendered but the verification failed: the PDF exists, the verify step says why
+        if proc.returncode not in (0, 3):
             raise StepFailed("drawset exit %d: %s" % (proc.returncode, _tail(st["stderr"] or st["stdout"])))
         pdf = None
         for line in st["stdout"].splitlines():
@@ -488,15 +521,24 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
 
     def step_verify():
         out = st["stdout"]
-        if "=== VERIFICATION ===" not in out:
-            raise StepFailed("drawset printed no verification block: %s" % _tail(out))
-        if any("FAIL" in l for l in out.splitlines()):
-            raise StepFailed(_verify_reason(out))
-        regression = next((l.strip() for l in out.splitlines() if l.startswith("5 regression")), "")
-        if not regression.endswith("OK"):
-            raise StepFailed("no regression verdict: %s" % (regression or _tail(out)))
-        if "=== PASS ===" not in out:
-            raise StepFailed("verification did not pass: %s" % _tail(out))
+        summary = _parse_summary(out)
+        st["summary"] = summary
+        if summary is not None:
+            if st.get("returncode") == 3 or not summary.get("pass"):
+                raise StepFailed(_summary_reason(summary))
+            if summary.get("regression") != "OK":
+                raise StepFailed("no regression verdict in the summary")
+        else:
+            # a drawset that predates DRAWSET_SUMMARY: read the prose
+            if "=== VERIFICATION ===" not in out:
+                raise StepFailed("drawset printed no verification block: %s" % _tail(out))
+            if any("FAIL" in l for l in out.splitlines()):
+                raise StepFailed(_verify_reason(out))
+            regression = next((l.strip() for l in out.splitlines() if l.startswith("5 regression")), "")
+            if not regression.endswith("OK"):
+                raise StepFailed("no regression verdict: %s" % (regression or _tail(out)))
+            if "=== PASS ===" not in out:
+                raise StepFailed("verification did not pass: %s" % _tail(out))
         sidecar = st["pdf_path"] + ".sources.json"
         if not os.path.exists(sidecar):
             raise StepFailed("no sources sidecar: %s" % os.path.basename(sidecar))
@@ -510,9 +552,15 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         if len(steps) != 1 or shas[0] != st["step_sha256"]:
             raise StepFailed("sidecar STEP sha differs from the registry")
         st["dimension_list_sha256"] = dl
+        st["geometry_sha256"] = str(src.get("geometry_sha256") or "")
         st["product_id"] = steps[0].get("product_id")
-        return ("PASS · dimension list %s · STEP %s" % (dl[:8], shas[0][:8]),
-                {"dimension_list_sha256": dl, "step_sha256": shas[0], "product_id": st["product_id"]})
+        data = {"dimension_list_sha256": dl, "step_sha256": shas[0], "product_id": st["product_id"]}
+        if st["geometry_sha256"]:
+            data["geometry_sha256"] = st["geometry_sha256"]
+        if summary is not None:
+            data["verify"] = {"round_trip": summary.get("round_trip"), "completeness_missing": summary.get("completeness_missing"),
+                              "wall_flags": summary.get("wall_flags"), "regression": summary.get("regression")}
+        return ("PASS · dimension list %s · geometry %s · STEP %s" % (dl[:8], (st["geometry_sha256"] or "—")[:8], shas[0][:8]), data)
 
     def step_upload():
         if not number or not issue:
@@ -559,6 +607,13 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             "drawset_version": drawset_version(cfg),
             "verify_ok": True,
         }
+        if st.get("geometry_sha256"):
+            result["geometry_sha256"] = st["geometry_sha256"]
+        if st.get("summary") is not None:
+            sm = st["summary"]
+            result["verify"] = {"round_trip": sm.get("round_trip"), "completeness_missing": sm.get("completeness_missing"),
+                                "wall_flags": sm.get("wall_flags"), "regression": sm.get("regression")}
+            result["unmatched_overrides"] = sm.get("unmatched_overrides") or []
         fin = portal.call("finishDrawingRender", job_id=job_id, storage_path=st["storage_path"],
                           file_name=st["file_name"], sha256=st["pdf_sha256"], result=result,
                           source_sha256=st.get("want_sha"))

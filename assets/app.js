@@ -7,6 +7,26 @@
   const CFG = window.PORTAL_CONFIG || {};
   const AUTH_KEY = "rushroom_portal_auth";
 
+  /* ---------------- Fusion Team link ----------------
+   * The document's page in Fusion Team (hub web UI, with its own "Open in Fusion"
+   * button): https://<hub>.autodesk360.com/g/data/<base64 of the lineage URN>, the
+   * form DataFile.fusionWebURL gives. The hub slug comes out of the Fusion project
+   * id the add-in stores ("a." + base64("business:<slug>#<project>")), else from
+   * config.fusionHubUrl. The old manage.autodesk.com redirect answered 404
+   * (found 2026-11-26). */
+  function fusionTeamLink(documentId, projectId) {
+    if (!documentId) return null;
+    let hub = CFG.fusionHubUrl || null;
+    try {
+      const raw = String(projectId || "").replace(/^[a-z]\./, "");
+      const decoded = raw ? atob(raw.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - raw.length % 4) % 4)) : "";
+      const m = decoded.match(/^(?:business|personal):([^#]+)/);
+      if (m) hub = `https://${m[1]}.autodesk360.com`;
+    } catch (_) { /* unreadable id: fall back to the configured hub */ }
+    if (!hub) return null;
+    return `${hub.replace(/\/$/, "")}/g/data/${btoa(String(documentId)).replace(/=+$/, "")}`;
+  }
+
   /* ---------------- DOM helpers ---------------- */
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -8131,9 +8151,7 @@
       let cadSection = null;
       if (role === "rushroom") {
         const cadModel = cadR && cadR.cad_model;
-        const fusionHref = cadModel && cadModel.fusion_document_id
-          ? `https://manage.autodesk.com/en/redirect?productKey=fusion360&dcs=${encodeURIComponent(cadModel.fusion_document_id)}`
-          : null;
+        const fusionHref = cadModel ? fusionTeamLink(cadModel.fusion_document_id, cadModel.fusion_project_id) : null;
         // The current revision's files carry the Fusion save counter — metadata
         // on the file, never a revision of its own (§3).
         const cadRevisions = (cadR && cadR.revisions) || [];
@@ -12893,9 +12911,7 @@
         ...(m.drawings || []).flatMap((d) => [d.drawing_number, d.title])].filter(Boolean).join(" ").toLowerCase();
 
       function rowsFor(m) {
-        const fusionHref = m.fusion_document_id
-          ? `https://manage.autodesk.com/en/redirect?productKey=fusion360&dcs=${encodeURIComponent(m.fusion_document_id)}`
-          : null;
+        const fusionHref = fusionTeamLink(m.fusion_document_id, m.fusion_project_id);
         const detailTr = el("tr", { style: "display:none" });
         const detailTd = el("td", { colspan: COLS, style: "padding:0 0.75rem 0.6rem 2.5rem;background:var(--bg-subtle,#f8fafc)" });
         detailTr.append(detailTd);

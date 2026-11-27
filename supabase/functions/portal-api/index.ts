@@ -7485,7 +7485,7 @@ Deno.serve(async (req) => {
     // issue it supersedes, whether the geometry moved. A legacy name-only
     // render warns `spec_not_recorded`; an open proposed/candidate row warns
     // `iteration_open`. Neither blocks the release.
-    const specFacts: Record<string, unknown> = { spec: null, dimensions_vs_superseded: null, geometry_same: null, unmatched_overrides: [], warnings: [] as string[] };
+    const specFacts: Record<string, unknown> = { spec: null, dimensions_vs_superseded: null, geometry_same: null, unmatched_overrides: [], unmatched_rules: [], warnings: [] as string[] };
     try {
       const specWarnings = specFacts.warnings as string[];
       const { data: pins } = await tdb("drawing_revisions")
@@ -7508,6 +7508,10 @@ Deno.serve(async (req) => {
         const { data: job } = await tdb("drawing_render_jobs").select("id, result").eq("id", pins.render_job_id).maybeSingle();
         const unmatched = job?.result?.unmatched_overrides;
         if (Array.isArray(unmatched)) specFacts.unmatched_overrides = unmatched;
+        // Pair rules that met no two holes, when drawset reports them apart
+        // from the overrides (the release modal reads both lists).
+        const unmatchedRules = job?.result?.unmatched_rules;
+        if (Array.isArray(unmatchedRules)) specFacts.unmatched_rules = unmatchedRules;
         if (supPins?.render_job_id) {
           const { data: supJob } = await tdb("drawing_render_jobs").select("id, result").eq("id", supPins.render_job_id).maybeSingle();
           const [a, b] = await Promise.all([loadJobDimensions(supJob?.result), loadJobDimensions(job?.result)]);

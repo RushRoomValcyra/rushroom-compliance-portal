@@ -14311,8 +14311,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const save = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
         const title = inputs.title.value.trim();
         if (!title) { say("Title is required"); return; }
-        ev.target.disabled = true; say("Saving…");
-        try {
+        const btn = ev.currentTarget; say("");
+        await drBusy(btn, async () => { try {
           const res = await API.post(token, "createDrawingWithRevision", {
             owner_component_id: state.free ? null : state.ownerId,
             storage_path: state.path, file_name: state.file.name,
@@ -14327,7 +14327,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             el("div", { style: "display:flex;justify-content:flex-end;margin-top:0.9rem" },
               el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => { close(); await onDone(); } }, "Done")),
           );
-        } catch (ex) { say(ex.message); ev.target.disabled = false; }
+        } catch (ex) { say(ex.message); btn.disabled = false; return false; } });
       } }, "Save");
 
       setChildren(box,
@@ -14376,6 +14376,154 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
   // the surface shows the same job again (live → polled, finished → its result).
   const _drSurfaceJobs = new Map();
 
+  // ---- Progress (DRAWINGS_TAB_UX §13.11): every background action of the
+  // drawings engine shows the upload zone's bar (.up-progress-row) — a render
+  // job driven by its real stages, a short action trickling toward 90% and
+  // landing on 100 when the call answers, red when it fails. The displayed
+  // value eases toward a moving goal, floor + (cap − floor)·(1 − 0.8e^(−t/τ) −
+  // 0.2e^(−t/12τ)), and a running bar carries a moving sheen, so a long stage
+  // never stands still. The loop stops on done, on failure, and
+  // once the bar has left the document (a repaint, the modal closed).
+  function drProgress(opts = {}) {
+    const bar = el("div", { class: "up-progress-bar" });
+    const pct = el("span", { class: "up-progress-pct" }, "0%");
+    const word = el("span", { class: "dr-progress-word" });
+    const track = el("div", { class: "up-progress", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "0", "aria-label": opts.label || "Progress" }, bar);
+    const root = el("div", { class: `up-progress-row dr-progress${opts.inline ? " is-inline" : ""}`, "aria-busy": "true" }, [track, pct, word]);
+    const born = Date.now();
+    let disp = 0, floor = 0, cap = 0, askFloor = -1, askCap = -1, tau = 4000, t0 = born, phase = "run", raf = null, seen = false, leave = null;
+    const goal = () => {
+      if (phase === "done") return 100;
+      if (phase !== "run") return disp;
+      // 80% of the band on τ, the last 20% on 12·τ: the number keeps creeping
+      // long after a plain exponential would have flattened (the sheen in
+      // styles.css keeps the bar visibly alive past that).
+      const t = Date.now() - t0;
+      return floor + (cap - floor) * (1 - 0.8 * Math.exp(-t / tau) - 0.2 * Math.exp(-t / (12 * tau)));
+    };
+    const paint = () => {
+      const v = Math.max(0, Math.min(100, disp));
+      bar.style.width = v.toFixed(1) + "%";
+      pct.textContent = Math.round(v) + "%";
+      track.setAttribute("aria-valuenow", String(Math.round(v)));
+    };
+    const halt = () => { if (raf != null) { cancelAnimationFrame(raf); raf = null; } };
+    const idle = () => root.setAttribute("aria-busy", "false");
+    const frame = () => {
+      raf = null;
+      if (root.isConnected) seen = true;
+      else if (seen || Date.now() - born > 15000) { if (phase === "run") phase = "gone"; idle(); return; }
+      const g = goal(), diff = g - disp;
+      if (diff > 0) disp = diff <= 0.3 ? g : Math.min(g, disp + diff * 0.12 + 0.15);
+      paint();
+      if (phase === "done" && disp >= 100) { idle(); return; }
+      if (phase !== "run" && phase !== "done") return;
+      raf = requestAnimationFrame(frame);
+    };
+    const go = () => { if (raf == null) raf = requestAnimationFrame(frame); };
+    // stage(floor, cap, τ ms, word): the goal starts at floor and creeps toward
+    // cap; the same stage asked again (every poll) keeps its clock.
+    const stage = (f, c, ms, w) => {
+      if (phase !== "run") { phase = "run"; root.classList.remove("is-error"); root.setAttribute("aria-busy", "true"); }
+      if (f !== askFloor || c !== askCap) {
+        const now = disp > goal() ? disp : goal();
+        askFloor = f; askCap = c;
+        floor = Math.max(f, Math.min(now, c)); cap = Math.max(c, floor);
+        t0 = Date.now(); tau = ms || 4000;
+      }
+      word.textContent = w || "";
+      go();
+    };
+    const api = {
+      el: root,
+      stage,
+      run: (ms) => stage(3, 90, ms || 2500, ""),
+      done: (w) => { phase = "done"; root.classList.remove("is-error"); if (w != null) word.textContent = w; go(); },
+      fail: (w) => { phase = "fail"; halt(); idle(); root.classList.add("is-error"); if (w != null) word.textContent = w; paint(); },
+      // A finished job seen on a repaint: the bar stands where it ended, no animation.
+      jump: (v, ok, w) => { halt(); disp = floor = cap = v; phase = ok ? "done" : "fail"; idle(); root.classList.toggle("is-error", !ok); word.textContent = w || ""; paint(); },
+      stop: () => { halt(); if (phase === "run") phase = "gone"; idle(); },
+      remove: (ms) => {
+        if (leave) clearTimeout(leave);
+        leave = setTimeout(() => { root.classList.add("is-leaving"); leave = setTimeout(() => { halt(); root.remove(); }, 350); }, ms || 0);
+      },
+      get value() { return disp; },
+    };
+    return api;
+  }
+
+  /** One short action (Apply, Send, Keep, Rebase, Drop, Release …): the button
+   *  is disabled at once — a second click cannot fire twice — and a bar stands
+   *  right after it (or in `opts.slot`), trickling toward 90 while `run` is
+   *  awaited; it lands on 100 when `run` returns anything but false and turns
+   *  red when it returns false or throws (the error text is the caller's).
+   *  Re-enabling the button stays with the caller, as before. */
+  async function drBusy(btn, run, opts = {}) {
+    if (btn && btn.__drBusy) return false;
+    if (btn && btn.__drBar) { btn.__drBar.stop(); btn.__drBar.el.remove(); }
+    const p = drProgress({ inline: !opts.slot, label: opts.label || (btn && btn.textContent ? btn.textContent.trim() : "Working") });
+    if (btn) { btn.__drBusy = true; btn.__drBar = p; btn.disabled = true; btn.setAttribute("aria-busy", "true"); }
+    if (opts.slot) { if (opts.slot.__drBar) { opts.slot.__drBar.stop(); opts.slot.__drBar.el.remove(); } opts.slot.__drBar = p; opts.slot.append(p.el); }
+    else if (btn) btn.after(p.el);
+    p.run(opts.ms);
+    let out;
+    try { out = await run(); }
+    catch (ex) { p.fail(); p.remove(1800); throw ex; }
+    finally { if (btn) { btn.__drBusy = false; btn.removeAttribute("aria-busy"); } }
+    if (out === false) { p.fail(); p.remove(1800); }
+    else { p.done(); p.remove(900); }
+    return out;
+  }
+
+  /** "Loading …" with the bar under it, for a pane that fills after a fetch. */
+  function drLoading(text) {
+    const p = drProgress({ label: text });
+    p.stage(5, 90, 1500, "");
+    return el("div", { class: "loading dr-loading" }, [el("div", {}, text), p.el]);
+  }
+
+  // Where a render job stands, from its steps: the queue owns the first 8%,
+  // the steps share the rest by weight (the render itself is the long one),
+  // a running step creeps through its band with its own τ, a gap between two
+  // steps creeps into the next band's first half.
+  const DR_STAGE_WEIGHT = { claim: 1, download: 2, render: 6, verify: 2, upload: 2, register: 1 };
+  const DR_STAGE_TAU = { claim: 3000, download: 5000, render: 25000, verify: 8000, upload: 6000, register: 3000 };
+  const DR_QUEUE_TOP = 8;
+  function drJobStage(j) {
+    if (!j) return null;
+    if (j.status === "done") return { phase: "done", at: 100 };
+    const byKey = {};
+    for (const s of j.steps || []) byKey[s.key] = s;
+    const keys = [...new Set([...(j.steps || []).map((s) => s.key), ...DR_STEP_KEYS])];
+    const total = keys.reduce((n, k) => n + (DR_STAGE_WEIGHT[k] || 1), 0);
+    let acc = DR_QUEUE_TOP;
+    const bands = keys.map((key) => { const w = (DR_STAGE_WEIGHT[key] || 1) / total * (100 - DR_QUEUE_TOP); const b = { key, from: acc, to: acc + w }; acc += w; return b; });
+    const word = (k) => (k === "register" && j.mode === "iterate" ? "Candidate" : (byKey[k]?.label || DR_STEP_LABELS[k] || k));
+    const st = (b) => (byKey[b.key] || {}).status || "pending";
+    const over = bands.filter((b) => st(b) === "passed" || st(b) === "skipped");
+    const reached = over.length ? over[over.length - 1].to : 0;
+    if (!drLive(j)) {
+      const bad = bands.find((b) => st(b) === "failed") || bands.find((b) => st(b) === "running");
+      return { phase: "fail", at: bad ? Math.max(bad.from, reached) : Math.max(reached, 4),
+        word: bad ? word(bad.key) : (j.status === "timed_out" ? "Timed out" : j.status === "cancelled" ? "Cancelled" : "Failed") };
+    }
+    const running = bands.find((b) => st(b) === "running");
+    if (running) return { phase: "run", floor: running.from, cap: running.to - 0.5, tau: DR_STAGE_TAU[running.key] || 5000, word: word(running.key) };
+    if (!over.length) return { phase: "run", floor: 1, cap: DR_QUEUE_TOP, tau: 15000, word: "Queued" };
+    const next = bands[bands.indexOf(over[over.length - 1]) + 1];
+    if (!next) return { phase: "run", floor: reached, cap: 99, tau: 2000, word: "" };
+    return { phase: "run", floor: next.from, cap: next.from + (next.to - next.from) * 0.5, tau: DR_STAGE_TAU[next.key] || 4000, word: word(next.key) };
+  }
+  /** Put a job's stage on a bar: `fresh` = the job was finished before this bar saw it running. */
+  function drShowJobStage(p, j, fresh) {
+    const s = drJobStage(j);
+    if (!s) return;
+    if (s.phase === "run") p.stage(s.floor, s.cap, s.tau, s.word);
+    else if (s.phase === "done") { if (fresh) p.jump(100, true, ""); else p.done(""); }
+    else if (fresh) p.jump(s.at, false, s.word);
+    else p.fail(s.word);
+  }
+
   /** The six steps as rows with glyphs, the result line when the job is over,
    *  a red line for any poll error. watch(job) shows it and polls
    *  getDrawingRenderJob every 2 s until the status leaves requested/running;
@@ -14385,13 +14533,21 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const stepsEl = el("div", {});
     const resultEl = el("div", { style: "display:none;margin-top:0.25rem;font-size:0.8125rem;font-weight:600" });
     const errEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.25rem" });
-    const root = el("div", { class: "dr-job", style: "padding:0.3rem 0 0.3rem 0.75rem" }, [stepsEl, resultEl, errEl]);
+    // The bar above the checklist (§13.11): from the click on, through the
+    // queue (no worker has claimed it yet) to Candidate ready / Register.
+    const bar = drProgress({ label: "Render job" });
+    const bars = [bar];
+    let sawLive = false;
+    const root = el("div", { class: "dr-job", style: "padding:0.3rem 0 0.3rem 0.75rem" }, [bar.el, stepsEl, resultEl, errEl]);
     let timer = null, gen = 0, job = null;
     const stop = () => { gen++; if (timer) { clearTimeout(timer); timer = null; } };
     const error = (msg) => { errEl.textContent = msg || ""; errEl.style.display = msg ? "" : "none"; };
     function show(j) {
       job = j;
       if (!j) return;
+      const fresh = !sawLive && !drLive(j);
+      if (drLive(j)) sawLive = true;
+      for (const b of bars) drShowJobStage(b, j, fresh);
       const byKey = {};
       for (const s of j.steps || []) byKey[s.key] = s;
       const keys = [...new Set([...(j.steps || []).map((s) => s.key), ...DR_STEP_KEYS])];
@@ -14431,17 +14587,28 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           error(ex.message);
           // 401/403/404 will not get better by asking again. Anything else is
           // the network: keep the job, slow down (2 s → 30 s) and keep asking.
-          if ([401, 403, 404].includes(ex.status)) return;
+          if ([401, 403, 404].includes(ex.status)) { for (const b of bars) b.fail(); return; }
           timer = setTimeout(tick, Math.min(2000 * 2 ** Math.min(++errors, 4), 30000)); return;
         }
         if (g !== gen) return;
         error(""); show(next);
         if (drLive(next)) { timer = setTimeout(tick, 2000); return; }
+        // Let the bar land on 100 (or turn red) before the surface repaints.
+        await new Promise((r) => setTimeout(r, 700));
+        if (g !== gen) return;
         if (opts.onDone) opts.onDone(next);
       };
       timer = setTimeout(tick, 2000);
     }
-    return { el: root, show, watch, stop, error, get job() { return job; } };
+    /** A second bar on the same job, for a place the user is looking at (the
+     *  Patch head's Render): it follows every poll the first one does. */
+    function addBar() {
+      const b = drProgress({ label: "Render job", inline: false });
+      bars.push(b);
+      if (job) drShowJobStage(b, job, !sawLive && !drLive(job));
+      return b.el;
+    }
+    return { el: root, show, watch, stop, error, addBar, get job() { return job; } };
   }
 
   /**
@@ -14490,6 +14657,10 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     ]);
     const close = openModal(`Drawing from Rev ${preset.revision.revision}`, el("div", {}, [row, errEl]));
 
+    // The catalogue loads after the modal opens: the bar stands where Render
+    // will be enabled, so an inactive Render never reads as broken (§13.11).
+    const loadBar = drProgress({ inline: true, label: "Loading specs" });
+    renderBtn.after(loadBar.el); loadBar.run(1500);
     let specs = [];
     const specByDrawing = {};   // drawing id → spec of its newest job
     const syncTitle = () => {
@@ -14513,17 +14684,19 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     (async () => {
       let res;
       try { res = await API.post(token, "listDrawingSpecs", {}); }
-      catch (ex) { error(ex.message); return; }
+      catch (ex) { error(ex.message); loadBar.fail(); return; }
       const all = res?.specs || [];
       const seen = res?.last_seen ? Date.parse(res.last_seen) : 0;
       const notice = (txt) => specSlot.replaceChildren(el("span", { style: "font-size:0.8125rem;color:#b45309;font-weight:600;white-space:nowrap" }, txt));
       if (!all.length || !seen || Date.now() - seen > DR_WORKER_STALE_MS) {
         notice("No drawing worker");
+        loadBar.fail(); loadBar.remove(1800);
         return;
       }
       specs = all.filter((s) => (s.part_numbers || []).length ? s.part_numbers.includes(preset.part_number) : true);
       if (!specs.length) {
         notice("No spec for this part");
+        loadBar.fail(); loadBar.remove(1800);
         return;
       }
       specSel.replaceChildren(...specs.map((s) => el("option", { value: s.name, disabled: s.parts > 1, title: s.title || "" },
@@ -14533,6 +14706,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         for (const j of jobs) if (j.drawing_id && j.spec && !specByDrawing[j.drawing_id]) specByDrawing[j.drawing_id] = j.spec;
       } catch { /* the catalogue alone is enough to render */ }
       preselect();
+      loadBar.done(); loadBar.remove(600);
       renderBtn.disabled = false;
     })();
 
@@ -14543,18 +14717,23 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const spec = specSel.value;
       if (!drawing_id && !title) { error("Title required"); titleInp.focus(); return; }
       if (!spec) { error("Spec required"); return; }
-      renderBtn.disabled = true;
+      // The request itself (a second or two), then the job's own bar in the
+      // rail takes over from the queue on (§13.11).
+      let job = null;
       try {
-        const body = { component_id: preset.component_id, cad_model_revision_id: preset.revision.id, spec };
-        if (drawing_id) body.drawing_id = drawing_id; else body.title = title;
-        const job = drUnwrapJob(await API.post(token, "requestDrawingRender", body));
-        if (!job || !job.id) throw new Error("The server returned no job");
-        close();
-        if (opts.onRequested) opts.onRequested(job);
+        await drBusy(renderBtn, async () => {
+          const body = { component_id: preset.component_id, cad_model_revision_id: preset.revision.id, spec };
+          if (drawing_id) body.drawing_id = drawing_id; else body.title = title;
+          job = drUnwrapJob(await API.post(token, "requestDrawingRender", body));
+          if (!job || !job.id) throw new Error("The server returned no job");
+        });
       } catch (ex) {
         error(ex.message);
         renderBtn.disabled = false;
+        return;
       }
+      close();
+      if (opts.onRequested) opts.onRequested(job);
     };
   }
 
@@ -14626,6 +14805,42 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     if (at.type === "pocket") return `pocket at (${drNum(at.at?.[0])}, ${drNum(at.at?.[1])})`;
     return "";
   }
+
+  /** A job result's unmatched list in one shape: carried overrides that met no
+   *  feature, and pair rules that met no two holes. drawset reports the pairs
+   *  either as result.unmatched_rules [{ rule: "pair", D, cc, reason }] or folded
+   *  into unmatched_overrides with kind "pair" — both are read. A pair entry
+   *  comes out { pair: true, D, cc, reason }. */
+  function drUnmatched(result) {
+    const r = result && typeof result === "object" ? result : {};
+    const out = [], pairsSeen = new Set();
+    const isPair = (u) => u.rule === "pair" || u.kind === "pair";
+    const add = (u) => {
+      if (!u || typeof u !== "object") return;
+      if (!isPair(u)) { out.push(u); return; }
+      const D = u.D ?? u.at?.D ?? null, cc = u.cc ?? u.at?.cc ?? null;
+      const key = `${D}|${cc}`;
+      if (pairsSeen.has(key)) return;
+      pairsSeen.add(key);
+      out.push({ ...u, pair: true, D, cc });
+    };
+    for (const u of Array.isArray(r.unmatched_overrides) ? r.unmatched_overrides : []) add(u);
+    for (const u of Array.isArray(r.unmatched_rules) ? r.unmatched_rules : []) if (u && isPair(u)) add(u);
+    return out;
+  }
+  const drUnmatchedWords = (u) => (u.pair
+    ? `pair Ø${drNum(u.D)} c/c ${drNum(u.cc)}${u.reason ? ` — ${u.reason}` : ""}`
+    : `${u.kind || ""} on ${drAtWords(u.at)}${u.reason ? ` — ${u.reason}` : ""}`.trim());
+  /** The op Drop posts: remove_pair { D, cc } for a pair rule, remove_override for an override. */
+  const drUnmatchedDropOp = (u) => (u.pair
+    ? (u.D != null && u.cc != null ? { op: "remove_pair", D: Number(u.D), cc: Number(u.cc), reason: "" } : null)
+    : (u.at && u.kind ? { op: "remove_override", at: u.at, kind: u.kind, reason: "" } : null));
+  /** remove_pair only removes a pair the drawing's own patch carries (the core
+   *  refuses "no pair … in this patch" otherwise): a pair rule that comes from
+   *  the template body gets no Drop, since that click could never succeed. */
+  const drPatchHasPair = (patch, u) => (Array.isArray(patch?.pairs)
+    ? patch.pairs.some((r) => Math.abs(Number(r?.D) - Number(u.D)) < 0.01 && Math.abs(Number(r?.cc) - Number(u.cc)) < 0.01)
+    : false);
 
   /** The edge a position kind is measured from, in words: y → bottom / top, x → left / right. */
   const drEdgeWords = (kind, side) => (String(kind).startsWith("pos_y") ? (side === "max" ? "top" : "bottom") : (side === "max" ? "right" : "left")) + " edge";
@@ -14984,14 +15199,19 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     };
     async function startIterate(btn, msg) {
       const p = proposed();
-      if (!p || !state.cadRev) return;
-      btn.disabled = true;
+      if (!p || !state.cadRev || btn.__drBusy) return;
+      if (msg) setMsg(msg, "");
       try {
-        const job = drUnwrapJob(await API.post(token, "requestDrawingRender", {
-          component_id: drawing.owner_component_id, cad_model_revision_id: state.cadRev.id,
-          drawing_id: drawing.id, mode: "iterate", spec_patch_id: p.patch_id,
-        }));
-        if (!job || !job.id) throw new Error("The server returned no job");
+        // The request (drBusy's bar at the button), then the job's bar: in the
+        // rail under the checklist and, mirrored, under the Patch head.
+        const job = await drBusy(btn, async () => {
+          const j = drUnwrapJob(await API.post(token, "requestDrawingRender", {
+            component_id: drawing.owner_component_id, cad_model_revision_id: state.cadRev.id,
+            drawing_id: drawing.id, mode: "iterate", spec_patch_id: p.patch_id,
+          }));
+          if (!j || !j.id) throw new Error("The server returned no job");
+          return j;
+        });
         state.live = true; syncRender();
         mountRenderJob(job);
       } catch (ex) {
@@ -15064,8 +15284,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           if (tol.value.trim()) op.tol = tol.value.trim();
           if (name && name.value.trim()) op.name = name.value.trim();
         }
-        apply.disabled = true;
-        if (await postOps([op], msg, { key: drDimKey(r), tol: tol.value, name: name ? name.value : "" })) closeForm(); else sync();
+        if (await drBusy(apply, () => postOps([op], msg, { key: drDimKey(r), tol: tol.value, name: name ? name.value : "" }))) closeForm(); else sync();
       };
       apply.onclick = submit;
       const onKey = (e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") closeForm(); };
@@ -15101,9 +15320,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       from.onchange = sync;
       const submit = async () => {
         if (apply.disabled) return;
-        apply.disabled = true;
         const op = { op: "override_dimension", at: r.at, kind, from: from.value, reason: "" };
-        if (await postOps([op], msg, { key: drDimKey(r), from: from.value })) closeForm(); else sync();
+        if (await drBusy(apply, () => postOps([op], msg, { key: drDimKey(r), from: from.value }))) closeForm(); else sync();
       };
       apply.onclick = submit;
       from.onkeydown = (e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") closeForm(); };
@@ -15219,7 +15437,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const tmpl = spec?.template || null;
     const templateOk = !!tmpl && tmpl.kind === "template";
     const scopeBtns = {};
-    let promptInput = null, sendBtn = null, cardSlot = null;
+    let promptInput = null, sendBtn = null, sendBar = null, cardSlot = null;
     const promptMsg = el("div", { class: "dr-error", style: "display:none" });
     function syncScope() {
       const hasSel = state.sel.size > 0;
@@ -15258,28 +15476,33 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const syncApply = () => { apply.disabled = !checks.some((c) => c.cb.checked); };
       apply.onclick = async () => {
         const chosen = checks.filter((c) => c.cb.checked).map((c) => stripUi(c.op));
-        if (!chosen.length) return;
-        apply.disabled = true; discard.disabled = true; setMsg(msg, "");
+        if (!chosen.length || apply.__drBusy) return;
+        discard.disabled = true; setMsg(msg, "");
         const extra = { origin: "dialogue", turn_id: res.turn_id, prompt, selection, proposal: pr };
         if (promote && chosen.some((o) => core.levelOf && core.levelOf(o) === "template")) {
-          try {
-            const r = await API.post(token, "promoteDrawingSpecOps", { drawing_id: drawing.id, ops: chosen, parent_seq: parentSeq(), turn_id: res.turn_id, note: prompt, prompt, selection, proposal: pr });
-            for (const t of Array.isArray(r.touched) ? r.touched : []) state.touched.add(drTouchKey(t));
-            // The template moved: the whole surface repaints on the new version.
-            await reload();
-          } catch (ex) {
-            if (ex.status === 409) { await reload(); return; }
-            const rejected = Array.isArray(ex.body?.rejected) ? ex.body.rejected : [];
-            setMsg(msg, rejected.length ? rejected.map((x) => x.reason).join(" · ") : ex.message, "error");
-            apply.disabled = false; discard.disabled = false;
-          }
+          await drBusy(apply, async () => {
+            try {
+              const r = await API.post(token, "promoteDrawingSpecOps", { drawing_id: drawing.id, ops: chosen, parent_seq: parentSeq(), turn_id: res.turn_id, note: prompt, prompt, selection, proposal: pr });
+              for (const t of Array.isArray(r.touched) ? r.touched : []) state.touched.add(drTouchKey(t));
+              // The template moved: the whole surface repaints on the new version.
+              await reload();
+            } catch (ex) {
+              if (ex.status === 409) { await reload(); return false; }
+              const rejected = Array.isArray(ex.body?.rejected) ? ex.body.rejected : [];
+              setMsg(msg, rejected.length ? rejected.map((x) => x.reason).join(" · ") : ex.message, "error");
+              apply.disabled = false; discard.disabled = false;
+              return false;
+            }
+          });
           return;
         }
-        if (await postOps(chosen, msg, null, extra)) closeCard(); else { apply.disabled = false; discard.disabled = false; }
+        if (await drBusy(apply, () => postOps(chosen, msg, null, extra))) closeCard(); else { apply.disabled = false; discard.disabled = false; }
       };
       discard.onclick = async () => {
-        discard.disabled = true;
-        try { if (res.turn_id) await API.post(token, "discardDrawingSpecTurn", { turn_id: res.turn_id }); } catch { /* the card closes either way */ }
+        apply.disabled = true;
+        await drBusy(discard, async () => {
+          try { if (res.turn_id) await API.post(token, "discardDrawingSpecTurn", { turn_id: res.turn_id }); } catch { /* the card closes either way */ }
+        });
         closeCard();
       };
       const opLine = (o) => {
@@ -15308,19 +15531,24 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         msg,
       ].filter(Boolean)));
     }
+    // The model takes 10–40 s: the bar spans the row under Ask from the click
+    // to the card (τ 12 s ≈ 57% at 10 s, 87% at 25 s), and Enter cannot send twice.
     async function send() {
       const prompt = promptInput.value.trim();
-      if (!prompt) return;
+      if (!prompt || sendBtn.__drBusy) return;
       setMsg(promptMsg, "");
-      promptInput.disabled = true; sendBtn.disabled = true;
+      promptInput.disabled = true;
       const selection = selectionPayload();
-      try {
-        const res = await API.post(token, "proposeDrawingSpecOps", { drawing_id: drawing.id, prompt, scope: state.scope, selection, parent_seq: parentSeq() });
-        paintCard(res, prompt, selection);
-        promptInput.value = "";
-      } catch (ex) {
-        setMsg(promptMsg, ex.message, "error");
-      }
+      await drBusy(sendBtn, async () => {
+        try {
+          const res = await API.post(token, "proposeDrawingSpecOps", { drawing_id: drawing.id, prompt, scope: state.scope, selection, parent_seq: parentSeq() });
+          paintCard(res, prompt, selection);
+          promptInput.value = "";
+        } catch (ex) {
+          setMsg(promptMsg, ex.message, "error");
+          return false;
+        }
+      }, { slot: sendBar, ms: 12000, label: "Asking" });
       promptInput.disabled = false; sendBtn.disabled = false;
     }
     function paintPrompt() {
@@ -15335,6 +15563,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       tBtn.disabled = !templateOk;
       promptInput = el("input", { class: "up-text", type: "text", placeholder: "Ask…", maxlength: "2000", "aria-label": "Ask", onkeydown: (e) => { if (e.key === "Enter") send(); } });
       sendBtn = el("button", { class: "btn btn-xs btn-primary", type: "button", onclick: send }, "Send");
+      sendBar = el("div", {});
       cardSlot = el("div", {});
       setChildren(promptSlot, el("div", { class: "dr-prompt" }, [
         el("div", { class: "dr-row" }, [
@@ -15345,6 +15574,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           el("label", { class: "form-row dr-prompt-field" }, [el("span", { class: "form-label" }, "Ask"), promptInput]),
           sendBtn,
         ]),
+        sendBar,
         promptMsg,
         cardSlot,
       ]));
@@ -15382,27 +15612,37 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     // ordinary remove_override, audited like any op.
     const unmatchedSlot = el("div", {});
     const patchErr = el("div", { class: "dr-error", style: "display:none" });
+    // The list is the issue's job — the one that drew the sheet in the file
+    // pane; while a candidate is open its own list stands in the compare
+    // strip, each line with the same Drop. A pair rule that met no two holes
+    // drops with remove_pair { D, cc }.
+    const dropUnmatched = async (u, btn, errNode) => {
+      const op = drUnmatchedDropOp(u);
+      if (!op) return;
+      if (!(await drBusy(btn, () => postOps([op], errNode)))) btn.disabled = false;
+      else btn.closest(".dr-patch-line")?.remove();
+    };
+    const unmatchedLine = (u, errNode) => el("div", { class: "dr-patch-line" }, [
+      el("span", { class: "is-warn" }, drUnmatchedWords(u)),
+      editable && drUnmatchedDropOp(u) && (!u.pair || drPatchHasPair(state.latest?.patch, u))
+        ? el("button", { class: "btn btn-xs", type: "button", onclick: (e) => dropUnmatched(u, e.currentTarget, errNode) }, "Drop")
+        : null,
+    ].filter(Boolean));
     function paintUnmatched() {
-      const list = Array.isArray(spec?.issue_job?.result?.unmatched_overrides) ? spec.issue_job.result.unmatched_overrides : [];
+      const list = drUnmatched(spec?.issue_job?.result);
       if (!dims.length || !list.length) { setChildren(unmatchedSlot); return; }
       setChildren(unmatchedSlot,
         el("h4", { class: "drawing-rail-h is-warn" }, `Unmatched overrides (${list.length})`),
-        el("div", { class: "dr-patch-lines" }, list.map((u) => el("div", { class: "dr-patch-line" }, [
-          el("span", { class: "is-warn" }, `${u.kind || ""} on ${drAtWords(u.at)}${u.reason ? ` — ${u.reason}` : ""}`.trim()),
-          editable && u.at && u.kind
-            ? el("button", { class: "btn btn-xs", type: "button", onclick: async (e) => {
-                const b = e.currentTarget; b.disabled = true;
-                if (!(await postOps([{ op: "remove_override", at: u.at, kind: u.kind, reason: "" }], patchErr))) b.disabled = false;
-                else b.closest(".dr-patch-line")?.remove();
-              } }, "Drop")
-            : null,
-        ].filter(Boolean)))),
+        el("div", { class: "dr-patch-lines" }, list.map((u) => unmatchedLine(u, patchErr))),
       );
     }
     // ---- Patch (n): one line per difference between the latest snapshot and
     // the accepted one (whatever the latest row's status: it is what the next
     // Apply builds on and the next Render sends), × where ops put it back
     const patchSlot = el("div", {});
+    // Kept across paintPatch (the same node is put back), so a live job's bar
+    // survives an Apply or × while the render runs.
+    const patchJobSlot = el("div", {});
     const acceptedPatch = () => (spec?.patch && spec.patch.patch) || null;
     const acceptedSeq = () => (spec?.patch ? Number(spec.patch.seq) || 0 : 0);
     function paintPatch() {
@@ -15419,13 +15659,14 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           el("span", { style: "flex:1" }),
           renderBtn,
         ].filter(Boolean)),
+        patchJobSlot,
         lines.length
           ? el("div", { class: "dr-patch-lines" }, lines.map((l) => el("div", { class: "dr-patch-line" }, [
               el("span", {}, l.text),
               l.remove && editable
                 ? el("button", { class: "btn btn-xs", type: "button", "aria-label": "Remove", onclick: async (e) => {
-                    const b = e.currentTarget; b.disabled = true;
-                    if (!(await postOps(l.remove, patchErr))) b.disabled = false;
+                    const b = e.currentTarget;
+                    if (!(await drBusy(b, () => postOps(l.remove, patchErr)))) b.disabled = false;
                   } }, "×")
                 : null,
             ].filter(Boolean))))
@@ -15458,14 +15699,17 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
               // diffed like any other step; nothing moves until Keep.
               t.drift && t.current_version != null && editable
                 ? el("button", { class: "btn btn-xs", type: "button", style: "margin-left:0.4rem", onclick: async (e) => {
-                    const b = e.currentTarget; b.disabled = true;
-                    try {
-                      await API.post(token, "rebaseDrawingSpec", { drawing_id: drawing.id, parent_seq: parentSeq() });
-                      await reload();
-                    } catch (ex) {
-                      if (ex.status === 409) { await reload(); return; }
-                      setMsg(patchErr, ex.message, "error"); b.disabled = false;
-                    }
+                    const b = e.currentTarget;
+                    await drBusy(b, async () => {
+                      try {
+                        await API.post(token, "rebaseDrawingSpec", { drawing_id: drawing.id, parent_seq: parentSeq() });
+                        await reload();
+                      } catch (ex) {
+                        if (ex.status === 409) { await reload(); return false; }
+                        setMsg(patchErr, ex.message, "error"); b.disabled = false;
+                        return false;
+                      }
+                    });
                   } }, "Rebase")
                 : null,
               t.on_versions && Object.keys(t.on_versions).length
@@ -15508,8 +15752,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             const r = to ? drRevertOps(state.latest?.patch || null, to) : { refused: "snapshot not loaded" };
             if (r.ops && r.ops.length) {
               action = el("button", { class: "btn btn-xs", type: "button", onclick: async (e) => {
-                e.currentTarget.disabled = true;
-                if (await postOps(r.ops, msg)) close(); else e.currentTarget.disabled = false;
+                const b = e.currentTarget;
+                if (await drBusy(b, () => postOps(r.ops, msg))) close(); else b.disabled = false;
               } }, "Revert");
             } else action = el("button", { class: "btn btn-xs", type: "button", disabled: true, title: r.refused || "nothing to revert" }, "Revert");
           }
@@ -15529,7 +15773,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       if (!job || !filePane.isConnected) return;
       const failed = job.status !== "done";
       const cap = (txt) => el("div", { class: "drawing-split-cap" }, txt);
-      const candTarget = el("div", { class: "drawing-file-target" }, el("div", { class: "loading" }, "Loading the candidate…"));
+      const candTarget = el("div", { class: "drawing-file-target" }, drLoading("Loading the candidate…"));
       const strip = el("div", { class: "dr-strip" }, el("div", { class: "loading" }, ""));
       const left = el("div", { class: "drawing-split-pane" }, [cap(`Issue ${letter}`), fileTarget]);
       const right = el("div", { class: "drawing-split-pane" }, [cap("Candidate"), candTarget]);
@@ -15583,29 +15827,33 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         if (curGeo && candGeo) head.push(dot(), seg(curGeo === candGeo ? `geometry same as Issue ${letter}` : `geometry differs from Issue ${letter}`, curGeo !== candGeo));
       }
       const verify = drVerifyLines(result);
-      const unmatched = Array.isArray(result.unmatched_overrides) ? result.unmatched_overrides : [];
+      const unmatched = drUnmatched(result);
       const stripErr = el("div", { class: "dr-error", style: "display:none" });
       const busy = (b, on) => { for (const x of b) x.disabled = on; };
-      const finish = async (action, buttons) => {
+      const finish = async (action, buttons, btn) => {
+        if (btn.__drBusy) return;
         busy(buttons, true); setMsg(stripErr, "");
-        try {
-          await API.post(token, action, { job_id: job.id });
-          _drSurfaceTouched.delete(drawing.id); _drSurfaceJobs.delete(drawing.id); _drSurfaceDismissed.delete(job.id);
-          await reload();
-        } catch (ex) {
-          // 409: kept or discarded meanwhile, or a later patch accepted — the
-          // surface repaints to what is true now.
-          if (ex.status === 409) { await reload(); return; }
-          setMsg(stripErr, ex.message, "error"); busy(buttons, false);
-        }
+        await drBusy(btn, async () => {
+          try {
+            await API.post(token, action, { job_id: job.id });
+            _drSurfaceTouched.delete(drawing.id); _drSurfaceJobs.delete(drawing.id); _drSurfaceDismissed.delete(job.id);
+            await reload();
+          } catch (ex) {
+            // 409: kept or discarded meanwhile, or a later patch accepted — the
+            // surface repaints to what is true now.
+            if (ex.status === 409) { await reload(); return false; }
+            setMsg(stripErr, ex.message, "error"); busy(buttons, false);
+            return false;
+          }
+        });
       };
       // Keep stands on every done job: the server admits each one
       // (acceptDrawingIteration) and fails the job itself when verification
       // failed; the amber lines are what drawset reports on a passing render
       // (§13.4 — a failed job offers Discard · Edit only).
       const buttons = [];
-      if (!failed) buttons.push(el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => finish("acceptDrawingIteration", buttons) }, "Keep"));
-      buttons.push(el("button", { class: "btn btn-sm", type: "button", onclick: () => finish("discardDrawingIteration", buttons) }, "Discard"));
+      if (!failed) buttons.push(el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: (e) => finish("acceptDrawingIteration", buttons, e.currentTarget) }, "Keep"));
+      buttons.push(el("button", { class: "btn btn-sm", type: "button", onclick: (e) => finish("discardDrawingIteration", buttons, e.currentTarget) }, "Discard"));
       // Edit: the pane closes, the candidate stays in the history, the next
       // Apply builds on its seq.
       buttons.push(el("button", { class: "btn btn-sm", type: "button", onclick: () => {
@@ -15620,7 +15868,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           ? el("dl", { class: "drawing-meta" }, verify.flatMap((l) => [el("dt", {}, l.label), el("dd", { class: l.warn ? "is-warn" : null }, l.text)]))
           : null,
         unmatched.length ? el("div", { class: "is-warn" }, `Unmatched overrides (${unmatched.length})`) : null,
-        ...unmatched.map((u) => el("div", { class: "is-warn" }, `${u.kind || ""} on ${drAtWords(u.at)}${u.reason ? ` — ${u.reason}` : ""}`.trim())),
+        unmatched.length ? el("div", { class: "dr-patch-lines" }, unmatched.map((u) => unmatchedLine(u, stripErr))) : null,
         el("div", { class: "dr-strip-actions" }, buttons),
         stripErr,
       );
@@ -15641,6 +15889,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       fromCadButton,
       setCadRev(rev) { state.cadRev = rev || null; syncRender(); },
       setLive(on) { state.live = !!on; syncRender(); },
+      showJobBar(node) { setChildren(patchJobSlot, node); },
       mountCompare,
       showFile,
       get editable() { return editable; },
@@ -15671,7 +15920,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const errEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.5rem" });
     const error = (msg) => { errEl.textContent = msg || ""; errEl.style.display = msg ? "" : "none"; };
 
-    const body = el("div", { style: "min-width:min(640px,88vw)" }, el("div", { class: "loading" }, "Loading…"));
+    const body = el("div", { style: "min-width:min(640px,88vw)" }, drLoading("Loading…"));
     const close = openModal(`Release ${word}`, body);
     const setTitle = (txt) => {
       const t = body.closest(".viewer-dialog")?.querySelector(".viewer-title");
@@ -15805,9 +16054,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
               p.geometry_same === true ? el("span", {}, "geometry same") : (p.geometry_same === false ? amber("geometry differs") : null),
             ])
           : dash()));
-        const un = Array.isArray(p.unmatched_overrides) ? p.unmatched_overrides : [];
+        const un = drUnmatched({ unmatched_overrides: p.unmatched_overrides, unmatched_rules: p.unmatched_rules });
         specRows.push(el("dt", {}, "Unmatched overrides"), el("dd", {}, un.length
-          ? lines(un.map((u) => amber(`${u.kind || ""} on ${drAtWords(u.at)}${u.reason ? ` — ${u.reason}` : ""}`.trim())))
+          ? lines(un.map((u) => amber(drUnmatchedWords(u))))
           : el("span", {}, "0")));
       }
       const dl = el("dl", { class: "drawing-meta" }, [
@@ -15831,19 +16080,25 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       ].filter(Boolean));
 
       releaseBtn.onclick = async () => {
+        if (releaseBtn.__drBusy) return;
         error("");
-        releaseBtn.disabled = true;
         cancelBtn.disabled = true;
-        try {
-          if (kind === "cad") await API.post(token, "releaseCadRevision", { cad_model_revision_id: revisionId });
-          else await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: revisionId, status: "released" });
-          close();
-          if (opts.onDone) await opts.onDone();
-        } catch (ex) {
-          error(ex.message);
-          releaseBtn.disabled = false;
-          cancelBtn.disabled = false;
-        }
+        let ok = false;
+        await drBusy(releaseBtn, async () => {
+          try {
+            if (kind === "cad") await API.post(token, "releaseCadRevision", { cad_model_revision_id: revisionId });
+            else await API.post(token, "setDrawingRevisionStatus", { drawing_revision_id: revisionId, status: "released" });
+            ok = true;
+          } catch (ex) {
+            error(ex.message);
+            releaseBtn.disabled = false;
+            cancelBtn.disabled = false;
+            return false;
+          }
+        });
+        if (!ok) return;
+        close();
+        if (opts.onDone) await opts.onDone();
       };
 
       body.replaceChildren(dl, errEl, buttons);
@@ -15876,7 +16131,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const date = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB") : "");
     const errEl = el("div", { style: "display:none;color:var(--danger,#e05454);font-size:0.8125rem;margin-top:0.5rem" });
     const error = (msg) => { errEl.textContent = msg || ""; errEl.style.display = msg ? "" : "none"; };
-    const body = el("div", { style: "min-width:min(640px,88vw)" }, el("div", { class: "loading" }, "Loading…"));
+    const body = el("div", { style: "min-width:min(640px,88vw)" }, drLoading("Loading…"));
     const close = openModal("Delete", body);
     const setTitle = (txt) => { const h = body.closest(".viewer-dialog")?.querySelector(".viewer-title"); if (h) h.textContent = txt; };
 
@@ -15929,14 +16184,21 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       ].filter(Boolean));
 
       deleteBtn.onclick = async () => {
-        error(""); deleteBtn.disabled = true; cancelBtn.disabled = true;
-        try {
-          await API.post(token, "deleteObject", { kind, id, confirm: confirmInp ? confirmInp.value.trim() : "" });
-          close();
-          if (opts.onDone) await opts.onDone();
-        } catch (ex) {
-          error(ex.message); deleteBtn.disabled = false; cancelBtn.disabled = false;
-        }
+        if (deleteBtn.__drBusy) return;
+        error(""); cancelBtn.disabled = true;
+        let ok = false;
+        await drBusy(deleteBtn, async () => {
+          try {
+            await API.post(token, "deleteObject", { kind, id, confirm: confirmInp ? confirmInp.value.trim() : "" });
+            ok = true;
+          } catch (ex) {
+            error(ex.message); deleteBtn.disabled = false; cancelBtn.disabled = false;
+            return false;
+          }
+        });
+        if (!ok) return;
+        close();
+        if (opts.onDone) await opts.onDone();
       };
       body.replaceChildren(dl, errEl, buttons);
     }
@@ -15956,8 +16218,10 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const token = API.getToken(role);
     let file = null;
     const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
-    const barFill = el("div", { style: "height:100%;background:var(--accent,#2fa564);width:0%;transition:width 0.15s" });
-    const progress = el("div", { style: "display:none;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden;margin-bottom:0.5rem" }, barFill);
+    // The drawings engine's bar (§13.11): the upload fills 0→80 from the real
+    // XHR progress, recording the revision creeps 80→96, the answer lands 100.
+    const progress = el("div", { style: "display:none;margin-bottom:0.5rem" });
+    let prog = null;
     const fileLabel = el("span", { style: "font-size:0.8125rem;color:var(--muted,#8b93a1);display:block;margin-top:2px" }, "No file chosen");
     const fileInp = el("input", { type: "file", accept: ".pdf,.png,.jpg,.jpeg,.tif,.tiff", style: "margin-top:4px" });
     fileInp.onchange = () => { file = fileInp.files?.[0] || null; fileLabel.textContent = file ? file.name : "No file chosen"; };
@@ -15973,11 +16237,17 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
 
     const upload = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async (ev) => {
       if (!file) { status.textContent = "Pick a file first."; return; }
+      if (ev.target.__drBusy) return;
+      ev.target.__drBusy = true;
       ev.target.disabled = true; status.textContent = "Uploading…"; progress.style.display = "";
+      if (prog) prog.stop();
+      prog = drProgress({ label: "Upload revision" });
+      setChildren(progress, prog.el);
+      prog.stage(2, 80, 4000, "");
       try {
         const { signedUrl, path } = await API.post(token, "docUploadUrl", { fileName: file.name });
-        await xhrPut(signedUrl, file, (p) => { barFill.style.width = `${p}%`; });
-        barFill.style.width = "100%"; status.textContent = "Recording revision…";
+        await xhrPut(signedUrl, file, (p) => { prog.stage(Math.min(78, p * 0.8), 80, 4000, ""); });
+        prog.stage(80, 96, 2000, ""); status.textContent = "Recording revision…";
         const res = await API.post(token, "addDrawingRevision", {
           drawing_id: drawing.id, storage_path: path, file_name: file.name,
           revision: revInp.value.trim() || null, notes: notes.value.trim() || null,
@@ -15985,6 +16255,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         // Report the outcome rather than closing on a generic success: a bump
         // changes each part's identity and should not vanish on a timer.
         const bumped = res.bumped || [];
+        prog.done(); ev.target.__drBusy = false;
+        await new Promise((r) => setTimeout(r, 500));
         body.replaceChildren(
           el("h3", { style: "margin:0 0 0.8rem;font-size:1rem" }, `Revision ${res.revision} saved`),
           bumped.length
@@ -15997,8 +16269,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: async () => { close(); await onDone(); } }, "Done")),
         );
       } catch (ex) {
-        status.textContent = ex.message; ev.target.disabled = false;
-        barFill.style.width = "0%"; progress.style.display = "none";
+        status.textContent = ex.message; ev.target.disabled = false; ev.target.__drBusy = false;
+        prog.fail();
       }
     } }, "Upload revision");
 
@@ -16022,7 +16294,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
   // is the moment it starts mattering, and that belongs in the part's trail.
   function adoptDrawingModal(drawing, role, onDone) {
     const token = API.getToken(role);
-    const box = el("div", {}, el("div", { class: "loading" }, "Loading parts…"));
+    const box = el("div", {}, drLoading("Loading parts…"));
     const close = openModal("Adopt drawing onto a part", box);
     let chosen = null;
     const status = el("span", { role: "status", style: "font-size:0.8125rem;color:#e05454;display:block;min-height:1.2em" }, "");
@@ -16032,13 +16304,16 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const search = el("input", { class: "up-text", type: "search", placeholder: "Search parts…", style: "width:100%;margin-bottom:0.4rem" });
       const list = el("div", { style: "max-height:240px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:6px" });
       const save = el("button", { class: "btn btn-sm btn-primary", type: "button", disabled: true, onclick: async (ev) => {
-        ev.target.disabled = true; status.textContent = "Adopting…";
-        try {
-          const res = await API.post(token, "adoptDrawing", { drawing_id: drawing.id, component_id: chosen.id });
-          close();
-          await onDone();
-          alert(`${drawing.drawing_number} is now drawing ${res.node_sequence} of ${chosen.name}. Its Change Log records the adoption.`);
-        } catch (ex) { status.textContent = ex.message; ev.target.disabled = false; }
+        const btn = ev.currentTarget; status.textContent = "";
+        let res = null;
+        const ok = await drBusy(btn, async () => {
+          try { res = await API.post(token, "adoptDrawing", { drawing_id: drawing.id, component_id: chosen.id }); }
+          catch (ex) { status.textContent = ex.message; btn.disabled = false; return false; }
+        });
+        if (ok === false || !res) return;
+        close();
+        await onDone();
+        alert(`${drawing.drawing_number} is now drawing ${res.node_sequence} of ${chosen.name}. Its Change Log records the adoption.`);
       } }, "Adopt");
       const paint = () => {
         const q = search.value.trim().toLowerCase();
@@ -16109,7 +16384,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const reload = async () => { await paint(); if (opts.onChange) await opts.onChange(); };
 
     async function paint(selectedRevisionId) {
-      setChildren(host, el("div", { class: "loading" }, "Loading drawing…"));
+      setChildren(host, drLoading("Loading drawing…"));
       // getDrawingSpec rides beside getDrawing (DYNAMIC_DRAWINGS §6): what
       // governs the drawing — template version, patch chain, the current
       // issue's render job and its signed sidecars. A 4xx/5xx leaves it null
@@ -16144,7 +16419,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       // it splits into the current issue and the candidate with the diff strip
       // under both (§6 "Compare, Keep, Discard"), and the target moves left.
       const fileTarget = el("div", { class: "drawing-file-target" },
-        el("div", { class: "loading" }, current ? "Loading the drawing…" : ""));
+        current ? drLoading("Loading the drawing…") : el("div", { class: "loading" }, ""));
       const filePane = el("div", { class: "drawing-file" }, fileTarget);
       if (!current) {
         setChildren(filePane, el("div", { class: "viewer-msg" }, [
@@ -16159,7 +16434,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       async function showRevision(rev) {
         if (!rev) return;
         disposeCurrent();
-        setChildren(fileTarget, el("div", { class: "loading" }, `Loading Issue ${rev.revision}…`));
+        setChildren(fileTarget, drLoading(`Loading Issue ${rev.revision}…`));
         try {
           const renderPdf = async (target) => {
             const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: rev.id });
@@ -16226,6 +16501,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         const panel = drawingRenderJobPanel(token, { onDone: async (j) => { _drSurfaceJobs.set(drawing.id, j); await reload(); } });
         setChildren(jobSlot, panel.el);
         panel.watch(job);
+        // An iterate job is most often started from the Patch head's Render:
+        // the same job's bar stands there too while it runs (§13.11).
+        if (layer && drLive(job) && job.mode === "iterate") layer.showJobBar(panel.addBar());
       };
       if (role === "rushroom" && drawing.owner_component_id) {
         API.post(token, "getComponentCad", { component_id: drawing.owner_component_id }).then((r) => {
@@ -16331,8 +16609,12 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           // partners. The label sits in the rail's label column, outside the box.
           ...(role === "rushroom"
             ? [el("dt", {}, "Supplier"), el("dd", {}, el("input", { type: "checkbox", "aria-label": "Supplier", checked: drawing.is_supplier_visible ? "checked" : null, onchange: async (e) => {
-                try { await API.post(token, "setDrawingSupplierVisibility", { drawing_id: drawing.id, is_supplier_visible: e.target.checked }); if (opts.onChange) await opts.onChange(); }
-                catch (ex) { alert(ex.message); e.target.checked = !e.target.checked; }
+                const cb = e.currentTarget;
+                await drBusy(cb, async () => {
+                  try { await API.post(token, "setDrawingSupplierVisibility", { drawing_id: drawing.id, is_supplier_visible: cb.checked }); if (opts.onChange) await opts.onChange(); }
+                  catch (ex) { alert(ex.message); cb.checked = !cb.checked; return false; }
+                });
+                cb.disabled = false;
               } }))] : []),
         ]),
         statusActions.length
@@ -16372,11 +16654,15 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           : null,
         el("span", { style: "flex:1" }),
         current
-          ? el("button", { class: "btn btn-xs", type: "button", onclick: async () => {
-              try {
-                const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: current.id });
-                window.open(url, "_blank", "noopener");
-              } catch (ex) { alert(ex.message); }
+          ? el("button", { class: "btn btn-xs", type: "button", onclick: async (e) => {
+              const b = e.currentTarget;
+              await drBusy(b, async () => {
+                try {
+                  const { url } = await API.post(token, "drawingFileUrl", { drawing_revision_id: current.id });
+                  window.open(url, "_blank", "noopener");
+                } catch (ex) { alert(ex.message); return false; }
+              });
+              b.disabled = false;
             } }, "⤓ Download")
           : null,
         // In its own modal, openModal already renders the one Close. Mounted in

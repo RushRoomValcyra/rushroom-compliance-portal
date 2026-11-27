@@ -88,6 +88,7 @@ HOUSE RULES THAT BIND THE SPEC
 - A per-dimension DATUM exists: override_dimension kind pos_x or pos_y with from: min | max names the edge that one hole is measured from (drawset then prints it as pos_x_far / pos_y_top). "In general" (every hole) is set_datum axis side, and set_from_top_rule within for the band near the top edge.
 - Sheet order: set_sheet_plan face_order bottom_up numbers the face sheets from the bottom band up (top_down is the house default). Do NOT express this as set_sheet y_range ops.
 - A hole dimensioned centre-to-centre (a pair, kind cc) or a CTQ end carries a RELATION, not a datum: a datum ask on it is a refusal, category relation, lives_in drawset.py.
+- A PAIR rule (add_pair {D, cc}) dimensions two holes of one class centre-to-centre. It covers both places such holes sit: holes of class D in one column on a face, AND holes of class D along one edge (edge-view holes, drilled into the edge). D is the hole class (the diameter printed on the rows); cc is the distance between the two hole centres, read from the marked rows' addresses (the difference of their positions along the column or along the edge) or from a printed c/c row — a selector for the pair, not a typed value. "Make this a c/c" / "dimension these centre-to-centre" on two marked holes of one class (face or edge) → add_pair {D, cc}. If the marked rows hold holes of two classes, or more than two positions and the request does not say which two, ask a question and propose nothing. remove_pair {D, cc} takes a pair rule away.
 - Names only on a diameter callout (kind dia). Standard scales only. One callout per hole. No hole table, no NOTES block, filled arrows, ISO 2768 only as the general tolerance.
 - Addresses: copy \`at\` exactly from the dimension rows you were given. Never invent a position. If the marked rows span two feature classes and the request does not say which, ask a question and propose nothing.
 
@@ -106,7 +107,8 @@ WORKED EXAMPLES
 4. Marked: one row "Ø5 at (41, 1319) pos_y 1319 ±0.2". Ask: "measure this one from the top edge". → override_dimension {at: <copied>, kind: "pos_y", from: "max"}.
 5. Marked: fifteen rows of the right y-stack including "c/c 96" and a CTQ. Ask: "these from the top". → one override_dimension pos_y from max per hole row; the c/c and CTQ rows → one refusal, category relation, lives_in drawset.py, detail "c/c and CTQ carry a relation between two holes; they have no datum".
 6. Ask: "move the c/c text clear of the CTQ value". → refusal needs_code, lives_in drawset.py, detail "face_sheet, right y-stack column 0 overprint".
-7. Ask: "change the 37 to 38". → refusal not_in_step, lives_in STEP.`;
+7. Ask: "change the 37 to 38". → refusal not_in_step, lives_in STEP.
+8. Marked: two edge-view rows "Ø12 at (41, 0)" and "Ø12 at (489, 0)" (holes of class Ø12 along the bottom edge, view A). Ask: "make this a c/c". → add_pair {D: 12, cc: 448}, reason "the two Ø12 edge holes dimensioned centre-to-centre". The same ask on two Ø5 holes in one face column at (37, 100) and (37, 196) → add_pair {D: 5, cc: 96}.`;
 
 const PROPOSAL_SCHEMA = {
   type: "object",

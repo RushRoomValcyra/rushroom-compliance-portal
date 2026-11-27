@@ -29,8 +29,8 @@ reported running before and passed after:
             mode iterate: drawingRenderUploadUrl only (a candidate, no issue)
   finishDrawingRender { storage_path, file_name, sha256, result }
             result carries dimension_list_sha256, geometry_sha256,
-            spec_body_sha256, patch_sha256, verify, unmatched_overrides and
-            artifacts { pdf, pngs[], dimensions, entities } (storage paths)
+            spec_body_sha256, patch_sha256, verify, unmatched_overrides,
+            unmatched_rules (pair rules that paired no holes) and artifacts { pdf, pngs[], dimensions, entities } (storage paths)
 
 Any failure -> finishDrawingRender { job_id, error }; the portal marks the
 running step failed and the rest skipped. A 409 from a report means the
@@ -427,14 +427,18 @@ def build_temp_spec(spec: dict, step_path: str, title_block: dict, cad_sha256: s
 
 
 def drawset_version(cfg: dict) -> str:
-    """git short hash when the drawset folder is itself a repo, else drawset.py's mtime."""
+    """git short hash (+ "-dirty" when drawset.py or specs/ differ from HEAD) when the drawset folder is itself a repo, else drawset.py's mtime."""
     d = cfg["drawset_dir"]
     try:
         r = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel", "--short", "HEAD"],
                            capture_output=True, text=True, timeout=10)
         lines = r.stdout.strip().splitlines()
         if r.returncode == 0 and len(lines) == 2 and os.path.realpath(lines[0]) == os.path.realpath(d):
-            return "git " + lines[1]
+            # uncommitted renderer code draws differently from HEAD: say so, or an issue traces to the wrong renderer
+            st = subprocess.run(["git", "-C", d, "status", "--porcelain", "--", "drawset.py", "specs"],
+                                capture_output=True, text=True, timeout=10)
+            dirty = st.returncode != 0 or bool(st.stdout.strip())
+            return "git " + lines[1] + ("-dirty" if dirty else "")
     except Exception:
         pass
     try:
@@ -740,6 +744,8 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         # the artefacts (local paths) and the unmatched overrides, from the summary when it has them
         st["local_artifacts"] = local_artifacts(summary, st["pdf_path"], st["temp_spec"]["set_name"], st.get("png_dir") or "")
         st["unmatched_overrides"] = list((summary or {}).get("unmatched_overrides") or []) if isinstance(summary, dict) else []
+        # pair rules (spec pairs, add_pair) that paired no two holes anywhere: [{rule, D, cc, reason}]
+        st["unmatched_rules"] = list((summary or {}).get("unmatched_rules") or []) if isinstance(summary, dict) else []
         if not legacy_portal:
             missing = [k for k in ("dimensions", "entities") if not st["local_artifacts"].get(k)]
             if missing:
@@ -747,7 +753,8 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             if not st["local_artifacts"]["pngs"]:
                 raise StepFailed("drawset wrote no sheet PNGs in the --png folder")
         data = {"dimension_list_sha256": dl, "step_sha256": shas[0], "product_id": st["product_id"],
-                "pngs": len(st["local_artifacts"]["pngs"]), "unmatched_overrides": st["unmatched_overrides"]}
+                "pngs": len(st["local_artifacts"]["pngs"]), "unmatched_overrides": st["unmatched_overrides"],
+                "unmatched_rules": st["unmatched_rules"]}
         if st["geometry_sha256"]:
             data["geometry_sha256"] = st["geometry_sha256"]
         if summary is not None:
@@ -755,6 +762,8 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
                               "wall_flags": summary.get("wall_flags"), "regression": summary.get("regression")}
         unmatched = " · %d unmatched override%s" % (len(st["unmatched_overrides"]), "" if len(st["unmatched_overrides"]) == 1 else "s") \
             if st["unmatched_overrides"] else ""
+        if st["unmatched_rules"]:
+            unmatched += " · %d unmatched rule%s" % (len(st["unmatched_rules"]), "" if len(st["unmatched_rules"]) == 1 else "s")
         return ("PASS · dimension list %s · geometry %s · STEP %s · %d PNG%s" % (
             dl[:8], (st["geometry_sha256"] or "—")[:8], shas[0][:8], len(st["local_artifacts"]["pngs"]), unmatched), data)
 
@@ -850,6 +859,7 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             result["verify"] = {"round_trip": sm.get("round_trip"), "completeness_missing": sm.get("completeness_missing"),
                                 "wall_flags": sm.get("wall_flags"), "regression": sm.get("regression")}
         result["unmatched_overrides"] = st.get("unmatched_overrides") or []
+        result["unmatched_rules"] = st.get("unmatched_rules") or []
         if st.get("artifacts"):
             result["artifacts"] = st["artifacts"]
         # the STEP sha this render was made from, inside result as well as the

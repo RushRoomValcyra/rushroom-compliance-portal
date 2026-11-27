@@ -644,3 +644,34 @@ Vocabulary added: **Unmatched overrides (n) · Drop · Rebase · Spec · vs Issu
 template changed since (vN) · iteration open · not recorded · geometry same /
 geometry differs**.
 
+### 13.11 Progress — every background action shows a bar (2026-11-27, v475)
+
+Asked 2026-11-27: "when there is a background work being done, there must be a
+progress bar … the user has zero chance to understand if a pressed button worked
+or not." One component, `drProgress`, in the upload zone's look
+(`.up-progress-row` · `.up-progress` · `.up-progress-bar` · `.up-progress-pct`);
+nothing new to learn, no explanatory text — a bar, the percentage, at most one
+stage word.
+
+| Work | Contract |
+|---|---|
+| **Render job** (New issue from CAD, Re-render, Render under Patch) | the bar sits above the stage checklist from the first paint of the job. The queue owns 0–8% ("Queued" while no worker has claimed it); the steps share the rest by weight (Claim 1 · Download 2 · Render 6 · Verify 2 · Upload 2 · Register / Candidate 1). A running step creeps through its band, goal = floor + (cap − floor)·(1 − 0.8·e^(−t/τ) − 0.2·e^(−t/12τ)), τ per step (Render 25 s), and every running bar carries a moving sheen, so a long stage — a job still queued with no worker included — never stands still even after its number has eased close to the band's cap; a gap between two polls creeps into the next band. Done → 100, then the surface repaints 0.7 s later; failed / timed out / cancelled → red at the step that failed, its word beside it; a poll that gives up (401/403/404) → red. An iterate job's bar is mirrored under the Patch head while it runs. A finished job seen on a repaint stands at 100 (or red) without animating |
+| **The click that starts a job** | the modal's Render and the rail's Re-render / Render carry the short-action bar for the request itself; the job's bar takes over from the queue on. The New issue modal shows the bar beside Render while the spec catalogue loads; red with "No drawing worker" / "No spec for this part" |
+| **Short actions** — Send (Ask), Apply (both forms), the card's Apply / Promote and Discard, ×, Drop, Rebase, Revert, Keep, Discard, Release, Delete, Download, Supplier, New drawing Save, Adopt | `drBusy(button, run)`: the button is disabled at once (a double click or a second Enter cannot fire twice); a small bar stands right after it, trickling toward 90% (τ 2.5 s); it lands on 100 and fades when the call answers, turns red and fades when it fails (the error text is where it was). Send is the long one (10–40 s): its bar spans the row under Ask, τ 12 s |
+| **Loading panes** | the surface ("Loading drawing…"), the file pane ("Loading the drawing…", and "Loading Issue X…" on a click in the issue history or on Plain PDF / Sheets), the candidate ("Loading the candidate…"), the release and delete previews (`previewRelease` / `previewDelete`, "Loading…") and Adopt's part list ("Loading parts…") show the bar under the text; + New issue's upload fills 0–80 from the real upload, 80–96 while the revision is recorded, 100 on the answer |
+| **Clean-up** | each bar runs one requestAnimationFrame loop that ends on done, on failure, and as soon as the bar has left the document (a repaint, the modal closed); nothing keeps spinning after an error |
+| **Accessibility** | `role="progressbar"` with `aria-valuemin` 0, `aria-valuemax` 100 and `aria-valuenow` following the bar; `aria-busy` true while it runs |
+
+**Unmatched pair rules (same release).** drawset reports a pair rule that met no
+two holes either as `result.unmatched_rules: [{ rule: "pair", D, cc, reason }]` or
+folded into `result.unmatched_overrides` with `kind: "pair"`; both are read. They
+list as "pair Ø8 c/c 32 — reason" in Unmatched overrides (n) on the rail (the
+current issue's job), in the compare strip (the candidate's job — the strip's
+lines now carry Drop too) and in the release modal (`previewRelease` passes
+`unmatched_rules`). Drop posts `remove_pair { D, cc, reason: "" }` through
+applyDrawingSpecOps. Drop shows only on a pair the drawing's own latest patch
+carries (`drPatchHasPair`): `remove_pair` removes only a patch pair, so a pair rule
+that lives in the template body lists without Drop — a button whose click could
+never succeed is not offered; changing the template's pairs goes through Ask at
+Template scope.
+

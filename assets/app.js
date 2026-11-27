@@ -14827,9 +14827,12 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     for (const [k, name] of Object.entries(b.edge_names || {})) if ((a.edge_names || {})[k] !== name) op({ op: "name_edge", edge: k, name });
     for (const k of Object.keys(a.edge_band || {})) if (!(k in (b.edge_band || {}))) op({ op: "set_edge_band", edge: k, text: null });
     for (const [k, text] of Object.entries(b.edge_band || {})) if ((a.edge_band || {})[k] !== text) op({ op: "set_edge_band", edge: k, text });
-    // views and sheets: id assignment and derivation live in drawset
-    if (!same(a.views || {}, b.views || {})) return refuse("views");
-    if (!same(a.sheets || {}, b.sheets || {})) return refuse("sheets");
+    // views and sheets: id assignment and derivation live in drawset. A
+    // drawing with no accepted patch yet compares against the empty schema-1
+    // structure, not against {} (found live on the first flat_panel drawing).
+    const EMPTY = core.emptyPatch(null);
+    if (!same(a.views || EMPTY.views, b.views || EMPTY.views)) return refuse("views");
+    if (!same(a.sheets || EMPTY.sheets, b.sheets || EMPTY.sheets)) return refuse("sheets");
     return { ops };
   }
 

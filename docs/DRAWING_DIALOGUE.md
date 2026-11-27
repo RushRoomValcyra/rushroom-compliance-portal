@@ -5,7 +5,7 @@ Design, 2026-11-27. Refines `docs/DYNAMIC_DRAWINGS.md` §4.2 / §7 Phase 5.
 portal-api `promoteDrawingSpecOps` · `discardDrawingSpecTurn` ·
 `getDrawingSpecVersion`, the worker `Mirror`, drawset `plan` / `from` /
 `pos_x_far`; UI contract in DRAWINGS_TAB_UX §13.9); §9 decided as recommended.
-Deployed 2026-11-27; §8 proofs 1–4, 7 and 8 held live the same morning on Side Panel Left (ROADMAP has the record); 6 and 9 wait for the first drawing on `flat_panel`.
+Deployed 2026-11-27; all §8 proofs held live the same morning — 1–4, 7, 8 and 10 on Side Panel Left, 6, 9 and 11 on Side Panel Right, the first drawing on `flat_panel` (ROADMAP has the record; flat_panel is at v3, promoted, `face_order: bottom_up`).
 
 ## 1 What was asked
 

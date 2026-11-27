@@ -217,6 +217,9 @@ test("the rail: scope row, Ask, the card, Promote wording, the From form, the sw
   assert.match(app, /const drTouchKey = \(r\) => `\$\{r\.sheet\}\|\$\{r\.feature\}\|\$\{String\(r\.kind\)\.replace\(\/\^pos_y_top\$\/, "pos_y"\)\.replace\(\/\^pos_x_far\$\/, "pos_x"\)\}`/);
   assert.match(app, /state\.touched\.add\(drTouchKey\(t\)\)/);
   assert.match(app, /core\.touchedEntities\(pend, dims\)/, "the touched set is rebuilt from the pending lines");
+  // A drawing with no accepted patch compares its views/sheets against the empty schema structure, not {}
+  // (found live on the first flat_panel drawing: Patch read (0) after a set_sheet_plan).
+  assert.match(app, /const EMPTY = core\.emptyPatch\(null\);\n\s*if \(!same\(a\.views \|\| EMPTY\.views, b\.views \|\| EMPTY\.views\)\)/);
   assert.ok(!/state\.touched\.add\(drDimKey/.test(app), "no touched key bypasses the swap pair");
   const sup = read("supplier.html");
   assert.ok(!sup.includes("drawing-spec-core"), "the supplier shell does not load the vocabulary");

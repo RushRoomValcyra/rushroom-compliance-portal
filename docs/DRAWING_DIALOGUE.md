@@ -92,7 +92,10 @@ Rules:
   whose ceiling is lower stays in this drawing's patch and the card says so on
   its line ("stays on this drawing: a callout is one part's business"). Under
   *This drawing*, nothing is promoted. Under *This callout*, an op with no
-  `at` is a refusal (`category: scope`, "mark nothing and choose This drawing").
+  `at` is offered **unticked** (`above_scope: true`) with its level badge;
+  ticking it is the widening, and it applies at its own level. It was a
+  refusal (`category: scope`) until 2026-11-27 (v474): a marked box plus a
+  general ask then produced a card with nothing to apply.
 - Template scope is offered only when the drawing is on a template version
   (`kind = template`). A legacy `part_spec` drawing (side_panel_left) shows the
   control disabled with "migrate to flat_panel first" (DECISIONS 2026-11-26,

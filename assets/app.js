@@ -15242,7 +15242,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       })),
       region_model: state.region ? { face: state.region.face || "", view: state.region.view || "", x: state.region.x, y: state.region.y } : null,
     });
-    const stripUi = (op) => { const o = { ...op }; delete o.level; delete o.promotable; delete o.stays_on_drawing; delete o.targets; return o; };
+    const stripUi = (op) => { const o = { ...op }; delete o.level; delete o.promotable; delete o.stays_on_drawing; delete o.above_scope; delete o.targets; return o; };
     function paintCard(res, prompt, selection) {
       const pr = res.proposal || {};
       const ops = Array.isArray(pr.operations) ? pr.operations : [];
@@ -15252,7 +15252,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const msg = el("div", { class: "dr-error", style: "display:none" });
       const promote = state.scope === "template" && ops.some((o) => o.promotable);
       const applyText = promote ? `Promote to ${tmpl.name} v${Number(tmpl.current_version || tmpl.version) + 1}` : "Apply";
-      const apply = el("button", { class: "btn btn-xs btn-primary", type: "button", disabled: !ops.length }, applyText);
+      const apply = el("button", { class: "btn btn-xs btn-primary", type: "button", disabled: !ops.some((o) => !o.above_scope) }, applyText);
       const discard = el("button", { class: "btn btn-xs", type: "button" }, "Discard");
       const closeCard = () => setChildren(cardSlot);
       const syncApply = () => { apply.disabled = !checks.some((c) => c.cb.checked); };
@@ -15283,7 +15283,8 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         closeCard();
       };
       const opLine = (o) => {
-        const cb = el("input", { type: "checkbox", checked: "checked", onchange: syncApply });
+        // An op past the marked callouts is offered unticked: ticking it is the widening.
+        const cb = el("input", { type: "checkbox", checked: o.above_scope ? null : "checked", onchange: syncApply });
         checks.push({ cb, op: o });
         return el("label", { class: "dr-card-op" }, [
           cb,

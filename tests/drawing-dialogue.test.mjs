@@ -154,7 +154,8 @@ test("portal-ai: the proposal schema's op enum is OPS, the scope is read from th
   assert.match(src, /LEVELS\.includes\(body\.scope\)/, "scope comes from the body, defaulting to drawing");
   assert.match(src, /levelOf\(op\)/, "the level is the core's constant, never a model field");
   assert.ok(!/level:\s*\{\s*type:\s*"string"/.test(src), "the schema must not let the model propose a level");
-  assert.match(src, /category:\s*"scope"/, "a callout-scope op without an address is a scope refusal");
+  assert.match(src, /above_scope = scope === "callout" && op\.at === undefined/, "a callout-scope op without an address is offered, flagged above_scope");
+  assert.doesNotMatch(src, /category:\s*"scope"/, "no op is refused only for its scope");
   assert.match(src, /drawing_spec_turns"\)\.insert\(\{[\s\S]*scope,/, "the turn row records the scope");
   assert.match(src, /cache_control:\s*\{\s*type:\s*"ephemeral"\s*\}/, "the system block is cached");
   assert.match(src, /thinking:\s*\{\s*type:\s*"adaptive"\s*\}/);
@@ -206,6 +207,8 @@ test("the rail: scope row, Ask, the card, Promote wording, the From form, the sw
   assert.match(app, /"discardDrawingSpecTurn"/);
   assert.match(app, /origin: "dialogue", turn_id: res\.turn_id/);
   assert.match(app, /"stays on this drawing"/);
+  assert.match(app, /checked: o\.above_scope \? null : "checked"/, "an op past the marked callouts is offered unticked");
+  assert.match(app, /delete o\.above_scope/, "the flag never reaches the patch");
   // A card with no operations offers Discard alone (asked 2026-11-27: "why can't I press Apply?").
   assert.match(app, /ops\.length \? \[apply, discard\] : \[discard\]/);
   assert.match(app, /const POS_FORM = \{ pos_x: "pos_x", pos_x_far: "pos_x", pos_y: "pos_y", pos_y_top: "pos_y" \}/);
@@ -229,6 +232,6 @@ test("the rail: scope row, Ask, the card, Promote wording, the From form, the sw
   assert.match(html, /drawing-spec-core\.mjs\?v=47\d/);
   for (const a of ["app.js", "styles.css"]) {
     const v = (html.match(new RegExp(`assets/${a}\\?v=(\\d+)`)) || [])[1];
-    assert.ok(Number(v) >= 473, `${a} not bumped to 473`);
+    assert.ok(Number(v) >= 474, `${a} not bumped to 474`);
   }
 });

@@ -94,7 +94,7 @@ HOUSE RULES THAT BIND THE SPEC
 WHAT IS CODE, NOT SPEC (refuse with needs_code and the file named): a new dimension kind; a cone or countersink callout; a slot class; a section with a normal other than x; a front- or rear-edge view; moving a text; the c/c–CTQ overprint (drawset.py face_sheet, right y-stack column 0); a per-hole position tolerance (drawset.py face_sheet, ptol per sheet); suppressing one dimension; a hole table; a NOTES block; a non-standard scale; any typed length. Anything about the 3D model or the STEP file: not_in_step, lives_in STEP. Anything that contradicts a house rule above: house_style, lives_in house_rule.
 
 SCOPE
-The engineer chose a scope before asking: callout, drawing or template. You never choose or change it; propose the operations the request needs and let the levels in the vocabulary card speak. Under scope callout, every operation must carry an \`at\` taken from the marked rows; a request with nothing to attach it to is a refusal with category scope ("mark nothing and choose This drawing"). Under scope template, prefer kind-level and rule-level operations (set_tolerance, set_datum, set_sheet_plan, set_hole_rule …) over per-feature overrides.
+The engineer chose a scope before asking: callout, drawing or template. You never choose or change it; propose the operations the request needs and let the levels in the vocabulary card speak. Under scope callout, prefer operations that carry an \`at\` taken from the marked rows; when the request plainly reaches past them (a kind tolerance, a sheet plan, a datum for every hole), still propose the operation without \`at\`: the portal offers it unticked, and the engineer decides. Never refuse a request only because of the scope. Under scope template, prefer kind-level and rule-level operations (set_tolerance, set_datum, set_sheet_plan, set_hole_rule …) over per-feature overrides.
 
 OUTPUT
 JSON only, in the schema given. For each operation: op, args_json (the arguments as one JSON object string, exactly the keys the card lists), a reason ≤ 160 characters in the engineer's words, and targets (the feature ids the rows you used carry, e.g. "H21"). Refusals name the request in the engineer's words, the category, where it lives and one line of detail. Questions are one sentence each. summary is one sentence.
@@ -373,13 +373,14 @@ export async function proposeDrawingSpecOps(body: any, ctx: Ctx): Promise<Respon
       refusals.push({ request: raw.reason || opName, category: "house_style", lives_in: "portal", detail: `${version.name} is a per-part spec with hand-written sheets; migrate the drawing to flat_panel first (decision 5)` });
       continue;
     }
-    if (scope === "callout" && op.at === undefined) {
-      refusals.push({ request: raw.reason || opName, category: "scope", lives_in: "portal", detail: "this changes more than one callout: choose This drawing" });
-      continue;
-    }
+    // Under This callout an op without an address reaches past the marked rows.
+    // It is offered unticked rather than refused: the engineer widens the scope
+    // by ticking it, and portal-api applies it at its own level.
+    const above_scope = scope === "callout" && op.at === undefined;
     operations.push({
       ...op,
       level,
+      above_scope,
       promotable: scope === "template" && level === "template",
       stays_on_drawing: scope === "template" && level !== "template",
       targets: Array.isArray(o?.targets) ? o.targets.map((t: any) => String(t)).slice(0, 50) : [],

@@ -1625,3 +1625,15 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/DYNAMIC_DRAWINGS.md`, `docs/DRAWING_RENDER.md`, `supabase/functions/_shared/drawing-spec-core.mjs`, `supabase/functions/portal-api/index.ts`, `tools/drawing-worker/worker.py`, `docs/DECISIONS.md`.
 
 ---
+
+## 2026-11-27 — The drawing dialogue: the engineer chooses the scope; a template change is a promoted version proved on one drawing first; the Mac file is a mirror
+
+**Decision:** ziirvass took every recommendation of `docs/DRAWING_DIALOGUE.md` §9, one by one: (1) the portal holds the current template body and the worker mirrors it into `specs/<name>.yaml` (`.bak` kept); a hand edit on the Mac still registers as a new version; (2) after a promotion every other drawing on that template rebases one at a time, each a candidate with a diff and a Keep, the count per version visible in the register — no batch; (3) the per-callout datum `override_dimension { from }` covers `pos_x` and `pos_y` from the start; (4) with something marked, the scope row preselects *This callout*; (5) the prompt row sits under the selection chips in the Dimensions section; (6) a drawing on a legacy `part_spec` cannot use Template scope — it migrates to `flat_panel` first; (7) any Rushroom user may promote, as Keep and Release today. With them the design itself: the scope of a turn (this callout · this drawing · the template) is a control the engineer sets, never an inference the model makes; `set_sheet_plan { face_order }` is a derivation knob, not three hand ranges; a dimension measured from the other edge is a different dimension (`pos_y_top`, `pos_x_far`), so the diff and the geometry hash say so; a template-scope Apply writes a new immutable `drawing_spec_versions` row (`origin = portal`) and carries the asking drawing onto it before any other drawing sees "v2 available".
+
+**Why:** Whether fifty drawings change is not something a model should guess, and asking on every turn would be the same cost in the other direction. Promote inverts nothing decided on 2026-11-26 — truth already lived in the portal; the file on the Mac had stayed the author only because no one had asked to edit the template from the portal. Per-hole *position tolerance* stays code because it changes the stack layout; per-hole *datum* is a lookup into the from-top stack drawset already keeps, so the earlier exclusion was right for the one and wrong for the other. One rebase at a time because each is a verified, release-facing change to a document a supplier may hold.
+
+**Consequences:** Phase 5 grows from 3 to 5 days (drawset `plan` and `from`, migration 0069, `promoteDrawingSpecOps`, the worker mirror, the prompt row with its scope control; eleven proofs in DRAWING_DIALOGUE §8); the §10 out-of-scope line on template editing is struck; `OP_LEVEL` joins `SPEC_VOCAB` as a tested constant.
+
+**Files changed:** `docs/DRAWING_DIALOGUE.md`, `docs/DYNAMIC_DRAWINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`.
+
+---

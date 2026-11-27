@@ -302,6 +302,13 @@ cannot widen the vocabulary: the op enum in its JSON schema and the
 validator's op set are generated from one constant and a static test asserts
 they are equal.
 
+Refined 2026-11-27 in `docs/DRAWING_DIALOGUE.md` before Phase 5 is built: the
+engineer chooses the **scope** of a turn (this callout · this drawing · the
+template) on the prompt row, the vocabulary gains `set_sheet_plan` (face-sheet
+order) and `override_dimension { from }` (a per-dimension datum on `pos_x` /
+`pos_y`), and a template-scope Apply **promotes** a new immutable template
+version proved on the asking drawing first.
+
 ### 4.3 Layer 3 — outside the vocabulary is code, and the chat says so
 
 drawset's vocabulary is closed. The following are **not** spec operations and
@@ -733,7 +740,7 @@ row; a marquee over the right y-stack selects exactly those pos_y rows and
 reports a model rectangle on the inside face; a hand-uploaded issue still
 shows the iframe.
 
-### Phase 5 — the dialogue and the refusal path (3 days)
+### Phase 5 — the dialogue and the refusal path (5 days, was 3) — design refined 2026-11-27, see `docs/DRAWING_DIALOGUE.md` (scope control, `set_sheet_plan`, `override_dimension { from }`, Promote, worker mirror; its §8 replaces the five proofs below; its §9 decided as recommended the same day)
 
 Goal: prose plus marked entities become a reviewed proposal; anything outside
 the vocabulary is named as code.
@@ -786,7 +793,7 @@ geometry changed" and refuses nothing it did not refuse before; afterwards
 letter"). Registering an edited flat_panel.yaml creates v2; D stays pinned to
 v1 and the rail offers Rebase.
 
-Total: 20 days. Deploy order per phase as always: `supabase db push` →
+Total: 22 days (20 until 2026-11-27; Phase 5 re-estimated at 5 in DRAWING_DIALOGUE). Deploy order per phase as always: `supabase db push` →
 `supabase functions deploy portal-ai --no-verify-jwt` (Phase 5) →
 `supabase functions deploy portal-api --no-verify-jwt` → `git push origin
 main`; the worker must be restarted after Phase 2.
@@ -855,9 +862,11 @@ main`; the worker must be restarted after Phase 2.
 ## 10 Out of scope
 
 Multi-part drawing sets (one STEP per `parts[]` label; DRAWING_RENDER §6).
-Editing the house template itself from the portal (promote a patch into
+~~Editing the house template itself from the portal (promote a patch into
 flat_panel.yaml): a file on the Mac; the recurring-refusals list is the
-backlog mechanism. Direct JSON editing of the patch as an escape hatch.
+backlog mechanism.~~ Brought into scope 2026-11-27 as **Promote**
+(`docs/DRAWING_DIALOGUE.md` §5): a template-scope turn writes a new immutable
+version and the Mac file becomes a mirror. Direct JSON editing of the patch as an escape hatch.
 Sending PNG crops to the model (vision): the sidecar is complete and
 reproducible. Suppressing a single dimension. New drawset feature classes
 (cones, countersinks, slots), non-`x` sections, front/rear-edge views, the

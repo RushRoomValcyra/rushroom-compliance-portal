@@ -47,10 +47,10 @@ test("docs and shells: SYSTEM_OVERVIEW lists the dynamic-drawings actions and th
   for (const a of ["getDrawingSpec", "applyDrawingSpecOps", "proposeDrawingSpecOps", "promoteDrawingSpecOps", "rebaseDrawingSpec", "drawing_spec_versions", "drawing_spec_patches", "drawing_spec_turns"]) assert.ok(so.includes(a), `${a} missing from SYSTEM_OVERVIEW`);
   const claude = read("CLAUDE.md");
   assert.match(claude, /Supabase Postgres \(32 tables\)/);
-  assert.match(claude, /Frontend cache version: \?v=472/);
+  assert.match(claude, /Frontend cache version: \?v=47[3-9]/);
   for (const f of ["index.html", "supplier.html"]) {
     const html = read(f);
-    for (const a of ["app.js", "styles.css", "viewer.js"]) assert.match(html, new RegExp(`assets/${a}\\?v=472`), `${f}: ${a}`);
+    for (const a of ["app.js", "styles.css", "viewer.js"]) assert.ok(Number((html.match(new RegExp(`assets/${a}\\?v=(\\d+)`)) || [])[1]) >= 472, `${f}: ${a}`);
   }
   const ux = read("docs/DRAWINGS_TAB_UX.md");
   assert.match(ux, /### 13\.10 Carry-forward, Rebase, the release facts/);

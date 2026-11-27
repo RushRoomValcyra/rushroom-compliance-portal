@@ -15301,7 +15301,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         ...refusals.map((r) => el("div", { class: "dr-refused" }, `${r.request} — ${r.category} · ${r.lives_in}${r.detail ? `: ${r.detail}` : ""}`)),
         questions.length ? el("div", { class: "dr-card-h" }, "Questions") : null,
         ...questions.map((q) => el("div", { class: "dr-card-q" }, q)),
-        el("div", { class: "dr-card-actions" }, [apply, discard]),
+        // A proposal with nothing to apply (refusals and questions only) offers
+        // Discard alone: a greyed Apply reads as a fault, not as "nothing here".
+        el("div", { class: "dr-card-actions" }, ops.length ? [apply, discard] : [discard]),
         msg,
       ].filter(Boolean)));
     }

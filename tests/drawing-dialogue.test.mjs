@@ -206,6 +206,8 @@ test("the rail: scope row, Ask, the card, Promote wording, the From form, the sw
   assert.match(app, /"discardDrawingSpecTurn"/);
   assert.match(app, /origin: "dialogue", turn_id: res\.turn_id/);
   assert.match(app, /"stays on this drawing"/);
+  // A card with no operations offers Discard alone (asked 2026-11-27: "why can't I press Apply?").
+  assert.match(app, /ops\.length \? \[apply, discard\] : \[discard\]/);
   assert.match(app, /const POS_FORM = \{ pos_x: "pos_x", pos_x_far: "pos_x", pos_y: "pos_y", pos_y_top: "pos_y" \}/);
   assert.match(app, /field\("From", from\)/);
   assert.match(app, /measured from the other edge/);
@@ -227,6 +229,6 @@ test("the rail: scope row, Ask, the card, Promote wording, the From form, the sw
   assert.match(html, /drawing-spec-core\.mjs\?v=47\d/);
   for (const a of ["app.js", "styles.css"]) {
     const v = (html.match(new RegExp(`assets/${a}\\?v=(\\d+)`)) || [])[1];
-    assert.ok(Number(v) >= 472, `${a} not bumped to 472`);
+    assert.ok(Number(v) >= 473, `${a} not bumped to 473`);
   }
 });

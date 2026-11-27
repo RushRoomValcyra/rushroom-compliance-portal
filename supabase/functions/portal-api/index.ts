@@ -7517,6 +7517,18 @@ Deno.serve(async (req) => {
       if (pins?.geometry_sha256 && supPins?.geometry_sha256) specFacts.geometry_same = pins.geometry_sha256 === supPins.geometry_sha256;
       const { data: openPatches } = await tdb("drawing_spec_patches").select("id").eq("drawing_id", drawing.id).in("status", ["proposed", "candidate"]).limit(1);
       if ((openPatches || []).length) specWarnings.push("iteration_open");
+      // The template moved since this issue was rendered: an amber fact, not a
+      // block (§9 decision 8) — the issue was verified against the version that
+      // rendered it.
+      if (pins?.spec_version_id && specFacts.spec) {
+        const sp = specFacts.spec as Record<string, unknown>;
+        const { data: cat } = await tdb("drawing_render_specs").select("current_version_id").eq("name", String(sp.name)).maybeSingle();
+        if (cat?.current_version_id && cat.current_version_id !== pins.spec_version_id) {
+          const curV = await loadSpecVersion(tdb, cat.current_version_id);
+          sp.current_version = curV?.version ?? null;
+          specWarnings.push("template_drift");
+        }
+      }
     } catch { /* the spec facts never block a release */ }
     return json({
       kind, word,
@@ -8606,6 +8618,12 @@ Deno.serve(async (req) => {
     const { data: drawing } = await tdb("drawings").select("id, drawing_number, title, render_spec, current_revision_id, spec_patch_id")
       .eq("id", drawing_id).maybeSingle();
     if (!drawing) return json({ error: "Drawing not found" }, 404);
+    // A released issue is immutable with its pins (§3.4): the next letter is
+    // where an edit goes, and "New issue from CAD" carries the accepted patch.
+    if (drawing.current_revision_id) {
+      const { data: cur } = await tdb("drawing_revisions").select("id, revision, status").eq("id", drawing.current_revision_id).maybeSingle();
+      if (cur && (cur.status || "draft") !== "draft") return json({ error: `Issue ${cur.revision} is ${cur.status}; render the next letter from CAD and edit that` }, 409);
+    }
 
     // The validator admits; nothing outside the vocabulary gets a row.
     const checked = validateOps(ops);
@@ -8750,6 +8768,57 @@ Deno.serve(async (req) => {
       previous_version: version.version,
       patch_id: row?.id, seq: row?.seq, patch, patch_sha256, promoted: pro.promoted, kept: pro.kept, rejected, touched,
       base: { name: version.name, version: have.version },
+    });
+  }
+
+  // --- Rebase: the drawing moves to the template's CURRENT version by an
+  // explicit act (DYNAMIC_DRAWINGS §3.2, §6; Phase 6): a `carry` row with the
+  // latest snapshot on the new base, rendered as a candidate and diffed like
+  // any other step. A new template version never moves a drawing by itself.
+  if (action === "rebaseDrawingSpec") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "").trim();
+    if (!drawing_id) return json({ error: "drawing_id required" }, 400);
+    const { data: drawing } = await tdb("drawings").select("id, drawing_number, title, render_spec, current_revision_id, spec_patch_id")
+      .eq("id", drawing_id).maybeSingle();
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+    if (drawing.current_revision_id) {
+      const { data: cur } = await tdb("drawing_revisions").select("id, revision, status").eq("id", drawing.current_revision_id).maybeSingle();
+      if (cur && (cur.status || "draft") !== "draft") return json({ error: `Issue ${cur.revision} is ${cur.status}; New issue from CAD renders the next letter on the current template` }, 409);
+    }
+    const patches = await loadSpecPatches(tdb, drawing_id);
+    const latest = patches.length ? patches[patches.length - 1] : null;
+    const latestSeq = latest ? Number(latest.seq) : 0;
+    if (body.parent_seq == null || body.parent_seq === "") {
+      return json({ error: "parent_seq required: the seq this step builds on (0 when the drawing has no patch yet)", latest_seq: latestSeq }, 400);
+    }
+    const parent_seq = Number(body.parent_seq);
+    if (!Number.isInteger(parent_seq) || parent_seq !== latestSeq) {
+      return json({ error: `parent_seq ${body.parent_seq} is not the latest (${latestSeq}); reload the drawing`, latest_seq: latestSeq }, 409);
+    }
+    const pinned = await resolveDrawingSpecVersion(tdb, drawing, patches);
+    if (!pinned) return json({ error: "The drawing has no governed spec yet; render an issue from a registered template first" }, 400);
+    const { data: cat } = await tdb("drawing_render_specs").select("name, current_version_id").eq("name", pinned.name).maybeSingle();
+    const target = cat?.current_version_id ? await loadSpecVersion(tdb, cat.current_version_id) : null;
+    if (!target) return json({ error: `${pinned.name} has no current version registered` }, 400);
+    if (target.id === pinned.id) return json({ error: `${pinned.name} v${pinned.version} is the current version; nothing to rebase onto` }, 409);
+    const base = latest ? latest.patch : emptyPatch(null);
+    const patch = { ...(base || emptyPatch(null)), v: 1, base: { name: target.name, version: target.version } };
+    const patch_sha256 = await canonicalSha(patch);
+    const { data: row, error } = await tdb("drawing_spec_patches").insert({
+      drawing_id, seq: latestSeq + 1, parent_id: latest?.id ?? null, spec_version_id: target.id,
+      patch, patch_sha256, operations: [], origin: "carry",
+      prompt: `rebase ${pinned.name} v${pinned.version} → v${target.version}`,
+      status: "proposed", created_by: session.uid || null,
+    }).select(SPEC_PATCH_FIELDS).maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) return json({ error: `seq ${latestSeq + 1} was taken meanwhile; reload the drawing`, latest_seq: latestSeq }, 409);
+      return json({ error: error.message }, 400);
+    }
+    return json({
+      patch_id: row?.id, seq: row?.seq, patch, patch_sha256,
+      from: { name: pinned.name, version: pinned.version, id: pinned.id }, to: { name: target.name, version: target.version, id: target.id, origin: target.origin ?? "mac" },
+      base: { name: target.name, version: target.version },
     });
   }
 

@@ -950,6 +950,8 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .dr-level { font-size: var(--fs-xs); font-weight: 600; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
 .dr-card-q { color: var(--muted); }
 .dr-card-actions { display: flex; gap: 0.4rem; margin-top: 0.2rem; }
+/* Phase 6: amber facts on the rail and in the release modal (never blocks). */
+.drawing-rail-h.is-warn, .drawing-meta .is-warn { color: var(--amber); }
 .dr-dim.is-selected td { background: rgba(94, 224, 143, 0.1); }
 
 @media (max-width: 900px) {

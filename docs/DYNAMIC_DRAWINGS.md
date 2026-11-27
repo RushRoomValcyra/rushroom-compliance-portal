@@ -769,7 +769,7 @@ Render, strip shows 2 tolerance changes; (2) "general tolerance ISO 2768-f" →
 refusal `not_in_step`; (5) marquee over two Ø5 classes, "tighten these" → a
 question, no ops. Each turn has an `ai_usage_events` row.
 
-### Phase 6 — carry-forward, rebase, release facts, docs, first real issues (2 days)
+### Phase 6 — carry-forward, rebase, release facts, docs, first real issues (2 days) — BUILT 2026-11-27 (v472; `rebaseDrawingSpec`, Drop on unmatched overrides, the spec facts in the release modal, `template_drift`; contract DRAWINGS_TAB_UX §13.10; the CAD-revision proof waits for a Rev C of Side Panel Left)
 
 Goal: the model survives a CAD revision and a template edit, the release
 modal states what an issue was made from, and the 47 parts start entering

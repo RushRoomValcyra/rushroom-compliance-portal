@@ -15373,11 +15373,33 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       return () => { if (state.sheets) state.sheets.dispose(); state.sheets = null; };
     }
 
+    // ---- Unmatched overrides on the current issue (Phase 6, §6 "New issue
+    // from a released drawing"): a carried override whose feature is no longer
+    // where it was, or a relation row, listed first with one-click Drop — an
+    // ordinary remove_override, audited like any op.
+    const unmatchedSlot = el("div", {});
+    const patchErr = el("div", { class: "dr-error", style: "display:none" });
+    function paintUnmatched() {
+      const list = Array.isArray(spec?.issue_job?.result?.unmatched_overrides) ? spec.issue_job.result.unmatched_overrides : [];
+      if (!dims.length || !list.length) { setChildren(unmatchedSlot); return; }
+      setChildren(unmatchedSlot,
+        el("h4", { class: "drawing-rail-h is-warn" }, `Unmatched overrides (${list.length})`),
+        el("div", { class: "dr-patch-lines" }, list.map((u) => el("div", { class: "dr-patch-line" }, [
+          el("span", { class: "is-warn" }, `${u.kind || ""} on ${drAtWords(u.at)}${u.reason ? ` — ${u.reason}` : ""}`.trim()),
+          editable && u.at && u.kind
+            ? el("button", { class: "btn btn-xs", type: "button", onclick: async (e) => {
+                const b = e.currentTarget; b.disabled = true;
+                if (!(await postOps([{ op: "remove_override", at: u.at, kind: u.kind, reason: "" }], patchErr))) b.disabled = false;
+                else b.closest(".dr-patch-line")?.remove();
+              } }, "Drop")
+            : null,
+        ].filter(Boolean)))),
+      );
+    }
     // ---- Patch (n): one line per difference between the latest snapshot and
     // the accepted one (whatever the latest row's status: it is what the next
     // Apply builds on and the next Render sends), × where ops put it back
     const patchSlot = el("div", {});
-    const patchErr = el("div", { class: "dr-error", style: "display:none" });
     const acceptedPatch = () => (spec?.patch && spec.patch.patch) || null;
     const acceptedSeq = () => (spec?.patch ? Number(spec.patch.seq) || 0 : 0);
     function paintPatch() {
@@ -15429,6 +15451,20 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
           el("dt", {}, "Template"),
           el("dd", {}, t ? [`${t.name} v${t.version}${t.origin === "portal" ? " · promoted" : ""}`, t.drift && t.current_version != null
               ? el("span", { class: "dr-refused", style: "margin-left:0.4rem" }, `v${t.current_version} available`) : null,
+              // Rebase (Phase 6): a carry row on the current version, rendered and
+              // diffed like any other step; nothing moves until Keep.
+              t.drift && t.current_version != null && editable
+                ? el("button", { class: "btn btn-xs", type: "button", style: "margin-left:0.4rem", onclick: async (e) => {
+                    const b = e.currentTarget; b.disabled = true;
+                    try {
+                      await API.post(token, "rebaseDrawingSpec", { drawing_id: drawing.id, parent_seq: parentSeq() });
+                      await reload();
+                    } catch (ex) {
+                      if (ex.status === 409) { await reload(); return; }
+                      setMsg(patchErr, ex.message, "error"); b.disabled = false;
+                    }
+                  } }, "Rebase")
+                : null,
               t.on_versions && Object.keys(t.on_versions).length
                 ? el("div", { class: "muted t-sm" }, Object.entries(t.on_versions).sort((x, y) => Number(y[0]) - Number(x[0])).map(([v, n]) => `${n} on v${v}`).join(" · "))
                 : null].filter(Boolean) : "—"),
@@ -15587,7 +15623,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       );
     }
 
-    paintPatch(); paintSpec(); paintPrompt();
+    paintUnmatched(); paintPatch(); paintSpec(); paintPrompt();
     // After a 409 repaint: the interrupted form again with its values and the
     // text in red; without a form (×, Revert) the text under the Patch lines.
     const again = _drSurfaceReopen.get(drawing.id);
@@ -15598,7 +15634,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       else setMsg(patchErr, again.error, "error");
     }
     return {
-      nodes: [...dimsNodes, patchSlot, specSlot],
+      nodes: [...dimsNodes, unmatchedSlot, patchSlot, specSlot],
       fromCadButton,
       setCadRev(rev) { state.cadRev = rev || null; syncRender(); },
       setLive(on) { state.live = !!on; syncRender(); },
@@ -15740,10 +15776,42 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
             ? line([el("span", { class: "muted" }, now), el("span", { class: "muted" }, "→"), el("span", {}, after)])
             : el("span", {}, after !== null ? after : now));
 
+      // The spec facts of a drawing issue (DYNAMIC_DRAWINGS §6 "Release gate",
+      // Phase 6): what rendered it, how it differs from the issue it
+      // supersedes, unmatched overrides; amber facts, never blocks.
+      const specRows = [];
+      if (kind === "drawing" && "spec" in p) {
+        const sw = Array.isArray(p.warnings) ? p.warnings : [];
+        const sp = p.spec || null;
+        const amber = (txt) => el("span", { class: "is-warn" }, txt);
+        specRows.push(el("dt", {}, "Spec"), el("dd", {}, sp
+          ? line([
+              el("span", {}, `${sp.name} v${sp.version}${sp.patch_seq != null ? ` + patch #${sp.patch_seq}` : ""}`),
+              sp.patch_seq != null ? el("span", { class: "muted" }, `${sp.patch_ops || 0} ops`) : null,
+              sw.includes("template_drift") && sp.current_version != null ? amber(`template changed since (v${sp.current_version})`) : null,
+              sw.includes("iteration_open") ? amber("iteration open") : null,
+            ])
+          : (sw.includes("spec_not_recorded") ? amber("not recorded") : dash())));
+        const c = p.dimensions_vs_superseded || null;
+        const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+        specRows.push(el("dt", {}, sup && sup.revision ? `vs Issue ${sup.revision}` : "vs previous"), el("dd", {}, c
+          ? line([
+              el("span", {}, `${plural(c.tol_changed || 0, "tolerance")} changed`),
+              el("span", { class: c.value_changed ? "is-warn" : null }, `${plural(c.value_changed || 0, "value")} changed`),
+              c.datum_swaps ? el("span", {}, `${plural(c.datum_swaps, "dimension")} measured from the other edge`) : null,
+              p.geometry_same === true ? el("span", {}, "geometry same") : (p.geometry_same === false ? amber("geometry differs") : null),
+            ])
+          : dash()));
+        const un = Array.isArray(p.unmatched_overrides) ? p.unmatched_overrides : [];
+        specRows.push(el("dt", {}, "Unmatched overrides"), el("dd", {}, un.length
+          ? lines(un.map((u) => amber(`${u.kind || ""} on ${drAtWords(u.at)}${u.reason ? ` — ${u.reason}` : ""}`.trim())))
+          : el("span", {}, "0")));
+      }
       const dl = el("dl", { class: "drawing-meta" }, [
         el("dt", {}, "Revision"), el("dd", {}, revisionCell),
         el("dt", {}, "Files"), el("dd", {}, filesCell),
         el("dt", {}, "Supersedes"), el("dd", {}, supersedesCell),
+        ...specRows,
         el("dt", {}, relatedLabel), el("dd", {}, relatedCell),
         el("dt", {}, "Warnings"), el("dd", {}, warningsCell),
         el("dt", {}, "Supplier will see"), el("dd", {}, supplierCell),

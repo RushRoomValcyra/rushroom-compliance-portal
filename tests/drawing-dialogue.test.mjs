@@ -227,6 +227,6 @@ test("the rail: scope row, Ask, the card, Promote wording, the From form, the sw
   assert.match(html, /drawing-spec-core\.mjs\?v=47\d/);
   for (const a of ["app.js", "styles.css"]) {
     const v = (html.match(new RegExp(`assets/${a}\\?v=(\\d+)`)) || [])[1];
-    assert.ok(Number(v) >= 471, `${a} not bumped to 471`);
+    assert.ok(Number(v) >= 472, `${a} not bumped to 472`);
   }
 });

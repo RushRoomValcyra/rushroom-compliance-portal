@@ -7,7 +7,7 @@ Compliance portal for Rushroom AB's LED furniture product.
   - `portal-api`    — auth, CRUD, tenants, accounts, BOM (the hot path; no heavy deps)
   - `portal-ai`     — every Anthropic action + document parsing (jszip, pdf-lib)
   - `portal-cellar` — EU CELLAR SPARQL + relation inference
-- DB: Supabase Postgres (29 tables). Schema in supabase/migrations/*.sql
+- DB: Supabase Postgres (32 tables). Schema in supabase/migrations/*.sql
 - AI: ALL calls use `claude-opus-4-8` via api.anthropic.com/v1/messages
 
 ## Commands I use to deploy
@@ -95,6 +95,6 @@ Component types (PROP-058): part | raw_material | sub_assembly |
         phantom_assembly (structural only) | finished_good | spare_part | product_family
 
 ## Current state
-Frontend cache version: ?v=471 (app.js, viewer.js, styles.css, drawing-spec-core.mjs)
+Frontend cache version: ?v=472 (app.js, viewer.js, styles.css, drawing-spec-core.mjs)
 Last SYSTEM_OVERVIEW audit: 2026-09-24
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

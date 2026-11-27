@@ -630,3 +630,17 @@ from the top · k dimensions measured from the other edge · promoted · n on vN
 What a supplier sees: nothing (§13.6 holds; none of the five actions is in
 `SUPPLIER_ACTIONS`, portal-ai denies suppliers by default).
 
+### 13.10 Carry-forward, Rebase, the release facts (Phase 6, 2026-11-27, v472)
+
+| Element | Contract |
+|---|---|
+| **Unmatched overrides (n)** | above Patch (n) on a draft, amber heading, when the current issue's render reported overrides whose feature is no longer where it was or a relation row: one line each "depth on Ø5 at (37, 58.5) — no such feature in the STEP" with **Drop** (`remove_override`, an ordinary op: Patch (n) gains the line, Render as usual). The list comes from `getDrawingSpec.issue_job.result.unmatched_overrides`; a New issue from CAD after a CAD change is where it shows first |
+| **Rebase** | beside "vN available" in the Spec section, on a draft only: posts `rebaseDrawingSpec { drawing_id, parent_seq }` → a `carry` row with the latest snapshot on the template's current version (no ops, prompt "rebase flat_panel v3 → v4"), status proposed; the surface repaints, Render renders it as a candidate, the strip diffs it like any step, Keep moves the pins. 409 "vN is the current version" when nothing drifted; 409 on a released current issue ("New issue from CAD renders the next letter on the current template") |
+| New issue from CAD | unchanged (Phase 2): the accepted patch travels as a `carry` row onto the template's current version; the first render after a CAD change lists its unmatched overrides as above |
+| Edits on a released issue | `applyDrawingSpecOps`, `promoteDrawingSpecOps` and `rebaseDrawingSpec` answer 409 "Issue B is released; render the next letter from CAD and edit that"; the rail already opens no form on a released issue |
+| **Release modal** (drawing) | three rows after Supersedes, from `previewRelease`: **Spec** "flat_panel v3 + patch #2 · 1 ops" with amber "template changed since (v4)" (`template_drift`) and "iteration open" (`iteration_open`), or amber "not recorded" (`spec_not_recorded`), or "—"; **vs Issue B** "k tolerances changed · v values changed (amber when > 0) · d dimensions measured from the other edge · geometry same / geometry differs (amber)", "—" without a superseded issue or a sidecar; **Unmatched overrides** "0" or the amber lines. Facts only: `can_release` is unchanged by any of them (§9 decisions 7 and 8) |
+
+Vocabulary added: **Unmatched overrides (n) · Drop · Rebase · Spec · vs Issue B ·
+template changed since (vN) · iteration open · not recorded · geometry same /
+geometry differs**.
+

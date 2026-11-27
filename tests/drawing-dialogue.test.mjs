@@ -224,9 +224,9 @@ test("the rail: scope row, Ask, the card, Promote wording, the From form, the sw
   const sup = read("supplier.html");
   assert.ok(!sup.includes("drawing-spec-core"), "the supplier shell does not load the vocabulary");
   const html = read("index.html");
-  assert.match(html, /drawing-spec-core\.mjs\?v=470/);
+  assert.match(html, /drawing-spec-core\.mjs\?v=47\d/);
   for (const a of ["app.js", "styles.css"]) {
     const v = (html.match(new RegExp(`assets/${a}\\?v=(\\d+)`)) || [])[1];
-    assert.ok(Number(v) >= 470, `${a} not bumped to 470`);
+    assert.ok(Number(v) >= 471, `${a} not bumped to 471`);
   }
 });

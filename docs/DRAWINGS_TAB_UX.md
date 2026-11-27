@@ -598,7 +598,7 @@ transform (`REC.view`: paper x = ox + (sx·x − p0)·s, paper y = oy +
 keeps no rectangle. Nothing of this is in `SUPPLIER_ACTIONS` or
 `supplier.html` (§13.6); the `?v=469` on supplier.html is cache hygiene.
 
-### 13.9 The dialogue — Scope · Ask · the card · Promote (Phase 5, 2026-11-27, v470)
+### 13.9 The dialogue — Scope · Ask · the card · Promote (Phase 5, 2026-11-27, v470; v471 after the first-patch fix)
 
 Decided in `docs/DRAWING_DIALOGUE.md` (its seven §9 decisions as recommended).
 Under the selection chips in the Dimensions section, on a **draft** issue,

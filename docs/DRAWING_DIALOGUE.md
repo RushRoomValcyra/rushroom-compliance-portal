@@ -1,7 +1,11 @@
 # The drawing dialogue — a prompt that changes a callout, a drawing, or the template
 
-Design, 2026-11-27. Refines `docs/DYNAMIC_DRAWINGS.md` §4.2 / §7 Phase 5 before
-it is built. Nothing here is implemented; §9 lists what must be decided first.
+Design, 2026-11-27. Refines `docs/DYNAMIC_DRAWINGS.md` §4.2 / §7 Phase 5.
+**Built the same day** (v470, migration 0069, portal-ai `handlers/drawing-spec.ts`,
+portal-api `promoteDrawingSpecOps` · `discardDrawingSpecTurn` ·
+`getDrawingSpecVersion`, the worker `Mirror`, drawset `plan` / `from` /
+`pos_x_far`; UI contract in DRAWINGS_TAB_UX §13.9); §9 decided as recommended.
+Deployed 2026-11-27; §8 proofs 1–4, 7 and 8 held live the same morning on Side Panel Left (ROADMAP has the record); 6 and 9 wait for the first drawing on `flat_panel`.
 
 ## 1 What was asked
 
@@ -240,7 +244,7 @@ top edge on Ø5 at (41, 1319)"), **sheets from the bottom / from the top**.
 |---|---|
 | drawset.py | `plan` key; `derive_template(spec, part, patch_datums, patch_plan)` honours `face_order`; `override_for` consulted for `pos_x` / `pos_y` with `from` in `ydims` and the x-row loop; new kind `pos_x_far`; a `from` override on a pair member or CTQ end reported via `override_inapplicable`; `--patch` tests for both; the Issue B oracle a38c2186 unchanged (no `from`, no `plan` → identical rows) |
 | flat_panel.yaml | `plan: { face_order: top_down }` |
-| `_shared/drawing-spec-core.mjs` | `set_sheet_plan`; `override_dimension` kinds `pos_x`, `pos_y` with required `from` and refused `tol`/`name`; `OP_LEVEL`; `TEMPLATE_KEYS`; `promoteTemplate(body, ops)`; `levelOf(op)`; static tests: every op has a level, `promoteTemplate` touches only `TEMPLATE_KEYS`, the AI enum still equals `OPS` |
+| `_shared/drawing-spec-core.mjs` | `set_sheet_plan`; `remove_tolerance` (level drawing; the × on a kind-tolerance line with no accepted value, and Revert, need it — found in the live proof); `override_dimension` kinds `pos_x`, `pos_y` with required `from` and refused `tol`/`name`; `OP_LEVEL`; `TEMPLATE_KEYS`; `promoteTemplate(body, ops)`; `levelOf(op)`; static tests: every op has a level, `promoteTemplate` touches only `TEMPLATE_KEYS`, the AI enum still equals `OPS` |
 | migration 0069 | `drawing_spec_versions`: `origin text not null default 'mac'`, `author_user_id uuid`, `parent_version_id uuid`, `promoted_from_drawing_id uuid`, `note text`; `drawing_spec_turns.scope text`; both tables already carry `organization_id` and sit in `TENANT_TABLES` |
 | portal-api | `promoteDrawingSpecOps`; `registerDrawingSpecs` keeps "known body → no new row, unknown body → new version `origin = mac`, current"; `pollDrawingRenderJob` answer gains `templates[]`; `getDrawingSpec` returns `template.origin/author/parent`, `plan`, and per-name counts for the rail; `applyDrawingSpecOps` validates `from` ops like any other |
 | portal-ai `proposeDrawingSpecOps` | body gains `scope`; the system prompt gains the scope rule ("propose ops; the engineer chose the level; never propose a level"), the two new ops with their worked examples (sheet order; this one from the top; the c/c relation refusal), and the loader adds `plan` and `derived.face_ranges` so the model can state the current order in its reason; refusal category `relation` added for datum asks on c/c / CTQ rows, `scope` for an op that needs a selection |

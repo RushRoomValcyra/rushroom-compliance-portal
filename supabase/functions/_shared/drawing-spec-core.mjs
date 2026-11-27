@@ -36,8 +36,19 @@ export const TOLERANCE_KINDS = [
   "general", "outline", "hole_position", "hole_depth", "edge_bore_depth",
   "pocket_depth", "groove_width", "groove_depth", "counterbore_depth",
 ];
-/** Per-dimension override kinds. No pos_* in v1 (§4.3: ptol is per face sheet). */
+/** Per-dimension override kinds that take a tolerance or a name. No per-hole
+ *  position TOLERANCE (§4.3: ptol is per face sheet). */
 export const OVERRIDE_KINDS = ["dia", "depth", "groove_width", "groove_depth", "pocket_depth"];
+/** Per-dimension DATUM kinds (docs/DRAWING_DIALOGUE.md §4.2): `from` names the
+ *  edge one hole's position is measured from; drawset prints the row as
+ *  pos_y_top / pos_x_far when that edge is not the datum. No tol, no name. */
+export const POS_OVERRIDE_KINDS = ["pos_x", "pos_y"];
+export const FACE_ORDERS = ["top_down", "bottom_up"];
+/** Where a change lives (DRAWING_DIALOGUE §3): the engineer's choice on the prompt row. */
+export const LEVELS = ["callout", "drawing", "template"];
+/** Why a proposal refuses an ask, and where the change actually lives (DYNAMIC_DRAWINGS §5.2, DRAWING_DIALOGUE §7). */
+export const REFUSAL_CATEGORIES = ["needs_code", "house_style", "value_in_spec", "not_in_step", "ambiguous", "relation", "scope"];
+export const LIVES_IN = ["drawset.py", "step2d.py", "door_dwg.py", "STEP", "house_rule", "portal"];
 export const VIEW_KINDS = ["edge", "section", "groove_section", "detail", "cup_section"];
 export const SHEET_KINDS = ["overview", "face", "door_overview", "hinge_sheet", "part_sheet"];
 /** House scales. 2:1 and 5:1 are the integers 2 and 5 (drawset prints n:1 when S ≥ 1 on a detail). */
@@ -78,6 +89,7 @@ export const PATCH_SCHEMA_VERSION = 1;
 // ---------------------------------------------------------------------------
 export const SPEC_VOCAB = Object.freeze({
   set_tolerance:     { args: { kind: TOLERANCE_KINDS, tol: "tol" }, required: ["kind", "tol"] },
+  remove_tolerance:  { args: { kind: TOLERANCE_KINDS }, required: ["kind"] },
   set_inside_face:   { args: { side: SIDES }, required: ["side"] },
   set_datum:         { args: { axis: DATUM_AXES, side: SIDES }, required: ["axis", "side"] },
   set_from_top_rule: { args: { within: "number" }, required: ["within"] },
@@ -85,8 +97,9 @@ export const SPEC_VOCAB = Object.freeze({
   set_edge_band:     { args: { edge: EDGES, text: "text_null" }, required: ["edge", "text"] },
   set_hole_rule:     { args: { D: "number", axis: HOLE_AXES, name: "text", dia_tol: "tol", depth_tol: "tol", only_at: "only_at" }, required: ["D", "axis"] },
   remove_hole_rule:  { args: { D: "number", axis: HOLE_AXES, only_at: "only_at" }, required: ["D", "axis"] },
-  override_dimension:{ args: { at: "at", kind: OVERRIDE_KINDS, tol: "tol", name: "text" }, required: ["at", "kind"] },
-  remove_override:   { args: { at: "at", kind: OVERRIDE_KINDS }, required: ["at", "kind"] },
+  set_sheet_plan:    { args: { face_order: FACE_ORDERS }, required: ["face_order"] },
+  override_dimension:{ args: { at: "at", kind: [...OVERRIDE_KINDS, ...POS_OVERRIDE_KINDS], tol: "tol", name: "text", from: SIDES }, required: ["at", "kind"] },
+  remove_override:   { args: { at: "at", kind: [...OVERRIDE_KINDS, ...POS_OVERRIDE_KINDS] }, required: ["at", "kind"] },
   add_pair:          { args: { D: "number", cc: "number", about: "about" }, required: ["D", "cc"] },
   remove_pair:       { args: { D: "number", cc: "number" }, required: ["D", "cc"] },
   add_ctq:           { args: { a: "ctq_end", b: "ctq_end", within: "number", label: "text" }, required: ["a", "b", "within", "label"] },
@@ -99,6 +112,23 @@ export const SPEC_VOCAB = Object.freeze({
   remove_sheet:      { args: { sheet: "integer" }, required: ["sheet"] },
 });
 export const OPS = Object.freeze(Object.keys(SPEC_VOCAB));
+
+/** The level CEILING of each op (DRAWING_DIALOGUE §3): an override is one
+ *  callout's business; views and sheets carry ids derived per part, so they
+ *  stay on the drawing; the rest may be promoted into the template. The scope
+ *  the engineer chooses is a ceiling, never a coercion: under Template an op
+ *  with a lower ceiling stays on the drawing and the card says so. */
+export const OP_LEVEL = Object.freeze({
+  set_tolerance: "template", remove_tolerance: "drawing", set_inside_face: "template", set_datum: "template", set_from_top_rule: "template",
+  name_edge: "template", set_edge_band: "template", set_hole_rule: "template", remove_hole_rule: "template",
+  set_sheet_plan: "template", add_pair: "template", remove_pair: "template", add_ctq: "template", remove_ctq: "template",
+  override_dimension: "callout", remove_override: "callout",
+  set_view: "drawing", add_view: "drawing", remove_view: "drawing",
+  set_sheet: "drawing", add_sheet: "drawing", remove_sheet: "drawing",
+});
+export const levelOf = (op) => OP_LEVEL[op && typeof op === "object" ? op.op : op] || null;
+/** The template body's own keys a promotion may write (never overrides, views or sheets: derived per part). */
+export const TEMPLATE_KEYS = Object.freeze(["tolerances", "datums", "plan", "edge_names", "edge_band", "features", "pairs", "ctq"]);
 
 /** What each view kind must carry besides `kind` (drawset reads these without a default). */
 export const VIEW_KIND_REQUIRED = Object.freeze({
@@ -357,6 +387,14 @@ export function validateOp(raw) {
   // Cross-field rules
   switch (name) {
     case "override_dimension":
+      if (POS_OVERRIDE_KINDS.includes(out.kind)) {
+        // A datum per dimension, nothing else: the per-hole position TOLERANCE stays code (§9 decision 3).
+        if (out.from === undefined) return { reason: `override_dimension: kind ${out.kind} takes from (min or max: the edge the position is measured from)` };
+        if (out.tol !== undefined || out.name !== undefined) return { reason: `override_dimension: kind ${out.kind} takes from only; a per-hole position tolerance is code (face_sheet)` };
+        if (out.at.type !== "hole") return { reason: `override_dimension: kind ${out.kind} needs a hole address` };
+        break;
+      }
+      if (out.from !== undefined) return { reason: `override_dimension: from applies to pos_x and pos_y only` };
       if (out.tol === undefined && out.name === undefined) return { reason: "override_dimension: give tol or name (or both)" };
       if (out.name !== undefined && out.kind !== "dia") return { reason: "override_dimension: name only with kind dia (the callout names the hole, not its depth)" };
       if ((out.kind === "groove_width" || out.kind === "groove_depth") && out.at.type !== "groove") return { reason: `override_dimension: kind ${out.kind} needs a groove address` };
@@ -406,7 +444,7 @@ export function emptyPatch(base) {
   return {
     v: PATCH_SCHEMA_VERSION,
     base: base === undefined ? null : clone(base),
-    tolerances: {}, datums: {}, edge_names: {}, edge_band: {},
+    tolerances: {}, datums: {}, plan: {}, edge_names: {}, edge_band: {},
     features: [], pairs: [], ctq: [], overrides: [],
     views: { set: {}, add: [], remove: [] },
     sheets: { set: {}, add: [], remove: [] },
@@ -417,7 +455,7 @@ export function emptyPatch(base) {
 function normalisePatch(patch) {
   const p = emptyPatch(patch && patch.base !== undefined ? patch.base : null);
   if (!isObj(patch)) return p;
-  for (const k of ["tolerances", "datums", "edge_names", "edge_band"]) if (isObj(patch[k])) p[k] = clone(patch[k]);
+  for (const k of ["tolerances", "datums", "plan", "edge_names", "edge_band"]) if (isObj(patch[k])) p[k] = clone(patch[k]);
   for (const k of ["features", "pairs", "ctq", "overrides"]) if (Array.isArray(patch[k])) p[k] = clone(patch[k]);
   for (const k of ["views", "sheets"]) {
     if (!isObj(patch[k])) continue;
@@ -442,9 +480,12 @@ const pairKey = (row, op) => near(row.D, op.D) && near(row.cc, op.cc);
 /** One handler per op. Each returns null (applied) or a reason string (rejected, patch unchanged). */
 export const OP_HANDLERS = Object.freeze({
   set_tolerance(p, op) { p.tolerances[op.kind] = op.tol; return null; },
+  // The patch stops saying anything about the kind; the template value applies again.
+  remove_tolerance(p, op) { if (!(op.kind in p.tolerances)) return `no ${op.kind} tolerance in this patch`; delete p.tolerances[op.kind]; return null; },
   set_inside_face(p, op) { p.datums.inside_face = op.side; return null; },
   set_datum(p, op) { p.datums[op.axis] = op.side; return null; },
   set_from_top_rule(p, op) { p.datums.y_from_top_within = op.within; return null; },
+  set_sheet_plan(p, op) { p.plan.face_order = op.face_order; return null; },
   name_edge(p, op) { p.edge_names[op.edge] = op.name; return null; },
   set_edge_band(p, op) { p.edge_band[op.edge] = op.text; return null; },
   set_hole_rule(p, op) {
@@ -539,6 +580,68 @@ export function applySpecOps(patch, ops) {
 }
 
 // ---------------------------------------------------------------------------
+// Promote (DRAWING_DIALOGUE §5): a template-scope turn writes a new template
+// BODY. Only the body's own keys (TEMPLATE_KEYS) change, by the same key-level
+// merge apply_patch does for them in drawset; views, sheets and overrides are
+// derived per part and never land here. This is not an "effective spec": the
+// result is a template body, itself an input, and drawset still derives
+// everything from it.
+// ---------------------------------------------------------------------------
+/**
+ * promoteTemplate(body, ops) → { body, promoted, kept, rejected }.
+ *   promoted: the admitted template-level ops, applied to the new body
+ *   kept:     admitted ops below the template ceiling (they stay on the drawing)
+ *   rejected: what the validator or a handler refused
+ * The input body is never mutated.
+ */
+export function promoteTemplate(body, ops) {
+  const src = isObj(body) ? body : {};
+  const out = clone(src);
+  const { ok, rejected } = validateOps(ops);
+  const promoted = [], kept = [];
+  // Seed a patch with the body's own keys so the one handler set edits them in place.
+  const seed = emptyPatch(null);
+  for (const k of ["tolerances", "datums", "plan", "edge_names", "edge_band"]) if (isObj(src[k])) seed[k] = clone(src[k]);
+  for (const k of ["features", "pairs", "ctq"]) if (Array.isArray(src[k])) seed[k] = clone(src[k]);
+  for (const op of ok) {
+    if (levelOf(op) !== "template") { kept.push(op); continue; }
+    const r = OP_HANDLERS[op.op](seed, op);
+    if (r) rejected.push({ op, reason: r }); else promoted.push(op);
+  }
+  for (const k of TEMPLATE_KEYS) {
+    const v = seed[k];
+    if (isObj(v) ? Object.keys(v).length || isObj(src[k]) : v.length || Array.isArray(src[k])) out[k] = clone(v);
+  }
+  return { body: out, promoted, kept, rejected };
+}
+
+/**
+ * stripPromoted(patch, promotedOps) → a new patch without what the promotion
+ * now carries in the body (so nothing is said twice when the drawing is
+ * carried onto the new version). Only keys the ops set are removed.
+ */
+export function stripPromoted(patch, promotedOps) {
+  const p = normalisePatch(patch);
+  for (const op of Array.isArray(promotedOps) ? promotedOps : []) {
+    if (!isObj(op)) continue;
+    switch (op.op) {
+      case "set_tolerance": delete p.tolerances[op.kind]; break;
+      case "set_inside_face": delete p.datums.inside_face; break;
+      case "set_datum": delete p.datums[op.axis]; break;
+      case "set_from_top_rule": delete p.datums.y_from_top_within; break;
+      case "set_sheet_plan": delete p.plan.face_order; break;
+      case "name_edge": delete p.edge_names[op.edge]; break;
+      case "set_edge_band": delete p.edge_band[op.edge]; break;
+      case "set_hole_rule": case "remove_hole_rule": p.features = p.features.filter((r) => !featureKey(r, op)); break;
+      case "add_pair": case "remove_pair": p.pairs = p.pairs.filter((r) => !pairKey(r, op)); break;
+      case "add_ctq": case "remove_ctq": p.ctq = p.ctq.filter((r) => r.label !== op.label); break;
+      default: break;
+    }
+  }
+  return p;
+}
+
+// ---------------------------------------------------------------------------
 // Canonical JSON and sha256
 // ---------------------------------------------------------------------------
 /** Keys sorted recursively, no whitespace, JSON.stringify semantics for values. Stable across runtimes. */
@@ -612,11 +715,24 @@ export function diffDimensionLists(a, b) {
     else if ((ra.text || "") !== (rb.text || "")) out.text_changed.push(e);
     else out.same.push(e);
   }
+  // A per-dimension datum move prints the same hole from the other edge: one
+  // row gone and one row new at the same address, kinds swapped (pos_y →
+  // pos_y_top, pos_x → pos_x_far). Counted so the strip can say "measured
+  // from the other edge" instead of leaving an added/removed pair to read.
+  let datum_swaps = 0;
+  for (const rm of out.removed) {
+    const at = rm.row && rm.row.at;
+    if (!isObj(at)) continue;
+    const pair = Object.values(POS_SWAP).find((ks) => ks.includes(rm.row.kind));
+    if (!pair) continue;
+    const other = pair.find((k) => k !== rm.row.kind);
+    if (out.added.some((ad) => ad.row && ad.row.kind === other && atEquals(ad.row.at, at))) datum_swaps++;
+  }
   out.counts = {
     a: A.size, b: B.size,
     added: out.added.length, removed: out.removed.length,
     value_changed: out.value_changed.length, tol_changed: out.tol_changed.length,
-    text_changed: out.text_changed.length, same: out.same.length,
+    text_changed: out.text_changed.length, same: out.same.length, datum_swaps,
   };
   return out;
 }
@@ -628,7 +744,9 @@ export function diffDimensionLists(a, b) {
 const THICKNESS_AXIS = "Z";
 const isHoleRow = (r) => isObj(r.at) && r.at.type === "hole";
 const holeAxis = (r) => String(r.at.axis || "").toUpperCase();
-const POS_KINDS = ["pos", "pos_x", "pos_y", "pos_y_top", "cc", "twin", "ends_in", "from", "to"];
+const POS_KINDS = ["pos", "pos_x", "pos_x_far", "pos_y", "pos_y_top", "cc", "twin", "ends_in", "from", "to"];
+/** The row kinds a per-dimension datum override moves between (drawset prints the far edge as the second kind). */
+export const POS_SWAP = Object.freeze({ pos_x: ["pos_x", "pos_x_far"], pos_y: ["pos_y", "pos_y_top"] });
 
 /** Rows a kind-level tolerance governs. `general` governs the title block, not a row. */
 function rowsForToleranceKind(kind, dims) {
@@ -647,9 +765,13 @@ function rowsForToleranceKind(kind, dims) {
 
 function rowsForOp(op, dims) {
   switch (op.op) {
-    case "override_dimension": case "remove_override":
-      return dims.filter((r) => r.kind === op.kind && atEquals(r.at, op.at));
-    case "set_tolerance":
+    case "override_dimension": case "remove_override": {
+      const kinds = POS_SWAP[op.kind] || [op.kind];
+      return dims.filter((r) => kinds.includes(r.kind) && atEquals(r.at, op.at));
+    }
+    case "set_sheet_plan":
+      return []; // the bands move between sheets; no printed dimension changes
+    case "set_tolerance": case "remove_tolerance":
       return rowsForToleranceKind(op.kind, dims);
     case "set_hole_rule": case "remove_hole_rule": {
       const kinds = op.op === "remove_hole_rule" ? ["dia", "depth"]
@@ -658,7 +780,7 @@ function rowsForOp(op, dims) {
         && (!op.only_at || op.only_at.some((p) => near(p[0], r.at.pos[0]) && near(p[1], r.at.pos[1]))));
     }
     case "set_datum":
-      return dims.filter((r) => isHoleRow(r) && (op.axis === "x" ? ["pos_x", "pos"] : ["pos_y", "pos_y_top", "pos"]).includes(r.kind));
+      return dims.filter((r) => isHoleRow(r) && (op.axis === "x" ? ["pos_x", "pos_x_far", "pos"] : ["pos_y", "pos_y_top", "pos"]).includes(r.kind));
     case "set_inside_face":
       return dims.filter((r) => isHoleRow(r) && r.kind === "depth");
     case "set_from_top_rule":

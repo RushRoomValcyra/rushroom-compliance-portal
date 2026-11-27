@@ -25,6 +25,7 @@ import { suggestPlannerComponent } from "./handlers/planner-component-suggest.ts
 import { suggestPlannerKey } from "./handlers/planner-key-suggest.ts";
 import { batchSuggestComponents } from "./handlers/planner-batch-suggest.ts";
 import { scanBomAnomalies } from "./handlers/bom-anomaly-scan.ts";
+import { proposeDrawingSpecOps } from "./handlers/drawing-spec.ts";
 import { normaliseExtractedLines } from "../_shared/cost-math.mjs";
 import { eq } from "../_shared/auth.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
@@ -1361,6 +1362,15 @@ You must never invent an internal drawing number or revision letter for the reci
   if (action === "scanBomAnomalies") {
     return await scanBomAnomalies(body, {
       role, tdb, apiKey: ANTHROPIC_API_KEY, model: SCAN_MODEL, meterAi,
+    });
+  }
+
+  // Dynamic drawings, layer 2 (docs/DRAWING_DIALOGUE.md): prose plus marked
+  // entities → a proposal over the closed vocabulary. SCAN_MODEL: a plausible
+  // wrong tolerance is the PROP-039 failure, not a metadata task.
+  if (action === "proposeDrawingSpecOps") {
+    return await proposeDrawingSpecOps(body, {
+      role, tdb, db, apiKey: ANTHROPIC_API_KEY, model: SCAN_MODEL, docBucket: DOC_BUCKET, meterAi, session,
     });
   }
 

@@ -98,7 +98,8 @@ test("validateOps: scales, override kinds, name only with dia, required args", (
   const reasons = v.rejected.map((x) => x.reason);
   assert.match(reasons[0], /scale must be one of 1, 2, 5, 10, 20/);
   assert.match(reasons[1], /scale/);
-  assert.match(reasons[2], /kind must be one of dia, depth, groove_width, groove_depth, pocket_depth/);
+  // A per-hole position TOLERANCE stays code (§9 decision 3); pos_x is a datum kind now and takes `from` only.
+  assert.match(reasons[2], /kind pos_x takes from/);
   assert.match(reasons[3], /name only with kind dia/);
   assert.match(reasons[4], /give tol or name/);
   assert.match(reasons[5], /groove address/);
@@ -149,7 +150,7 @@ test("applySpecOps: never mutates its input; v:1 and base kept", () => {
 test("applySpecOps: from null/undefined starts an empty schema-1 snapshot", () => {
   const { patch } = M.applySpecOps(null, []);
   assert.deepEqual(plain(patch), plain(M.emptyPatch(null)));
-  assert.deepEqual(Object.keys(patch).sort(), ["base", "ctq", "datums", "edge_band", "edge_names", "features", "overrides", "pairs", "sheets", "tolerances", "v", "views"]);
+  assert.deepEqual(Object.keys(patch).sort(), ["base", "ctq", "datums", "edge_band", "edge_names", "features", "overrides", "pairs", "plan", "sheets", "tolerances", "v", "views"]);
 });
 
 test("applySpecOps: override_dimension upserts by (at, kind); remove_override removes it", () => {
@@ -325,7 +326,7 @@ test("diffDimensionLists: keyed by (at | feature) + kind; added/removed/value/to
     { sheet: 3, feature: "G0", kind: "groove_width", value: 4, text: "4", tol: "+0.2 -0", view: "", at: GROOVE },
   ];
   const d = M.diffDimensionLists(ROWS_A, b);
-  assert.deepEqual(d.counts, { a: 5, b: 5, added: 1, removed: 1, value_changed: 1, tol_changed: 1, text_changed: 1, same: 1 });
+  assert.deepEqual(d.counts, { a: 5, b: 5, added: 1, removed: 1, value_changed: 1, tol_changed: 1, text_changed: 1, same: 1, datum_swaps: 0 });
   assert.equal(d.added[0].row.feature, "H41");
   assert.equal(d.removed[0].row.feature, "H13");
   assert.equal(d.tol_changed[0].key, M.canonicalJson(HOLE) + "|depth");
@@ -374,7 +375,9 @@ test("static: every op in SPEC_VOCAB has a handler in applySpecOps and vice vers
     "add_ctq", "remove_ctq", "set_view", "add_view", "remove_view", "set_sheet", "add_sheet", "remove_sheet"]) {
     assert.ok(vocab.includes(op), `${op} missing from SPEC_VOCAB`);
   }
-  assert.equal(vocab.length, 20);
+  assert.ok(vocab.includes("set_sheet_plan"), "set_sheet_plan missing (DRAWING_DIALOGUE §4.1)");
+  assert.ok(vocab.includes("remove_tolerance"), "remove_tolerance missing (a kind tolerance set in error must be unsettable)");
+  assert.equal(vocab.length, 22);
   for (const [op, def] of Object.entries(M.SPEC_VOCAB)) {
     assert.ok(Array.isArray(def.required), `${op}.required`);
     for (const k of def.required) assert.ok(k in def.args, `${op}: required ${k} not in args`);

@@ -51,6 +51,7 @@ import {
 } from "../_shared/render-job-core.mjs";
 import {
   applySpecOps, canonicalJson, canonicalSha, diffDimensionLists, emptyPatch, touchedEntities, validateOps,
+  promoteTemplate, stripPromoted, TEMPLATE_KEYS,
 } from "../_shared/drawing-spec-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
@@ -1406,7 +1407,7 @@ async function replaceDraftRevisionFile(
 const SPEC_PATCH_FIELDS =
   "id, drawing_id, seq, parent_id, spec_version_id, patch, patch_sha256, operations, origin, prompt, selection, proposal, "
   + "turn_id, status, job_id, created_by, created_at";
-const SPEC_VERSION_FIELDS = "id, name, version, kind, body, body_sha256, registered_by, created_at";
+const SPEC_VERSION_FIELDS = "id, name, version, kind, body, body_sha256, registered_by, created_at, origin, author_user_id, parent_version_id, promoted_from_drawing_id, note";
 const SPEC_PATCH_ORIGINS = ["click", "dialogue", "carry", "hand"];
 const RENDER_ARTIFACT_KEYS = ["pdf", "dimensions", "entities"];
 
@@ -1532,13 +1533,49 @@ async function listSpecsWithVersions(tdb: any): Promise<any[]> {
   const ids = [...new Set(rows.map((r) => r.current_version_id).filter(Boolean))];
   const byId: Record<string, any> = {};
   if (ids.length) {
-    const { data: versions } = await tdb("drawing_spec_versions").select("id, name, version, kind, body_sha256, created_at").in("id", ids);
+    const { data: versions } = await tdb("drawing_spec_versions").select("id, name, version, kind, body_sha256, created_at, origin").in("id", ids);
     for (const v of (versions || []) as any[]) byId[v.id] = v;
   }
   return rows.map((r) => {
     const v = r.current_version_id ? byId[r.current_version_id] : null;
-    return { ...r, template: r.template === true, version: v?.version ?? null, body_sha256: v?.body_sha256 ?? null, kind: v?.kind ?? null };
+    return { ...r, template: r.template === true, version: v?.version ?? null, body_sha256: v?.body_sha256 ?? null, kind: v?.kind ?? null, origin: v?.origin ?? null };
   });
+}
+
+/** The templates and their CURRENT version — what the worker mirrors into
+ *  specs/<name>.yaml (DRAWING_DIALOGUE §5): name, version, body sha, origin. */
+async function templateList(tdb: any): Promise<{ name: string; version: number | null; body_sha256: string | null; origin: string | null }[]> {
+  const rows = await listSpecsWithVersions(tdb);
+  return rows.filter((r) => r.template && r.current_version_id)
+    .map((r) => ({ name: r.name, version: r.version, body_sha256: r.body_sha256, origin: r.origin }));
+}
+
+/** How many drawings sit on each version of a template: the latest patch's
+ *  base, else the current issue's pin. For the rail's "flat_panel: 3 on v2,
+ *  48 on v1" (DRAWING_DIALOGUE §5). */
+async function drawingsPerVersion(tdb: any, name: string): Promise<Record<string, number>> {
+  const { data: versions } = await tdb("drawing_spec_versions").select("id, version").eq("name", name);
+  const vnum: Record<string, number> = {};
+  for (const v of (versions || []) as any[]) vnum[v.id] = Number(v.version);
+  const ids = Object.keys(vnum);
+  if (!ids.length) return {};
+  const { data: drawings } = await tdb("drawings").select("id, current_revision_id").eq("render_spec", name);
+  const dIds = ((drawings || []) as any[]).map((d) => d.id);
+  if (!dIds.length) return {};
+  const onVersion: Record<string, string> = {};
+  const { data: revs } = await tdb("drawing_revisions").select("id, spec_version_id").in("id", ((drawings || []) as any[]).map((d) => d.current_revision_id).filter(Boolean));
+  const revVersion: Record<string, string> = {};
+  for (const r of (revs || []) as any[]) if (r.spec_version_id) revVersion[r.id] = r.spec_version_id;
+  for (const d of (drawings || []) as any[]) if (d.current_revision_id && revVersion[d.current_revision_id]) onVersion[d.id] = revVersion[d.current_revision_id];
+  const { data: patches } = await tdb("drawing_spec_patches").select("drawing_id, seq, spec_version_id").in("drawing_id", dIds).order("seq", { ascending: true });
+  for (const p of (patches || []) as any[]) onVersion[p.drawing_id] = p.spec_version_id; // ascending: the last wins
+  const counts: Record<string, number> = {};
+  for (const vid of Object.values(onVersion)) {
+    if (!(vid in vnum)) continue;
+    const k = String(vnum[vid]);
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  return counts;
 }
 
 /** The render job behind a drawing's current issue (render_job_id on the
@@ -8116,7 +8153,10 @@ Deno.serve(async (req) => {
     // One indexed select on the idle path: the open jobs, timeouts applied.
     const open = await expireDrawingRenderJobs(tdb, session);
     const target = open.find((j) => j.status === "requested");
-    if (!target) return json({ job: null });
+    // The worker mirrors specs/<name>.yaml from the current template version
+    // (DRAWING_DIALOGUE §5): the idle answer carries the list so a promotion
+    // reaches the Mac on the next poll.
+    if (!target) return json({ job: null, templates: await templateList(tdb) });
     const at = new Date().toISOString();
     // The claim is one UPDATE guarded by status = 'requested': of two workers
     // polling at once only one touches the row; the other gets no row back
@@ -8197,7 +8237,28 @@ Deno.serve(async (req) => {
         spec_body, spec_body_sha256, spec_patch, patch_sha256,
         png: true,
       },
+      templates: await templateList(tdb),
     });
+  }
+
+  // --- the worker fetches a template's current body to mirror it ------------
+  if (action === "getDrawingSpecVersion") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const name = String(body.name ?? "").trim();
+    const version_id = String(body.version_id ?? "").trim();
+    if (!name && !version_id) return json({ error: "name or version_id required" }, 400);
+    let row: any = null;
+    if (version_id) row = await loadSpecVersion(tdb, version_id);
+    else {
+      const { data: cat } = await tdb("drawing_render_specs").select("name, current_version_id").eq("name", name).maybeSingle();
+      row = cat?.current_version_id ? await loadSpecVersion(tdb, cat.current_version_id) : null;
+      if (!row) {
+        const { data: newest } = await tdb("drawing_spec_versions").select(SPEC_VERSION_FIELDS).eq("name", name).order("version", { ascending: false }).limit(1);
+        row = (newest || [])[0] || null;
+      }
+    }
+    if (!row) return json({ error: "No stored version for that template" }, 404);
+    return json({ version: row });
   }
 
   // --- the worker asks where to put an artefact (pdf, png, the two sidecars) -
@@ -8413,6 +8474,9 @@ Deno.serve(async (req) => {
     const rows: any[] = [];
     const seen = new Set<string>();
     const versions_added: string[] = [];
+    // The sha of the body each file carried, so the worker knows whether its
+    // file already matches the current version (DRAWING_DIALOGUE §5).
+    const sent: Record<string, string> = {};
     for (const s of body.specs) {
       const n = normaliseSpec(s);
       if (!n || seen.has(n.name)) continue;
@@ -8441,7 +8505,16 @@ Deno.serve(async (req) => {
             versions_added.push(`${n.name} v${version}`);
           }
         }
-        if (have) out.current_version_id = have.id;
+        sent[n.name] = body_sha256;
+        if (have) {
+          // A body the portal already holds never moves the pointer BACK: a
+          // version promoted from a drawing (origin portal) stays current until
+          // the worker's mirror has caught the file up (DRAWING_DIALOGUE §5).
+          // An unknown body is a hand edit on the Mac and became max + 1 above.
+          const { data: newest } = await tdb("drawing_spec_versions").select("id, version").eq("name", n.name).order("version", { ascending: false }).limit(1);
+          const top = (newest || [])[0];
+          out.current_version_id = top && Number(top.version) > Number(have.version) ? top.id : have.id;
+        }
       }
       rows.push(out);
     }
@@ -8455,7 +8528,10 @@ Deno.serve(async (req) => {
     const { data: removed, error: dErr } = await dq.select("name");
     if (dErr) return json({ error: dErr.message }, 400);
     const specs = await listSpecsWithVersions(tdb);
-    return json({ ok: true, specs, last_seen: specsLastSeen(specs), removed: (removed || []).map((r: any) => r.name), versions_added });
+    return json({
+      ok: true, specs, last_seen: specsLastSeen(specs), removed: (removed || []).map((r: any) => r.name), versions_added,
+      sent, templates: await templateList(tdb),
+    });
   }
 
   // --- the modal's spec list ------------------------------------------------
@@ -8481,11 +8557,19 @@ Deno.serve(async (req) => {
     if (pinned) {
       const { data: cat } = await tdb("drawing_render_specs").select("name, current_version_id, template").eq("name", pinned.name).maybeSingle();
       const currentVersion = cat?.current_version_id ? await loadSpecVersion(tdb, cat.current_version_id) : null;
+      const bodyKeys: Record<string, unknown> = {};
+      for (const k of TEMPLATE_KEYS as readonly string[]) if (pinned.body && pinned.body[k] !== undefined) bodyKeys[k] = pinned.body[k];
       template = {
         name: pinned.name, version: pinned.version, kind: pinned.kind, body_sha256: pinned.body_sha256, spec_version_id: pinned.id,
+        origin: pinned.origin ?? "mac", note: pinned.note ?? null, parent_version_id: pinned.parent_version_id ?? null,
         current_version: currentVersion?.version ?? null, current_version_id: currentVersion?.id ?? null,
+        current_origin: currentVersion?.origin ?? null,
         drift: !!currentVersion && currentVersion.id !== pinned.id,
         registered: !!cat,
+        // The body's own keys (never views or sheets: derived per part) and
+        // how many drawings sit on each version (DRAWING_DIALOGUE §5, §6).
+        body: bodyKeys,
+        on_versions: pinned.kind === "template" ? await drawingsPerVersion(tdb, pinned.name) : {},
       };
     }
     const issueJob = await currentIssueRenderJob(tdb, drawing);
@@ -8561,12 +8645,122 @@ Deno.serve(async (req) => {
       if (/duplicate key|unique/i.test(error.message)) return json({ error: `seq ${latestSeq + 1} was taken meanwhile; reload the drawing`, latest_seq: latestSeq }, 409);
       return json({ error: error.message }, 400);
     }
+    // A dialogue turn whose ops were applied is accepted (DRAWING_DIALOGUE §6).
+    if (turn_id) await tdb("drawing_spec_turns").update({ accepted: true }).eq("id", turn_id).eq("drawing_id", drawing_id);
     // The blast radius before the 20 s job: the rows of the current issue's
     // dimension list these ops would change.
     const issueJob = await currentIssueRenderJob(tdb, drawing);
     const dims = issueJob?.result?.artifacts?.dimensions ? await loadJobDimensions(issueJob.result) : [];
     const touched = dims.length ? touchedEntities(checked.ok, dims) : [];
     return json({ patch_id: row?.id, seq: row?.seq, patch, patch_sha256, rejected, touched, base: { name: version.name, version: version.version } });
+  }
+
+  // --- Promote: a template-scope turn writes a NEW template version and carries
+  // this drawing onto it (docs/DRAWING_DIALOGUE.md §5). Only the body's own
+  // keys change (promoteTemplate); the drawing's patch loses what the body now
+  // carries (stripPromoted) and gains the ops below the template ceiling; the
+  // new seq is a `carry` row on the new base, rendered and kept like any
+  // other step. No other drawing moves: each shows "vN available · Rebase".
+  if (action === "promoteDrawingSpecOps") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const drawing_id = String(body.drawing_id ?? "").trim();
+    const ops = Array.isArray(body.ops) ? body.ops : null;
+    const turn_id = String(body.turn_id ?? "").trim() || null;
+    const note = body.note != null ? String(body.note).slice(0, 400) : null;
+    if (!drawing_id || !ops) return json({ error: "drawing_id and ops[] required" }, 400);
+    if (!ops.length) return json({ error: "ops is empty" }, 400);
+    if (ops.length > 200) return json({ error: "at most 200 ops per step" }, 400);
+    const { data: drawing } = await tdb("drawings").select("id, drawing_number, title, render_spec, current_revision_id, spec_patch_id")
+      .eq("id", drawing_id).maybeSingle();
+    if (!drawing) return json({ error: "Drawing not found" }, 404);
+    if (drawing.current_revision_id) {
+      const { data: rev } = await tdb("drawing_revisions").select("id, revision, status").eq("id", drawing.current_revision_id).maybeSingle();
+      if (rev && (rev.status || "draft") !== "draft") return json({ error: `Issue ${rev.revision} is ${rev.status}; render the next letter before changing the template from it` }, 409);
+    }
+    const patches = await loadSpecPatches(tdb, drawing_id);
+    const latest = patches.length ? patches[patches.length - 1] : null;
+    const latestSeq = latest ? Number(latest.seq) : 0;
+    if (body.parent_seq == null || body.parent_seq === "") {
+      return json({ error: "parent_seq required: the seq this step builds on (0 when the drawing has no patch yet)", latest_seq: latestSeq }, 400);
+    }
+    const parent_seq = Number(body.parent_seq);
+    if (!Number.isInteger(parent_seq) || parent_seq !== latestSeq) {
+      return json({ error: `parent_seq ${body.parent_seq} is not the latest (${latestSeq}); reload the drawing`, latest_seq: latestSeq }, 409);
+    }
+    const version = await resolveDrawingSpecVersion(tdb, drawing, patches);
+    if (!version) return json({ error: "The drawing has no governed spec yet; render an issue from a registered template first" }, 400);
+    if (version.kind !== "template") return json({ error: `${version.name} is a per-part spec, not a template; migrate the drawing to flat_panel first` }, 400);
+    const pro = promoteTemplate(version.body, ops);
+    const rejected: any[] = [...(pro.rejected || [])];
+    if (!pro.promoted.length) return json({ error: "no operation is template-level; nothing to promote", rejected, kept: pro.kept }, 400);
+    const body_sha256 = await canonicalSha(pro.body);
+    // The same body under the same name is one version (the unique key).
+    let { data: have } = await tdb("drawing_spec_versions").select(SPEC_VERSION_FIELDS).eq("name", version.name).eq("body_sha256", body_sha256).maybeSingle();
+    if (!have) {
+      const { data: newest } = await tdb("drawing_spec_versions").select("version").eq("name", version.name).order("version", { ascending: false }).limit(1);
+      const nextVersion = (Number((newest || [])[0]?.version) || 0) + 1;
+      const { data: ins, error: vErr } = await tdb("drawing_spec_versions").insert({
+        name: version.name, version: nextVersion, kind: "template", body: pro.body, body_sha256,
+        registered_by: session.email || session.uid || "portal", origin: "portal", author_user_id: session.uid || null,
+        parent_version_id: version.id, promoted_from_drawing_id: drawing_id, note,
+      }).select(SPEC_VERSION_FIELDS).maybeSingle();
+      if (vErr) {
+        if (!/duplicate key|unique/i.test(vErr.message)) return json({ error: vErr.message }, 400);
+        const { data: again } = await tdb("drawing_spec_versions").select(SPEC_VERSION_FIELDS).eq("name", version.name).eq("body_sha256", body_sha256).maybeSingle();
+        have = again;
+      } else have = ins;
+    }
+    if (!have) return json({ error: "The new version could not be written" }, 400);
+    // The catalogue points at what is current; the worker mirrors it (§5).
+    await tdb("drawing_render_specs").update({ current_version_id: have.id, template: true }).eq("name", version.name);
+    // This drawing onto the new base: the accepted-or-latest patch minus what
+    // the body now says, plus the ops below the template ceiling.
+    const basePatch = latest ? latest.patch : emptyPatch({ name: version.name, version: version.version });
+    const stripped = stripPromoted(basePatch, pro.promoted);
+    const applied = pro.kept.length ? applySpecOps(stripped, pro.kept) : { patch: stripped, rejected: [] };
+    for (const r of applied.rejected || []) rejected.push(r);
+    const patch = { ...applied.patch, base: { name: version.name, version: have.version } };
+    const patch_sha256 = await canonicalSha(patch);
+    const operations = [...pro.promoted.map((o: any) => ({ ...o, promoted_to: `${version.name} v${have.version}` })), ...pro.kept];
+    const { data: row, error } = await tdb("drawing_spec_patches").insert({
+      drawing_id, seq: latestSeq + 1, parent_id: latest?.id ?? null, spec_version_id: have.id,
+      patch, patch_sha256, operations, origin: "carry", turn_id,
+      prompt: body.prompt != null ? String(body.prompt).slice(0, 4000) : note,
+      selection: body.selection && typeof body.selection === "object" ? body.selection : null,
+      proposal: body.proposal && typeof body.proposal === "object" ? body.proposal : null,
+      status: "proposed", created_by: session.uid || null,
+    }).select(SPEC_PATCH_FIELDS).maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) return json({ error: `seq ${latestSeq + 1} was taken meanwhile; reload the drawing`, latest_seq: latestSeq }, 409);
+      return json({ error: error.message }, 400);
+    }
+    if (turn_id) await tdb("drawing_spec_turns").update({ accepted: true }).eq("id", turn_id).eq("drawing_id", drawing_id);
+    try {
+      await db.from("platform_audit").insert({
+        actor_user_id: session.uid ?? null, actor_email: session.email ?? null,
+        action: "drawing_template_promoted", target_organization_id: (session.org as string) || RUSHROOM_ORG_ID,
+        detail: { name: version.name, from_version: version.version, to_version: have.version, version_id: have.id, drawing_id, drawing_number: drawing.drawing_number, ops: pro.promoted, note },
+      });
+    } catch { /* the version row and the patch row are the record */ }
+    const issueJob = await currentIssueRenderJob(tdb, drawing);
+    const dims = issueJob?.result?.artifacts?.dimensions ? await loadJobDimensions(issueJob.result) : [];
+    const touched = dims.length ? touchedEntities([...pro.promoted, ...pro.kept], dims) : [];
+    return json({
+      version: { id: have.id, name: have.name, version: have.version, body_sha256: have.body_sha256, origin: have.origin ?? "portal" },
+      previous_version: version.version,
+      patch_id: row?.id, seq: row?.seq, patch, patch_sha256, promoted: pro.promoted, kept: pro.kept, rejected, touched,
+      base: { name: version.name, version: have.version },
+    });
+  }
+
+  // --- a proposal the engineer did not take ---------------------------------
+  if (action === "discardDrawingSpecTurn") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const turn_id = String(body.turn_id ?? "").trim();
+    if (!turn_id) return json({ error: "turn_id required" }, 400);
+    const { data, error } = await tdb("drawing_spec_turns").update({ accepted: false }).eq("id", turn_id).is("accepted", null).select("id");
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true, discarded: !!(data && data.length) });
   }
 
   // --- Keep: the candidate becomes the draft's file; the letter stays -------
@@ -9406,6 +9600,10 @@ Deno.serve(async (req) => {
   if (action === "scanBomAnomalies") {
     // PROP-076: served by portal-ai. A client still posting it here is stale.
     return json({ error: "Action 'scanBomAnomalies' moved to portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
+  }
+  if (action === "proposeDrawingSpecOps") {
+    // Served by portal-ai (DRAWING_DIALOGUE §7); the guard keeps a stale client honest.
+    return json({ error: "Action 'proposeDrawingSpecOps' is served by portal-ai. Refresh the page to pick up the new client.", moved_to: "portal-ai" }, 421);
   }
 
   if (action === "batchSuggestComponents") {

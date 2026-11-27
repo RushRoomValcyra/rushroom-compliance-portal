@@ -14613,6 +14613,10 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
 
   const drNum = (v) => (typeof v === "number" ? String(Math.round(v * 100) / 100) : String(v ?? ""));
   const drDimKey = (r) => `${r.sheet}|${r.feature}|${r.kind}`;
+  // The touched set keys a row by the kind pair a datum move swaps between
+  // (pos_y ↔ pos_y_top, pos_x ↔ pos_x_far), so the candidate's row lights amber
+  // under its new kind (DRAWING_DIALOGUE §4.2).
+  const drTouchKey = (r) => `${r.sheet}|${r.feature}|${String(r.kind).replace(/^pos_y_top$/, "pos_y").replace(/^pos_x_far$/, "pos_x")}`;
 
   /** An address in words: "Ø5 at (37, 58.5)", "groove X at 12", "pocket at (40, 300)". */
   function drAtWords(at) {
@@ -14623,19 +14627,25 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     return "";
   }
 
+  /** The edge a position kind is measured from, in words: y → bottom / top, x → left / right. */
+  const drEdgeWords = (kind, side) => (String(kind).startsWith("pos_y") ? (side === "max" ? "top" : "bottom") : (side === "max" ? "right" : "left")) + " edge";
   /** One op in words — what the Patch list, the history and the audit speak. */
   function drOpWords(op) {
     if (!op || typeof op !== "object") return "";
     const where = drAtWords(op.at);
     switch (op.op) {
       case "override_dimension": {
+        // A per-dimension datum (DRAWING_DIALOGUE §4.2): "pos_y from top edge on Ø5 at (41, 1319)".
+        if (op.from != null) return `${op.kind} from ${drEdgeWords(op.kind, op.from)} on ${where}`;
         const parts = [];
         if (op.tol != null) parts.push(`${op.kind} tol ${op.tol}`);
         if (op.name != null) parts.push(`${op.kind === "dia" ? "name" : "named"} ${op.name}`);
         return `${parts.join(" · ") || op.kind} on ${where}`;
       }
+      case "set_sheet_plan": return `sheets from the ${op.face_order === "bottom_up" ? "bottom" : "top"}`;
       case "remove_override": return `${op.kind} override removed on ${where}`;
       case "set_tolerance": return `${op.kind} tol ${op.tol} for all`;
+      case "remove_tolerance": return `${op.kind} tol back to the template`;
       case "set_inside_face": return `inside face ${op.side}`;
       case "set_datum": return `datum ${op.axis} ${op.side}`;
       case "set_from_top_rule": return `from top within ${drNum(op.within)}`;
@@ -14687,10 +14697,10 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     for (const [kind, tol] of Object.entries(curTol)) {
       if (accTol[kind] === tol) continue;
       const op = { op: "set_tolerance", kind, tol };
-      lines.push({ op, text: drOpWords(op), remove: accTol[kind] != null ? [withReason({ op: "set_tolerance", kind, tol: accTol[kind] })] : null });
+      lines.push({ op, text: drOpWords(op), remove: [withReason(accTol[kind] != null ? { op: "set_tolerance", kind, tol: accTol[kind] } : { op: "remove_tolerance", kind })] });
     }
     const accOv = Array.isArray(acc.overrides) ? acc.overrides : [], curOv = Array.isArray(cur.overrides) ? cur.overrides : [];
-    const ovOp = (o) => { const w = { op: "override_dimension", at: o.at, kind: o.kind }; if (o.tol != null) w.tol = o.tol; if (o.name != null) w.name = o.name; return w; };
+    const ovOp = (o) => { const w = { op: "override_dimension", at: o.at, kind: o.kind }; if (o.tol != null) w.tol = o.tol; if (o.name != null) w.name = o.name; if (o.from != null) w.from = o.from; return w; };
     for (const o of curOv) {
       const was = accOv.find((x) => x.kind === o.kind && sameAt(x.at, o.at));
       if (was && same(was, o)) continue;
@@ -14701,13 +14711,13 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     for (const was of accOv) {
       if (curOv.some((x) => x.kind === was.kind && sameAt(x.at, was.at))) continue;
       const op = { op: "remove_override", at: was.at, kind: was.kind };
-      lines.push({ op, text: `remove ${was.kind}${was.tol != null ? " tol" : was.name != null ? " name" : ""} on ${drAtWords(was.at)}`, remove: [withReason(ovOp(was))] });
+      lines.push({ op, text: `remove ${was.kind}${was.tol != null ? " tol" : was.name != null ? " name" : was.from != null ? " datum" : ""} on ${drAtWords(was.at)}`, remove: [withReason(ovOp(was))] });
     }
     // Everything else the vocabulary can say (hole rules, pairs, CTQ, datums,
     // edge names and bands): in words, no ×.
     const rest = drRevertOps(acc, cur);
     for (const op of rest.ops || []) {
-      if (op.op === "set_tolerance" || op.op === "override_dimension" || op.op === "remove_override") continue;
+      if (op.op === "set_tolerance" || op.op === "remove_tolerance" || op.op === "override_dimension" || op.op === "remove_override") continue;
       lines.push({ op, text: drOpWords(op), remove: null });
     }
     return lines;
@@ -14717,16 +14727,19 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
    *  they change; a carry row has none. */
   function drHistoryWords(row) {
     const ops = Array.isArray(row.operations) ? row.operations : [];
-    const n = { tolerance: 0, name: 0, removal: 0, other: 0 };
+    const n = { tolerance: 0, name: 0, datum: 0, removal: 0, promoted: 0, other: 0 };
     for (const op of ops) {
       if (!op) continue;
+      if (op.promoted_to) n.promoted++;
       if (op.op === "set_tolerance" || (op.op === "override_dimension" && op.tol != null)) n.tolerance++;
       else if ((op.op === "override_dimension" && op.name != null) || op.op === "name_edge") n.name++;
+      else if ((op.op === "override_dimension" && op.from != null) || op.op === "set_datum" || op.op === "set_from_top_rule") n.datum++;
       else if (/^remove_/.test(String(op.op))) n.removal++;
       else n.other++;
     }
     const w = (c, s, p) => (c ? `${c} ${c === 1 ? s : p}` : null);
-    return [w(n.tolerance, "tolerance", "tolerances"), w(n.name, "name", "names"), w(n.removal, "removal", "removals"), w(n.other, "op", "ops")].filter(Boolean).join(" · ");
+    return [w(n.tolerance, "tolerance", "tolerances"), w(n.name, "name", "names"), w(n.datum, "datum", "datums"), w(n.removal, "removal", "removals"), w(n.other, "op", "ops"),
+      n.promoted ? `${n.promoted} promoted` : null].filter(Boolean).join(" · ");
   }
   const DR_PATCH_TONE = { proposed: "#64748b", candidate: "#0369a1", accepted: "#15803d", discarded: "#b45309", failed: "#b91c1c" };
   /** Proposed · Candidate · Accepted · Discarded · Failed — the drawingStatusChip look, the patch's words. */
@@ -14758,7 +14771,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const op = (o) => ops.push({ ...o, reason: "" });
     const refuse = (why) => ({ refused: why });
     // tolerances
-    for (const k of Object.keys(a.tolerances || {})) if (!(k in (b.tolerances || {}))) return refuse(`${k} tolerance`);
+    for (const k of Object.keys(a.tolerances || {})) if (!(k in (b.tolerances || {}))) op({ op: "remove_tolerance", kind: k });
     for (const [k, tol] of Object.entries(b.tolerances || {})) if ((a.tolerances || {})[k] !== tol) op({ op: "set_tolerance", kind: k, tol });
     // overrides by (at, kind)
     const ovA = Array.isArray(a.overrides) ? a.overrides : [], ovB = Array.isArray(b.overrides) ? b.overrides : [];
@@ -14775,6 +14788,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const w = { op: "override_dimension", at: o.at, kind: o.kind };
       if (o.tol != null) w.tol = o.tol;
       if (o.name != null) w.name = o.name;
+      if (o.from != null) w.from = o.from;
       op(w);
     }
     // hole rules by (D, axis, only_at)
@@ -14805,6 +14819,10 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     if (dB.inside_face != null && dB.inside_face !== dA.inside_face) op({ op: "set_inside_face", side: dB.inside_face });
     for (const ax of ["x", "y"]) if (dB[ax] != null && dB[ax] !== dA[ax]) op({ op: "set_datum", axis: ax, side: dB[ax] });
     if (dB.y_from_top_within != null && dB.y_from_top_within !== dA.y_from_top_within) op({ op: "set_from_top_rule", within: dB.y_from_top_within });
+    // the sheet plan (DRAWING_DIALOGUE §4.1)
+    const plA = (a.plan || {}), plB = (b.plan || {});
+    if (plA.face_order != null && plB.face_order == null) return refuse("sheet plan");
+    if (plB.face_order != null && plB.face_order !== plA.face_order) op({ op: "set_sheet_plan", face_order: plB.face_order });
     for (const k of Object.keys(a.edge_names || {})) if (!(k in (b.edge_names || {}))) return refuse(`edge name ${k}`);
     for (const [k, name] of Object.entries(b.edge_names || {})) if ((a.edge_names || {})[k] !== name) op({ op: "name_edge", edge: k, name });
     for (const k of Object.keys(a.edge_band || {})) if (!(k in (b.edge_band || {}))) op({ op: "set_edge_band", edge: k, text: null });
@@ -14892,6 +14910,9 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       // Phase 4: the sheet viewers (current issue, candidate) and the selection
       // the sheet made — row keys (drDimKey) and the marquee's model rectangle.
       sheets: null, cand: null, sel: new Set(), region: null,
+      // Phase 5 (DRAWING_DIALOGUE §3, §6): the scope the engineer chose on the
+      // prompt row (callout · drawing · template) and whether they chose it by hand.
+      scope: null, scopeChosen: false,
     };
     _drSurfaceTouched.set(drawing.id, state.touched);
     const letter = currentRev ? currentRev.revision : "";
@@ -14904,15 +14925,26 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const parentSeq = () => (state.latest ? Number(state.latest.seq) || 0 : 0);
     const proposed = () => (state.latest && state.latest.status === "proposed" ? state.latest : null);
     const setMsg = (node, text, kind) => { node.textContent = text || ""; node.className = kind === "error" ? "dr-error" : "dr-refused"; node.style.display = text ? "" : "none"; };
+    // After a reload the page memory is empty but the Patch lines are not: the
+    // rows they touch are amber again, rebuilt from the pending diff (the same
+    // blast radius the server answers on Apply).
+    if (!state.touched.size && core && state.latest?.patch) {
+      const accP = (spec?.patch && spec.patch.patch) || null, accS = spec?.patch ? Number(spec.patch.seq) || 0 : 0;
+      if (parentSeq() > accS) {
+        const pend = drPendingLines(accP, state.latest.patch).map((l) => ({ ...l.op, reason: "" }));
+        for (const t of core.touchedEntities(pend, dims)) state.touched.add(drTouchKey(t));
+      }
+    }
 
     // ---- posting ops: one place, so every form, × and revert agree ---------
     // Returns true when a new seq was made (rejected ops, if any, are in `msg`).
     // `reopen` ({ key, tol, name }) is the form to bring back after a 409.
-    async function postOps(ops, msg, reopen) {
+    async function postOps(ops, msg, reopen, extra) {
       setMsg(msg, "");
       let res;
+      const origin = extra && extra.origin ? extra.origin : "click";
       try {
-        res = await API.post(token, "applyDrawingSpecOps", { drawing_id: drawing.id, ops, parent_seq: parentSeq(), origin: "click" });
+        res = await API.post(token, "applyDrawingSpecOps", { drawing_id: drawing.id, ops, parent_seq: parentSeq(), origin, ...(extra || {}) });
       } catch (ex) {
         if (ex.status === 409) {
           // A second engineer moved the chain (the server names latest_seq):
@@ -14931,13 +14963,13 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const rejected = Array.isArray(res?.rejected) ? res.rejected : [];
       if (rejected.length) setMsg(msg, rejected.map((r) => r.reason).join(" · "), "refused");
       if (!res || !res.patch_id) return false;
-      state.latest = { patch_id: res.patch_id, seq: res.seq, patch: res.patch, patch_sha256: res.patch_sha256, status: "proposed", origin: "click" };
+      state.latest = { patch_id: res.patch_id, seq: res.seq, patch: res.patch, patch_sha256: res.patch_sha256, status: "proposed", origin };
       // The server stores the ops as the validator normalised them (tolerance
       // grammar, address case) and does not echo them: the same validator runs
       // here so the history words match after the next reload.
       const admitted = core && typeof core.validateOps === "function" ? core.validateOps(ops).ok : ops;
-      state.history.push({ patch_id: res.patch_id, seq: res.seq, origin: "click", status: "proposed", operations: admitted, created_at: new Date().toISOString() });
-      for (const t of Array.isArray(res.touched) ? res.touched : []) state.touched.add(drDimKey(t));
+      state.history.push({ patch_id: res.patch_id, seq: res.seq, origin, status: "proposed", operations: admitted, created_at: new Date().toISOString() });
+      for (const t of Array.isArray(res.touched) ? res.touched : []) state.touched.add(drTouchKey(t));
       markTouched(); paintPatch(); paintSpec(); syncRender();
       return true;
     }
@@ -14985,21 +15017,30 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     let openRow = null;
     let applyFilter = null, dimsWrap = null;
     const selSlot = el("div", {});
+    const promptSlot = el("div", {});
     const closeForm = () => { if (openRow) { openRow.formTr.remove(); openRow.tr.classList.remove("is-open"); openRow = null; } };
-    const touchedIds = (rows) => rows.map((r) => (state.touched.has(drDimKey(r)) ? drEntId(r) : null)).filter(Boolean);
+    const touchedIds = (rows) => rows.map((r) => (state.touched.has(drTouchKey(r)) ? drEntId(r) : null)).filter(Boolean);
     const markTouched = () => {
-      for (const tr of rowEls) tr.classList.toggle("is-touched", state.touched.has(drDimKey(tr.__row)));
+      for (const tr of rowEls) tr.classList.toggle("is-touched", state.touched.has(drTouchKey(tr.__row)));
       if (state.sheets) state.sheets.setTouched(touchedIds(dims));
     };
     const isOverrideRow = (r) => core.OVERRIDE_KINDS.includes(r.kind) && !!r.at && typeof r.at === "object";
+    // A position row on a hole takes a per-dimension DATUM (DRAWING_DIALOGUE
+    // §4.2): "From" picks the edge; drawset prints the far edge as pos_y_top /
+    // pos_x_far, so the row's kind maps back to the op's kind.
+    const POS_FORM = { pos_x: "pos_x", pos_x_far: "pos_x", pos_y: "pos_y", pos_y_top: "pos_y" };
+    const isPosRow = (r) => !!POS_FORM[r.kind] && !!r.at && typeof r.at === "object" && r.at.type === "hole";
+    const edgeNames = () => ({ ...((spec?.template?.body || {}).edge_names || {}), ...((state.latest?.patch || {}).edge_names || {}) });
+    const datumSide = (axis) => (state.latest?.patch?.datums || {})[axis] || ((spec?.template?.body || {}).datums || {})[axis] || "min";
     // A row opens the form only when the vocabulary has an op for it (§13.2):
     // an override kind with an address, or a kind with a kind-level tolerance.
     // A kind in neither list opens nothing. A relation row ("through",
     // "into the Ø2") prints no number, so no tolerance can sit on it: drawset
     // marks it `relation` in the sidecar and it opens nothing either.
-    const canOpen = (r) => editable && !r.relation && (isOverrideRow(r) || !!drToleranceKindFor(r));
+    const canOpen = (r) => editable && !r.relation && (isOverrideRow(r) || isPosRow(r) || !!drToleranceKindFor(r));
     // `prefill` ({ tol, name, error }) brings a form back after a 409 repaint.
     function openForm(tr, r, prefill) {
+      if (isPosRow(r)) return openFromForm(tr, r, prefill);
       const isOverride = isOverrideRow(r);
       const tolKind = isOverride ? null : drToleranceKindFor(r);
       const cell = el("td", { colspan: 6 });
@@ -15039,6 +15080,35 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       }
       tr.after(formTr); tr.classList.add("is-open"); openRow = { tr, formTr };
       const first = cell.querySelector("input"); if (first) first.focus();
+    }
+    // The one-row form of a position row: From [edge] · Apply · Cancel.
+    function openFromForm(tr, r, prefill) {
+      const kind = POS_FORM[r.kind];
+      const axis = kind === "pos_x" ? "x" : "y";
+      const names = edgeNames();
+      const word = (side) => names[`${axis}_${side}`] || drEdgeWords(kind, side);
+      const now = (r.kind === "pos_x_far" || r.kind === "pos_y_top") ? (datumSide(axis) === "min" ? "max" : "min") : datumSide(axis);
+      const cell = el("td", { colspan: 6 });
+      const formTr = el("tr", { class: "dr-dim-form" }, cell);
+      const msg = el("div", { class: "dr-refused", style: "display:none" });
+      const from = el("select", { class: "up-text", "aria-label": "From" }, ["min", "max"].map((side) => el("option", { value: side, selected: side === now ? "selected" : null }, word(side))));
+      const apply = el("button", { class: "btn btn-xs btn-primary", type: "button", disabled: true }, "Apply");
+      const cancel = el("button", { class: "btn btn-xs", type: "button", onclick: closeForm }, "Cancel");
+      const sync = () => { apply.disabled = from.value === now; };
+      from.onchange = sync;
+      const submit = async () => {
+        if (apply.disabled) return;
+        apply.disabled = true;
+        const op = { op: "override_dimension", at: r.at, kind, from: from.value, reason: "" };
+        if (await postOps([op], msg, { key: drDimKey(r), from: from.value })) closeForm(); else sync();
+      };
+      apply.onclick = submit;
+      from.onkeydown = (e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") closeForm(); };
+      const field = (text, input) => el("label", { class: "form-row" }, [el("span", { class: "form-label" }, text), input]);
+      setChildren(cell, el("div", { class: "dr-row" }, [field("From", from), apply, cancel]), msg);
+      if (prefill) { if (prefill.from) from.value = prefill.from; sync(); if (prefill.error) setMsg(msg, prefill.error, "error"); }
+      tr.after(formTr); tr.classList.add("is-open"); openRow = { tr, formTr };
+      from.focus();
     }
     const dimsNodes = [el("h4", { class: "drawing-rail-h" }, `Dimensions (${dims.length})`)];
     if (!dims.length) dimsNodes.push(el("div", { class: "muted t-sm" }, "No dimensions."));
@@ -15082,6 +15152,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       dimsNodes.push(
         el("div", { class: "dr-dims-filter" }, filter),
         selSlot,
+        promptSlot,
         dimsWrap,
       );
       setChildren(dimsWrap, el("table", { class: "dr-dims" }, [
@@ -15118,6 +15189,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const clearSelection = () => { state.sel = new Set(); state.region = null; if (applyFilter) applyFilter(); paintSelection(); if (state.sheets) state.sheets.setSelected([]); if (state.cand) state.cand.setSelected([]); };
     function paintSelection() {
       const rows = dims.filter((r) => state.sel.has(drDimKey(r)));
+      syncScope();
       if (!rows.length && !state.region) { setChildren(selSlot); return; }
       const kinds = new Map();
       for (const r of rows) kinds.set(r.kind, (kinds.get(r.kind) || 0) + 1);
@@ -15136,6 +15208,142 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       if (!ids.length && !region) { if (!add) clearSelection(); return; }
       selectRows(keys, { add, region, openOne: ids.length === 1 && !add && !region });
     };
+    // ---- The dialogue (DRAWING_DIALOGUE §3, §6): Scope · Ask… · Send; the
+    // proposal card with Operations · Stays code · Questions; Apply posts the
+    // checked ops through applyDrawingSpecOps (origin dialogue) or, under
+    // Template scope, promoteDrawingSpecOps. The scope is the engineer's,
+    // never the model's; the level of an op is a constant of the core.
+    const tmpl = spec?.template || null;
+    const templateOk = !!tmpl && tmpl.kind === "template";
+    const scopeBtns = {};
+    let promptInput = null, sendBtn = null, cardSlot = null;
+    const promptMsg = el("div", { class: "dr-error", style: "display:none" });
+    function syncScope() {
+      const hasSel = state.sel.size > 0;
+      if (!state.scope) state.scope = hasSel ? "callout" : "drawing";
+      if (state.scope === "callout" && !hasSel) { state.scope = "drawing"; state.scopeChosen = false; }
+      else if (hasSel && state.scope === "drawing" && !state.scopeChosen) state.scope = "callout";
+      if (state.scope === "template" && !templateOk) state.scope = hasSel ? "callout" : "drawing";
+      for (const [k, b] of Object.entries(scopeBtns)) {
+        b.classList.toggle("is-active", state.scope === k);
+        b.setAttribute("aria-pressed", state.scope === k ? "true" : "false");
+        if (k === "callout") b.disabled = !hasSel;
+      }
+      if (promptInput) promptInput.placeholder = "Ask…";
+    }
+    const chooseScope = (k) => { state.scope = k; state.scopeChosen = true; syncScope(); };
+    const selectionPayload = () => ({
+      sheet: state.sheets ? Number(state.sheets.sheet) : null,
+      entities: dims.filter((r) => state.sel.has(drDimKey(r))).map((r) => ({
+        sheet: r.sheet, feature: r.feature, kind: r.kind, value: r.value, text: r.text, tol: r.tol, view: r.view, at: r.at ?? null, relation: !!r.relation,
+      })),
+      region_model: state.region ? { face: state.region.face || "", view: state.region.view || "", x: state.region.x, y: state.region.y } : null,
+    });
+    const stripUi = (op) => { const o = { ...op }; delete o.level; delete o.promotable; delete o.stays_on_drawing; delete o.targets; return o; };
+    function paintCard(res, prompt, selection) {
+      const pr = res.proposal || {};
+      const ops = Array.isArray(pr.operations) ? pr.operations : [];
+      const refusals = Array.isArray(pr.refusals) ? pr.refusals : [];
+      const questions = Array.isArray(pr.questions) ? pr.questions : [];
+      const checks = [];
+      const msg = el("div", { class: "dr-error", style: "display:none" });
+      const promote = state.scope === "template" && ops.some((o) => o.promotable);
+      const applyText = promote ? `Promote to ${tmpl.name} v${Number(tmpl.current_version || tmpl.version) + 1}` : "Apply";
+      const apply = el("button", { class: "btn btn-xs btn-primary", type: "button", disabled: !ops.length }, applyText);
+      const discard = el("button", { class: "btn btn-xs", type: "button" }, "Discard");
+      const closeCard = () => setChildren(cardSlot);
+      const syncApply = () => { apply.disabled = !checks.some((c) => c.cb.checked); };
+      apply.onclick = async () => {
+        const chosen = checks.filter((c) => c.cb.checked).map((c) => stripUi(c.op));
+        if (!chosen.length) return;
+        apply.disabled = true; discard.disabled = true; setMsg(msg, "");
+        const extra = { origin: "dialogue", turn_id: res.turn_id, prompt, selection, proposal: pr };
+        if (promote && chosen.some((o) => core.levelOf && core.levelOf(o) === "template")) {
+          try {
+            const r = await API.post(token, "promoteDrawingSpecOps", { drawing_id: drawing.id, ops: chosen, parent_seq: parentSeq(), turn_id: res.turn_id, note: prompt, prompt, selection, proposal: pr });
+            for (const t of Array.isArray(r.touched) ? r.touched : []) state.touched.add(drTouchKey(t));
+            // The template moved: the whole surface repaints on the new version.
+            await reload();
+          } catch (ex) {
+            if (ex.status === 409) { await reload(); return; }
+            const rejected = Array.isArray(ex.body?.rejected) ? ex.body.rejected : [];
+            setMsg(msg, rejected.length ? rejected.map((x) => x.reason).join(" · ") : ex.message, "error");
+            apply.disabled = false; discard.disabled = false;
+          }
+          return;
+        }
+        if (await postOps(chosen, msg, null, extra)) closeCard(); else { apply.disabled = false; discard.disabled = false; }
+      };
+      discard.onclick = async () => {
+        discard.disabled = true;
+        try { if (res.turn_id) await API.post(token, "discardDrawingSpecTurn", { turn_id: res.turn_id }); } catch { /* the card closes either way */ }
+        closeCard();
+      };
+      const opLine = (o) => {
+        const cb = el("input", { type: "checkbox", checked: "checked", onchange: syncApply });
+        checks.push({ cb, op: o });
+        return el("label", { class: "dr-card-op" }, [
+          cb,
+          el("span", {}, drOpWords(o)),
+          o.reason ? el("span", { class: "muted" }, o.reason) : null,
+          el("span", { class: "dr-level" }, o.level || ""),
+          o.stays_on_drawing ? el("span", { class: "muted" }, "stays on this drawing") : null,
+        ].filter(Boolean));
+      };
+      setChildren(cardSlot, el("div", { class: "dr-card" }, [
+        pr.summary ? el("div", { class: "dr-card-summary" }, pr.summary) : null,
+        ops.length ? el("div", { class: "dr-card-h" }, "Operations") : null,
+        ops.length ? el("div", { class: "dr-card-ops" }, ops.map(opLine)) : null,
+        refusals.length ? el("div", { class: "dr-card-h" }, "Stays code") : null,
+        ...refusals.map((r) => el("div", { class: "dr-refused" }, `${r.request} — ${r.category} · ${r.lives_in}${r.detail ? `: ${r.detail}` : ""}`)),
+        questions.length ? el("div", { class: "dr-card-h" }, "Questions") : null,
+        ...questions.map((q) => el("div", { class: "dr-card-q" }, q)),
+        el("div", { class: "dr-card-actions" }, [apply, discard]),
+        msg,
+      ].filter(Boolean)));
+    }
+    async function send() {
+      const prompt = promptInput.value.trim();
+      if (!prompt) return;
+      setMsg(promptMsg, "");
+      promptInput.disabled = true; sendBtn.disabled = true;
+      const selection = selectionPayload();
+      try {
+        const res = await API.post(token, "proposeDrawingSpecOps", { drawing_id: drawing.id, prompt, scope: state.scope, selection, parent_seq: parentSeq() });
+        paintCard(res, prompt, selection);
+        promptInput.value = "";
+      } catch (ex) {
+        setMsg(promptMsg, ex.message, "error");
+      }
+      promptInput.disabled = false; sendBtn.disabled = false;
+    }
+    function paintPrompt() {
+      if (!editable || !dims.length) { setChildren(promptSlot); return; }
+      const scopeBtn = (k, text, title) => {
+        const b = el("button", { class: "dr-scope-btn", type: "button", title: title || null, onclick: () => chooseScope(k) }, text);
+        scopeBtns[k] = b;
+        return b;
+      };
+      const tBtn = scopeBtn("template", templateOk ? `Template ${tmpl.name} v${tmpl.version}` : "Template",
+        templateOk ? null : (tmpl ? `${tmpl.name} is a per-part spec: migrate to flat_panel first` : "no template"));
+      tBtn.disabled = !templateOk;
+      promptInput = el("input", { class: "up-text", type: "text", placeholder: "Ask…", maxlength: "2000", "aria-label": "Ask", onkeydown: (e) => { if (e.key === "Enter") send(); } });
+      sendBtn = el("button", { class: "btn btn-xs btn-primary", type: "button", onclick: send }, "Send");
+      cardSlot = el("div", {});
+      setChildren(promptSlot, el("div", { class: "dr-prompt" }, [
+        el("div", { class: "dr-row" }, [
+          el("label", { class: "form-row" }, [el("span", { class: "form-label" }, "Scope"),
+            el("div", { class: "dr-scope", role: "group", "aria-label": "Scope" }, [scopeBtn("callout", "This callout"), scopeBtn("drawing", "This drawing"), tBtn])]),
+        ]),
+        el("div", { class: "dr-row" }, [
+          el("label", { class: "form-row dr-prompt-field" }, [el("span", { class: "form-label" }, "Ask"), promptInput]),
+          sendBtn,
+        ]),
+        promptMsg,
+        cardSlot,
+      ]));
+      syncScope();
+    }
     const sheetsAvailable = fromJob && pngs.length > 0 && !!ents;
     // The file pane for one issue: the sheets for the current issue made by a
     // render job (unless the user chose Plain PDF), the PDF otherwise.
@@ -15216,8 +15424,11 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         el("h4", { class: "drawing-rail-h" }, "Spec"),
         el("dl", { class: "drawing-meta" }, [
           el("dt", {}, "Template"),
-          el("dd", {}, t ? [`${t.name} v${t.version}`, t.drift && t.current_version != null
-              ? el("span", { class: "dr-refused", style: "margin-left:0.4rem" }, `v${t.current_version} available`) : null].filter(Boolean) : "—"),
+          el("dd", {}, t ? [`${t.name} v${t.version}${t.origin === "portal" ? " · promoted" : ""}`, t.drift && t.current_version != null
+              ? el("span", { class: "dr-refused", style: "margin-left:0.4rem" }, `v${t.current_version} available`) : null,
+              t.on_versions && Object.keys(t.on_versions).length
+                ? el("div", { class: "muted t-sm" }, Object.entries(t.on_versions).sort((x, y) => Number(y[0]) - Number(x[0])).map(([v, n]) => `${n} on v${v}`).join(" · "))
+                : null].filter(Boolean) : "—"),
           el("dt", {}, "Patch"),
           el("dd", {}, acc ? `#${acc.seq} · ${(state.history.find((h) => Number(h.seq) === Number(acc.seq))?.operations || []).length} ops` : "—"),
           ...(rows.length ? [
@@ -15321,7 +15532,11 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       if (!failed) {
         const c = core.diffDimensionLists(dims, candDims).counts;
         head.push(seg(`${c.a} → ${c.b}`), dot(), seg(`${plural(c.tol_changed, "tolerance")} changed`), dot(), seg(`${plural(c.value_changed, "value")} changed`, c.value_changed > 0));
-        if (c.added || c.removed) head.push(dot(), seg(`+${c.added} added · ${c.removed} removed`, true));
+        // A per-dimension datum move is one row gone and one new at the same
+        // address with the kind swapped (DRAWING_DIALOGUE §4.2): said as such.
+        const swaps = Number(c.datum_swaps) || 0;
+        if (swaps) head.push(dot(), seg(`${plural(swaps, "dimension")} measured from the other edge`));
+        if (c.added - swaps > 0 || c.removed - swaps > 0) head.push(dot(), seg(`+${c.added - swaps} added · ${c.removed - swaps} removed`, true));
         const curGeo = spec?.issue_job?.result?.geometry_sha256 || null, candGeo = result.geometry_sha256 || null;
         if (curGeo && candGeo) head.push(dot(), seg(curGeo === candGeo ? `geometry same as Issue ${letter}` : `geometry differs from Issue ${letter}`, curGeo !== candGeo));
       }
@@ -15369,14 +15584,14 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       );
     }
 
-    paintPatch(); paintSpec();
+    paintPatch(); paintSpec(); paintPrompt();
     // After a 409 repaint: the interrupted form again with its values and the
     // text in red; without a form (×, Revert) the text under the Patch lines.
     const again = _drSurfaceReopen.get(drawing.id);
     if (again) {
       _drSurfaceReopen.delete(drawing.id);
       const tr = again.form ? rowEls.find((x) => drDimKey(x.__row) === again.form.key) : null;
-      if (tr && canOpen(tr.__row)) openForm(tr, tr.__row, { tol: again.form.tol, name: again.form.name, error: again.error });
+      if (tr && canOpen(tr.__row)) openForm(tr, tr.__row, { tol: again.form.tol, name: again.form.name, from: again.form.from, error: again.error });
       else setMsg(patchErr, again.error, "error");
     }
     return {

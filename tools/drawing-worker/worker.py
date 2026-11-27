@@ -312,13 +312,64 @@ def spec_catalogue(cfg: dict) -> list[dict]:
     return out
 
 
-def register_specs(portal: Portal, cfg: dict, agent: str) -> None:
+def register_specs(portal: Portal, cfg: dict, agent: str) -> dict:
     if not os.path.isdir(specs_dir(cfg)):
         log.error("specs folder missing, nothing registered: %s", specs_dir(cfg))
-        return
+        return {}
     specs = spec_catalogue(cfg)
-    portal.call("registerDrawingSpecs", agent=agent, specs=specs)
+    r = portal.call("registerDrawingSpecs", agent=agent, specs=specs)
     log.info("registered %d specs (with bodies): %s", len(specs), ", ".join(s["name"] for s in specs) or "-")
+    return r if isinstance(r, dict) else {}
+
+
+# ----------------------------------------------------------------- template mirror
+
+class Mirror:
+    """specs/<name>.yaml mirrors the portal's CURRENT template version (docs/DRAWING_DIALOGUE.md §5): a
+    template-scope turn promotes a new version in the portal, and the file on this Mac follows it. `known`
+    holds, per template name, the body sha the file is believed to carry: what registerDrawingSpecs hashed
+    for the body this worker sent, or the version last written here. The poll answer's `templates` list
+    names the current sha per template; a difference means fetch and write (the previous file kept as
+    .bak). A hand edit on the Mac still registers at the next registration and becomes current, so both
+    editors write into one history and neither overwrites the other silently."""
+
+    def __init__(self):
+        self.known: dict[str, str] = {}
+
+    def after_register(self, portal: Portal, cfg: dict, answer: dict) -> None:
+        for name, sha in (answer.get("sent") or {}).items():
+            self.known[str(name)] = str(sha)
+        self.sync(portal, cfg, answer.get("templates") or [])
+
+    def sync(self, portal: Portal, cfg: dict, templates: list) -> None:
+        for t in templates or []:
+            if not isinstance(t, dict) or not t.get("name") or not t.get("body_sha256"):
+                continue
+            name = str(t["name"]); sha = str(t["body_sha256"])
+            if self.known.get(name) == sha:
+                continue
+            try:
+                self.write(portal, cfg, name, sha, t.get("version"), t.get("origin"))
+            except Exception as exc:
+                log.warning("template mirror %s: %s", name, exc)
+
+    def write(self, portal: Portal, cfg: dict, name: str, sha: str, version, origin) -> None:
+        r = portal.call("getDrawingSpecVersion", name=name)
+        v = r.get("version") if isinstance(r, dict) else None
+        if not isinstance(v, dict) or not isinstance(v.get("body"), dict):
+            raise RuntimeError("no body for %s" % name)
+        if str(v.get("body_sha256") or "") != sha:
+            sha = str(v.get("body_sha256") or sha)
+        path = os.path.join(specs_dir(cfg), name + ".yaml")
+        if os.path.exists(path):
+            shutil.copyfile(path, path + ".bak")
+        text = dump_yaml(v["body"], cfg)
+        header = "# Mirror of the portal's %s v%s (%s, %s). Edit here and restart the worker to register a new version,\n# or change it from a drawing's prompt under Template scope (docs/DRAWING_DIALOGUE.md §5).\n" % (
+            name, v.get("version", version or "?"), v.get("origin", origin or "?"), str(v.get("created_at") or "")[:19])
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(header + text)
+        self.known[name] = sha
+        log.info("%s.yaml <- v%s (%s)", name, v.get("version", version or "?"), v.get("origin", origin or "portal"))
 
 
 # ----------------------------------------------------------------- temp spec
@@ -893,12 +944,13 @@ def main_loop(cfg: dict) -> int:
              agent, portal.url, cfg["poll_seconds"], specs_dir(cfg), cfg["_config_file"] or "defaults")
     next_register = 0.0
     last_poll_error = None
+    mirror = Mirror()
     try:
         while not stop.is_set():
             now = time.time()
             if now >= next_register:
                 try:
-                    register_specs(portal, cfg, agent)
+                    mirror.after_register(portal, cfg, register_specs(portal, cfg, agent))
                     next_register = now + REGISTER_EVERY_S
                 except Exception as exc:
                     log.warning("registerDrawingSpecs failed: %s", exc)
@@ -908,6 +960,8 @@ def main_loop(cfg: dict) -> int:
                 r = portal.call("pollDrawingRenderJob", agent=agent)
                 job = r.get("job") if isinstance(r, dict) else None
                 last_poll_error = None
+                if isinstance(r, dict) and r.get("templates"):
+                    mirror.sync(portal, cfg, r.get("templates"))
             except Exception as exc:
                 msg = str(exc)
                 if msg != last_poll_error:

@@ -48,6 +48,7 @@
       "suggestPlannerKey",          // key name for a BOM component
       "batchSuggestComponents",     // PROP-075
       "scanBomAnomalies",           // PROP-076
+      "proposeDrawingSpecOps",      // dynamic drawings, layer 2 (DRAWING_DIALOGUE)
     ]),
     "portal-cellar": new Set([
       "addDirective", "syncDirectiveRelations", "inferDirectiveRelations",

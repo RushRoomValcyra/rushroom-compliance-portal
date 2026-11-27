@@ -11,12 +11,14 @@ Compliance portal for Rushroom AB's LED furniture product.
 - AI: ALL calls use `claude-opus-4-8` via api.anthropic.com/v1/messages
 
 ## Commands I use to deploy
-Deploy edge functions: supabase functions deploy portal-ai --no-verify-jwt
-                       supabase functions deploy portal-cellar --no-verify-jwt
-                       supabase functions deploy portal-api --no-verify-jwt
+Deploy edge functions: supabase functions deploy portal-ai --no-verify-jwt --use-api
+                       supabase functions deploy portal-cellar --no-verify-jwt --use-api
+                       supabase functions deploy portal-api --no-verify-jwt --use-api
                        (heavy functions FIRST — the frontend routes to them once pushed;
-                        a _shared/ change requires redeploying all three)
-Apply DB migration:    supabase db push
+                        a _shared/ change requires redeploying all three;
+                        --use-api bundles server-side: without it the CLI waits on Docker,
+                        which is usually not running here; from an agent add --yes)
+Apply DB migration:    supabase db push --remote   (the bare command targets the local stack; from an agent add --yes)
 Deploy frontend:       merge to main (Netlify publishes it; pull requests get a deploy preview)
 Bump cache:            increment ?v=N on every asset tag in index.html (and supplier.html if present)
 
@@ -93,6 +95,6 @@ Component types (PROP-058): part | raw_material | sub_assembly |
         phantom_assembly (structural only) | finished_good | spare_part | product_family
 
 ## Current state
-Frontend cache version: ?v=469 (app.js, viewer.js, styles.css)
+Frontend cache version: ?v=470 (app.js, viewer.js, styles.css, drawing-spec-core.mjs)
 Last SYSTEM_OVERVIEW audit: 2026-09-24
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

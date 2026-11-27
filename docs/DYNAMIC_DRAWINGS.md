@@ -330,6 +330,7 @@ schema's enum and the validator are both generated from it.
 | op | args | effect on the patch | notes |
 |---|---|---|---|
 | `set_tolerance` | `kind ∈ {general, outline, hole_position, hole_depth, edge_bore_depth, pocket_depth, groove_width, groove_depth, counterbore_depth}`, `tol` | `tolerances[kind] = tol` | `general` accepts `ISO 2768-[fmcv]` |
+| `remove_tolerance` | `kind` | `delete tolerances[kind]` | added 2026-11-27 (DRAWING_DIALOGUE): the patch stops speaking about the kind, the template value applies; level drawing, never promoted |
 | `set_inside_face` | `side ∈ {min, max}` | `datums.inside_face` | applied **inside** `derive_template` for template renders (§5.4) |
 | `set_datum` | `axis ∈ {x, y}`, `side` | `datums.x` / `datums.y` | same |
 | `set_from_top_rule` | `within` (mm) | `datums.y_from_top_within` | a rule threshold, not a printed value |
@@ -740,7 +741,7 @@ row; a marquee over the right y-stack selects exactly those pos_y rows and
 reports a model rectangle on the inside face; a hand-uploaded issue still
 shows the iframe.
 
-### Phase 5 — the dialogue and the refusal path (5 days, was 3) — design refined 2026-11-27, see `docs/DRAWING_DIALOGUE.md` (scope control, `set_sheet_plan`, `override_dimension { from }`, Promote, worker mirror; its §8 replaces the five proofs below; its §9 decided as recommended the same day)
+### Phase 5 — the dialogue and the refusal path (5 days, was 3) — BUILT 2026-11-27 (v470, migration 0069; design in `docs/DRAWING_DIALOGUE.md`, UI contract DRAWINGS_TAB_UX §13.9; its §8 proofs run after the deploy)
 
 Goal: prose plus marked entities become a reviewed proposal; anything outside
 the vocabulary is named as code.

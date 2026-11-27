@@ -932,6 +932,24 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .sheet-marquee { fill: rgba(94, 224, 143, 0.1); stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 2; pointer-events: none; }
 .dr-selection { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-size: var(--fs-xs); }
 .dr-selection .btn-xs { min-height: 24px; padding: 0 0.45rem; }
+/* The dialogue (DRAWING_DIALOGUE §6): Scope · Ask · Send, then the proposal card. */
+.dr-prompt { display: flex; flex-direction: column; gap: 0.35rem; }
+.dr-prompt .dr-prompt-field { flex: 1; min-width: 0; }
+.dr-prompt .dr-prompt-field .up-text { width: 100%; }
+.dr-scope { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.dr-scope-btn { font: inherit; font-size: var(--fs-xs); min-height: 32px; padding: 0 0.6rem; border: 0; border-right: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer; white-space: nowrap; }
+.dr-scope-btn:last-child { border-right: 0; }
+.dr-scope-btn.is-active { background: var(--accent); color: #fff; }
+.dr-scope-btn:disabled { opacity: 0.45; cursor: default; }
+.dr-card { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.5rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); font-size: var(--fs-xs); }
+.dr-card-summary { font-size: var(--fs-sm); }
+.dr-card-h { font-weight: 600; margin-top: 0.2rem; }
+.dr-card-ops { display: flex; flex-direction: column; gap: 0.2rem; }
+.dr-card-op { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; cursor: pointer; }
+.dr-card-op input { margin: 0; }
+.dr-level { font-size: var(--fs-xs); font-weight: 600; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.dr-card-q { color: var(--muted); }
+.dr-card-actions { display: flex; gap: 0.4rem; margin-top: 0.2rem; }
 .dr-dim.is-selected td { background: rgba(94, 224, 143, 0.1); }
 
 @media (max-width: 900px) {

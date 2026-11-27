@@ -597,3 +597,36 @@ transform (`REC.view`: paper x = ox + (sx·x − p0)·s, paper y = oy +
 (y − ya)·s); a marquee on a sheet with no face view, or outside its bbox,
 keeps no rectangle. Nothing of this is in `SUPPLIER_ACTIONS` or
 `supplier.html` (§13.6); the `?v=469` on supplier.html is cache hygiene.
+
+### 13.9 The dialogue — Scope · Ask · the card · Promote (Phase 5, 2026-11-27, v470)
+
+Decided in `docs/DRAWING_DIALOGUE.md` (its seven §9 decisions as recommended).
+Under the selection chips in the Dimensions section, on a **draft** issue,
+Rushroom only. Server contract: `proposeDrawingSpecOps` (portal-ai, SCAN_MODEL),
+`applyDrawingSpecOps` with `origin: "dialogue"` and `turn_id`,
+`promoteDrawingSpecOps`, `discardDrawingSpecTurn`, `getDrawingSpecVersion`
+(portal-api); migration 0069; the worker mirrors `specs/<name>.yaml`.
+
+| Element | Contract |
+|---|---|
+| **Scope** | label outside, one segmented row: **This callout · This drawing · Template flat_panel v1**. *This callout* is enabled only while the chips hold a selection and is preselected when something is marked; otherwise *This drawing*. *Template* is disabled on a per-part spec with the reason as its title ("side_panel_left is a per-part spec: migrate to flat_panel first"). The scope is a **ceiling** the engineer sets; the model never proposes a level |
+| **Ask** | one input, placeholder **Ask…**, ≤ 2000 characters, Enter or **Send**; disabled while the call runs; an error in red under it |
+| Send | `proposeDrawingSpecOps { drawing_id, prompt, scope, selection: { sheet, entities[], region_model }, parent_seq }` — the marked rows travel with their `at`; the marquee's model rectangle when there is one |
+| **The card** | **Operations**: one line per admitted op in the Patch (n) wording, a checkbox (on), the reason in grey, the level badge (*callout · drawing · template*); under Template scope an op below its ceiling reads "stays on this drawing" in grey. **Stays code** (amber): "request — category · lives_in: detail" (categories needs_code · house_style · value_in_spec · not_in_step · ambiguous · relation · scope). **Questions**: one sentence each |
+| **Apply** | the checked ops → `applyDrawingSpecOps` (`origin: "dialogue"`, `turn_id`, prompt, selection, proposal); touched rows and boxes amber; Patch (n) gains the lines; Render as in §13.3. Under Template scope with a template-level op checked the button reads **Promote to flat_panel v2** and posts `promoteDrawingSpecOps`: a new immutable version (`origin = portal`), this drawing carried onto it (`origin = carry`, status proposed), the surface repaints on the new version; other drawings show "v2 available" |
+| **Discard** | `discardDrawingSpecTurn { turn_id }`; the card closes; the turn stays as declined |
+| **From** (layer 1) | a position row on a hole (`pos_x`, `pos_x_far`, `pos_y`, `pos_y_top`) opens **From** [edge] · Apply · Cancel instead of a tolerance: the edge names come from the template and the patch ("front edge", "top edge"), the current edge is preselected, Apply posts `override_dimension { at, kind: pos_x \| pos_y, from }`. A relation row (c/c, CTQ) opens nothing, as before |
+| Patch lines | "pos_y from top edge on Ø5 at (41, 1319)" · "sheets from the bottom" · a removed datum reads "remove pos_y datum on …"; × works as for any override; the sheet plan lists without ×. × on a kind-tolerance line the accepted patch has no value for posts `remove_tolerance` ("general tol back to the template"), found missing in the live proof: until then such a line could only be replaced, never unset. Revert can take a tolerance away the same way |
+| Spec | Template reads "flat_panel v2 · promoted" when the pinned version came from a turn, then "3 on v2 · 48 on v1" in grey under it |
+| Strip | a per-dimension datum move is one row gone and one new at the same address with the kind swapped (`pos_y` → `pos_y_top`, `pos_x` → `pos_x_far`): the strip says "k dimensions measured from the other edge" and counts only the rest as added / removed (amber). `geometry_sha256` moves on such a swap — truthfully: a dimension measured from the other edge is a different dimension |
+| History | a promotion's seq reads "#7 · carry · 1 op · 1 promoted"; a dialogue seq "#8 · dialogue · 2 tolerances" |
+
+Vocabulary added: **Scope · This callout · This drawing · Template · Ask… ·
+Send · Operations · Stays code · Questions · Apply · Promote to flat_panel v2 ·
+Discard · stays on this drawing · From · from the top edge / from the bottom
+edge / from the left edge / from the right edge · sheets from the bottom /
+from the top · k dimensions measured from the other edge · promoted · n on vN**.
+
+What a supplier sees: nothing (§13.6 holds; none of the five actions is in
+`SUPPLIER_ACTIONS`, portal-ai denies suppliers by default).
+

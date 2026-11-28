@@ -200,9 +200,13 @@
    *
    * opts: { pngs: [url per sheet], entities: { sheets: [...] } (the sidecar),
    *         name, tools: [nodes for the bar], onSelect({ sheet, ids, add,
-   *         region }), onHover(id | null), onSheet(n) }.
+   *         region }), onHover(id | null), onSheet(n),
+   *         onPaperClick({ sheet, x_mm, y_mm }) — every plain click, in paper mm
+   *         with the origin bottom-left, as the boxes }.
    * Returns { dispose, showSheet(n), sheet, setSelected(ids), setTouched(ids),
-   *           setLinked(fn) } — ids are "sheet:index" strings.
+   *           setRings([{ sheet, x_mm, y_mm, r_mm, cls, label? }]) } — ids are
+   *           "sheet:index" strings. Rings are circles in the same overlay that
+   *           never take a click (Drawing Templates phase 2: the holes a rule takes).
    */
   function renderSheets(target, opts) {
     const pngs = Array.isArray(opts.pngs) ? opts.pngs : [];
@@ -212,6 +216,27 @@
     let selected = new Set(), touched = new Set(), hover = null;
     let fit = true, currentSheet = sheets.length ? Number(sheets[0].sheet) : 1;
     const rects = new Map();           // id → rect node (current sheet only)
+    let rings = [], ringLayer = null, ringH = 297;
+    const paintRings = () => {
+      if (!ringLayer) return;
+      const kids = [];
+      for (const r of rings) {
+        if (Number(r.sheet) !== currentSheet || !Number.isFinite(r.x_mm) || !Number.isFinite(r.y_mm)) continue;
+        const c = document.createElementNS(SVG_NS, "circle");
+        c.setAttribute("class", `sheet-ring${r.cls ? ` ${r.cls}` : ""}`);
+        c.setAttribute("cx", r.x_mm); c.setAttribute("cy", ringH - r.y_mm); c.setAttribute("r", Math.max(Number(r.r_mm) || 0, 0.5));
+        c.setAttribute("vector-effect", "non-scaling-stroke");
+        kids.push(c);
+        if (r.label != null && r.label !== "") {
+          const t = document.createElementNS(SVG_NS, "text");
+          t.setAttribute("class", `sheet-ring-label${r.cls ? ` ${r.cls}` : ""}`);
+          t.setAttribute("x", r.x_mm + (Number(r.r_mm) || 0) + 0.8); t.setAttribute("y", ringH - r.y_mm - (Number(r.r_mm) || 0) - 0.8);
+          t.textContent = String(r.label);
+          kids.push(t);
+        }
+      }
+      ringLayer.replaceChildren(...kids);
+    };
     const paint = () => {
       for (const [id, r] of rects) {
         r.classList.toggle("is-selected", selected.has(id));
@@ -271,6 +296,10 @@
         rects.set(id, r);
         svg.appendChild(r);
       });
+      ringLayer = document.createElementNS(SVG_NS, "g");
+      ringLayer.setAttribute("class", "sheet-rings");
+      ringH = H;
+      svg.appendChild(ringLayer);
 
       // Click selects one box (shift adds); a drag draws a marquee that selects
       // every box it touches and reports the rectangle, mapped through the
@@ -317,6 +346,7 @@
           return;
         }
         const id = d.target && d.target.dataset ? d.target.dataset.id : null;
+        if (opts.onPaperClick) opts.onPaperClick({ sheet: currentSheet, x_mm: d.p[0], y_mm: d.p[1] });
         if (!opts.onSelect) return;
         if (id) opts.onSelect({ sheet: currentSheet, ids: [id], add: d.shift, region: null });
         else if (!d.shift) opts.onSelect({ sheet: currentSheet, ids: [], add: false, region: null });
@@ -326,7 +356,7 @@
 
       const page = h("div", { class: "sheet-page" }, [img, svg]);
       stage.replaceChildren(page);
-      applyZoom(); paint();
+      applyZoom(); paint(); paintRings();
       if (opts.onSheet) opts.onSheet(currentSheet);
     }
 
@@ -359,11 +389,12 @@
     showSheet(currentSheet);
 
     return {
-      dispose() { rects.clear(); },
+      dispose() { rects.clear(); rings = []; ringLayer = null; },
       showSheet,
       get sheet() { return currentSheet; },
       setSelected(ids) { selected = new Set(ids || []); paint(); },
       setTouched(ids) { touched = new Set(ids || []); paint(); },
+      setRings(list) { rings = Array.isArray(list) ? list.slice() : []; paintRings(); },
       ids(sheet) { return (sheets.find((x) => Number(x.sheet) === Number(sheet))?.entities || []).map((_, i) => idOf(sheet, i)); },
     };
   }

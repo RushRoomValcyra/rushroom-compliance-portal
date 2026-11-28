@@ -14262,13 +14262,15 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     // (DRAWINGS_TAB_UX §14). Rushroom only: the sub-tab is only in the Rushroom
     // SUB_TABS, so a supplier never reaches anything below. Every name starts
     // dtpl — the Surgery Templates register owns template* / tpl*.
-    const dtplState = { view: "register", chip: "all", q: "", sort: "", dir: 1, typeId: null };
+    const dtplState = { view: "register", chip: "all", q: "", sort: "", dir: 1, typeId: null, sandboxId: null };
     let _dtplData = null;      // listDrawingTemplates + every type (retired included)
     let _dtplTimer = null;     // the reference item's poll
     let _dtplSheets = null;    // the reference sheets' viewer (disposed on leave)
     let _dtplSeq = 0;          // radio group names in History
+    let _dtplCatchTimer = null; // a sandbox's catch poll (phase 2)
     function dtplStop() {
       if (_dtplTimer) { clearTimeout(_dtplTimer); _dtplTimer = null; }
+      if (_dtplCatchTimer) { clearTimeout(_dtplCatchTimer); _dtplCatchTimer = null; }
       if (_dtplSheets) { try { _dtplSheets.dispose(); } catch { /* already gone */ } _dtplSheets = null; }
     }
     const dtplDash = () => el("span", { class: "muted" }, "—");
@@ -14544,9 +14546,11 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const parts = page.parts || [];
       const drawings = page.drawings || [];
       const history = page.history || [];
+      const sandboxes = page.sandboxes || [];
       const warnEl = el("div", {});
 
       const renameBtn = el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplNameModal(t) }, "Rename");
+      const sandboxBtn = dtplSandboxMenu(t, sandboxes);
       const retireBtn = el("button", { class: "btn btn-xs", type: "button" }, t.retired_at ? "Restore" : "Retire");
       retireBtn.onclick = async () => {
         warnEl.replaceChildren();
@@ -14561,6 +14565,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       const refSlot = el("div", { class: "dtpl-ref" });
       const pane = el("div", { class: "dtpl-pane" });
       const tabs = dtplTabs([
+        { id: "rules", label: "Rules", build: (p) => dtplSavedRules(p, page) },
         { id: "parts", label: `Parts (${parts.length})`, build: (p) => p.append(dtplTable(["Part number", "Name", "Drawing"],
           parts.length ? parts.map((c) => el("tr", {}, [
             el("td", {}, el("span", { style: "font-family:monospace;font-size:0.8125rem" }, c.part_number || "—")),
@@ -14590,7 +14595,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
 
       host.replaceChildren(
         dtplHead([el("strong", {}, t.name || "Part type"), t.retired_at ? el("span", { class: "muted" }, "Retired") : null].filter(Boolean),
-          [renameBtn, retireBtn]),
+          [renameBtn, retireBtn, sandboxBtn]),
         warnEl,
         el("div", { class: "drawing-surface" }, [el("div", { class: "drawing-file dtpl-file" }, [refSlot, tabs, pane]), rail]),
       );
@@ -14611,7 +14616,7 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     // The reference drawing above the tabs: the bar while its item is queued or
     // running, the sheets when done ("Verification failed" above them when the
     // engine's own check failed), the error when it failed.
-    async function dtplShowReference(slot, t, onFinished) {
+    async function dtplShowReference(slot, t, onFinished, view) {
       const item = t.last_item || null;
       if (!t.reference || !item) return;
       if (item.status === "queued" || item.status === "running") { dtplWatchItem(item.id, slot, onFinished); return; }
@@ -14627,10 +14632,14 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       if (!target.isConnected) return;
       if (!pngs.length) { target.replaceChildren(dtplWarn("No sheets")); return; }
       target.replaceChildren();
+      const entities = ents && Array.isArray(ents.sheets) ? ents : { sheets: [] };
       _dtplSheets = window.PortalViewer.renderSheets(target, {
-        pngs, entities: ents && Array.isArray(ents.sheets) ? ents : { sheets: [] },
+        pngs, entities,
         name: `${t.reference.part_number || t.name} Rev ${t.reference.revision || ""}`.trim(),
+        // A sandbox marks holes by a click on the paper (phase 2, §3.9 step 1).
+        onPaperClick: view && view.onPaperClick ? view.onPaperClick : null,
       });
+      if (view && view.onReady) view.onReady(_dtplSheets, entities);
     }
 
     // Poll getDrawingTemplateItem every 3 s; stages from the job's steps, the
@@ -14810,6 +14819,919 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
         el("h4", { class: "drawing-rail-h" }, `Compare v${(r.from || {}).version ?? "?"} → v${(r.to || {}).version ?? "?"}`),
         el("ul", { class: "dtpl-diff" }, (r.lines || []).map((l) => el("li", {}, l))),
       );
+    }
+
+    // ---- Phase 2: sandboxes, rules and the catch (DRAWING_TEMPLATES §3.9, §4.3, §4.4) ----
+    // The words come from template-rules-core (window.PortalRulesCore), the
+    // same file portal-api checks with; the catch comes from the engine only
+    // (one evaluator). The saved type page stays read-only: every edit is an
+    // operation on a sandbox, sent through applyDrawingTemplateOps.
+    const dtplRC = () => window.PortalRulesCore || null;
+    let _dtplSb = null;        // the open sandbox page
+    const dtplRuleId = () => "r_" + crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+    const dtplAge = (iso) => {
+      if (!iso) return "—";
+      const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+      if (m < 60) return `${m} min`;
+      const h = Math.round(m / 60);
+      return h < 48 ? `${h} h` : `${Math.round(h / 24)} d`;
+    };
+    // "12,5" (a Swedish keyboard) → 12.5; empty → undefined; junk → NaN (checkRule names it).
+    const dtplNum = (v) => {
+      const t = String(v ?? "").trim().replace(",", ".");
+      if (!t) return undefined;
+      const n = Number(t);
+      return Number.isFinite(n) ? n : NaN;
+    };
+    const dtplField = (text, input, cls) => el("label", { class: `form-row${cls ? ` ${cls}` : ""}` }, [el("span", { class: "form-label" }, text), input]);
+    const dtplSelect = (label, options, value) => {
+      const s = el("select", { class: "up-text", "aria-label": label }, options.map(([v, txt]) => el("option", { value: v }, txt)));
+      if (value != null) s.value = String(value);
+      return s;
+    };
+    const dtplInput = (label, value, cls) => el("input", { class: `up-text${cls ? ` ${cls}` : ""}`, type: "text", "aria-label": label, value: value == null ? "" : String(value) });
+    const DTPL_TERM_WORDS = { dia: "Ø", drilled: "Drilled", through: "Through / blind", place: "Place", column: "Column", row: "Row", spacing: "Spacing", near: "Near" };
+    const DTPL_DRILLED_WORDS = { face: "a face", inside: "inside face", outside: "outside face", both: "both faces", through: "through", neither: "neither face", edge: "an edge" };
+    const DTPL_TEST_WORDS = { as_modelled: "as modelled", nearest_class: "nearest a hole class", away_from_groove: "opposite the groove", most_blind: "most blind holes", opens_class: "where a hole class opens" };
+    const DTPL_EXTRAS = [
+      { k: "tol_pos", label: "Position ±" }, { k: "tol_cc", label: "c/c ±" }, { k: "tol_dia", label: "Ø tolerance" },
+      { k: "tol_depth", label: "Depth tolerance" }, { k: "thickness", label: "Thickness from" }, { k: "callout", label: "Callout name" },
+      { k: "at_least", label: "At least" }, { k: "mates_with", label: "Mates with" },
+    ];
+
+    // A small list under a button; a click elsewhere closes it.
+    function dtplMenu(anchor, items) {
+      const wrap = anchor.closest(".dtpl-menu-wrap") || anchor.parentElement;
+      const old = wrap.querySelector(".dtpl-menu");
+      if (old) { old.remove(); return; }
+      const menu = el("div", { class: "dtpl-menu", role: "menu" }, items.filter(Boolean));
+      wrap.append(menu);
+      const off = (e) => { if (!menu.contains(e.target) && e.target !== anchor) { menu.remove(); document.removeEventListener("pointerdown", off, true); } };
+      setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
+      menu.addEventListener("click", (e) => { if (e.target.closest(".dtpl-menu-item")) { menu.remove(); document.removeEventListener("pointerdown", off, true); } });
+      return menu;
+    }
+
+    // [Sandbox ▾ n] in the type page's head: name · who · age, then New.
+    function dtplSandboxMenu(t, sandboxes) {
+      const list = (sandboxes || []).filter((s) => !s.state || s.state === "sandbox");
+      const btn = el("button", { class: "btn btn-xs", type: "button", "aria-haspopup": "menu" }, `Sandbox ▾ ${list.length}`);
+      btn.onclick = () => dtplMenu(btn, [
+        ...list.map((s) => el("button", { class: "dtpl-menu-item", type: "button", role: "menuitem", onclick: () => dtplOpenSandbox(s.id) }, [
+          el("strong", {}, s.name || "Sandbox"),
+          el("span", { class: "muted" }, [s.by_label, dtplAge(s.updated_at || s.created_at)].filter(Boolean).join(" · ")),
+        ])),
+        t.retired_at ? null : el("button", { class: "dtpl-menu-item", type: "button", role: "menuitem", onclick: () => dtplSandboxNameModal(t, null) }, el("strong", {}, "New")),
+      ]);
+      return el("span", { class: "dtpl-menu-wrap" }, btn);
+    }
+
+    // New sandbox / rename: one row, `Name [      ] [Create]`, as dtplNameModal.
+    function dtplSandboxNameModal(t, sb) {
+      const input = el("input", { class: "up-text", type: "text", "aria-label": "Name", maxlength: "80", value: sb ? sb.name || "" : "", style: "flex:1;min-width:240px" });
+      const btn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, sb ? "Save" : "Create");
+      const err = el("div", { class: "dr-error", style: "display:none;margin-top:0.4rem" });
+      const close = openModal(sb ? "Rename sandbox" : "New sandbox", el("div", {}, [
+        el("div", { class: "dtpl-form-row" }, [el("label", { class: "dtpl-label" }, "Name"), input, btn]),
+        err,
+      ]));
+      const go = async () => {
+        const name = input.value.trim();
+        if (!name) { input.focus(); return; }
+        err.style.display = "none";
+        const res = await drBusy(btn, async () => {
+          try {
+            return sb
+              ? await API.post(token, "renameDrawingTemplateSandbox", { id: sb.id, rev: sb.rev, name })
+              : await API.post(token, "createDrawingTemplateSandbox", { part_type_id: t.id, name });
+          } catch (ex) { err.textContent = ex.message; err.style.display = ""; return false; }
+        });
+        btn.disabled = false;
+        if (!res) return;
+        close();
+        const id = (res.sandbox && res.sandbox.id) || (sb && sb.id);
+        if (id) dtplOpenSandbox(id);
+      };
+      btn.onclick = go;
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+      input.focus();
+    }
+
+    // EDGES rows: label · words (· what the engine read on the reference). A
+    // pencil only in a sandbox.
+    function dtplEdgesRows(lines, reads, onEdit) {
+      return el("dl", { class: "drawing-meta dtpl-lines dtpl-edges" }, (lines || []).flatMap((row) => [
+        el("dt", {}, row.label),
+        el("dd", { class: "dtpl-edge-dd" }, [
+          el("span", {}, row.words),
+          reads && reads[row.key] ? el("span", { class: "muted" }, reads[row.key]) : null,
+          onEdit ? el("button", { class: "btn btn-xs dtpl-pencil", type: "button", "aria-label": `Edit ${row.label}`, onclick: () => onEdit(row.key) }, "✎") : null,
+        ].filter(Boolean)),
+      ]));
+    }
+
+    // The saved view (read-only): EDGES, RULES (n), BASE DEFAULT.
+    function dtplSavedRules(target, page) {
+      const RC = dtplRC();
+      const lines = Array.isArray(page.edges) ? page.edges : (RC ? RC.describeEdges(null) : []);
+      const rules = Array.isArray(page.rules) ? page.rules : [];
+      target.append(
+        el("h4", { class: "drawing-rail-h" }, "Edges"),
+        dtplEdgesRows(lines, null, null),
+        el("h4", { class: "drawing-rail-h" }, `Rules (${rules.length})`),
+        rules.length ? el("div", { class: "dtpl-rules" }, rules.map((r, i) => dtplRuleRow(RC ? RC.describeRule(r) : { name: r.name || "Rule", takes: "", measured: "" }, i + 1, null, {})))
+          : el("div", { class: "muted t-sm" }, "No rules."),
+        el("div", { class: "dtpl-rule dtpl-base" }, [el("span", {}), el("strong", {}, "Base default"), el("span", {}), el("span", {}), el("span", { class: "dtpl-count" }, "—"), el("span", {})]),
+      );
+    }
+
+    // One rule row: n · Name | takes | measured | count | actions.
+    function dtplRuleRow(words, n, count, opts) {
+      return el("div", {
+        class: `dtpl-rule${opts.selected ? " is-selected" : ""}${opts.onClick ? " is-clickable" : ""}`,
+        draggable: opts.drag ? "true" : null, "data-rule": opts.id || null,
+        onclick: opts.onClick ? (e) => { if (!hitRowControl(e)) opts.onClick(); } : null,
+      }, [
+        el("span", { class: "dtpl-rule-n muted" }, String(n)),
+        el("strong", {}, words.name),
+        el("span", {}, words.takes),
+        el("span", { class: "muted" }, words.measured),
+        el("span", { class: `dtpl-count${opts.short ? " is-warn" : ""}` }, count == null ? "—" : String(count)),
+        el("span", { class: "dtpl-rule-acts" }, opts.actions || []),
+        ...(opts.below || []).map((txt) => el("div", { class: "dtpl-rule-below" }, txt)),
+      ]);
+    }
+
+    // ---- Paper ↔ model on the reference's face views (§3.9 step 1) -------------
+    // drawset: paper x = ox + (sx·x − p0)·s, paper y = oy + (y − ya)·s, the view
+    // showing ya ≤ y ≤ yb. A hole's `pos` is drawset's in-plane position.
+    function dtplFaceViews(ents, sheet) {
+      const out = [];
+      for (const sh of (ents && Array.isArray(ents.sheets) ? ents.sheets : [])) {
+        if (sheet != null && Number(sh.sheet) !== Number(sheet)) continue;
+        for (const v of Array.isArray(sh.views) ? sh.views : []) if (v && v.kind === "face" && Number(v.s) > 0) out.push({ sheet: Number(sh.sheet), v });
+      }
+      return out;
+    }
+    function dtplRingsFor(ents, holes, cls, labelOf) {
+      const out = [];
+      for (const { sheet, v } of dtplFaceViews(ents, null)) {
+        const sx = v.sx || 1, p0 = v.p0 || 0, ya = v.ya || 0;
+        for (const h of holes || []) {
+          if (!h || !Array.isArray(h.pos)) continue;
+          const [x, y] = h.pos;
+          if (v.ya != null && y < v.ya - 1e-6) continue;
+          if (v.yb != null && y > v.yb + 1e-6) continue;
+          out.push({
+            sheet, x_mm: v.ox + (sx * x - p0) * v.s, y_mm: v.oy + (y - ya) * v.s,
+            r_mm: Math.max((Number(h.D) || 0) / 2 * v.s, 1.6), cls, label: labelOf ? labelOf(h) : null,
+          });
+        }
+      }
+      return out;
+    }
+    function dtplHoleAt(ents, holes, sheet, x_mm, y_mm) {
+      let best = null;
+      for (const { v } of dtplFaceViews(ents, sheet)) {
+        const sx = v.sx || 1, p0 = v.p0 || 0, ya = v.ya || 0;
+        const x = ((x_mm - v.ox) / v.s + p0) / sx;
+        const y = (y_mm - v.oy) / v.s + ya;
+        const slack = 1.5 / v.s;     // 1.5 mm of paper around the ring
+        if (v.ya != null && y < v.ya - slack) continue;
+        if (v.yb != null && y > v.yb + slack) continue;
+        for (const h of holes || []) {
+          if (!h || !Array.isArray(h.pos)) continue;
+          const d = Math.hypot(h.pos[0] - x, h.pos[1] - y);
+          const lim = Math.max((Number(h.D) || 0) / 2, 1.6 / v.s) + slack;
+          if (d <= lim && (!best || d < best.d)) best = { hole: h, d, view: v.id || "face" };
+        }
+      }
+      return best;
+    }
+
+    // ---- The sandbox page ---------------------------------------------------------
+    // S holds the page; repaint() rebuilds all but the persistent nodes (the
+    // reference sheets, the hand row, the catch bar, the op bar), so the sheets
+    // are never reloaded and a running bar keeps running.
+    async function dtplOpenSandbox(id, opts = {}) {
+      const host = dtplHost();
+      const keep = opts.keep && _dtplSb && _dtplSb.id === id ? _dtplSb : null;
+      if (!keep) dtplStop();
+      dtplState.view = "sandbox"; dtplState.sandboxId = id;
+      const here = () => dtplState.view === "sandbox" && dtplState.sandboxId === id;
+      if (!keep) host.replaceChildren(drLoading("Loading sandbox…"));
+      let page;
+      try { page = await API.post(token, "getDrawingTemplateSandbox", { id }); }
+      catch (ex) {
+        if (!here()) return;
+        if (keep) { keep.flash(ex.message); return; }
+        host.replaceChildren(dtplHead([el("strong", {}, "Sandbox")]), el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
+        return;
+      }
+      if (!here()) return;
+      const S = keep || {
+        id, tab: opts.tab || "rules", sel: null, picks: [], cands: [], viewer: null, ents: null,
+        refSlot: el("div", { class: "dtpl-ref" }), handSlot: el("div", { class: "dtpl-hand-slot" }),
+        catchSlot: el("div", { class: "dtpl-catch-slot" }), opSlot: el("div", { class: "dtpl-op-slot" }),
+        warnEl: el("div", {}), hand: null, catchSeq: 0,
+      };
+      _dtplSb = S;
+      S.page = page;
+      S.sb = page.sandbox || {};
+      S.t = page.part_type || {};
+      S.parts = page.parts || [];
+      S.catch = page.catch || null;
+      S.marks = page.marks || [];
+      if (S.catch && S.catch.status === "done" && S.catch.summary) S.out = S.catch.summary;
+      else if (!keep) S.out = null;
+      S.flash = (msg) => S.warnEl.replaceChildren(msg ? dtplWarn(msg) : "");
+      S.repaint = () => { if (here()) dtplSbPaint(S); };
+      dtplSbPaint(S);
+      if (!keep) {
+        dtplShowReference(S.refSlot, S.t, () => { if (here()) dtplOpenSandbox(id, { tab: S.tab }); }, {
+          onPaperClick: (at) => dtplSbClick(S, at),
+          onReady: (viewer, ents) => { S.viewer = viewer; S.ents = ents; dtplSbRings(S); },
+        });
+      }
+      // The catch on open: watch a queued one, ask for one when there is none,
+      // it was skipped or cancelled, or it was taken on another body.
+      const c = S.catch;
+      if (keep) return;
+      const otherBody = !!(c && S.sb.body_sha256 && c.body_sha256 && c.body_sha256 !== S.sb.body_sha256);
+      if (c && (c.status === "queued" || c.status === "running")) dtplSbWatchCatch(S, c.item_id);
+      else if (c && c.status === "failed") { const p = drProgress({ label: "Catch" }); S.catchSlot.replaceChildren(p.el); p.jump(100, false, c.error || "Failed"); }
+      else if (c && c.status === "done" && !otherBody) { const p = drProgress({ label: "Catch" }); S.catchSlot.replaceChildren(p.el); p.jump(100, true, ""); }
+      else dtplSbRequestCatch(S, null);   // none, skipped, cancelled, or done on another body
+    }
+    // The catch on one part (the reference unless a key is given).
+    const dtplSbRefKey = (S) => ((S.parts.find((p) => p.is_reference) || {}).component_id) || (S.t.reference && S.t.reference.component_id) || null;
+    const dtplSbOut = (S, key) => {
+      const k = key || dtplSbRefKey(S);
+      return S.out && Array.isArray(S.out.parts) ? S.out.parts.find((p) => p.key === k) || null : null;
+    };
+
+    function dtplSbPaint(S) {
+      const RC = dtplRC();
+      const host = dtplHost();
+      const sb = S.sb, t = S.t;
+      const rules = (sb.body && Array.isArray(sb.body.rules)) ? sb.body.rules : [];
+      const changes = Array.isArray(sb.changes) ? sb.changes : [];
+      const back = el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplOpenType(t.id || sb.part_type_id) }, `← ${t.name || "Part type"}`);
+      const renameBtn = el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplSandboxNameModal(t, sb) }, "Rename");
+      const discardBtn = el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplSbDiscard(S) }, "Discard");
+      const head = el("div", { class: "drawing-head dtpl-sb-head" }, [
+        back,
+        el("div", { class: "drawing-title" }, el("strong", {}, `${t.name || "Part type"} · Sandbox "${sb.name || ""}"`)),
+        el("span", { style: "flex:1" }),
+        renameBtn, discardBtn,
+      ]);
+      // The shell is built once per page: a repaint never moves the reference
+      // sheets (their scroll stays), and the box being typed in keeps its focus.
+      let sh = S.shell;
+      const fresh = !sh || sh.host !== host || !host.contains(sh.surface);
+      if (fresh) {
+        sh = S.shell = { host, head, tabs: el("div", {}), pane: el("div", { class: "dtpl-pane" }), rail: el("div", { class: "drawing-rail" }) };
+        sh.surface = el("div", { class: "drawing-surface" }, [el("div", { class: "drawing-file dtpl-file" }, [S.refSlot, sh.tabs, sh.pane]), sh.rail]);
+        host.replaceChildren(head, S.warnEl, sh.surface);
+      } else { sh.head.replaceWith(head); sh.head = head; }
+      const focused = document.activeElement;
+      const inHand = !!(focused && S.handSlot.contains(focused));
+      let caret = null;
+      try { if (inHand && typeof focused.selectionStart === "number") caret = [focused.selectionStart, focused.selectionEnd]; } catch { caret = null; }
+      const pane = sh.pane;
+      const tabs = dtplTabs([
+        { id: "rules", label: `Rules (${rules.length})`, build: (p) => { S.tab = "rules"; dtplSbRulesPane(S, p); } },
+        { id: "try", label: `Try on ${S.parts.length}`, build: (p) => { S.tab = "try"; dtplSbTryPane(S, p); } },
+      ], pane, S.tab);
+
+      // The rail: CHANGE (n) with × per operation, Marks, the catch's bar.
+      const changeRows = changes.length ? changes.map((line, index) => {
+        const x = el("button", { class: "btn btn-xs", type: "button", "aria-label": "Remove" }, "×");
+        x.onclick = () => dtplSbRemoveOp(S, index, x);
+        return el("div", { class: "dr-patch-line" }, [el("span", {}, line), x]);
+      }) : [el("div", { class: "muted t-sm" }, "No changes.")];
+      const refOut = dtplSbOut(S);
+      const takenBy = (holeId) => {
+        if (!refOut) return "";
+        const names = (refOut.rules || []).filter((r) => (r.taken || []).includes(holeId))
+          .map((r) => (rules.find((x) => x.id === r.id) || {}).name || r.id);
+        return names.length ? names.join(" · ") : ((refOut.base_default || []).includes(holeId) ? "Base default" : "");
+      };
+      const pickRows = S.picks.map((m, i) => el("div", { class: "dtpl-mark" }, [
+        el("div", { class: "dr-patch-line" }, [
+          el("span", { class: "dtpl-mark-n" }, String(m.n)),
+          el("span", {}, m.description),
+          el("button", { class: "btn btn-xs", type: "button", "aria-label": "Remove mark", onclick: () => { S.picks.splice(i, 1); dtplSbRings(S); S.repaint(); } }, "×"),
+        ]),
+        takenBy(m.hole_id) ? el("div", { class: "muted t-sm dtpl-mark-by" }, takenBy(m.hole_id)) : null,
+      ].filter(Boolean)));
+      const stored = (S.marks || []).map((m) => el("div", { class: "muted t-sm" }, m.description || m.hole_id || "—"));
+      const rerun = el("button", { class: "btn btn-xs", type: "button" }, "Catch");
+      rerun.onclick = () => dtplSbRequestCatch(S, null);
+      sh.tabs.replaceWith(tabs); sh.tabs = tabs;
+      sh.rail.replaceChildren(
+        el("h4", { class: "drawing-rail-h" }, `Change (${changes.length})`),
+        el("div", { class: "dr-patch-lines" }, changeRows),
+        el("h4", { class: "drawing-rail-h" }, `Marks (${S.picks.length + (S.marks || []).length})`),
+        ...pickRows, ...stored,
+        el("h4", { class: "drawing-rail-h" }, "Catch"),
+        S.catchSlot,
+        el("div", { class: "dtpl-catch-acts" }, rerun),
+        el("h4", { class: "drawing-rail-h" }, "Sandbox"),
+        el("dl", { class: "drawing-meta" }, [
+          el("dt", {}, "By"), el("dd", {}, sb.by_label || "—"),
+          el("dt", {}, "Started"), el("dd", {}, dtplWhen(sb.created_at)),
+          el("dt", {}, "Changed"), el("dd", {}, dtplWhen(sb.updated_at)),
+        ]),
+      );
+      if (inHand && focused.isConnected && document.activeElement !== focused) {
+        focused.focus();
+        if (caret) try { focused.setSelectionRange(caret[0], caret[1]); } catch { /* not a text box */ }
+      }
+      dtplSbRings(S);
+    }
+
+    // RULES: EDGES (pencil) · the rules (drag to reorder, ✎, ×) · [+ Rule] · the
+    // hand row · BASE DEFAULT · findings in amber.
+    function dtplSbRulesPane(S, p) {
+      const RC = dtplRC();
+      const sb = S.sb;
+      const body = sb.body || {};
+      const rules = Array.isArray(body.rules) ? body.rules : [];
+      const refOut = dtplSbOut(S);
+      const counts = RC && refOut ? RC.catchCounts(refOut) : null;
+      const shortOf = new Map(((refOut && refOut.rules) || []).map((r) => [r.id, !!r.short]));
+      const overlaps = RC && refOut ? RC.overlapLines(refOut, rules) : {};
+      const lines = RC ? RC.describeEdges(body.edges) : [];
+      const reads = refOut && refOut.edges && refOut.edges.reads ? refOut.edges.reads : null;
+      const edgeSlot = el("div", {});
+      p.append(
+        S.opSlot,
+        el("h4", { class: "drawing-rail-h" }, "Edges"),
+        dtplEdgesRows(lines, reads, () => dtplSbEdgesForm(S, edgeSlot)),
+        edgeSlot,
+        el("h4", { class: "drawing-rail-h" }, `Rules (${rules.length})`),
+      );
+      const refPart = S.parts.find((c) => c.is_reference) || {};
+      if (refOut && refOut.status && refOut.status !== "ok") p.append(dtplWarn(refOut.status === "no_features" ? (refPart.features_error ? `Failed: ${refPart.features_error}` : "No features yet") : `Failed: ${refOut.error || "—"}`));
+      else if (!refOut && refPart.features_error) p.append(dtplWarn(`Failed: ${refPart.features_error}`));
+      const list = el("div", { class: "dtpl-rules" });
+      const syncSel = () => { for (const n of p.querySelectorAll(".dtpl-rule")) n.classList.toggle("is-selected", S.sel === "base" ? n.classList.contains("dtpl-base") : (!!S.sel && n.dataset.rule === S.sel)); };
+      let dragId = null;
+      rules.forEach((r, i) => {
+        const words = RC ? RC.describeRule(r) : { name: r.name, takes: "", measured: "" };
+        const edit = el("button", { class: "btn btn-xs", type: "button", "aria-label": "Edit", onclick: () => dtplHandRow(S, r) }, "✎");
+        const x = el("button", { class: "btn btn-xs", type: "button", "aria-label": "Remove" }, "×");
+        x.onclick = () => dtplSbApply(S, [{ op: "remove_rule", id: r.id }], { btn: x });
+        const row = dtplRuleRow(words, i + 1, counts && r.id in counts ? counts[r.id] : null, {
+          id: r.id, drag: true, selected: S.sel === r.id, short: shortOf.get(r.id),
+          onClick: () => { S.sel = S.sel === r.id ? null : r.id; dtplSbRings(S); syncSel(); },
+          actions: [edit, x], below: overlaps[r.id] || [],
+        });
+        row.addEventListener("dragstart", (e) => { dragId = r.id; row.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", r.id); });
+        row.addEventListener("dragend", () => { dragId = null; row.classList.remove("is-dragging"); });
+        row.addEventListener("dragover", (e) => { if (dragId && dragId !== r.id) { e.preventDefault(); row.classList.add("is-drop"); } });
+        row.addEventListener("dragleave", () => row.classList.remove("is-drop"));
+        row.addEventListener("drop", (e) => {
+          e.preventDefault(); row.classList.remove("is-drop");
+          if (!dragId || dragId === r.id) return;
+          const ids = rules.map((x2) => x2.id).filter((x2) => x2 !== dragId);
+          ids.splice(ids.indexOf(r.id) + (rules.findIndex((x2) => x2.id === dragId) < i ? 1 : 0), 0, dragId);
+          dtplSbApply(S, [{ op: "reorder_rules", ids }], {});
+        });
+        list.append(row);
+      });
+      if (!rules.length) list.append(el("div", { class: "muted t-sm" }, "No rules."));
+      const addBtn = el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplHandRow(S, null) }, "+ Rule");
+      const baseRow = dtplRuleRow({ name: "Base default", takes: "", measured: "" }, "", counts ? counts.base_default : null, {
+        selected: S.sel === "base",
+        onClick: () => { S.sel = S.sel === "base" ? null : "base"; dtplSbRings(S); syncSel(); },
+      });
+      baseRow.classList.add("dtpl-base");
+      p.append(list, el("div", { class: "dtpl-add" }, addBtn), S.handSlot, baseRow,
+        ...((refOut && refOut.findings) || []).map(dtplWarn));
+    }
+
+    // Rings on the reference: the selected rule's holes (or BASE DEFAULT's), the marks numbered.
+    function dtplSbRings(S) {
+      if (!S.viewer || !S.viewer.setRings) return;
+      const refOut = dtplSbOut(S);
+      const holes = refOut && Array.isArray(refOut.holes) ? refOut.holes : [];
+      const byId = new Map(holes.map((h) => [h.id, h]));
+      let ids = [];
+      if (S.sel === "base") ids = (refOut && refOut.base_default) || [];
+      else if (S.sel) ids = (((refOut && refOut.rules) || []).find((r) => r.id === S.sel) || {}).taken || [];
+      const sel = ids.map((x) => byId.get(x)).filter(Boolean);
+      const markN = new Map(S.picks.map((m) => [m.hole_id, m.n]));
+      const marks = S.picks.map((m) => byId.get(m.hole_id) || m.hole).filter(Boolean);
+      S.viewer.setRings([
+        ...dtplRingsFor(S.ents, sel, S.sel === "base" ? "is-base" : "is-rule"),
+        ...dtplRingsFor(S.ents, marks, "is-mark", (h) => markN.get(h.id)),
+      ]);
+    }
+
+    // A click on a face sheet: the nearest hole of the reference's catch is marked
+    // (a numbered chip worded by describeHole) and a catch with the mark is asked
+    // for; its candidates fill the hand row's Takes.
+    function dtplSbClick(S, at) {
+      const RC = dtplRC();
+      const refOut = dtplSbOut(S);
+      if (!refOut || !Array.isArray(refOut.holes) || !RC) return;
+      const hit = dtplHoleAt(S.ents, refOut.holes, at.sheet, at.x_mm, at.y_mm);
+      if (!hit) return;
+      const h = hit.hole;
+      if (!S.picks.some((m) => m.hole_id === h.id)) {
+        const n = S.picks.reduce((a, m) => Math.max(a, m.n), 0) + 1;
+        S.picks.push({
+          n, component_id: refOut.key, cad_sha256: refOut.cad_sha256 || null, hole_id: h.id, hole: h,
+          description: RC.describeHole(h), paper: { sheet: at.sheet, x_mm: at.x_mm, y_mm: at.y_mm, view: hit.view },
+        });
+      }
+      S.repaint();
+      dtplSbRequestCatch(S, { component_id: refOut.key, hole_id: h.id });
+    }
+
+    // ---- The catch: request, poll every 1.5 s, repaint counts and rings --------
+    async function dtplSbRequestCatch(S, mark) {
+      const seq = ++S.catchSeq;
+      if (_dtplCatchTimer) { clearTimeout(_dtplCatchTimer); _dtplCatchTimer = null; }
+      const p = drProgress({ label: "Catch" });
+      S.catchSlot.replaceChildren(p.el);
+      p.stage(1, DR_QUEUE_TOP, 15000, "Queued");
+      let r;
+      try { r = await API.post(token, "requestDrawingTemplateCatch", mark ? { id: S.id, mark } : { id: S.id }); }
+      catch (ex) { if (seq === S.catchSeq) p.fail(ex.message); return; }
+      if (seq !== S.catchSeq) return;
+      S.catch = { item_id: r.item_id, status: "queued", mark: mark || null };
+      S.pendingMark = mark || null;
+      dtplSbWatchCatch(S, r.item_id, p, seq);
+    }
+    function dtplSbWatchCatch(S, itemId, bar, seqIn) {
+      const seq = seqIn || ++S.catchSeq;
+      const p = bar || drProgress({ label: "Catch" });
+      if (!bar) { S.catchSlot.replaceChildren(p.el); p.stage(1, DR_QUEUE_TOP, 15000, "Queued"); }
+      let misses = 0;
+      let idle = 0;   // polls in a row with no worker on the item
+      const gone = () => seq !== S.catchSeq || _dtplSb !== S || dtplState.view !== "sandbox" || dtplState.sandboxId !== S.id || !p.el.isConnected;
+      const tick = async () => {
+        _dtplCatchTimer = null;
+        if (gone()) { p.stop(); return; }
+        if (_subTab !== "drawing_templates") { _dtplCatchTimer = setTimeout(tick, 1500); return; }
+        let r;
+        try { r = await API.post(token, "getDrawingTemplateCatch", { item_id: itemId }); misses = 0; }
+        catch (ex) {
+          if (gone()) return;
+          const fatal = !!(ex && ex.status >= 400 && ex.status < 500);
+          if (fatal || ++misses > 5) { p.fail(ex.message); return; }
+          _dtplCatchTimer = setTimeout(tick, 4000);
+          return;
+        }
+        if (gone()) { p.stop(); return; }
+        const it = (r && r.item) || {};
+        const job = (r && r.job) || null;
+        if (it.status === "done") {
+          p.done("");
+          S.catch = { item_id: itemId, status: "done", summary: it.summary || null, mark: (it.request && it.request.mark) || S.pendingMark || null, body_sha256: it.request && it.request.body_sha256 };
+          S.out = it.summary || null;
+          dtplSbCaught(S);
+          return;
+        }
+        if (it.status === "failed" || it.status === "cancelled") {
+          const s = job ? drJobStage(job) : null;
+          p.fail(it.error || (s && s.word) || (it.status === "cancelled" ? "Cancelled" : "Failed"));
+          S.catch = { item_id: itemId, status: it.status, error: it.error || null };
+          return;
+        }
+        if (it.status === "skipped") {
+          // Asked on a body this page no longer holds: ask again. Otherwise the reason.
+          const asked = it.request && it.request.body_sha256;
+          const stale = !!(asked && S.sb.body_sha256 && asked !== S.sb.body_sha256);
+          if (stale && (!S.sb.state || S.sb.state === "sandbox")) { p.stop(); dtplSbRequestCatch(S, null); return; }
+          p.fail(it.error || "Skipped");
+          S.catch = { item_id: itemId, status: "skipped", error: it.error || null };
+          return;
+        }
+        if (job) { idle = 0; drShowJobStage(p, job, false); }
+        else {
+          // No worker yet: 1.5 s, then 5 s, then 15 s, then the bar ends; [Catch] asks again.
+          if (++idle > 40) { p.fail("No worker"); S.catch = { item_id: itemId, status: "failed", error: "No worker" }; return; }
+          p.stage(1, DR_QUEUE_TOP, 15000, "Waiting for the worker");
+        }
+        _dtplCatchTimer = setTimeout(tick, job ? 1500 : idle > 20 ? 15000 : idle > 8 ? 5000 : 1500);
+      };
+      tick();
+    }
+    // A catch arrived: counts, rings, and for a mark the candidates in the hand row
+    // (the narrowest in Takes, the others as chips).
+    function dtplSbCaught(S) {
+      const out = S.out || {};
+      const mark = S.catch && S.catch.mark;
+      const cands = Array.isArray(out.candidates) ? out.candidates : [];
+      if (mark && cands.length) {
+        S.cands = cands;
+        if (!S.hand) dtplHandRow(S, null);
+        if (S.hand) S.hand.setCandidates(cands);
+      }
+      S.pendingMark = null;
+      S.repaint();
+    }
+
+    // ---- Operations -----------------------------------------------------------------
+    // One op list through applyDrawingTemplateOps; a 409 reloads the page (another
+    // tab moved the sandbox on). After every success a catch is asked for.
+    async function dtplSbApply(S, ops, o = {}) {
+      S.flash("");
+      const res = await drBusy(o.btn || null, async () => {
+        try { return await API.post(token, "applyDrawingTemplateOps", { id: S.id, rev: S.sb.rev, ops, ...(o.marks && o.marks.length ? { marks: o.marks } : {}) }); }
+        catch (ex) {
+          const errs = ex.body && Array.isArray(ex.body.errors) ? ex.body.errors.map((e) => (typeof e === "string" ? e : e.error)).filter(Boolean) : [];
+          const msg = [ex.message, ...errs.filter((e) => e !== ex.message)].join(" · ");
+          if (o.errEl) { o.errEl.textContent = msg; o.errEl.style.display = ""; } else S.flash(msg);
+          if (ex.status === 409) dtplOpenSandbox(S.id, { keep: true });
+          return false;
+        }
+      }, o.btn ? {} : { slot: S.opSlot, label: "Apply" });
+      if (o.btn) o.btn.disabled = false;
+      if (!res) return false;
+      await dtplSbTake(S, res.sandbox, res.marks, !!(o.marks && o.marks.length) || (S.marks || []).length > 0);
+      dtplSbRequestCatch(S, null);
+      return true;
+    }
+    async function dtplSbRemoveOp(S, index, btn) {
+      S.flash("");
+      const res = await drBusy(btn, async () => {
+        try { return await API.post(token, "removeDrawingTemplateOp", { id: S.id, rev: S.sb.rev, index }); }
+        catch (ex) { S.flash(ex.message); if (ex.status === 409) dtplOpenSandbox(S.id, { keep: true }); return false; }
+      });
+      btn.disabled = false;
+      if (!res) return;
+      await dtplSbTake(S, res.sandbox, res.marks, (S.marks || []).length > 0);
+      dtplSbRequestCatch(S, null);
+    }
+    // The answer's sandbox and its stored marks. The page is read again when the
+    // answer lacks the CHANGE lines, or lacks the marks and they may have changed.
+    async function dtplSbTake(S, sandbox, marks, marksMoved) {
+      const whole = !!(sandbox && Array.isArray(sandbox.changes));
+      if (whole) S.sb = { ...S.sb, ...sandbox };
+      if (Array.isArray(marks)) S.marks = marks;
+      if (whole && (Array.isArray(marks) || !marksMoved)) { S.repaint(); return; }
+      await dtplOpenSandbox(S.id, { keep: true });
+    }
+
+    // The hand row (§4.4): Name · Takes · Across from · Up from · c/c · c/c dir ·
+    // c/c is · [+] · Specifics · Apply · Cancel, labels above, wrapping with
+    // each label on its box. Apply checks the rule with checkRule first.
+    function dtplHandRow(S, rule) {
+      const RC = dtplRC();
+      if (!RC) { S.flash("Rules core not loaded"); return; }
+      const r = rule || { id: dtplRuleId(), name: "", select: [], at_least: 0, measure: {} };
+      const m = r.measure || {};
+      const cc = m.cc || null;
+      const tol = m.tol || {};
+      const name = dtplInput("Name", r.name, "dtpl-name");
+      const termsEl = el("span", { class: "dtpl-terms" });
+      const terms = [];
+      const addTerm = (t) => {
+        if (terms.length >= RC.MAX_TERMS) return;
+        const box = dtplTermBox(t, () => { terms.splice(terms.indexOf(box), 1); box.el.remove(); });
+        terms.push(box);
+        termsEl.insertBefore(box.el, plusTerm);
+      };
+      const plusTerm = el("button", { class: "btn btn-xs", type: "button", "aria-label": "Add term", onclick: () => addTerm({ t: "dia" }) }, "+");
+      termsEl.append(plusTerm);
+      const setTerms = (select) => {
+        for (const b of terms.splice(0)) b.el.remove();
+        for (const t of select || []) addTerm(t);
+      };
+      setTerms(r.select);
+      const across = dtplSelect("Across from", [["", "—"], ["front", "front"], ["rear", "rear"]], m.across || "");
+      const up = dtplSelect("Up from", [["", "—"], ["bottom", "bottom"], ["top", "top"]], m.up || "");
+      const ccPitch = dtplInput("c/c", cc && cc.pitch != null ? cc.pitch : "", "dtpl-num");
+      const ccDir = dtplSelect("c/c dir", RC.CC_DIRS.map((d) => [d, d]), cc ? cc.dir : "up");
+      const ccMust = dtplSelect("c/c is", [["", "—"], ["can", "can be"], ["shall", "shall be"]], cc ? cc.must : "");
+      const specifics = dtplInput("Specifics", r.specifics || "", "dtpl-specifics");
+      // The extras: one labelled box at a time.
+      const extras = new Map();     // k → input/select
+      const extraEls = el("span", { class: "dtpl-extras" });
+      const extraValue = {
+        tol_pos: tol.pos, tol_cc: tol.cc, tol_dia: tol.dia, tol_depth: tol.depth, thickness: m.thickness, callout: m.callout,
+        at_least: r.at_least ? r.at_least : undefined, mates_with: r.mates_with,
+      };
+      const addExtra = (k, v) => {
+        if (extras.has(k)) return;
+        const spec = DTPL_EXTRAS.find((x) => x.k === k);
+        const box = k === "thickness"
+          ? dtplSelect(spec.label, [["inside", "inside"], ["outside", "outside"]], v || "inside")
+          : dtplInput(spec.label, v, k.startsWith("tol_") || k === "at_least" ? "dtpl-num" : "");
+        extras.set(k, box);
+        extraEls.append(dtplField(spec.label, box));
+        plusExtra.style.display = extras.size >= DTPL_EXTRAS.length ? "none" : "";
+      };
+      const plusExtra = el("button", { class: "btn btn-xs", type: "button", "aria-label": "Add box", "aria-haspopup": "menu" }, "+");
+      plusExtra.onclick = () => dtplMenu(plusExtra, DTPL_EXTRAS.filter((x) => !extras.has(x.k)).map((x) =>
+        el("button", { class: "dtpl-menu-item", type: "button", role: "menuitem", onclick: () => { addExtra(x.k, ""); const b = extras.get(x.k); if (b) b.focus(); } }, x.label)));
+      for (const x of DTPL_EXTRAS) if (extraValue[x.k] !== undefined && extraValue[x.k] !== null && extraValue[x.k] !== "") addExtra(x.k, extraValue[x.k]);
+
+      const apply = el("button", { class: "btn btn-xs btn-primary", type: "button" }, "Apply");
+      const cancel = el("button", { class: "btn btn-xs", type: "button" }, "Cancel");
+      const err = el("div", { class: "dr-refused", style: "display:none" });
+      const candEl = el("div", { class: "dtpl-cands" });
+      const read = () => {
+        const out = { id: r.id, name: name.value.trim(), select: terms.map((b) => b.read()), at_least: 0, measure: {} };
+        const ms = out.measure;
+        if (across.value) ms.across = across.value;
+        if (up.value) ms.up = up.value;
+        if (ccMust.value || ccPitch.value.trim()) {
+          const pitch = dtplNum(ccPitch.value);
+          ms.cc = { dir: ccDir.value, must: ccMust.value, pitch: pitch === undefined ? null : pitch };
+        }
+        const tl = {};
+        for (const [k, key] of [["tol_pos", "pos"], ["tol_cc", "cc"], ["tol_dia", "dia"], ["tol_depth", "depth"]]) {
+          const b = extras.get(k);
+          if (b && b.value.trim()) tl[key] = b.value.trim();
+        }
+        if (Object.keys(tl).length) ms.tol = tl;
+        if (extras.has("thickness")) ms.thickness = extras.get("thickness").value;
+        if (extras.has("callout") && extras.get("callout").value.trim()) ms.callout = extras.get("callout").value.trim();
+        if (extras.has("at_least")) { const n = dtplNum(extras.get("at_least").value); out.at_least = n === undefined ? 0 : n; }
+        if (extras.has("mates_with") && extras.get("mates_with").value.trim()) out.mates_with = extras.get("mates_with").value.trim();
+        if (specifics.value.trim()) out.specifics = specifics.value.trim();
+        return out;
+      };
+      const close = () => { S.hand = null; S.cands = []; S.handSlot.replaceChildren(); };
+      cancel.onclick = close;
+      apply.onclick = async () => {
+        if (apply.__drBusy) return;
+        err.style.display = "none";
+        const next = read();
+        const errors = RC.checkRule(next, (S.sb.body || {}).edges);
+        if (errors.length) { err.textContent = errors.join(" · "); err.style.display = ""; return; }
+        const exists = ((S.sb.body || {}).rules || []).some((x) => x.id === next.id);
+        const marks = S.picks.map((mk) => ({ rule_id: next.id, component_id: mk.component_id, cad_sha256: mk.cad_sha256, hole_id: mk.hole_id, description: mk.description, paper: mk.paper }));
+        const ok = await dtplSbApply(S, [{ op: exists ? "set_rule" : "add_rule", rule: next }], { btn: apply, errEl: err, marks });
+        if (ok) { S.picks = []; close(); dtplSbRings(S); S.repaint(); }
+      };
+      const onKey = (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") apply.onclick(); if (e.key === "Escape") close(); };
+      const row = el("div", { class: "dr-row dtpl-hand", onkeydown: onKey }, [
+        dtplField("Name", name),
+        el("div", { class: "form-row dtpl-takes" }, [el("span", { class: "form-label" }, "Takes"), termsEl]),
+        dtplField("Across from", across),
+        dtplField("Up from", up),
+        dtplField("c/c", ccPitch),
+        dtplField("c/c dir", ccDir),
+        dtplField("c/c is", ccMust),
+        extraEls, el("span", { class: "dtpl-menu-wrap" }, plusExtra),
+        dtplField("Specifics", specifics, "dtpl-specifics-f"),
+        apply, cancel,
+      ]);
+      const setCandidates = (cands) => {
+        const refKey = dtplSbRefKey(S);
+        const list = cands || [];
+        if (list.length) setTerms(list[list.length - 1].select);
+        candEl.replaceChildren(...list.map((c) => {
+          const n = c.counts && refKey in c.counts ? c.counts[refKey] : null;
+          return el("button", { class: "dtpl-cand", type: "button", onclick: () => setTerms(c.select) },
+            `${RC.describeSelect(c.select)}${n == null ? "" : ` · ${n}`}`);
+        }));
+      };
+      S.hand = { rule: r, setTerms, setCandidates };
+      S.handSlot.replaceChildren(el("div", { class: "dtpl-hand-wrap" }, [row, candEl, err]));
+      if (S.cands && S.cands.length && !rule) setCandidates(S.cands);
+      name.focus();
+    }
+
+    // One selector term: a kind select, then the boxes that kind takes, then ×.
+    function dtplTermBox(term, onRemove) {
+      const RC = dtplRC();
+      const wrap = el("span", { class: "dtpl-term" });
+      const kind = dtplSelect("Term", RC.TERM_KINDS.map((k) => [k, DTPL_TERM_WORDS[k] || k]), term.t || "dia");
+      const x = el("button", { class: "btn btn-xs", type: "button", "aria-label": "Remove term", onclick: onRemove }, "×");
+      let read = () => ({ t: kind.value });
+      const edgeOpts = (list) => list.map((w) => [w, w]);
+      const build = (t) => {
+        const k = kind.value;
+        let boxes = [];
+        if (k === "dia") {
+          const D = dtplInput("Ø", t.D, "dtpl-num");
+          boxes = [dtplField("Ø", D)]; read = () => ({ t: k, D: dtplNum(D.value) });
+        } else if (k === "drilled") {
+          const v = dtplSelect("Drilled in", RC.DRILLED.map((w) => [w, DTPL_DRILLED_WORDS[w] || w]), t.v || "inside");
+          const edge = dtplSelect("Edge", edgeOpts(RC.EDGE_WORDS), t.edge || "bottom");
+          const edgeF = dtplField("Edge", edge);
+          const sync = () => { edgeF.style.display = v.value === "edge" ? "" : "none"; };
+          v.onchange = sync; sync();
+          boxes = [dtplField("Drilled in", v), edgeF]; read = () => (v.value === "edge" ? { t: k, v: v.value, edge: edge.value } : { t: k, v: v.value });
+        } else if (k === "through") {
+          const v = dtplSelect("Through or blind", [["through", "through"], ["blind", "blind"]], t.v || "through");
+          boxes = [dtplField("Through or blind", v)]; read = () => ({ t: k, v: v.value });
+        } else if (k === "place") {
+          const op = dtplSelect("Place", RC.PLACE_OPS.map((w) => [w, w]), t.op || "at");
+          const v = dtplInput("Distance", t.v, "dtpl-num");
+          const v2 = dtplInput("To", t.v2, "dtpl-num");
+          const edge = dtplSelect("Edge", edgeOpts(RC.EDGE_WORDS), t.edge || "front");
+          const v2F = dtplField("To", v2);
+          const sync = () => { v2F.style.display = op.value === "between" ? "" : "none"; };
+          op.onchange = sync; sync();
+          boxes = [dtplField("Place", op), dtplField("Distance", v), v2F, dtplField("Edge", edge)];
+          read = () => { const o = { t: k, edge: edge.value, op: op.value, v: dtplNum(v.value) }; if (op.value === "between") o.v2 = dtplNum(v2.value); return o; };
+        } else if (k === "column" || k === "row") {
+          const edge = dtplSelect("From", edgeOpts(k === "column" ? RC.ACROSS_EDGES : RC.UP_EDGES), t.edge || (k === "column" ? "front" : "bottom"));
+          const rank = dtplInput("Rank", t.rank != null ? t.rank : 1, "dtpl-num");
+          boxes = [dtplField("Rank", rank), dtplField("From", edge)]; read = () => ({ t: k, edge: edge.value, rank: dtplNum(rank.value) });
+        } else if (k === "spacing") {
+          const pitch = dtplInput("Pitch", t.pitch, "dtpl-num");
+          const dir = dtplSelect("Direction", RC.SPACING_DIRS.map((w) => [w, w]), t.dir || "up");
+          boxes = [dtplField("Pitch", pitch), dtplField("Direction", dir)]; read = () => ({ t: k, pitch: dtplNum(pitch.value), dir: dir.value });
+        } else if (k === "near") {
+          const D = dtplInput("Ø", t.D, "dtpl-num");
+          const within = dtplInput("Within", t.within, "dtpl-num");
+          boxes = [dtplField("Ø", D), dtplField("Within", within)]; read = () => ({ t: k, D: dtplNum(D.value), within: dtplNum(within.value) });
+        }
+        wrap.replaceChildren(kind, ...boxes, x);
+      };
+      kind.onchange = () => build({ t: kind.value });
+      build(term || {});
+      // Strip the boxes left empty, so checkRule names what is missing.
+      return { el: wrap, read: () => { const o = read(); for (const key of Object.keys(o)) if (o[key] === undefined) delete o[key]; return o; } };
+    }
+
+    // EDGES' pencil: one row, a select per edge and the class Ø where the test needs it.
+    function dtplSbEdgesForm(S, slot) {
+      const RC = dtplRC();
+      if (slot.firstChild) { slot.replaceChildren(); return; }
+      const now = RC.normaliseEdges((S.sb.body || {}).edges);
+      const label = { front: "Front edge", bottom: "Bottom edge", inside: "Inside face" };
+      const boxes = {};
+      const fields = [];
+      for (const key of Object.keys(RC.EDGE_TESTS)) {
+        const sel = dtplSelect(label[key], RC.EDGE_TESTS[key].map((tst) => [tst, DTPL_TEST_WORDS[tst] || tst]), now[key].test);
+        const D = dtplInput("Ø", now[key].D, "dtpl-num");
+        const dField = dtplField("Ø", D);
+        const sync = () => { dField.style.display = RC.EDGE_TEST_NEEDS_D.includes(sel.value) ? "" : "none"; };
+        sel.onchange = sync; sync();
+        boxes[key] = { sel, D };
+        fields.push(dtplField(label[key], sel), dField);
+      }
+      const apply = el("button", { class: "btn btn-xs btn-primary", type: "button" }, "Apply");
+      const cancel = el("button", { class: "btn btn-xs", type: "button", onclick: () => slot.replaceChildren() }, "Cancel");
+      const err = el("div", { class: "dr-refused", style: "display:none" });
+      apply.onclick = async () => {
+        if (apply.__drBusy) return;
+        err.style.display = "none";
+        const edges = {};
+        for (const [key, b] of Object.entries(boxes)) {
+          const e = { test: b.sel.value };
+          if (RC.EDGE_TEST_NEEDS_D.includes(e.test)) e.D = dtplNum(b.D.value);
+          if (e.test !== now[key].test || e.D !== now[key].D) edges[key] = e;
+        }
+        if (!Object.keys(edges).length) { slot.replaceChildren(); return; }
+        const errors = RC.checkEdges(edges);
+        if (errors.length) { err.textContent = errors.join(" · "); err.style.display = ""; return; }
+        if (await dtplSbApply(S, [{ op: "set_edges", edges }], { btn: apply, errEl: err })) slot.replaceChildren();
+      };
+      slot.replaceChildren(el("div", { class: "dtpl-hand-wrap" }, [el("div", { class: "dr-row" }, [...fields, apply, cancel]), err]));
+    }
+
+    // TRY ON: [+ Part] and one row per part: Part · CAD · a count per rule · Base default.
+    function dtplSbTryPane(S, p) {
+      const RC = dtplRC();
+      const t = S.t;
+      const rules = ((S.sb.body || {}).rules) || [];
+      const addBtn = el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplSbPickPart(S) }, "+ Part");
+      const slot = el("div", {});
+      const cols = 3 + rules.length;
+      const rows = S.parts.map((c) => {
+        const out = dtplSbOut(S, c.component_id);
+        const counts = RC && out ? RC.catchCounts(out) : null;
+        const shortOf = new Map(((out && out.rules) || []).map((r) => [r.id, !!r.short]));
+        let assign = null;
+        if (!c.of_type && t.id) {
+          assign = el("button", { class: "btn btn-xs", type: "button" }, `Assign ${t.name || "part type"}`);
+          assign.onclick = async () => {
+            S.flash("");
+            const res = await drBusy(assign, async () => {
+              try { return await API.post(token, "setComponentPartType", { component_ids: [c.component_id], part_type_id: t.id }); }
+              catch (ex) { S.flash(ex.message); return false; }
+            });
+            assign.disabled = false;
+            if (!res) return;
+            if (res.refused && res.refused.length) S.flash(res.refused.map((x) => x.reason).join(" · "));
+            await dtplOpenSandbox(S.id, { keep: true });
+            dtplSbRequestCatch(S, null);
+          };
+        }
+        const label = el("td", {}, [
+          el("span", { style: "font-family:monospace;font-size:0.8125rem" }, c.part_number || "—"), " ",
+          c.name || "", c.is_reference ? el("span", { class: "dtpl-badge" }, "Reference") : null,
+        ].filter(Boolean));
+        const cad = el("td", {}, c.cad_revision ? String(c.cad_revision) : "—");
+        let cells;
+        if (!c.cad_sha256) cells = [el("td", { colspan: rules.length + 1, class: "is-warn" }, "No CAD")];
+        else if (c.features_error && (!out || out.status === "no_features")) cells = [el("td", { colspan: rules.length + 1, class: "is-warn" }, `failed: ${c.features_error}`)];
+        else if (!out) cells = [el("td", { colspan: rules.length + 1, class: "muted" }, "—")];
+        else if (out.status === "no_features") cells = [el("td", { colspan: rules.length + 1, class: "is-warn" }, "no features yet")];
+        else if (out.status === "failed") cells = [el("td", { colspan: rules.length + 1, class: "is-warn" }, `failed: ${out.error || "—"}`)];
+        else cells = [
+          ...rules.map((r) => el("td", { class: `num${shortOf.get(r.id) ? " is-warn" : ""}` }, counts && r.id in counts ? String(counts[r.id]) : "—")),
+          el("td", { class: "num" }, counts ? String(counts.base_default) : "—"),
+        ];
+        return el("tr", { class: out && out.status && out.status !== "ok" ? "is-warn" : null }, [label, cad, ...cells, el("td", {}, assign)]);
+      });
+      p.append(
+        el("div", { class: "dtpl-add" }, addBtn), slot,
+        el("div", { class: "table-wrap" }, el("table", { class: "dtpl-try", style: "font-size:0.875rem" }, [
+          el("thead", {}, el("tr", {}, [
+            el("th", {}, "Part"), el("th", {}, "CAD"),
+            ...rules.map((r, i) => el("th", { class: "num", title: r.name || "" }, String(i + 1))),
+            el("th", { class: "num" }, "Base default"), el("th", {}),
+          ])),
+          el("tbody", {}, rows.length ? rows : [dtplEmpty(cols + 1, "No parts.")]),
+        ])),
+      );
+    }
+
+    // [+ Part]: the reference picker's list (listPartTypeReferenceCandidates), one
+    // row per part; a click adds it to the sandbox's try parts.
+    async function dtplSbPickPart(S) {
+      const body = el("div", {}, drLoading("Loading parts…"));
+      const close = openModal("Try on", body);
+      let cands;
+      try { cands = (await API.post(token, "listPartTypeReferenceCandidates", { part_type_id: S.t.id || S.sb.part_type_id })).candidates || []; }
+      catch (ex) { body.replaceChildren(el("div", { class: "error" }, ex.message)); return; }
+      const have = new Set(S.parts.map((c) => c.component_id));
+      const byPart = new Map();
+      for (const c of cands) if (!have.has(c.component_id)) byPart.set(c.component_id, c);   // the newest revision last
+      const list = [...byPart.values()];
+      const slot = el("div", {});
+      const err = el("div", { class: "dr-error", style: "display:none;margin-bottom:0.4rem" });
+      const tbody = el("tbody", {});
+      let q = "", busy = false;
+      const search = el("input", {
+        class: "up-text", type: "search", placeholder: "Search…", "aria-label": "Search", style: "min-width:220px;margin-bottom:0.6rem",
+        oninput: (e) => { q = e.target.value.trim().toLowerCase(); paint(); },
+      });
+      const pick = async (c) => {
+        if (busy) return;
+        busy = true;
+        err.style.display = "none";
+        const ids = [...new Set([...(S.sb.try_component_ids || []), c.component_id])];
+        const res = await drBusy(null, async () => {
+          try { return await API.post(token, "setDrawingTemplateTryParts", { id: S.id, rev: S.sb.rev, component_ids: ids }); }
+          catch (ex) { err.textContent = ex.message; err.style.display = ""; return false; }
+        }, { slot, label: "Try on" });
+        busy = false;
+        if (!res) return;
+        close();
+        S.tab = "try";
+        await dtplOpenSandbox(S.id, { keep: true });
+        dtplSbRequestCatch(S, null);
+      };
+      function paint() {
+        const rows = list.filter((c) => !q || [c.part_number, c.name].filter(Boolean).join(" ").toLowerCase().includes(q));
+        tbody.replaceChildren(...(rows.length ? rows.map((c) => el("tr", { class: "dtpl-row", onclick: () => pick(c) }, [
+          el("td", {}, el("span", { style: "font-family:monospace;font-size:0.8125rem" }, c.part_number || "—")),
+          el("td", {}, c.name || "—"),
+          el("td", {}, c.revision ? `Rev ${c.revision}` : "—"),
+          el("td", {}, dtplDay(c.released_at)),
+        ])) : [dtplEmpty(4, "No parts with a released CAD revision.")]));
+      }
+      body.replaceChildren(search, err, slot, el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
+        el("thead", {}, el("tr", {}, ["Part number", "Name", "Revision", "Released"].map((h) => el("th", {}, h)))),
+        tbody,
+      ])));
+      paint();
+      search.focus();
+    }
+
+    // Discard: the facts modal, never a browser dialog: n changes · marks · started by.
+    function dtplSbDiscard(S) {
+      const sb = S.sb;
+      const n = Array.isArray(sb.changes) ? sb.changes.length : (Array.isArray(sb.operations) ? sb.operations.length : 0);
+      const err = el("div", { class: "dr-error", style: "display:none;margin-top:0.5rem" });
+      const discard = el("button", { class: "btn btn-sm doc-del", type: "button" }, "Discard");
+      const cancel = el("button", { class: "btn btn-sm", type: "button" }, "Cancel");
+      const close = openModal(`Discard "${sb.name || "Sandbox"}"`, el("div", { style: "min-width:min(480px,88vw)" }, [
+        el("dl", { class: "drawing-meta" }, [
+          el("dt", {}, "Changes"), el("dd", {}, `${n} ${n === 1 ? "change" : "changes"}`),
+          el("dt", {}, "Marks"), el("dd", {}, String((S.marks || []).length)),
+          el("dt", {}, "Started"), el("dd", {}, `${dtplWhen(sb.created_at)}${sb.by_label ? ` · ${sb.by_label}` : ""}`),
+        ]),
+        err,
+        el("div", { style: "display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:1rem" }, [el("span", { style: "flex:1" }), cancel, discard]),
+      ]));
+      cancel.onclick = () => close();
+      discard.onclick = async () => {
+        if (discard.__drBusy) return;
+        err.style.display = "none"; cancel.disabled = true;
+        const ok = await drBusy(discard, async () => {
+          try { await API.post(token, "discardDrawingTemplateChange", { id: sb.id || S.id, rev: sb.rev }); return true; }
+          catch (ex) { err.textContent = ex.message; err.style.display = ""; return false; }
+        });
+        cancel.disabled = false;
+        if (!ok) { discard.disabled = false; return; }
+        close();
+        dtplOpenType(S.t.id || sb.part_type_id);
+      };
     }
 
     // Land on the first register: CAD Models for Rushroom, Drawings for a supplier.

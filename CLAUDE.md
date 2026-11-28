@@ -7,7 +7,7 @@ Compliance portal for Rushroom AB's LED furniture product.
   - `portal-api`    — auth, CRUD, tenants, accounts, BOM (the hot path; no heavy deps)
   - `portal-ai`     — every Anthropic action + document parsing (jszip, pdf-lib)
   - `portal-cellar` — EU CELLAR SPARQL + relation inference
-- DB: Supabase Postgres (32 tables). Schema in supabase/migrations/*.sql
+- DB: Supabase Postgres (35 tables). Schema in supabase/migrations/*.sql
 - AI: ALL calls use `claude-opus-4-8` via api.anthropic.com/v1/messages
 
 ## Commands I use to deploy
@@ -62,7 +62,7 @@ and never describe unexercised code as working. Run `/status` to see where every
                               plus "Discovered While Building" for ideas found mid-build
 - docs/DECISIONS.md         — architectural decisions log (Claude appends after /ship)
 
-## Database — 32 tables across 7 domains
+## Database — 35 tables across 7 domains
 Action plan: steps
 Documents: documents, document_versions, uploads
 Standards: standards, standard_versions
@@ -83,6 +83,10 @@ Spec governance (dynamic drawings, 0068): drawing_spec_versions,
         drawing_spec_patches, drawing_spec_turns
         (docs/DYNAMIC_DRAWINGS.md; template + patch pinned on every issue;
          an iterated draft keeps its letter, STATUS_MODEL §5.2)
+Drawing templates (0070-0071, docs/DRAWING_TEMPLATES.md): part_types,
+        drawing_template_items (the queue: reference, features, catch),
+        drawing_template_changes (a type's sandbox), drawing_template_marks,
+        cad_feature_cache (raw STEP features per file + sha)
 Custom fields (PROP-040): custom_spec_fields
 Manufacturing (PROP-030): family_routing_steps, work_orders,
         work_order_steps, work_order_components
@@ -95,6 +99,6 @@ Component types (PROP-058): part | raw_material | sub_assembly |
         phantom_assembly (structural only) | finished_good | spare_part | product_family
 
 ## Current state
-Frontend cache version: ?v=476 (app.js, viewer.js, styles.css, drawing-spec-core.mjs)
+Frontend cache version: ?v=477 (app.js, viewer.js, styles.css, drawing-spec-core.mjs)
 Last SYSTEM_OVERVIEW audit: 2026-09-24
 PROP-012 (multi-tenant SaaS): IN PROGRESS — do not break organization_id logic

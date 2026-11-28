@@ -1,11 +1,25 @@
 # Drawing templates — a shared base, a rule set per part type, and a sandbox where rules are tried before they become a version
 
-**DESIGN — model changed and decided 2026-11-28; not built.** Nothing in this document
-exists in code. It replaces the design of 2026-11-27 (one template, `flat_panel`, with one datum
-per panel). What survives from that design is carried over; what the new model ends is deleted
-and named in §14 and §15. The owner answered the eight questions on 2026-11-28, all as recommended (§14). What was checked
-in the code, and where, is in the appendix. Every hole count below is read from the Rev B STEP
-(Postęp's geometry, what all CAD models in production are on), not from Rev F.
+**DESIGN — model changed and decided 2026-11-28. Phase 1 (types, the page, the reference render)
+is built and live (0070, v476). Phase 2 (rules he can see: sandboxes, rules by hand and by mark,
+the catch as rings and counts) is built 2026-11-28 (0071, v477); phases 3-9 are not built.** It
+replaces the design of 2026-11-27 (one template, `flat_panel`, with one datum per panel). What
+survives from that design is carried over; what the new model ends is deleted and named in §14
+and §15. The owner answered the eight questions on 2026-11-28, all as recommended (§14). What was
+checked in the code, and where, is in the appendix. Every hole count below is read from the Rev B
+STEP (Postęp's geometry, what all CAD models in production are on), not from Rev F.
+
+**As built in phase 2, where it differs from the text below.** The vocabulary is
+`_shared/template-rules-core.mjs`; the one evaluator is `fusion_scripts/catch.py`. (1) "Drilled
+in" has one more value, **"in a face"** (any hole in a face, whichever way it opens): without it
+§3.7 rule 5 also took the two Ø2 in the rear edge; with it the seed rules give exactly the table's
+counts on Left Rev B (8, 9, 9, 4, 3, 1, 2, base default 19), pinned in `proofs/run_catch.py`.
+(2) The feature cache is keyed by a features format number, not the engine version, so an engine
+commit does not empty it. (3) Only holes are selected; grooves, pockets and the CTQ relation
+(rules 8 and 9) wait. (4) An edge hole is ringed and marked at its mouth on the face view, not on
+its callout or edge view. (5) A type has no saved version until phase 6, so the saved view shows
+no rules and the Takes column has no `old → new`. (6) Compare, Render, Decide, Bring up and Ask
+are phases 5-7.
 
 Short names used below: DD = DYNAMIC_DRAWINGS.md, DLG = DRAWING_DIALOGUE.md, UX =
 DRAWINGS_TAB_UX.md. "The engine" is drawset.py with the worker on the Mac.

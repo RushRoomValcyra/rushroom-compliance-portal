@@ -85,3 +85,87 @@ test("flat_panel becomes the Base; one Base and one rule set per type per org", 
   assert.match(src, /ADD COLUMN IF NOT EXISTS portal_owned BOOLEAN NOT NULL DEFAULT FALSE/);
   assert.match(src, /ADD COLUMN IF NOT EXISTS part_type_id UUID REFERENCES part_types\(id\);/, "bom_components lacks part_type_id");
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2 — 0071: sandboxes, marks, the feature cache, modes features / catch
+// ---------------------------------------------------------------------------
+const FILE_2 = "supabase/migrations/0071_template_sandboxes_and_catch.sql";
+const sql2 = () => readFileSync(join(root, FILE_2), "utf8").replace(/^\s*--.*$/gm, "").replace(/--.*$/gm, "");
+
+test("0071 exists", () => {
+  assert.ok(existsSync(join(root, FILE_2)), `${FILE_2} is missing`);
+});
+
+test("0071: the three new tables are tenant tables with RLS on", () => {
+  const src = sql2();
+  for (const name of ["drawing_template_changes", "drawing_template_marks", "cad_feature_cache"]) {
+    assert.match(table(src, name), /organization_id\s+UUID NOT NULL REFERENCES organizations\(id\)/, `${name} lacks organization_id NOT NULL → organizations`);
+    assert.match(src, new RegExp(`ALTER TABLE ${name} ENABLE ROW LEVEL SECURITY;`), `${name} has no RLS`);
+  }
+});
+
+test("0071: the sandbox carries rev, state, origin, bodies and try parts", () => {
+  const t = table(sql2(), "drawing_template_changes");
+  assert.match(t, /part_type_id\s+UUID NOT NULL REFERENCES part_types\(id\)/);
+  assert.match(t, /started_from_version_id\s+UUID REFERENCES drawing_spec_versions\(id\)/);
+  assert.match(t, /start_body\s+JSONB NOT NULL/);
+  assert.match(t, /operations\s+JSONB NOT NULL DEFAULT '\[\]'/);
+  assert.match(t, /\bbody\s+JSONB NOT NULL/);
+  assert.match(t, /rev\s+INTEGER NOT NULL DEFAULT 1/);
+  assert.match(t, /try_component_ids\s+JSONB NOT NULL DEFAULT '\[\]'/);
+  assert.match(t, /CHECK \(origin IN \('page', 'drawing', 'restore'\)\)/);
+  assert.match(t, /CHECK \(state IN \('sandbox', 'put_forward', 'saved', 'discarded'\)\)/);
+  assert.match(sql2(), /ON drawing_template_changes \(organization_id, part_type_id\) WHERE state = 'put_forward'/, "two put forward per rule set");
+});
+
+test("0071: marks cascade with their sandbox; the cache is unique per file, bytes and format", () => {
+  const src = sql2();
+  assert.match(table(src, "drawing_template_marks"), /change_id\s+UUID NOT NULL REFERENCES drawing_template_changes\(id\) ON DELETE CASCADE/);
+  const c = table(src, "cad_feature_cache");
+  assert.match(c, /cad_file_id\s+UUID NOT NULL REFERENCES cad_model_files\(id\) ON DELETE CASCADE/);
+  assert.match(c, /UNIQUE \(cad_file_id, sha256, features_format\)/);
+  assert.ok(!/REFERENCES cad_files\(/.test(src), "a FK names cad_files");
+});
+
+test("0071: template items gain change_id and request, and a shape per new purpose", () => {
+  const src = sql2();
+  assert.match(src, /ADD COLUMN IF NOT EXISTS change_id UUID REFERENCES drawing_template_changes\(id\) ON DELETE CASCADE/);
+  assert.match(src, /ADD COLUMN IF NOT EXISTS request\s+JSONB/);
+  const catchShape = src.match(/drawing_template_items_catch_shape CHECK \(([\s\S]*?)\n\);/);
+  assert.ok(catchShape, "no catch shape");
+  for (const k of ["change_id IS NOT NULL", "parts IS NOT NULL", "component_id IS NULL", "cad_file_id IS NULL", "drawing_id IS NULL"]) {
+    assert.ok(catchShape[1].includes(k), `the catch item shape lacks ${k}`);
+  }
+  const featShape = src.match(/drawing_template_items_features_shape CHECK \(([\s\S]*?)\n\);/);
+  assert.ok(featShape, "no features shape");
+  for (const k of ["component_id IS NOT NULL", "cad_file_id IS NOT NULL", "cad_sha256 IS NOT NULL", "drawing_id IS NULL"]) {
+    assert.ok(featShape[1].includes(k), `the features item shape lacks ${k}`);
+  }
+  assert.match(src, /DROP CONSTRAINT IF EXISTS drawing_template_items_catch_shape;/, "not re-runnable");
+});
+
+test("0071: the render job gains features and catch; part columns empty for catch only", () => {
+  const src = sql2();
+  assert.match(src, /ADD CONSTRAINT drawing_render_jobs_mode_check\s+CHECK \(mode IN \('issue', 'iterate', 'sandbox', 'features', 'catch'\)\);/);
+  for (const c of ["component_id", "cad_model_revision_id", "cad_file_id"]) {
+    assert.match(src, new RegExp(`ALTER COLUMN ${c}\\s+DROP NOT NULL`), `${c} stays NOT NULL`);
+  }
+  const shape = src.match(/ADD CONSTRAINT drawing_render_jobs_mode_shape CHECK \(([\s\S]*?)\n\);/);
+  assert.ok(shape, "the mode shape CHECK is missing");
+  const branches = shape[1].split(/\n\s*OR\s*\n/);
+  assert.equal(branches.length, 4, "one branch per mode group");
+  const PART = "component_id IS NOT NULL AND cad_model_revision_id IS NOT NULL AND cad_file_id IS NOT NULL";
+  const norm = (s) => s.replace(/\s+/g, " ");
+  for (const [i, mode] of [[0, "mode IN ('issue','iterate')"], [1, "mode = 'sandbox'"], [2, "mode = 'features'"]]) {
+    assert.ok(norm(branches[i]).includes(mode), `branch ${i} is not ${mode}`);
+    assert.ok(norm(branches[i]).includes(PART), `${mode} no longer requires its part and CAD`);
+  }
+  assert.ok(norm(branches[3]).includes("mode = 'catch'"));
+  assert.ok(!norm(branches[3]).includes("component_id IS NOT NULL"), "catch requires a part");
+  for (const k of ["template_item_id IS NOT NULL", "drawing_id IS NULL", "issue IS NULL", "spec IS NULL"]) {
+    assert.ok(branches[2].includes(k) && branches[3].includes(k), `features / catch lack ${k}`);
+  }
+  // The phase 1 shapes are kept word for word.
+  assert.match(branches[0], /issue IS NOT NULL AND spec IS NOT NULL AND template_item_id IS NULL/);
+  assert.match(branches[1], /spec_version_id IS NOT NULL/);
+});

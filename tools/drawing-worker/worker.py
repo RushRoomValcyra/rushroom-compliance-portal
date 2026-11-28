@@ -39,6 +39,13 @@ reported running before and passed after:
             spec_body_sha256, patch_sha256, verify, unmatched_overrides,
             unmatched_rules (pair rules that paired no holes) and artifacts { pdf, pngs[], dimensions, entities } (storage paths)
 
+Modes features and catch (DRAWING_TEMPLATES.md §3.9; a part type's template item, no drawing, no render):
+  features  download (as above, sha checked) -> render = catch.py features STEP -> verify, upload skipped;
+            finishDrawingRender { job_id, result: { mode, features_format, features, cad_sha256, drawset_version } }
+  catch     download skipped -> render = catch.py catch <the poll's catch_input> -> verify, upload skipped;
+            finishDrawingRender { job_id, result: { mode, catch, drawset_version } }
+  No regression pass, no PDF, no upload, nothing written to specs/.
+
 Any failure -> finishDrawingRender { job_id, error }; the portal marks the
 running step failed and the rest skipped. A 409 from a report means the
 portal closed the job (cancelled, timed out): the worker stops that job and
@@ -90,13 +97,16 @@ DEFAULTS = {
 }
 
 STEPS = ("download", "render", "verify", "upload")   # claim and register are the portal's
-MODES = ("issue", "iterate", "sandbox")              # sandbox: a template item's render, no drawing (DRAWING_TEMPLATES.md §4)
+# features / catch: a template item's catch.py run, no render, no PDF, no upload (DRAWING_TEMPLATES.md §3.9, §10.3 item 13)
+TEMPLATE_MODES = ("features", "catch")
+MODES = ("issue", "iterate", "sandbox") + TEMPLATE_MODES   # sandbox: a template item's render, no drawing (DRAWING_TEMPLATES.md §4)
 SANDBOX_PDF = "sandbox.pdf"
 PART_NUMBER = re.compile(r"RR-\d{6}-[A-Z0-9]{8}")
 REGISTER_EVERY_S = 300          # registerDrawingSpecs on start and every 5 min (the portal calls a worker absent after 10)
 REGISTER_RETRY_S = 60           # after a failed registration
 DOWNLOAD_TIMEOUT_S = 120
 DRAWSET_TIMEOUT_S = 600         # the portal fails a running job after 15 min; leave room for upload
+CATCH_TIMEOUT_S = 180           # catch.py: about 1 s to start, 0.1 s a STEP, milliseconds a part for a catch
 UPLOAD_TIMEOUT_S = 180
 CALL_TIMEOUT_S = 60
 DETAIL_MAX = 600
@@ -435,8 +445,9 @@ def build_temp_spec(spec: dict, step_path: str, title_block: dict, cad_sha256: s
     return out
 
 
-def drawset_version(cfg: dict) -> str:
-    """git short hash (+ "-dirty" when drawset.py or specs/ differ from HEAD) when the drawset folder is itself a repo, else drawset.py's mtime."""
+def drawset_version(cfg: dict, also: tuple = ()) -> str:
+    """git short hash (+ "-dirty" when drawset.py or specs/ differ from HEAD) when the drawset folder is itself a repo, else drawset.py's mtime.
+    also: further engine files a job ran (features / catch: catch.py, step2d.py), checked for -dirty too."""
     d = cfg["drawset_dir"]
     try:
         r = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel", "--short", "HEAD"],
@@ -444,7 +455,7 @@ def drawset_version(cfg: dict) -> str:
         lines = r.stdout.strip().splitlines()
         if r.returncode == 0 and len(lines) == 2 and os.path.realpath(lines[0]) == os.path.realpath(d):
             # uncommitted renderer code draws differently from HEAD: say so, or an issue traces to the wrong renderer
-            st = subprocess.run(["git", "-C", d, "status", "--porcelain", "--", "drawset.py", "specs"],
+            st = subprocess.run(["git", "-C", d, "status", "--porcelain", "--", "drawset.py", "specs"] + list(also),
                                 capture_output=True, text=True, timeout=10)
             dirty = st.returncode != 0 or bool(st.stdout.strip())
             return "git " + lines[1] + ("-dirty" if dirty else "")
@@ -574,7 +585,66 @@ def claim_refusal(job: dict, mode: str) -> str | None:
             return "Sandbox needs a spec_body"
         if _present(job.get("spec_patch")):
             return "Sandbox takes no patch"
+    if mode in TEMPLATE_MODES:
+        if not _present(job.get("template_item_id")):
+            return "%s needs a template_item_id" % mode.capitalize()
+        if _present(job.get("spec_patch")):
+            return "%s takes no patch" % mode.capitalize()
+    if mode == "features" and not _present(job.get("step_url")):
+        return "Features needs a step_url"
+    if mode == "catch":
+        raw = job.get("catch_input")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw.strip() else None
+            except ValueError:
+                return "Catch input is not JSON"
+        if not isinstance(raw, dict):
+            return "Catch needs a catch_input"
     return None
+
+
+def part_label(job: dict) -> str:
+    """The part a job is about, for the log: the title block's part number or name, else the job's component."""
+    tb = job.get("title_block") or {}
+    for v in (tb.get("part_number"), tb.get("part_name"), tb.get("title"), job.get("part_number"), job.get("part_name"),
+              job.get("component_id")):
+        if v not in (None, ""):
+            return str(v)
+    return "?"
+
+
+def claim_line(job: dict, mode: str) -> str:
+    """The "claimed" log line, worded per mode: an issue names its drawing and letter; a template job has
+    neither, so it names the part (sandbox, features) or the parts (catch) and the template item."""
+    tb = job.get("title_block") or {}
+    short = str(job.get("id") or "")[:8]
+    item = str(job.get("template_item_id") or "?")[:8]
+    if mode == "catch":
+        ci = job.get("catch_input")
+        if isinstance(ci, str):
+            try:
+                ci = json.loads(ci)
+            except ValueError:
+                ci = None
+        ci = ci if isinstance(ci, dict) else {}
+        parts = ci.get("parts") or []
+        mark = ci.get("mark") or None
+        return "job %s: claimed · mode catch · template item %s · %d part%s · %d rule%s%s" % (
+            short, item, len(parts), "" if len(parts) == 1 else "s", len(ci.get("rules") or []),
+            "" if len(ci.get("rules") or []) == 1 else "s",
+            " · mark %s" % mark.get("hole_id") if isinstance(mark, dict) else "")
+    if mode == "features":
+        return "job %s: claimed · mode features · %s · template item %s · %s" % (
+            short, part_label(job), item, os.path.basename(str(job.get("step_file_name") or "")) or "?")
+    if mode == "sandbox":
+        return "job %s: claimed · mode sandbox · %s · template item %s · spec %s · from CAD Rev %s" % (
+            short, part_label(job), item, job.get("spec"), tb.get("cad_revision") or "?")
+    number = str(tb.get("drawing_number") or "").strip()
+    issue = str(tb.get("issue") or job.get("issue") or "").strip()
+    return "job %s: claimed · mode %s · %s Issue %s · %s · spec %s%s · from CAD Rev %s" % (
+        short, mode, number or "?", issue or "?", part_label(job), job.get("spec"),
+        " + patch" if job.get("spec_patch") not in (None, "", "null") else "", tb.get("cad_revision") or "?")
 
 
 def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
@@ -589,9 +659,7 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
     legacy_portal = "spec_body" not in job      # a portal before DYNAMIC_DRAWINGS Phase 2: no body, no patch, no artefact uploads
     tmp = tempfile.mkdtemp(prefix="drawing-worker-")
     st: dict = {}
-    log.info("job %s: claimed · mode %s · %s Issue %s · %s · spec %s%s · from CAD Rev %s",
-             short, mode, number or "?", issue or "?", tb.get("part_number") or "?", job.get("spec"),
-             " + patch" if job.get("spec_patch") not in (None, "", "null") else "", tb.get("cad_revision") or "?")
+    log.info("%s", claim_line(job, mode))
 
     def report(key: str, status: str, detail=None, data=None) -> None:
         kwargs = {"job_id": job_id, "key": key, "status": status}
@@ -862,6 +930,113 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         return ("%s · %d bytes · %s · %d PNGs + sidecars under renders/%s" % (file_name, size, st["pdf_sha256"][:8], len(art["pngs"]), short),
                 data)
 
+    # ---- features / catch: catch.py, no render (DRAWING_TEMPLATES.md §3.9) ----
+    def run_catch_py(args: list[str], out_path: str) -> dict:
+        """catch.py <args> --out out_path in the drawset folder; the JSON it wrote."""
+        if not os.path.exists(os.path.join(cfg["drawset_dir"], "catch.py")):
+            raise StepFailed("catch.py not found in %s; update the drawset folder" % cfg["drawset_dir"])
+        cmd = [cfg["python"], "catch.py"] + args + ["--out", out_path]
+        log.info("job %s: %s (cwd %s)", short, " ".join(cmd), cfg["drawset_dir"])
+        try:
+            proc = subprocess.run(cmd, cwd=cfg["drawset_dir"], capture_output=True, text=True, timeout=CATCH_TIMEOUT_S,
+                                  start_new_session=True)
+        except subprocess.TimeoutExpired:
+            raise StepFailed("catch.py did not finish within %d s" % CATCH_TIMEOUT_S)
+        if proc.stderr.strip():
+            log.debug("job %s: catch.py stderr\n%s", short, proc.stderr)
+        if proc.returncode != 0:
+            raise StepFailed("catch.py exit %d: %s" % (proc.returncode, _tail(proc.stderr or proc.stdout)))
+        try:
+            with open(out_path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError) as exc:
+            raise StepFailed("catch.py wrote no JSON: %s" % exc)
+
+    def step_features():
+        t0 = time.time()
+        out = run_catch_py(["features", st["step_path"]], os.path.join(tmp, "features.json"))
+        if str(out.get("sha256") or "").lower() != st["step_sha256"]:
+            raise StepFailed("catch.py read a STEP whose sha differs from the download")
+        fmt = out.get("features_format")
+        if not isinstance(fmt, int) or not isinstance(out.get("features"), dict):
+            raise StepFailed("catch.py features answered without features_format / features")
+        st["features"] = out
+        f = out["features"]
+        return ("features format %d · %d holes · %d walls · %d floors · %.1f s" % (
+            fmt, len(f.get("holes") or []), len(f.get("walls") or []), len(f.get("floors") or []), time.time() - t0),
+            {"features_format": fmt, "holes": len(f.get("holes") or []), "sha256": out["sha256"],
+             "seconds": round(time.time() - t0, 1)})
+
+    def step_catch():
+        t0 = time.time()
+        ci = job.get("catch_input")
+        if isinstance(ci, str):
+            ci = json.loads(ci)
+        in_path = os.path.join(tmp, "catch_input.json")
+        with open(in_path, "w", encoding="utf-8") as f:
+            json.dump(ci, f)
+        out = run_catch_py(["catch", in_path], os.path.join(tmp, "catch.json"))
+        if not isinstance(out.get("parts"), list):
+            raise StepFailed("catch.py catch answered without parts")
+        st["catch"] = out
+        by = {}
+        for p in out["parts"]:
+            by[p.get("status")] = by.get(p.get("status"), 0) + 1
+        words = " · ".join("%d %s" % (n, k) for k, n in sorted(by.items())) or "no parts"
+        return ("%s · %d rule%s · %d candidate%s · %.1f s" % (
+            words, len(ci.get("rules") or []), "" if len(ci.get("rules") or []) == 1 else "s",
+            len(out.get("candidates") or []), "" if len(out.get("candidates") or []) == 1 else "s", time.time() - t0),
+            {"parts": len(out["parts"]), "status": by, "candidates": len(out.get("candidates") or []),
+             "seconds": round(time.time() - t0, 1)})
+
+    def run_template_job() -> dict:
+        """features: download -> render (catch.py features) -> verify, upload skipped.
+        catch: download skipped -> render (catch.py catch) -> verify, upload skipped.
+        Then finishDrawingRender { job_id, result } with no file: nothing is uploaded, nothing written to specs/."""
+        plan = {"download": step_download if mode == "features" else None,
+                "render": step_features if mode == "features" else step_catch, "verify": None, "upload": None}
+        why = {"download": "the catch reads the cached features, no STEP",
+               "verify": "a %s job has no dimension list to verify" % mode,
+               "upload": "a %s job uploads nothing: the result is the answer" % mode}
+        for key in STEPS:
+            body = plan[key]
+            if body is None:
+                report(key, "skipped", why[key])
+                continue
+            report(key, "running")
+            t0 = time.time()
+            try:
+                out = body()
+            except (StepFailed, JobClosed, KeyboardInterrupt):
+                raise
+            except Exception:
+                tb_text = traceback.format_exc()
+                log.error("job %s: %s raised\n%s", short, key, tb_text)
+                raise StepFailed(tb_text.strip().splitlines()[-1][:300])
+            detail, data = out
+            report(key, "passed", detail, data)
+            log.info("job %s: %s passed in %.1f s — %s", short, key, time.time() - t0, detail)
+        version = drawset_version(cfg, ("catch.py", "step2d.py"))
+        if mode == "features":
+            result = {"mode": "features", "features_format": st["features"]["features_format"],
+                      "features": st["features"]["features"], "cad_sha256": st["step_sha256"], "drawset_version": version}
+        else:
+            result = {"mode": "catch", "catch": st["catch"], "drawset_version": version}
+        fin = portal.call("finishDrawingRender", job_id=job_id, result=result)
+        j = fin.get("job") if isinstance(fin, dict) else None
+        if j and j.get("status") != "done":
+            log.error("job %s: the portal did not accept the %s — %s; files kept in %s",
+                      short, mode, j.get("error") or j.get("status"), tmp)
+            return fin
+        if mode == "features":
+            log.info("job %s: done — features of %s (%s) for template item %s",
+                     short, part_label(job), st["step_sha256"][:8], str(job.get("template_item_id") or "?")[:8])
+        else:
+            log.info("job %s: done — catch for template item %s · %d parts", short,
+                     str(job.get("template_item_id") or "?")[:8], len(st["catch"]["parts"]))
+        shutil.rmtree(tmp, ignore_errors=True)
+        return fin
+
     bodies = {"download": step_download, "render": step_render, "verify": step_verify, "upload": step_upload}
 
     def finish_error(error: str) -> None:
@@ -878,6 +1053,8 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
         return {"error": refusal}
     try:
+        if mode in TEMPLATE_MODES:
+            return run_template_job()
         for key in STEPS:
             report(key, "running")
             t0 = time.time()

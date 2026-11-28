@@ -703,3 +703,21 @@ Vocabulary added: **Drawing Templates · Base · Part type · No part type ·
 Per-part specs · Retired · Reference · Choose / Change · On Base vN ·
 Waiting for the worker · Finishing · Verification failed · Lines · Compare ·
 Template**.
+
+## 15 Drawing Templates, phase 2 — sandboxes, rules, the catch (contract, 2026-11-28, v477)
+
+Design: `docs/DRAWING_TEMPLATES.md` §3, §3.9, §4.3, §4.4, §12 row 2. Words come from
+`_shared/template-rules-core.mjs` (`describeRule`, `describeHole`, `describeEdges`,
+`describeRuleOps`), so a rule reads the same on every page.
+
+| where | what |
+|---|---|
+| **Type page** | `Sandbox ▾ n` in the head: the type's sandboxes (name · who · age) and **New** (a one-row name modal). A first tab **Rules**: EDGES rows (label · words), RULES (n), BASE DEFAULT; read-only, no pencil |
+| **Sandbox page** | amber head `<Type> · Sandbox "<name>"`, **Rename**, **Discard** (facts modal: changes · marks · started; no `confirm()`). Tabs **Rules · Try on**. The reference sheets on top |
+| **Rules** | EDGES with a pencil (one row: a select per edge, an Ø box where the test needs one). One line per rule: n · name · takes · measured · count on the reference (amber when under "at least") · ✎ · ×; overlap lines under it ("loses 1 hole to Top fixing"); drag to reorder. `+ Rule`. BASE DEFAULT with its count. Findings in amber |
+| **The hand row** | one row, labels above the boxes: Name · Takes (a kind select and its boxes per term, `+` adds a term) · Across from · Up from · c/c · c/c dir · c/c is (— / can be / shall be) · `+` (one box at a time: Position ±, c/c ±, Ø tolerance, Depth tolerance, Thickness from, Callout name, At least, Mates with) · Specifics · **Apply** · **Cancel**. `checkRule` runs before Apply |
+| **Rings and marks** | clicking a rule (or BASE DEFAULT) rings its holes on the face sheet. Clicking a hole marks it: a numbered chip worded by place ("① Ø5 · 105 from the front edge · 59 up"), a catch with the mark, then Takes filled with the narrowest candidate and the others as chips with their counts |
+| **Rail** | CHANGE (n) with × per operation · Marks · the Catch bar (queued → running → done, re-run) · By / Started / Changed |
+| **Try on** | `+ Part` (any part with a released STEP); one row per part: Part · CAD · a count per rule · Base default; `Assign <type>` on a part of another type or none; amber rows "No CAD", "no features yet", "failed: <reason>" |
+| **Progress** | every operation runs under the button's bar; every catch shows the Catch bar from the click on and polls `getDrawingTemplateCatch` every 1.5 s |
+

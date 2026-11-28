@@ -997,6 +997,75 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 .dtpl-compare { margin-top: 0.6rem; }
 .dtpl-diff { margin: 0.3rem 0 0; padding-left: 0; list-style: none; font-size: var(--fs-sm); }
 .dtpl-diff li { padding: 0.15rem 0; }
+/* Drawing Templates, phase 2 (DRAWING_TEMPLATES §4.4): the sandbox's amber
+   head, the [Sandbox ▾] list, rule rows, the hand row (copies .dr-row), the
+   candidate chips, the rings on the sheet. Amber is a warning or the sandbox. */
+.dtpl-sb-head { background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 10px; padding: 0.4rem 0.6rem; }
+.dtpl-sb-head .drawing-title { color: var(--amber); }
+.dtpl-menu-wrap { position: relative; display: inline-block; }
+.dtpl-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; min-width: 260px;
+  display: flex; flex-direction: column; gap: 0.2rem; padding: 0.3rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+.dtpl-menu-item {
+  display: flex; align-items: baseline; gap: 0.45rem; width: 100%; text-align: left; white-space: nowrap;
+  padding: 0.35rem 0.55rem; border-radius: 6px; cursor: pointer; min-height: 32px;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; font-size: var(--fs-sm);
+}
+.dtpl-menu-item:hover { border-color: var(--accent); color: var(--accent); }
+.dtpl-edges dd { margin: 0; }
+.dtpl-edge-dd { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.dtpl-pencil { min-height: 24px; padding: 0 0.45rem; }
+.dtpl-rules { display: flex; flex-direction: column; }
+.dtpl-rule {
+  display: grid; grid-template-columns: 1.5rem minmax(8rem, 1fr) minmax(10rem, 2fr) minmax(10rem, 2fr) 3rem auto;
+  gap: 0.2rem 0.6rem; align-items: baseline; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); font-size: var(--fs-sm);
+}
+.dtpl-rule.is-clickable { cursor: pointer; }
+.dtpl-rule.is-clickable:hover { background: var(--panel-2); }
+.dtpl-rule.is-selected { background: rgba(94, 224, 143, 0.1); }
+.dtpl-rule.is-dragging { opacity: 0.5; }
+.dtpl-rule.is-drop { box-shadow: inset 0 2px 0 var(--accent); }
+.dtpl-rule[draggable="true"] { cursor: grab; }
+.dtpl-rule-below { grid-column: 2 / -1; color: var(--muted); font-size: var(--fs-xs); }
+.dtpl-rule-acts { display: flex; gap: 0.3rem; justify-content: flex-end; }
+.dtpl-rule-acts .btn-xs { min-height: 24px; padding: 0 0.45rem; }
+.dtpl-count { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.dtpl-count.is-warn { color: var(--amber); }
+.dtpl-base { font-weight: 600; border-bottom: 0; }
+.dtpl-add { margin: 0.4rem 0; }
+.dtpl-hand-wrap { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.5rem 0.6rem; margin: 0.3rem 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+.dtpl-hand .up-text { width: auto; }
+.dtpl-hand .dtpl-name { width: 9rem; }
+.dr-row .dtpl-num { width: 4.2rem; }
+.dtpl-terms, .dtpl-extras { display: flex; align-items: flex-end; gap: 0.35rem; flex-wrap: wrap; }
+.dtpl-extras:empty { display: none; }
+.dtpl-term { display: inline-flex; align-items: flex-end; gap: 0.2rem; padding: 0.15rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.dtpl-term .btn-xs { min-height: 28px; padding: 0 0.4rem; }
+.dtpl-hand .dtpl-menu { right: auto; left: 0; }
+.dtpl-specifics-f { flex: 1 1 16rem; }
+.dtpl-hand .dtpl-specifics { width: 100%; }
+.dtpl-cands { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.dtpl-cands:empty { display: none; }
+.dtpl-cand {
+  font: inherit; font-size: var(--fs-xs); padding: 0.15rem 0.55rem; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+.dtpl-cand:hover { border-color: var(--accent); color: var(--accent); }
+.dtpl-mark { display: flex; flex-direction: column; gap: 0.1rem; margin-bottom: 0.3rem; font-size: var(--fs-xs); }
+.dtpl-mark-n {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 1.2rem; height: 1.2rem; border-radius: 999px;
+  background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-bd); font-weight: 700; font-size: var(--fs-2xs);
+}
+.dtpl-mark-by { padding-left: 1.6rem; }
+.dtpl-catch-acts { margin-top: 0.3rem; }
+.dtpl-try .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dtpl-try .is-warn, .dtpl-try tr.is-warn td { color: var(--amber); }
+.sheet-ring { fill: none; stroke: var(--accent); stroke-width: 2px; pointer-events: none; }
+.sheet-ring.is-base { stroke: var(--muted); stroke-dasharray: 3 2; }
+.sheet-ring.is-mark { stroke: var(--amber); stroke-width: 2.5px; }
+.sheet-ring-label { font-size: 4px; font-weight: 700; fill: var(--amber); pointer-events: none; }
 
 @media (max-width: 900px) {
   /* The rail below the drawing, not beside it — a 300px column next to a

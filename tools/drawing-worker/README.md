@@ -27,8 +27,9 @@ Every `poll_seconds`: `pollDrawingRenderJob`. On a job: `download` →
 `render` → `verify` → `upload` → `finishDrawingRender`, each step reported
 before and after. A job has a `mode`: `issue` (a new letter, as always),
 `iterate` (a candidate for the current draft; nothing on the drawing changes
-until the engineer presses Keep — `docs/DYNAMIC_DRAWINGS.md` §3.7) or
-`sandbox` (a reference render, no drawing; below).
+until the engineer presses Keep — `docs/DYNAMIC_DRAWINGS.md` §3.7),
+`sandbox` (a reference render, no drawing; below), or `features` / `catch`
+(a part type's rules evaluated by `catch.py`, no render; below).
 
 - `render` takes the spec body from the job (`spec_body`, the portal's copy
   of the template or spec as a JSON string, `docs/DYNAMIC_DRAWINGS.md` §3.2)
@@ -75,7 +76,7 @@ template item when no real job is waiting, so real work is always taken first.
 The job draws a part on a template version and writes no drawing.
 
 - Refused at claim, before download: a mode other than `issue`, `iterate`,
-  `sandbox` (`Unknown mode <m>`); a sandbox job without `spec_body`
+  `sandbox`, `features`, `catch` (`Unknown mode <m>`); a sandbox job without `spec_body`
   (`Sandbox needs a spec_body`) or with a patch (`Sandbox takes no patch`).
 - The title block is `SANDBOX` / `S` with the CAD revision letter, so the
   change line reads `From CAD Rev <letter>`; drawset runs with the same flags
@@ -94,6 +95,49 @@ The job draws a part on a template version and writes no drawing.
 Behaviour test (stdlib, no network): `python3 tools/drawing-worker/test_worker_sandbox.py`
 (also run by `node --test tests/`).
 
+### Modes `features` and `catch` (a part type's rules, no render)
+
+`docs/DRAWING_TEMPLATES.md` §3.9, §10.3 item 13. The catch answers "which holes
+does each rule take, on the reference and on every part": it needs the STEP's
+raw features and no views, so it runs `catch.py` in the drawset folder (with
+the venv python) instead of `drawset.py`.
+
+- `features`: the poll carries `id`, `template_item_id`, `step_url`,
+  `step_file_name`, `cad_sha256`. `download` as for a render (sha checked);
+  `render` = `catch.py features <STEP> --out features.json` (the engine's
+  sha of the file must equal the download's); `verify` and `upload` are
+  reported **skipped**. Then `finishDrawingRender { job_id, result: { mode:
+  "features", features_format, features, cad_sha256, drawset_version } }`;
+  the portal caches the features per (CAD file, sha, `features_format`).
+- `catch`: the poll carries `id`, `template_item_id` and `catch_input` (the
+  rules, the edges, the Base datums, every part with its cached features or
+  null, and an optional mark; an object, a JSON string is read too).
+  `download` is **skipped**; `render` = `catch.py catch catch_input.json
+  --out catch.json`; `verify` and `upload` **skipped**. Then
+  `finishDrawingRender { job_id, result: { mode: "catch", catch: <catch.py's
+  answer>, drawset_version } }`. A part without features is the engine's
+  `no_features`, a failed edge test its `failed` with the reason: both are
+  results, not job errors.
+- Refused at claim: either mode without `template_item_id` or with a patch,
+  `features` without `step_url`, `catch` without a `catch_input` object.
+  A `catch.py` exit other than 0 (malformed input, a missing STEP) fails the
+  job with its last stderr lines, as a drawset failure does.
+- No regression pass, no PDF, nothing uploaded, nothing written to `specs/`.
+  `drawset_version` also turns `-dirty` when `catch.py` or `step2d.py`
+  differ from HEAD (only for these modes; an issue's version is unchanged).
+
+Behaviour test (stdlib, a fake `catch.py`; one test runs the real one on the
+Rev B STEP when the venv and the drawset folder are there):
+`python3 tools/drawing-worker/test_worker_catch.py`.
+
+The "claimed" log line names the part on template jobs (it printed `?` for
+sandbox jobs): sandbox and features name the title block's part name or the
+job's component, catch names the template item, the number of parts and rules.
+
+**Restart the worker before the first catch is asked for.** A worker started
+before these modes refuses the job at claim (`Unknown mode features`); the
+item fails and the catch must be asked for again.
+
 **Restart the worker before the first reference is chosen.** A worker
 started before sandbox mode claims the job, renders it and only then fails
 at upload with `unknown job mode 'sandbox'`; the item fails and the
@@ -104,6 +148,7 @@ reference must be chosen again.
 | where | what |
 |---|---|
 | `tools/drawing-worker/worker.log` | every poll error, claim, step, finish; drawset's stdout/stderr at DEBUG (gitignored) |
+| `$TMPDIR/drawing-worker-*/` (features / catch) | the STEP (features), `features.json` or `catch_input.json` + `catch.json`. Removed when done, kept on failure |
 | `$TMPDIR/drawing-worker-*/` | the STEP, the temp spec (with `patch:` when the job carries one), `out/` with the PDF, `.sources.json`, `<set>_dimensions.json` and `<set>_entities.json`, `png/` with one PNG per sheet, `drawset.stdout.txt` / `drawset.stderr.txt`. Removed when the job is done; kept when it fails (the log names the folder) |
 | the portal | mode `issue`: the PDF under the documents bucket (`docUploadUrl`) and the issue on the drawing (`finishDrawingRender`); every mode: the PDF, the sheet PNGs, `dimensions.json` and `entities.json` under `drawings/<drawing_id>/renders/<job_id>/` (`drawingRenderUploadUrl`) (mode `sandbox`: `drawing-templates/items/<item>/renders/<job_id>/`, no drawing); the spec catalogue with bodies (`registerDrawingSpecs`) |
 
@@ -123,6 +168,6 @@ python3 worker.py --dry-spec doors_m             # "would fail at render: spec h
 |---|---|
 | `portal_url` | portal-api function URL |
 | `token_file` | the add-in's `config.json`, relative to this folder |
-| `drawset_dir` | folder with `drawset.py` and `specs/` |
+| `drawset_dir` | folder with `drawset.py`, `catch.py` and `specs/` |
 | `python` | the venv interpreter drawset runs with |
 | `poll_seconds` | poll interval |

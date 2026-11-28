@@ -1649,3 +1649,15 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/DRAWING_TEMPLATES.md` (new), `docs/DECISIONS.md`.
 
 ---
+
+## 2026-11-28 — Drawing template rules: one evaluator in the engine, "in a face" as a selector word, the feature cache keyed by format
+
+**Decision:** (1) Which holes a rule takes is computed only by the engine (`fusion_scripts/catch.py`), as a small job on the worker with no render; the browser and the API check shapes and words (`_shared/template-rules-core.mjs`) and never evaluate a selector. (2) "Drilled in" gains the value **in a face** (any hole in a face, whichever way it opens). (3) `cad_feature_cache` is keyed by CAD file, STEP sha and a features format number (`FEATURES_FORMAT`, the same constant in catch.py and render-job-core.mjs), not by the engine version. (4) The inside-face test "most blind holes" counts the raw features, before two-sided holes are merged.
+
+**Why:** (1) A second evaluator in the browser would answer faster and drift from the one that draws; a catch is about 1.2 s on the worker. (2) Without it the design's own seed rule 5, "any hole in a face within 60 of the top edge", also took the two Ø2 in the rear edge: 5 holes, not 3. With it the seven seed rules give exactly the design's counts on Side Panel Left Rev B (8, 9, 9, 4, 3, 1, 2; base default 19), pinned in `proofs/run_catch.py`. (3) Keyed by engine version, every engine commit would empty the cache and re-read every STEP. (4) Counted after the merge, Side Panel Shared reads 2 / 0 and passes silently; raw it reads 40 / 38 and fails by name, which is what §3.1 asks for.
+
+**Consequences:** A catch waits for the worker's poll (up to 5 s) and shows a bar. A change to what `step2d.features` returns must bump `FEATURES_FORMAT` in both places (a test compares them). Grooves, pockets and relations are not selectable yet.
+
+**Files changed:** `supabase/functions/_shared/template-rules-core.mjs`, `fusion_scripts/catch.py`, `docs/DRAWING_TEMPLATES.md`.
+
+---

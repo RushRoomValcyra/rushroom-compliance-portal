@@ -65,3 +65,12 @@ test("test_worker_sandbox.py passes", (t) => {
   const r = spawnSync("python3", [script], { encoding: "utf8", timeout: 120000, cwd: fileURLToPath(new URL("../tools/drawing-worker/", import.meta.url)) });
   assert.equal(r.status, 0, `test_worker_sandbox.py exited ${r.status}\n${r.stdout}\n${r.stderr}`);
 });
+
+// Phase 2: the features and catch modes (tools/drawing-worker/test_worker_catch.py).
+test("test_worker_catch.py passes", (t) => {
+  const py = spawnSync("python3", ["--version"], { encoding: "utf8" });
+  if (py.error) { t.skip("python3 not found"); return; }
+  const script = fileURLToPath(new URL("../tools/drawing-worker/test_worker_catch.py", import.meta.url));
+  const r = spawnSync("python3", [script], { encoding: "utf8", timeout: 180000, cwd: fileURLToPath(new URL("../tools/drawing-worker/", import.meta.url)) });
+  assert.equal(r.status, 0, `test_worker_catch.py exited ${r.status}\n${r.stdout}\n${r.stderr}`);
+});

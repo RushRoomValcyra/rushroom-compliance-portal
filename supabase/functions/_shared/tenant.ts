@@ -76,6 +76,9 @@ export const TENANT_TABLES = new Set([
   // Drawing Templates phase 1 (migration 0070, docs/DRAWING_TEMPLATES.md §10.1):
   // the part types and the queue of portal-born renders that write no drawing.
   "part_types", "drawing_template_items",
+  // Drawing Templates phase 2 (migration 0071): the sandbox of a type's rules,
+  // the holes marked on parts, and the STEP feature cache the catch reads.
+  "drawing_template_changes", "drawing_template_marks", "cad_feature_cache",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

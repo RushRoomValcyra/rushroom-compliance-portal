@@ -258,3 +258,144 @@ export function sandboxFinishCheck({ result, bodySourceSha, itemCadSha, versionS
   const verify_ok = res.verify_ok !== false && !(verify && String(verify.regression ?? "OK").toUpperCase() === "FAIL");
   return { source, verify_ok, verify };
 }
+
+// ---------------------------------------------------------------------------
+// Drawing Templates phase 2 — the feature cache and the catch (§3, §5.2, §5.3)
+// ---------------------------------------------------------------------------
+/** The raw-features format the portal caches under. MUST equal
+ *  fusion_scripts/catch.py's FEATURES_FORMAT: a cache row of another format is
+ *  never handed to the engine. */
+export const FEATURES_FORMAT = 1;
+
+const hex64 = (v) => /^[0-9a-f]{64}$/i.test(String(v ?? "")) ? String(v).toLowerCase() : null;
+const plainObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** The checks a finished `features` job must pass before its cache row is
+ *  written: the STEP it read is the item's, the format is the portal's, and
+ *  features is an object. → { error } | { features_format, features, cad_sha256, drawset_version }. */
+export function featuresFinishCheck({ result, itemCadSha }) {
+  const res = plainObj(result) ? result : {};
+  const sha = hex64(res.cad_sha256);
+  if (!sha || sha !== String(itemCadSha ?? "").toLowerCase()) return { error: "STEP changed while reading its features" };
+  const format = Number(res.features_format);
+  if (format !== FEATURES_FORMAT) {
+    return { error: `features format ${Number.isFinite(format) ? format : "missing"}; the portal reads format ${FEATURES_FORMAT}` };
+  }
+  if (!plainObj(res.features)) return { error: "No features returned" };
+  return {
+    features_format: FEATURES_FORMAT, features: res.features, cad_sha256: sha,
+    drawset_version: res.drawset_version != null ? String(res.drawset_version).slice(0, 80) : null,
+  };
+}
+
+/** A features read that failed is not asked again at once: a STEP that cannot
+ *  be read would otherwise be downloaded and failed ahead of every catch.
+ *  One (file, sha) waits FEATURES_RETRY_COOLDOWN_MS after a failure, and after
+ *  FEATURES_MAX_FAILS failures inside FEATURES_FAIL_WINDOW_MS it waits until
+ *  the oldest of them leaves the window. A cache row or new bytes (another
+ *  sha) are not held back by any of this. */
+export const FEATURES_RETRY_COOLDOWN_MS = 10 * 60_000;
+export const FEATURES_MAX_FAILS = 3;
+export const FEATURES_FAIL_WINDOW_MS = 24 * 3_600_000;
+
+/** The key a STEP's features are cached and queued under. */
+export const featureKey = (cadFileId, sha) => `${cadFileId}:${String(sha ?? "").toLowerCase()}`;
+
+const itemTime = (it) => {
+  const t = Date.parse(it && (it.finished_at || it.created_at));
+  return Number.isFinite(t) ? t : NaN;
+};
+
+/** The (file, sha) keys whose features must not be queued again now.
+ *  `items` features items [{ cad_file_id, cad_sha256, status, finished_at, created_at }]
+ *  (other statuses are ignored), `nowMs` the clock. → Set of featureKey. */
+export function featureRetryBlocked(items, nowMs) {
+  const fails = new Map();
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || it.status !== "failed" || !it.cad_file_id || !it.cad_sha256) continue;
+    const t = itemTime(it);
+    if (!Number.isFinite(t) || nowMs - t > FEATURES_FAIL_WINDOW_MS) continue;
+    const k = featureKey(it.cad_file_id, it.cad_sha256);
+    const f = fails.get(k) || { count: 0, newest: -Infinity };
+    f.count++;
+    if (t > f.newest) f.newest = t;
+    fails.set(k, f);
+  }
+  const blocked = new Set();
+  for (const [k, f] of fails) {
+    if (f.count >= FEATURES_MAX_FAILS || nowMs - f.newest < FEATURES_RETRY_COOLDOWN_MS) blocked.add(k);
+  }
+  return blocked;
+}
+
+/** Why a STEP has no features: per (file, sha), the error of its newest
+ *  features item when that item failed. A newer queued, running or done item
+ *  means the read is under way or made, so that key has no entry.
+ *  `items` [{ cad_file_id, cad_sha256, status, error, created_at }]. → Map featureKey → error. */
+export function featureErrors(items) {
+  const newest = new Map();
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || !it.cad_file_id || !it.cad_sha256) continue;
+    const t = Date.parse(it.created_at);
+    const at = Number.isFinite(t) ? t : -Infinity;
+    const k = featureKey(it.cad_file_id, it.cad_sha256);
+    const cur = newest.get(k);
+    if (!cur || at > cur.at) newest.set(k, { at, it });
+  }
+  const out = new Map();
+  for (const [k, { it }] of newest) if (it.status === "failed") out.set(k, String(it.error || "Failed"));
+  return out;
+}
+
+/** The checks a finished `catch` job must pass: an output with a parts list,
+ *  one row per part the item asked for. → { error } | { catch, drawset_version }. */
+export function catchFinishCheck({ result, itemParts }) {
+  const res = plainObj(result) ? result : {};
+  const out = res.catch;
+  if (!plainObj(out) || !Array.isArray(out.parts)) return { error: "No catch returned" };
+  const asked = new Set((Array.isArray(itemParts) ? itemParts : []).map((p) => p && p.component_id).filter(Boolean));
+  const got = new Set(out.parts.map((p) => p && p.key).filter(Boolean));
+  const missing = [...asked].filter((k) => !got.has(k));
+  if (missing.length) return { error: `The catch has no answer for ${missing.length} of ${asked.size} parts` };
+  return { catch: out, drawset_version: res.drawset_version != null ? String(res.drawset_version).slice(0, 80) : null };
+}
+
+/** The engine's catch input (fusion_scripts/catch.py, contract §1) from what the
+ *  portal holds: the Base's datums, the sandbox's rules and edges, the item's
+ *  parts and the cached features (null when missing: the engine answers
+ *  "no_features" for that part), and the mark.
+ *  `cache` maps `${cad_file_id}:${sha256}` → features; `labels` component id → name. */
+export function buildCatchInput({ datums, rules, edges, parts, cache, labels, mark }) {
+  const d = plainObj(datums) ? datums : {};
+  const base = { datums: {} };
+  for (const k of ["x", "y", "inside_face"]) if (d[k] !== undefined) base.datums[k] = d[k];
+  const c = cache instanceof Map ? cache : new Map(Object.entries(cache || {}));
+  const l = labels instanceof Map ? labels : new Map(Object.entries(labels || {}));
+  return {
+    base,
+    edges: plainObj(edges) ? edges : {},
+    rules: Array.isArray(rules) ? rules : [],
+    parts: (Array.isArray(parts) ? parts : []).map((p) => ({
+      key: p.component_id,
+      label: l.get(p.component_id) ?? null,
+      cad_sha256: p.cad_sha256 ?? null,
+      features: c.get(`${p.cad_file_id}:${String(p.cad_sha256 ?? "").toLowerCase()}`) ?? null,
+    })),
+    mark: plainObj(mark) && mark.component_id && mark.hole_id
+      ? { key: String(mark.component_id), hole_id: String(mark.hole_id) }
+      : null,
+  };
+}
+
+/** A part's STEP for the sandbox (DRAWING_TEMPLATES §4.4, Try on): of the
+ *  released revisions that have a STEP with a sha, the highest letter.
+ *  `revs` [{ id, revision }], `stepOf` revision id → { id, sha256 }, `compare`
+ *  the revision comparator. → { cad_model_revision_id, revision, cad_file_id, cad_sha256 } | null. */
+export function newestReleasedStep(revs, stepOf, compare) {
+  const withStep = (Array.isArray(revs) ? revs : []).filter((r) => r && stepOf.get(r.id) && stepOf.get(r.id).sha256);
+  if (!withStep.length) return null;
+  withStep.sort((a, b) => compare(b.revision, a.revision));
+  const r = withStep[0];
+  const f = stepOf.get(r.id);
+  return { cad_model_revision_id: r.id, revision: r.revision, cad_file_id: f.id, cad_sha256: String(f.sha256).toLowerCase() };
+}

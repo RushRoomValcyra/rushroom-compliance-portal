@@ -116,11 +116,11 @@ test("the dialogue prompt: add_pair covers a face column and an edge; 'make this
   assert.match(src, /"make this a c\/c"\. → add_pair \{D: 12, cc: 448\}/);
 });
 
-test("cache v476 on both shells and in CLAUDE.md", () => {
+test("cache v477 on both shells and in CLAUDE.md", () => {
   for (const f of ["index.html", "supplier.html"]) {
     const html = read(f);
-    for (const a of ["app.js", "styles.css", "viewer.js"]) assert.equal((html.match(new RegExp(`assets/${a}\\?v=(\\d+)`)) || [])[1], "476", `${f}: ${a}`);
+    for (const a of ["app.js", "styles.css", "viewer.js"]) assert.equal((html.match(new RegExp(`assets/${a}\\?v=(\\d+)`)) || [])[1], "477", `${f}: ${a}`);
   }
-  assert.match(read("index.html"), /drawing-spec-core\.mjs\?v=476/);
-  assert.match(read("CLAUDE.md"), /Frontend cache version: \?v=476/);
+  assert.match(read("index.html"), /drawing-spec-core\.mjs\?v=477/);
+  assert.match(read("CLAUDE.md"), /Frontend cache version: \?v=477/);
 });

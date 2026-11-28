@@ -49,7 +49,12 @@ import {
   normaliseSpec, normaliseSteps as normaliseRenderSteps, setStep as setRenderStep,
   skipRemaining as skipRemainingRenderSteps, timeoutPatch as renderTimeoutPatch, titleBlock,
   pickNextItem, sandboxTitleBlock, ITEM_PUMP_ORDER, ITEM_CLAIM_STALE_MS, partTypeChange, sandboxFinishCheck,
+  FEATURES_FORMAT, featuresFinishCheck, catchFinishCheck, buildCatchInput, newestReleasedStep,
+  FEATURES_FAIL_WINDOW_MS, featureKey, featureRetryBlocked, featureErrors,
 } from "../_shared/render-job-core.mjs";
+import {
+  applyRuleOps, describeRuleOps, describeEdges, emptyRuleBody, normaliseRuleBody, DEFAULT_EDGES, RULE_ID,
+} from "../_shared/template-rules-core.mjs";
 import {
   applySpecOps, canonicalJson, canonicalSha, diffDimensionLists, emptyPatch, touchedEntities, validateOps,
   promoteTemplate, stripPromoted, TEMPLATE_KEYS, describeTemplateBody, diffTemplateBodies,
@@ -1416,7 +1421,7 @@ const RENDER_ARTIFACT_KEYS = ["pdf", "dimensions", "entities"];
  *  A sandbox job has no drawing: its folder keys on the template item
  *  (DRAWING_TEMPLATES phase 1). */
 const renderArtifactPrefix = (job: { drawing_id: string | null; id: string; mode?: string | null; template_item_id?: string | null }) =>
-  job.mode === "sandbox" && job.template_item_id
+  (job.mode === "sandbox" || job.mode === "features" || job.mode === "catch") && job.template_item_id
     ? `drawing-templates/items/${job.template_item_id}/renders/${job.id}/`
     : `drawings/${job.drawing_id}/renders/${job.id}/`;
 
@@ -1865,6 +1870,255 @@ function partTypeKey(name: string, taken: Set<string>): string {
   return key;
 }
 
+// ---------------------------------------------------------------------------
+// Drawing Templates phase 2 (docs/DRAWING_TEMPLATES.md §3, §4.4, §5.2): the
+// sandbox of a type's rules, the feature cache and the catch. The rule
+// vocabulary and its operations live in _shared/template-rules-core.mjs; the
+// finish checks and the catch input in _shared/render-job-core.mjs.
+// ---------------------------------------------------------------------------
+const TEMPLATE_CHANGE_FIELDS =
+  "id, part_type_id, name, started_from_version_id, start_body, operations, body, body_sha256, request, origin, "
+  + "from_drawing_id, state, rev, try_component_ids, created_by, created_by_label, created_at, updated_at";
+const TEMPLATE_CATCH_FIELDS = `${TEMPLATE_ITEM_FIELDS}, change_id, request, parts`;
+const TEMPLATE_MARK_FIELDS = "id, change_id, rule_id, component_id, cad_sha256, hole_id, description, paper, created_by, created_at";
+const SANDBOX_MAX_TRY_PARTS = 20;
+const SANDBOX_MAX_OPS = 200;
+const SANDBOX_MAX_MARKS = 50;
+
+/** A sandbox as every sandbox action answers it: the CHANGE list in words. */
+function sandboxView(row: any): any {
+  const operations = Array.isArray(row.operations) ? row.operations : [];
+  return {
+    id: row.id, part_type_id: row.part_type_id, name: row.name, state: row.state, rev: row.rev,
+    by_label: row.created_by_label ?? null, created_at: row.created_at, updated_at: row.updated_at,
+    operations, body: normaliseRuleBody(row.body), body_sha256: row.body_sha256 ?? null,
+    changes: describeRuleOps(row.start_body, operations),
+    try_component_ids: Array.isArray(row.try_component_ids) ? row.try_component_ids : [],
+  };
+}
+
+/** The 409 every sandbox write answers when the page's rev is not the row's. */
+function sandboxConflict(row: any) {
+  return json({ error: "The sandbox changed meanwhile; reload it", rev: row?.rev ?? null }, 409);
+}
+
+/** Write a sandbox guarded by its rev and state: one UPDATE, rev + 1. Returns
+ *  the new row, or null when another write got there first. */
+async function writeSandbox(tdb: any, row: any, patch: Record<string, unknown>): Promise<any | null> {
+  const { data } = await tdb("drawing_template_changes")
+    .update({ ...patch, rev: row.rev + 1, updated_at: new Date().toISOString() })
+    .eq("id", row.id).eq("rev", row.rev).eq("state", "sandbox").select(TEMPLATE_CHANGE_FIELDS);
+  return (data || [])[0] ?? null;
+}
+
+/** The sandbox row by id, or null. */
+async function loadSandbox(tdb: any, id: string): Promise<any | null> {
+  if (!id) return null;
+  const { data } = await tdb("drawing_template_changes").select(TEMPLATE_CHANGE_FIELDS).eq("id", id).maybeSingle();
+  return data || null;
+}
+
+/** The parts a sandbox catches on (§4.4): the reference (its pinned STEP),
+ *  every part of the type and the try parts, each with its newest RELEASED
+ *  CAD revision's STEP (listPartTypeReferenceCandidates' rule). A part with
+ *  none is listed with cad_sha256 null. */
+async function loadSandboxParts(tdb: any, partType: any, tryIds: string[]): Promise<any[]> {
+  const ref = partType?.reference ?? null;
+  const { data: typed } = await tdb("bom_components").select("id, part_number, name, part_type_id").eq("part_type_id", partType.id);
+  const tryList = [...new Set((tryIds || []).filter(Boolean))];
+  const { data: tried } = tryList.length
+    ? await tdb("bom_components").select("id, part_number, name, part_type_id").in("id", tryList)
+    : { data: [] };
+  const byId = new Map<string, any>();
+  for (const c of [...((typed || []) as any[]), ...((tried || []) as any[])]) byId.set(c.id, c);
+  if (ref && !byId.has(ref.component_id)) {
+    const { data: rc } = await tdb("bom_components").select("id, part_number, name, part_type_id").eq("id", ref.component_id).maybeSingle();
+    if (rc) byId.set(rc.id, rc);
+  }
+  const ids = [...byId.keys()];
+  const { data: models } = ids.length ? await tdb("cad_models").select("id, component_id").in("component_id", ids) : { data: [] };
+  const compOfModel = new Map(((models || []) as any[]).map((m) => [m.id, m.component_id]));
+  const { data: revRows } = compOfModel.size
+    ? await tdb("cad_model_revisions").select("id, cad_model_id, revision, status").eq("status", "released").in("cad_model_id", [...compOfModel.keys()])
+    : { data: [] };
+  const revs = (revRows || []) as any[];
+  const { data: fileRows } = revs.length
+    ? await tdb("cad_model_files").select("id, cad_model_revision_id, sha256").eq("format", "step").in("cad_model_revision_id", revs.map((r) => r.id))
+    : { data: [] };
+  const stepOf = new Map<string, any>();
+  for (const f of (fileRows || []) as any[]) if (f.sha256 && !stepOf.has(f.cad_model_revision_id)) stepOf.set(f.cad_model_revision_id, f);
+  const revsOf = new Map<string, any[]>();
+  for (const r of revs) {
+    const cid = compOfModel.get(r.cad_model_id);
+    if (!revsOf.has(cid)) revsOf.set(cid, []);
+    revsOf.get(cid)!.push(r);
+  }
+  const rows: any[] = [];
+  for (const c of byId.values()) {
+    const isRef = !!ref && ref.component_id === c.id;
+    const step = isRef
+      ? { cad_model_revision_id: ref.cad_model_revision_id, revision: ref.revision ?? null, cad_file_id: ref.cad_file_id, cad_sha256: String(ref.sha256 || "").toLowerCase() || null }
+      : newestReleasedStep(revsOf.get(c.id) || [], stepOf, compareRevision);
+    rows.push({
+      component_id: c.id, part_number: c.part_number, name: c.name,
+      cad_revision: step?.revision ?? null, cad_model_revision_id: step?.cad_model_revision_id ?? null,
+      cad_file_id: step?.cad_file_id ?? null, cad_sha256: step?.cad_sha256 ?? null,
+      has_features: false, features_error: null, is_reference: isRef, of_type: c.part_type_id === partType.id,
+      is_try: tryList.includes(c.id),
+    });
+  }
+  const fileIds = [...new Set(rows.map((r) => r.cad_file_id).filter(Boolean))];
+  if (fileIds.length) {
+    const [{ data: cached }, { data: asked }] = await Promise.all([
+      tdb("cad_feature_cache").select("cad_file_id, sha256").in("cad_file_id", fileIds).eq("features_format", FEATURES_FORMAT),
+      tdb("drawing_template_items").select("cad_file_id, cad_sha256, status, error, created_at").eq("purpose", "features")
+        .in("cad_file_id", fileIds).order("created_at", { ascending: false }).limit(500),
+    ]);
+    const have = new Set(((cached || []) as any[]).map((r) => featureKey(r.cad_file_id, r.sha256)));
+    // A part without features whose newest read failed says why (featureErrors).
+    const failed = featureErrors((asked || []) as any[]);
+    for (const r of rows) {
+      const key = r.cad_file_id ? featureKey(r.cad_file_id, r.cad_sha256) : null;
+      r.has_features = !!key && have.has(key);
+      r.features_error = key && !r.has_features ? failed.get(key) ?? null : null;
+    }
+  }
+  // The reference first, then the type's parts, then the try parts.
+  const rank = (r: any) => (r.is_reference ? 0 : r.of_type ? 1 : 2);
+  return rows.sort((a, b) => rank(a) - rank(b)
+    || String(a.part_number).localeCompare(String(b.part_number), undefined, { numeric: true }));
+}
+
+/** A sandbox's marks, oldest first: what getDrawingTemplateSandbox answers and
+ *  what a write that adds or drops marks answers beside its sandbox. */
+async function loadSandboxMarks(tdb: any, changeId: string): Promise<any[]> {
+  const { data } = await tdb("drawing_template_marks").select(TEMPLATE_MARK_FIELDS).eq("change_id", changeId).order("created_at", { ascending: true });
+  return (data || []) as any[];
+}
+
+/** Queue a `features` item for every STEP whose (file, sha, format) has no
+ *  cache row, no open features item and no recent failed read (§5.2;
+ *  featureRetryBlocked holds the cooldown). Returns how many were queued.
+ *  `parts` [{ component_id, cad_model_revision_id, cad_file_id, cad_sha256 }]. */
+async function queueFeatureItems(tdb: any, session: any, parts: any[]): Promise<number> {
+  const want = (parts || []).filter((p) => p && p.component_id && p.cad_model_revision_id && p.cad_file_id && p.cad_sha256);
+  if (!want.length) return 0;
+  const fileIds = [...new Set(want.map((p) => p.cad_file_id))];
+  const now = Date.now();
+  const [{ data: cached }, { data: open }, { data: failed }] = await Promise.all([
+    tdb("cad_feature_cache").select("cad_file_id, sha256").in("cad_file_id", fileIds).eq("features_format", FEATURES_FORMAT),
+    tdb("drawing_template_items").select("cad_file_id, cad_sha256").eq("purpose", "features")
+      .in("status", ["queued", "running"]).in("cad_file_id", fileIds),
+    // A read that failed a moment ago is not asked again on every catch.
+    tdb("drawing_template_items").select("cad_file_id, cad_sha256, status, finished_at, created_at").eq("purpose", "features")
+      .eq("status", "failed").in("cad_file_id", fileIds)
+      .gte("created_at", new Date(now - FEATURES_FAIL_WINDOW_MS).toISOString()),
+  ]);
+  const have = new Set<string>();
+  for (const r of (cached || []) as any[]) have.add(featureKey(r.cad_file_id, r.sha256));
+  for (const r of (open || []) as any[]) have.add(featureKey(r.cad_file_id, r.cad_sha256));
+  for (const k of featureRetryBlocked((failed || []) as any[], now)) have.add(k);
+  const rows: any[] = [];
+  for (const p of want) {
+    const key = featureKey(p.cad_file_id, p.cad_sha256);
+    if (have.has(key)) continue;
+    have.add(key);
+    rows.push({
+      purpose: "features", component_id: p.component_id, cad_model_revision_id: p.cad_model_revision_id,
+      cad_file_id: p.cad_file_id, cad_sha256: String(p.cad_sha256).toLowerCase(),
+      status: "queued", requested_by: session?.uid ?? null, requested_by_label: actorLabel(session),
+    });
+  }
+  if (!rows.length) return 0;
+  const { error } = await tdb("drawing_template_items").insert(rows);
+  return error ? 0 : rows.length;
+}
+
+/** The pump's half for `features` and `catch` items (§5.2, §5.3): no render.
+ *  features: one STEP, signed, read by catch.py. catch: the sandbox's rules
+ *  and edges, the Base's datums and every part's cached features. */
+async function pumpRuleItem(tdb: any, item: any, agent: string, at: string, failItem: (reason: string) => Promise<void>): Promise<any | null> {
+  const isCatch = item.purpose === "catch";
+  const skipItem = async (reason: string) => {
+    await tdb("drawing_template_items").update({ status: "skipped", error: reason.slice(0, 2000), finished_at: at })
+      .eq("id", item.id).eq("status", "running");
+    return null;
+  };
+  let catch_input: any = null;
+  let stepFile: any = null;
+  if (isCatch) {
+    const change = await loadSandbox(tdb, item.change_id);
+    if (!change) { await failItem("the sandbox no longer exists"); return null; }
+    if (change.state !== "sandbox") return await skipItem(`the sandbox is ${change.state}`);
+    if (item.request?.body_sha256 && item.request.body_sha256 !== change.body_sha256) {
+      return await skipItem("the sandbox changed after the catch was asked");
+    }
+    const parts = Array.isArray(item.parts) ? item.parts : [];
+    const fileIds = [...new Set(parts.map((p: any) => p.cad_file_id).filter(Boolean))] as string[];
+    const compIds = [...new Set(parts.map((p: any) => p.component_id).filter(Boolean))] as string[];
+    const [{ data: cached }, { data: comps }, base] = await Promise.all([
+      fileIds.length
+        ? tdb("cad_feature_cache").select("cad_file_id, sha256, features").in("cad_file_id", fileIds).eq("features_format", FEATURES_FORMAT)
+        : { data: [] },
+      compIds.length ? tdb("bom_components").select("id, name").in("id", compIds) : { data: [] },
+      loadBaseRow(tdb),
+    ]);
+    const cache = new Map<string, any>();
+    for (const r of (cached || []) as any[]) cache.set(`${r.cad_file_id}:${String(r.sha256).toLowerCase()}`, r.features);
+    const labels = new Map<string, any>(((comps || []) as any[]).map((c) => [c.id, c.name]));
+    const rb = normaliseRuleBody(change.body);
+    catch_input = buildCatchInput({
+      datums: base?.version?.body?.datums ?? {}, rules: rb.rules, edges: rb.edges,
+      parts, cache, labels, mark: item.request?.mark ?? null,
+    });
+  } else {
+    const { data: f } = await tdb("cad_model_files").select("id, file_name, sha256, storage_path").eq("id", item.cad_file_id).maybeSingle();
+    if (!f) { await failItem("the STEP file no longer exists"); return null; }
+    if (String(f.sha256 ?? "").toLowerCase() !== String(item.cad_sha256 ?? "").toLowerCase()) {
+      return await skipItem("the STEP changed after it was queued");
+    }
+    stepFile = f;
+  }
+  const { data: job, error } = await tdb("drawing_render_jobs").insert({
+    mode: item.purpose, template_item_id: item.id,
+    component_id: isCatch ? null : item.component_id,
+    cad_model_revision_id: isCatch ? null : item.cad_model_revision_id,
+    cad_file_id: isCatch ? null : item.cad_file_id,
+    spec_version_id: null, spec: null, issue: null,
+    drawing_id: null, created_drawing: false,
+    status: "running", claimed_at: at, claimed_by: agent,
+    requested_by: item.requested_by ?? null,
+    steps: setRenderStep(newRenderSteps(), "claim", "passed", agent, at),
+  }).select("*").maybeSingle();
+  if (error || !job) {
+    // As the reference path: once back to the queue, a second failure fails the item.
+    const reason = `the ${item.purpose} job could not be created: ${error?.message || "no row"}`;
+    if (item.error) { await failItem(reason); return null; }
+    await tdb("drawing_template_items").update({ status: "queued", taken_at: null, error: reason.slice(0, 2000) })
+      .eq("id", item.id).eq("status", "running");
+    return null;
+  }
+  await tdb("drawing_template_items").update({ job_id: job.id, error: null }).eq("id", item.id);
+  const [out] = await withRenderJobContext(tdb, [job]);
+  if (isCatch) {
+    return { ...out, mode: "catch", id: job.id, template_item_id: item.id, catch_input, drawing_id: null, issue: null };
+  }
+  const { data: signed, error: signErr } = await db.storage.from(DOC_BUCKET).createSignedUrl(stepFile.storage_path, 3600);
+  if (signErr || !signed?.signedUrl) {
+    const reason = `STEP could not be signed: ${signErr?.message || "no url"}`;
+    await tdb("drawing_render_jobs").update(renderFailPatch(job.steps, reason, at)).eq("id", job.id).eq("status", "running");
+    await failItem(reason);
+    return null;
+  }
+  return {
+    ...out, mode: "features", id: job.id, template_item_id: item.id,
+    component_id: item.component_id, cad_model_revision_id: item.cad_model_revision_id, cad_file_id: item.cad_file_id,
+    step_url: signed.signedUrl, step_file_name: stepFile.file_name,
+    step_sha256: item.cad_sha256, cad_sha256: item.cad_sha256, features_format: FEATURES_FORMAT,
+    drawing_id: null, issue: null,
+  };
+}
+
 /** The pump (DRAWING_TEMPLATES §5.2): called by the poll only when no real job
  *  is requested, so real work always goes first. Takes the next queued item
  *  with a guarded claim, inserts its job already running for this worker, and
@@ -1897,7 +2151,9 @@ async function pumpTemplateItem(tdb: any, agent: string): Promise<any | null> {
     await tdb("drawing_template_items").update({ status: "failed", error: reason.slice(0, 2000), finished_at: at })
       .eq("id", item.id).eq("status", "running");
   };
-  // Phase 1 renders reference items only; any other purpose is not built yet.
+  // Phase 2: a features item reads one STEP, a catch item runs the rules; neither renders.
+  if (item.purpose === "features" || item.purpose === "catch") return await pumpRuleItem(tdb, item, agent, at, failItem);
+  // A reference item renders; try, preview and rebase are not built yet.
   if (item.purpose !== "reference") { await failItem(`Purpose ${item.purpose} is not built yet`); return null; }
   const version = await loadSpecVersion(tdb, item.spec_version_id);
   if (!version) { await failItem("the template version no longer exists"); return null; }
@@ -7283,6 +7539,18 @@ Deno.serve(async (req) => {
       rev.files.push({ id: fileId, format, ...fileRow });
     }
 
+    // A STEP's raw features are read once per bytes (DRAWING_TEMPLATES §5.2),
+    // so a catch needs no download later: queue a features item for the new
+    // file, or for new bytes on a replaced one. Never fatal to the send; a
+    // catch queues a missing one again.
+    if (format === "step" && sha256 && fileId && model.component_id) {
+      try {
+        await queueFeatureItems(tdb, session, [{
+          component_id: model.component_id, cad_model_revision_id: rev.id, cad_file_id: fileId, cad_sha256: sha256,
+        }]);
+      } catch { /* requestDrawingTemplateCatch queues it again */ }
+    }
+
     // The model's current_revision_id follows the revisions.
     await syncCadModel(tdb, cad_model_id, revisions);
 
@@ -8658,6 +8926,46 @@ Deno.serve(async (req) => {
 
     if (body.error != null && body.error !== "") return await fail(String(body.error));
 
+    // mode=features and mode=catch (DRAWING_TEMPLATES phase 2): no render, no
+    // drawing, no file. features fills the cache; catch stores the engine's
+    // answer on its item. Checked in _shared/render-job-core.mjs.
+    if (job.mode === "features" || job.mode === "catch") {
+      const res = body.result && typeof body.result === "object" && !Array.isArray(body.result) ? body.result : {};
+      const { data: item } = await tdb("drawing_template_items").select("*").eq("id", job.template_item_id).maybeSingle();
+      if (!item) return await fail("the template item no longer exists");
+      let summary: any = null;
+      let jobResult: any = null;
+      let words = "";
+      if (job.mode === "features") {
+        const check: any = featuresFinishCheck({ result: res, itemCadSha: item.cad_sha256 });
+        if (check.error) return await fail(check.error);
+        const { error: cErr } = await tdb("cad_feature_cache").upsert({
+          cad_file_id: item.cad_file_id, sha256: check.cad_sha256, features_format: check.features_format,
+          features: check.features,
+        }, { onConflict: "cad_file_id,sha256,features_format" });
+        if (cErr) return await fail(`the features could not be cached: ${cErr.message}`);
+        const holes = Array.isArray(check.features.holes) ? check.features.holes.length : null;
+        summary = { features_format: check.features_format, cad_sha256: check.cad_sha256, drawset_version: check.drawset_version, holes };
+        jobResult = { mode: "features", ...summary };
+        words = "Features cached · no drawing written";
+      } else {
+        const check: any = catchFinishCheck({ result: res, itemParts: item.parts });
+        if (check.error) return await fail(check.error);
+        summary = check.catch;
+        jobResult = { mode: "catch", drawset_version: check.drawset_version, parts: check.catch.parts.length };
+        words = "Catch stored · no drawing written";
+      }
+      const steps = setRenderStep(job.steps, "register", "passed", words, at);
+      const { data: upd, error } = await tdb("drawing_render_jobs").update({
+        status: "done", finished_at: at, error: null, steps, result: jobResult,
+      }).eq("id", job_id).eq("status", "running").select("id");
+      if (error) return json({ error: error.message }, 400);
+      if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
+      await tdb("drawing_template_items").update({ status: "done", finished_at: at, error: null, summary })
+        .eq("id", item.id).in("status", ["queued", "running"]);
+      return json({ ok: true });
+    }
+
     // mode=sandbox (DRAWING_TEMPLATES phase 1, the reference render): no
     // drawing, revision, document, history or supplier row is touched. Checked
     // BEFORE the verification guard below: a failed verify is a result here —
@@ -9631,7 +9939,22 @@ Deno.serve(async (req) => {
         };
       }).sort((a, b) => String(a.drawing_number).localeCompare(String(b.drawing_number), undefined, { numeric: true }));
     }
-    return json({ level: isBase ? "base" : "type", base: base.row, part_type, lines, history, parts, drawings });
+    // Phase 2: a type's open sandboxes, newest first, and its rules in words.
+    // No type version is saved yet, so the rules are none and the edges the default.
+    let sandboxes: any[] = [];
+    if (!isBase) {
+      const { data: sbx } = await tdb("drawing_template_changes")
+        .select("id, name, state, created_by_label, created_at, updated_at, operations")
+        .eq("part_type_id", part_type.id).eq("state", "sandbox").order("created_at", { ascending: false });
+      sandboxes = ((sbx || []) as any[]).map((c) => ({
+        id: c.id, name: c.name, state: c.state, by_label: c.created_by_label ?? null,
+        created_at: c.created_at, updated_at: c.updated_at, ops: Array.isArray(c.operations) ? c.operations.length : 0,
+      }));
+    }
+    return json({
+      level: isBase ? "base" : "type", base: base.row, part_type, lines, history, parts, drawings,
+      ...(isBase ? {} : { sandboxes, edges: describeEdges(DEFAULT_EDGES), rules: [] }),
+    });
   }
 
   // --- one template item and its job (the page polls this every 3 s) --------
@@ -9646,6 +9969,255 @@ Deno.serve(async (req) => {
     if (item.job_id) {
       const { data: row } = await tdb("drawing_render_jobs").select(RENDER_JOB_LIST_FIELDS).eq("id", item.job_id).maybeSingle();
       if (row) [job] = await withRenderJobContext(tdb, [row]);
+    }
+    return json({ item, job: job ?? null });
+  }
+
+  // ==========================================================================
+  // Drawing Templates phase 2 — sandboxes of a type's rules and the catch
+  // (docs/DRAWING_TEMPLATES.md §3, §4.4, §10.2). Every write is guarded by the
+  // sandbox's rev: a stale page gets 409 { error, rev } and reloads.
+  // ==========================================================================
+
+  // --- a new sandbox on a type: empty rules, the default edges ---------------
+  if (action === "createDrawingTemplateSandbox") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const part_type_id = String(body.part_type_id ?? "").trim();
+    const name = String(body.name ?? "").trim().replace(/\s+/g, " ");
+    const { data: pt } = part_type_id ? await tdb("part_types").select("id, name, retired_at").eq("id", part_type_id).maybeSingle() : { data: null };
+    if (!pt) return json({ error: "Part type not found" }, 404);
+    if (pt.retired_at) return json({ error: "Part type is retired" }, 409);
+    if (!name) return json({ error: "Name required" }, 400);
+    if (name.length > 80) return json({ error: "Name too long" }, 400);
+    // No type version exists in phase 2: every sandbox starts from no rules.
+    const start = emptyRuleBody();
+    const { data: row, error } = await tdb("drawing_template_changes").insert({
+      part_type_id: pt.id, name, started_from_version_id: null,
+      start_body: start, operations: [], body: start, body_sha256: await canonicalSha(start),
+      origin: "page", state: "sandbox", rev: 1, try_component_ids: [],
+      created_by: session.uid ?? null, created_by_label: actorLabel(session),
+    }).select(TEMPLATE_CHANGE_FIELDS).maybeSingle();
+    if (error || !row) return json({ error: error?.message || "Sandbox not created" }, 400);
+    return json({ sandbox: sandboxView(row) });
+  }
+
+  // --- one sandbox: its rules, the type, the parts it catches on, the catch --
+  if (action === "getDrawingTemplateSandbox") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const row = await loadSandbox(tdb, String(body.id ?? "").trim());
+    if (!row) return json({ error: "Sandbox not found" }, 404);
+    await expireDrawingRenderJobs(tdb, session);
+    const view = await loadPartTypeView(tdb, { includeRetired: true, ids: [row.part_type_id] });
+    const part_type = view.part_types[0] ?? null;
+    if (!part_type) return json({ error: "Part type not found" }, 404);
+    const sandbox = sandboxView(row);
+    const [parts, { data: items }, marks] = await Promise.all([
+      loadSandboxParts(tdb, part_type, sandbox.try_component_ids),
+      tdb("drawing_template_items").select(TEMPLATE_CATCH_FIELDS).eq("change_id", row.id).eq("purpose", "catch")
+        .order("created_at", { ascending: false }).limit(1),
+      loadSandboxMarks(tdb, row.id),
+    ]);
+    const it = ((items || []) as any[])[0] ?? null;
+    const caught = it ? {
+      item_id: it.id, status: it.status, error: it.error ?? null,
+      body_sha256: it.request?.body_sha256 ?? null, mark: it.request?.mark ?? null, summary: it.summary ?? null,
+    } : null;
+    return json({ sandbox, part_type, parts, catch: caught, marks: marks || [] });
+  }
+
+  // --- operations on the sandbox's rules: all or nothing, rev-guarded --------
+  if (action === "applyDrawingTemplateOps") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const row = await loadSandbox(tdb, String(body.id ?? "").trim());
+    if (!row) return json({ error: "Sandbox not found" }, 404);
+    if (row.state !== "sandbox") return json({ error: `Sandbox is ${row.state}` }, 409);
+    if (Number(body.rev) !== row.rev) return sandboxConflict(row);
+    const ops = Array.isArray(body.ops) ? body.ops : [];
+    if (!ops.length) return json({ error: "No operations" }, 400);
+    const prior = Array.isArray(row.operations) ? row.operations : [];
+    if (prior.length + ops.length > SANDBOX_MAX_OPS) return json({ error: `At most ${SANDBOX_MAX_OPS} changes in one sandbox` }, 400);
+    const applied: any = applyRuleOps(row.body, ops);
+    if (!applied.ok) {
+      const errors = applied.errors as any[];
+      return json({ error: errors.map((e) => `change ${e.index + 1}: ${e.error}`).join("; "), errors }, 400);
+    }
+    // Marks travel on their op (rule_id = the op's rule) or beside the ops.
+    const rawMarks: any[] = [];
+    for (const op of ops) {
+      if (Array.isArray(op?.marks)) for (const m of op.marks) rawMarks.push({ ...(m || {}), rule_id: m?.rule_id ?? op?.rule?.id ?? null });
+    }
+    if (Array.isArray(body.marks)) rawMarks.push(...body.marks);
+    if (rawMarks.length > SANDBOX_MAX_MARKS) return json({ error: `At most ${SANDBOX_MAX_MARKS} marks at once` }, 400);
+    const markRows: any[] = [];
+    for (const m of rawMarks) {
+      const component_id = String(m?.component_id ?? "").trim();
+      const cad_sha256 = String(m?.cad_sha256 ?? "").trim().toLowerCase();
+      const hole_id = String(m?.hole_id ?? "").trim();
+      const rule_id = m?.rule_id == null || m.rule_id === "" ? null : String(m.rule_id);
+      if (!component_id || !hole_id || hole_id.length > 40) return json({ error: "A mark names a part and a hole" }, 400);
+      if (!/^[0-9a-f]{64}$/.test(cad_sha256)) return json({ error: "A mark names the STEP bytes it was made on" }, 400);
+      if (rule_id !== null && !RULE_ID.test(rule_id)) return json({ error: "A mark's rule id must look like r_xxxxxx" }, 400);
+      const description = m?.description == null ? null : String(m.description).slice(0, 400);
+      const paper = m?.paper && typeof m.paper === "object" && !Array.isArray(m.paper) ? m.paper : null;
+      markRows.push({ change_id: row.id, rule_id, component_id, cad_sha256, hole_id, description, paper, created_by: session.uid ?? null });
+    }
+    if (markRows.length) {
+      const want = [...new Set(markRows.map((m) => m.component_id))];
+      const { data: found } = await tdb("bom_components").select("id").in("id", want);
+      if (((found || []) as any[]).length !== want.length) return json({ error: "A marked part was not found" }, 404);
+    }
+    const stored = ops.map((op: any) => { const { marks: _marks, ...rest } = op || {}; return rest; });
+    // The marks go in first: if they cannot be stored nothing is written and
+    // the page's rev still holds; if the guarded write then loses, they are
+    // taken out again. The sandbox is never ahead of its marks.
+    let markIds: string[] = [];
+    if (markRows.length) {
+      const { data: ins, error: mErr } = await tdb("drawing_template_marks").insert(markRows).select("id");
+      if (mErr) return json({ error: `Marks not saved: ${mErr.message}` }, 500);
+      markIds = ((ins || []) as any[]).map((r) => r.id);
+    }
+    const next = await writeSandbox(tdb, row, {
+      operations: [...prior, ...stored], body: applied.body, body_sha256: await canonicalSha(applied.body),
+    });
+    if (!next && markIds.length) await tdb("drawing_template_marks").delete().in("id", markIds);
+    if (!next) return sandboxConflict(await loadSandbox(tdb, row.id));
+    return json({ sandbox: sandboxView(next), marks: await loadSandboxMarks(tdb, row.id) });
+  }
+
+  // --- take one change back out: the rest replayed from the start ------------
+  if (action === "removeDrawingTemplateOp") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const row = await loadSandbox(tdb, String(body.id ?? "").trim());
+    if (!row) return json({ error: "Sandbox not found" }, 404);
+    if (row.state !== "sandbox") return json({ error: `Sandbox is ${row.state}` }, 409);
+    if (Number(body.rev) !== row.rev) return sandboxConflict(row);
+    const prior = Array.isArray(row.operations) ? row.operations : [];
+    const index = Number(body.index);
+    if (!Number.isInteger(index) || index < 0 || index >= prior.length) return json({ error: "No such change" }, 400);
+    const rest = prior.filter((_: any, i: number) => i !== index);
+    const replay: any = applyRuleOps(row.start_body, rest);
+    if (!replay.ok) {
+      const lines = describeRuleOps(row.start_body, prior);
+      const first = (replay.errors as any[])[0];
+      // first.index counts in the list without the removed op; name it in the CHANGE list as shown.
+      const broken = first.index >= index ? first.index + 1 : first.index;
+      return json({
+        error: `Taking out "${lines[index]}" breaks change ${broken + 1} "${lines[broken]}": ${first.error}`,
+        errors: replay.errors,
+      }, 400);
+    }
+    const next = await writeSandbox(tdb, row, {
+      operations: rest, body: replay.body, body_sha256: await canonicalSha(replay.body),
+    });
+    if (!next) return sandboxConflict(await loadSandbox(tdb, row.id));
+    // A mark whose rule is gone no longer says where a rule came from.
+    const live = new Set((replay.body.rules as any[]).map((r) => r.id));
+    const { data: ruled } = await tdb("drawing_template_marks").select("id, rule_id").eq("change_id", row.id).not("rule_id", "is", null);
+    const gone = ((ruled || []) as any[]).filter((m) => !live.has(m.rule_id)).map((m) => m.id);
+    if (gone.length) await tdb("drawing_template_marks").delete().in("id", gone);
+    return json({ sandbox: sandboxView(next), marks: await loadSandboxMarks(tdb, row.id) });
+  }
+
+  // --- rename a sandbox --------------------------------------------------------
+  if (action === "renameDrawingTemplateSandbox") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const row = await loadSandbox(tdb, String(body.id ?? "").trim());
+    if (!row) return json({ error: "Sandbox not found" }, 404);
+    if (row.state !== "sandbox") return json({ error: `Sandbox is ${row.state}` }, 409);
+    if (Number(body.rev) !== row.rev) return sandboxConflict(row);
+    const name = String(body.name ?? "").trim().replace(/\s+/g, " ");
+    if (!name) return json({ error: "Name required" }, 400);
+    if (name.length > 80) return json({ error: "Name too long" }, 400);
+    const next = await writeSandbox(tdb, row, { name });
+    if (!next) return sandboxConflict(await loadSandbox(tdb, row.id));
+    return json({ sandbox: sandboxView(next) });
+  }
+
+  // --- the parts beside the type's own that the catch also runs on -----------
+  if (action === "setDrawingTemplateTryParts") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const row = await loadSandbox(tdb, String(body.id ?? "").trim());
+    if (!row) return json({ error: "Sandbox not found" }, 404);
+    if (row.state !== "sandbox") return json({ error: `Sandbox is ${row.state}` }, 409);
+    if (Number(body.rev) !== row.rev) return sandboxConflict(row);
+    const raw = Array.isArray(body.component_ids) ? body.component_ids : [];
+    const ids = [...new Set(raw.map((v: unknown) => String(v ?? "").trim()).filter(Boolean))] as string[];
+    if (ids.length > SANDBOX_MAX_TRY_PARTS) return json({ error: `At most ${SANDBOX_MAX_TRY_PARTS} parts to try on` }, 400);
+    if (ids.length) {
+      const { data: found } = await tdb("bom_components").select("id").in("id", ids);
+      if (((found || []) as any[]).length !== ids.length) return json({ error: "Part not found" }, 404);
+    }
+    const next = await writeSandbox(tdb, row, { try_component_ids: ids });
+    if (!next) return sandboxConflict(await loadSandbox(tdb, row.id));
+    return json({ sandbox: sandboxView(next) });
+  }
+
+  // --- discard: the sandbox stays as a record; its queued work is cancelled --
+  if (action === "discardDrawingTemplateChange") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const row = await loadSandbox(tdb, String(body.id ?? "").trim());
+    if (!row) return json({ error: "Sandbox not found" }, 404);
+    if (row.state !== "sandbox") return json({ error: `Sandbox is ${row.state}` }, 409);
+    if (Number(body.rev) !== row.rev) return sandboxConflict(row);
+    const next = await writeSandbox(tdb, row, { state: "discarded" });
+    if (!next) return sandboxConflict(await loadSandbox(tdb, row.id));
+    await tdb("drawing_template_items").update({ status: "cancelled", finished_at: new Date().toISOString() })
+      .eq("change_id", row.id).eq("status", "queued");
+    return json({ ok: true });
+  }
+
+  // --- ask the engine which holes each rule takes, on every part -------------
+  if (action === "requestDrawingTemplateCatch") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const row = await loadSandbox(tdb, String(body.id ?? "").trim());
+    if (!row) return json({ error: "Sandbox not found" }, 404);
+    if (row.state !== "sandbox") return json({ error: `Sandbox is ${row.state}` }, 409);
+    const view = await loadPartTypeView(tdb, { includeRetired: true, ids: [row.part_type_id] });
+    const part_type = view.part_types[0] ?? null;
+    if (!part_type) return json({ error: "Part type not found" }, 404);
+    const all = await loadSandboxParts(tdb, part_type, Array.isArray(row.try_component_ids) ? row.try_component_ids : []);
+    const parts = all.filter((p) => p.cad_sha256 && p.cad_file_id && p.cad_model_revision_id);
+    if (!parts.length) return json({ error: "No part with a released STEP" }, 409);
+    let mark: any = null;
+    if (body.mark != null) {
+      const component_id = String(body.mark?.component_id ?? "").trim();
+      const hole_id = String(body.mark?.hole_id ?? "").trim();
+      if (!component_id || !hole_id || hole_id.length > 40) return json({ error: "A mark names a part and a hole" }, 400);
+      if (!parts.some((p) => p.component_id === component_id)) return json({ error: "The marked part is not in this sandbox" }, 400);
+      mark = { component_id, hole_id };
+    }
+    // Features first: the pump hands out features before catches, so a part
+    // read for the first time is cached before this catch runs.
+    const queued_features = await queueFeatureItems(tdb, session, parts);
+    const at = new Date().toISOString();
+    // The newest catch is the one the page waits on: an older queued one is replaced.
+    await tdb("drawing_template_items").update({ status: "cancelled", finished_at: at })
+      .eq("change_id", row.id).eq("purpose", "catch").eq("status", "queued");
+    const { data: item, error } = await tdb("drawing_template_items").insert({
+      purpose: "catch", part_type_id: row.part_type_id, change_id: row.id,
+      parts: parts.map((p) => ({
+        component_id: p.component_id, cad_model_revision_id: p.cad_model_revision_id,
+        cad_file_id: p.cad_file_id, cad_sha256: p.cad_sha256,
+      })),
+      request: { body_sha256: row.body_sha256 ?? null, mark },
+      status: "queued", requested_by: session.uid ?? null, requested_by_label: actorLabel(session),
+    }).select("id").maybeSingle();
+    if (error || !item) return json({ error: error?.message || "Catch not queued" }, 400);
+    return json({ item_id: item.id, queued_features });
+  }
+
+  // --- one catch and its job (the page polls this every 1.5 s) ---------------
+  if (action === "getDrawingTemplateCatch") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const id = String(body.item_id ?? "").trim();
+    if (!id) return json({ error: "Catch not found" }, 404);
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: item } = await tdb("drawing_template_items").select(TEMPLATE_CATCH_FIELDS).eq("id", id).maybeSingle();
+    if (!item || item.purpose !== "catch") return json({ error: "Catch not found" }, 404);
+    let job: any = null;
+    if (item.job_id) {
+      const { data: jr } = await tdb("drawing_render_jobs").select(RENDER_JOB_LIST_FIELDS).eq("id", item.job_id).maybeSingle();
+      if (jr) [job] = await withRenderJobContext(tdb, [jr]);
     }
     return json({ item, job: job ?? null });
   }

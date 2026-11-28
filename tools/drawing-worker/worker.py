@@ -19,7 +19,10 @@ reported running before and passed after:
             The exact spec_body / spec_patch strings are sha256-hashed and
             echoed; the worker never canonicalises anything itself.
   verify    drawset's DRAWSET_SUMMARY line (exit 3 = rendered, verification
-            failed), falling back to the prose block; the .sources.json
+            failed), falling back to the prose block. In mode sandbox a
+            failed verdict is a result: the step is reported failed with
+            the reason and the job goes on to upload with verify_ok false;
+            missing sidecars or files still fail the job. The .sources.json
             sidecar carries the dimension-list sha, the geometry sha and the
             STEP sha (must equal cad_sha256); summary.artifacts names the
             local pdf, pngs, dimensions.json, entities.json
@@ -27,6 +30,10 @@ reported running before and passed after:
                           (the revision's file, as today) AND every artefact
                           through drawingRenderUploadUrl { job_id, file_name }
             mode iterate: drawingRenderUploadUrl only (a candidate, no issue)
+            mode sandbox: drawingRenderUploadUrl only, the PDF as sandbox.pdf
+                          (a part type's reference render: no drawing, no
+                          issue, DRAWING_TEMPLATES.md §4; register is the
+                          portal's, written in finishDrawingRender)
   finishDrawingRender { storage_path, file_name, sha256, result }
             result carries dimension_list_sha256, geometry_sha256,
             spec_body_sha256, patch_sha256, verify, unmatched_overrides,
@@ -83,6 +90,8 @@ DEFAULTS = {
 }
 
 STEPS = ("download", "render", "verify", "upload")   # claim and register are the portal's
+MODES = ("issue", "iterate", "sandbox")              # sandbox: a template item's render, no drawing (DRAWING_TEMPLATES.md §4)
+SANDBOX_PDF = "sandbox.pdf"
 PART_NUMBER = re.compile(r"RR-\d{6}-[A-Z0-9]{8}")
 REGISTER_EVERY_S = 300          # registerDrawingSpecs on start and every 5 min (the portal calls a worker absent after 10)
 REGISTER_RETRY_S = 60           # after a failed registration
@@ -546,6 +555,28 @@ def _verify_reason(stdout: str) -> str:
 
 # ----------------------------------------------------------------- one job
 
+def _present(raw) -> bool:
+    """A poll field that carries a value: not absent, null, empty or the string "null"."""
+    if raw is None:
+        return False
+    if isinstance(raw, str):
+        return raw.strip() not in ("", "null")
+    return True
+
+
+def claim_refusal(job: dict, mode: str) -> str | None:
+    """Why a claimed job is refused before download, or None. A mode this worker
+    does not know fails at once; a sandbox job needs a spec_body and takes no patch."""
+    if mode not in MODES:
+        return "Unknown mode %s" % mode
+    if mode == "sandbox":
+        if not _present(job.get("spec_body")):
+            return "Sandbox needs a spec_body"
+        if _present(job.get("spec_patch")):
+            return "Sandbox takes no patch"
+    return None
+
+
 def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
     """Execute one claimed job and close it with finishDrawingRender. Never
     raises except KeyboardInterrupt (after finishing the job with an error)."""
@@ -702,6 +733,13 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
                                                   " · patch %s" % ((st.get("patch_sha256") or "?")[:8]) if patch is not None else ""),
                 data)
 
+    def verdict_failed(reason: str) -> None:
+        """A failed verification verdict: fatal for issue / iterate; for sandbox a
+        result, kept to report the verify step failed and carried on to upload."""
+        if mode != "sandbox":
+            raise StepFailed(reason)
+        st.setdefault("verify_fail", reason)
+
     def step_verify():
         out = st["stdout"]
         summary = _parse_summary(out)
@@ -712,20 +750,22 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             raise StepFailed("drawset predates spec patches (no DRAWSET_SUMMARY); update the drawset folder")
         if summary is not None:
             if st.get("returncode") == 3 or not summary.get("pass"):
-                raise StepFailed(_summary_reason(summary))
-            if summary.get("regression") != "OK":
+                verdict_failed(_summary_reason(summary))
+            elif summary.get("regression") == "FAIL":
+                verdict_failed(_summary_reason(summary))
+            elif summary.get("regression") != "OK":
                 raise StepFailed("no regression verdict in the summary")
         else:
             # a drawset that predates DRAWSET_SUMMARY: read the prose
             if "=== VERIFICATION ===" not in out:
                 raise StepFailed("drawset printed no verification block: %s" % _tail(out))
-            if any("FAIL" in l for l in out.splitlines()):
-                raise StepFailed(_verify_reason(out))
             regression = next((l.strip() for l in out.splitlines() if l.startswith("5 regression")), "")
-            if not regression.endswith("OK"):
+            if any("FAIL" in l for l in out.splitlines()):
+                verdict_failed(_verify_reason(out))
+            elif not regression.endswith("OK"):
                 raise StepFailed("no regression verdict: %s" % (regression or _tail(out)))
-            if "=== PASS ===" not in out:
-                raise StepFailed("verification did not pass: %s" % _tail(out))
+            elif "=== PASS ===" not in out:
+                verdict_failed("verification did not pass: %s" % _tail(out))
         sidecar = st["pdf_path"] + ".sources.json"
         if not os.path.exists(sidecar):
             raise StepFailed("no sources sidecar: %s" % os.path.basename(sidecar))
@@ -760,6 +800,10 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         if summary is not None:
             data["verify"] = {"round_trip": summary.get("round_trip"), "completeness_missing": summary.get("completeness_missing"),
                               "wall_flags": summary.get("wall_flags"), "regression": summary.get("regression")}
+        if st.get("verify_fail"):
+            # sandbox only: reported failed by the drive loop, the job goes on
+            data["verify_ok"] = False
+            return st["verify_fail"], data
         unmatched = " · %d unmatched override%s" % (len(st["unmatched_overrides"]), "" if len(st["unmatched_overrides"]) == 1 else "s") \
             if st["unmatched_overrides"] else ""
         if st["unmatched_rules"]:
@@ -768,7 +812,8 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             dl[:8], (st["geometry_sha256"] or "—")[:8], shas[0][:8], len(st["local_artifacts"]["pngs"]), unmatched), data)
 
     def upload_artifact(file_name: str, path: str, content_type: str) -> str:
-        """One render artefact into drawings/<drawing_id>/renders/<job_id>/<file_name>; the storage path."""
+        """One render artefact into drawings/<drawing_id>/renders/<job_id>/<file_name> (sandbox:
+        drawing-templates/items/<item>/renders/<job_id>/, the portal picks the prefix); the storage path."""
         r = portal.call("drawingRenderUploadUrl", job_id=job_id, file_name=file_name)
         if not r.get("signedUrl") or not r.get("path"):
             raise StepFailed("drawingRenderUploadUrl answered without signedUrl/path for %s" % file_name)
@@ -778,9 +823,10 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
     def step_upload():
         if not number or not issue:
             raise StepFailed("title_block lacks drawing_number or issue")
-        if mode not in ("issue", "iterate"):
+        if mode not in MODES:
             raise StepFailed("unknown job mode %r" % mode)
-        file_name = "%s Issue %s.pdf" % (number, issue)
+        # sandbox: a reference render, no issue; never docUploadUrl
+        file_name = SANDBOX_PDF if mode == "sandbox" else "%s Issue %s.pdf" % (number, issue)
         st["file_name"] = file_name
         st["pdf_sha256"] = sha256_of(st["pdf_path"])
         size = os.path.getsize(st["pdf_path"])
@@ -807,8 +853,9 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
         art["dimensions"] = upload_artifact("dimensions.json", local["dimensions"], "application/json")
         art["entities"] = upload_artifact("entities.json", local["entities"], "application/json")
         st["artifacts"] = art
-        if mode == "iterate":
-            # a candidate: the renders/ PDF is the file Keep (acceptDrawingIteration) moves onto the draft
+        if mode in ("iterate", "sandbox"):
+            # iterate: a candidate, the renders/ PDF is the file Keep (acceptDrawingIteration) moves onto the draft;
+            # sandbox: the artefact PDF is the only copy (drawing-templates/items/<item>/renders/<job>/)
             st["storage_path"] = art["pdf"]
             data["storage_path"] = art["pdf"]
         data["artifacts"] = art
@@ -824,6 +871,12 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             log.error("job %s: finishDrawingRender(error) failed: %s", short, exc)
 
     # ---- drive -------------------------------------------------------------
+    refusal = claim_refusal(job, mode)
+    if refusal:
+        log.error("job %s: refused at claim — %s", short, refusal)
+        finish_error(refusal)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return {"error": refusal}
     try:
         for key in STEPS:
             report(key, "running")
@@ -837,6 +890,11 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
                 log.error("job %s: %s raised\n%s", short, key, tb_text)
                 raise StepFailed(tb_text.strip().splitlines()[-1][:300])
             detail, data = out if isinstance(out, tuple) else (out, None)
+            if key == "verify" and st.get("verify_fail"):
+                # sandbox: the failed verdict is the result; the sheets are still uploaded
+                report(key, "failed", detail, data)
+                log.warning("job %s: verify failed in %.1f s — %s; sandbox goes on to upload", short, time.time() - t0, detail)
+                continue
             report(key, "passed", detail, data)
             log.info("job %s: %s passed in %.1f s — %s", short, key, time.time() - t0, detail)
         result = {
@@ -844,7 +902,7 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             "dimension_list_sha256": st["dimension_list_sha256"],
             "spec_sha256": st["spec_sha256"],
             "drawset_version": drawset_version(cfg),
-            "verify_ok": True,
+            "verify_ok": not st.get("verify_fail"),
         }
         if st.get("geometry_sha256"):
             result["geometry_sha256"] = st["geometry_sha256"]
@@ -874,9 +932,14 @@ def run_job(job: dict, portal: Portal, cfg: dict) -> dict:
             # The portal refused the result (a letter added meanwhile, a vanished
             # drawing, a stale-worker guard): nothing was registered. Keep the folder for a look.
             log.error("job %s: the portal did not accept the %s — %s; files kept in %s",
-                      short, "candidate" if mode == "iterate" else "issue", j.get("error") or j.get("status"), tmp)
+                      short, {"iterate": "candidate", "sandbox": "reference render"}.get(mode, "issue"),
+                      j.get("error") or j.get("status"), tmp)
             return fin
-        if mode == "iterate":
+        if mode == "sandbox":
+            log.info("job %s: done — reference render for template item %s%s; no drawing written",
+                     short, str(job.get("template_item_id") or "?")[:8],
+                     " (verification failed: %s)" % st["verify_fail"] if st.get("verify_fail") else "")
+        elif mode == "iterate":
             log.info("job %s: done — candidate for %s Issue %s rendered (patch %s); the draft is untouched until Keep",
                      short, number, issue, (st.get("patch_sha256") or "none")[:8])
         else:

@@ -809,3 +809,109 @@ export function touchedEntities(ops, dims) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// A template body in words (docs/DRAWING_TEMPLATES.md §4.5, §6). The Base page
+// and History never show YAML or a key name: each body is read into phrases
+// { subject, value }, printed "subject value", and two bodies are compared by
+// those phrases, not by keys.
+// ---------------------------------------------------------------------------
+const TOLERANCE_WORDS = Object.freeze({
+  outline: "Outline", hole_position: "Hole positions", hole_depth: "Depth of holes in the face",
+  edge_bore_depth: "Depth of holes in an edge", pocket_depth: "Pocket depth",
+  groove_width: "Groove width", groove_depth: "Groove depth", counterbore_depth: "Counterbore depth",
+});
+const FACE_ORDER_WORDS = Object.freeze({ bottom_up: "bottom band first", top_down: "top band first" });
+/** Keys a body carries that are per-render facts or later-phase content; they
+ *  are neither described nor counted as "other settings". */
+const TEMPLATE_META_KEYS = Object.freeze(["date", "issue", "group", "title", "set_name", "template", "parts", "change", "ctq", "pairs", "features"]);
+/** Keys the phrases describe (plan only through face_order). */
+const DESCRIBED_KEYS = Object.freeze(["owner", "designed_by", "tolerances", "plan"]);
+
+/** "+a -b" → "+a / −b" (U+2212 minus); anything else as written. */
+function tolWords(raw) {
+  const s = String(raw).trim();
+  const m = s.match(/^\+(\S+)\s+-(\S+)$/);
+  return m ? `+${m[1]} / −${m[2]}` : s;
+}
+const filled = (v) => v !== null && v !== undefined && String(v).trim() !== "";
+
+/** The phrases of a body, grouped: { title_block, tolerances, sheets, edges }. */
+function templatePhrases(body) {
+  const b = isObj(body) ? body : {};
+  const tol = isObj(b.tolerances) ? b.tolerances : {};
+  const plan = isObj(b.plan) ? b.plan : {};
+  const title_block = [];
+  if (filled(b.owner)) title_block.push({ subject: "Owner", value: String(b.owner).trim() });
+  if (filled(b.designed_by)) title_block.push({ subject: "Designed by", value: String(b.designed_by).trim() });
+  if (filled(tol.general)) title_block.push({ subject: "General tolerance", value: String(tol.general).trim() });
+  const tolerances = [];
+  for (const kind of TOLERANCE_KINDS) {
+    if (kind === "general" || !filled(tol[kind])) continue;
+    tolerances.push({ subject: TOLERANCE_WORDS[kind], value: tolWords(tol[kind]) });
+  }
+  const sheets = [];
+  if (FACE_ORDER_WORDS[plan.face_order]) sheets.push({ subject: "Face sheets", value: FACE_ORDER_WORDS[plan.face_order] });
+  sheets.push({ subject: "Views and scales per part", value: "" });
+  // Phase 1: the edges are today's derivation for every body (§3.1 defaults).
+  const edges = [{ subject: "Front edge", value: "as modelled" }, { subject: "Inside face", value: "most blind holes" }];
+  return { title_block, tolerances, sheets, edges };
+}
+const phraseText = (p) => (p.value ? `${p.subject} ${p.value}` : p.subject);
+const joinPhrases = (list) => list.map(phraseText).join(" · ");
+
+/** describeTemplateBody(body) → { title_block, tolerances, sheets, edges, rules }:
+ *  four lines of words joined by " · ", and the rules (none in phase 1). */
+export function describeTemplateBody(body) {
+  const g = templatePhrases(body);
+  return {
+    title_block: joinPhrases(g.title_block),
+    tolerances: joinPhrases(g.tolerances),
+    sheets: joinPhrases(g.sheets),
+    edges: joinPhrases(g.edges),
+    rules: [],
+  };
+}
+
+/** diffTemplateBodies(from, to) → string[]: "+ phrase", "− phrase",
+ *  "subject a → b", then "<n> other settings changed" for top-level keys
+ *  outside the described set (datums count here); ["No differences."] when
+ *  nothing differs. */
+export function diffTemplateBodies(fromBody, toBody) {
+  const flat = (body) => { const g = templatePhrases(body); return [...g.title_block, ...g.tolerances, ...g.sheets, ...g.edges]; };
+  const from = flat(fromBody), to = flat(toBody);
+  const fromBy = new Map(from.map((p) => [p.subject, p]));
+  const toBy = new Map(to.map((p) => [p.subject, p]));
+  const lines = [];
+  for (const p of to) {
+    const was = fromBy.get(p.subject);
+    if (!was) lines.push(`+ ${phraseText(p)}`);
+    else if (was.value !== p.value) lines.push(`${p.subject} ${was.value} → ${p.value}`);
+  }
+  for (const p of from) if (!toBy.has(p.subject)) lines.push(`− ${phraseText(p)}`);
+  const a = isObj(fromBody) ? fromBody : {}, b = isObj(toBody) ? toBody : {};
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  let other = 0;
+  for (const k of keys) {
+    if (TEMPLATE_META_KEYS.includes(k)) continue;
+    if (k === "plan") {
+      // face_order is described; any other plan setting counts once.
+      const rest = (v) => { const o = isObj(v) ? { ...v } : {}; delete o.face_order; return canonicalJson(o); };
+      if (rest(a.plan) !== rest(b.plan)) other++;
+      continue;
+    }
+    if (k === "tolerances") {
+      // The kinds in TOLERANCE_KINDS are described; each other kind that differs counts.
+      const ta = isObj(a.tolerances) ? a.tolerances : {}, tb = isObj(b.tolerances) ? b.tolerances : {};
+      for (const kind of new Set([...Object.keys(ta), ...Object.keys(tb)])) {
+        if (TOLERANCE_KINDS.includes(kind)) continue;
+        if (canonicalJson(ta[kind] === undefined ? null : ta[kind]) !== canonicalJson(tb[kind] === undefined ? null : tb[kind])) other++;
+      }
+      continue;
+    }
+    if (DESCRIBED_KEYS.includes(k)) continue;
+    if (canonicalJson(a[k] === undefined ? null : a[k]) !== canonicalJson(b[k] === undefined ? null : b[k])) other++;
+  }
+  if (other) lines.push(`${other} other settings changed`);
+  return lines.length ? lines : ["No differences."];
+}

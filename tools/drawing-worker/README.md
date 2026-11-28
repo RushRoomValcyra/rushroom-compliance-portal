@@ -25,9 +25,10 @@ out to for drawset and, when `pyyaml` is not importable, for YAML.
 
 Every `poll_seconds`: `pollDrawingRenderJob`. On a job: `download` →
 `render` → `verify` → `upload` → `finishDrawingRender`, each step reported
-before and after. A job has a `mode`: `issue` (a new letter, as always) or
+before and after. A job has a `mode`: `issue` (a new letter, as always),
 `iterate` (a candidate for the current draft; nothing on the drawing changes
-until the engineer presses Keep — `docs/DYNAMIC_DRAWINGS.md` §3.7).
+until the engineer presses Keep — `docs/DYNAMIC_DRAWINGS.md` §3.7) or
+`sandbox` (a reference render, no drawing; below).
 
 - `render` takes the spec body from the job (`spec_body`, the portal's copy
   of the template or spec as a JSON string, `docs/DYNAMIC_DRAWINGS.md` §3.2)
@@ -67,13 +68,44 @@ keeps every distinct body as an immutable version and computes
 `body_sha256` itself). Specs with more than one part are registered but
 refused at render ("spec has N parts; a render job draws one part").
 
+### Mode `sandbox` (a part type's reference render)
+
+`docs/DRAWING_TEMPLATES.md` §4. The portal hands out a sandbox job from a
+template item when no real job is waiting, so real work is always taken first.
+The job draws a part on a template version and writes no drawing.
+
+- Refused at claim, before download: a mode other than `issue`, `iterate`,
+  `sandbox` (`Unknown mode <m>`); a sandbox job without `spec_body`
+  (`Sandbox needs a spec_body`) or with a patch (`Sandbox takes no patch`).
+- The title block is `SANDBOX` / `S` with the CAD revision letter, so the
+  change line reads `From CAD Rev <letter>`; drawset runs with the same flags
+  as for an issue, regression pass included.
+- A failed verdict (exit 3, `pass: false`, regression `FAIL`) is a result:
+  `verify` is reported **failed** with the reason, the sheets are still
+  uploaded and `result.verify_ok` is `false`. Missing sidecars, PNGs or PDF
+  and any other exit code fail the job as for an issue.
+- `upload` goes through `drawingRenderUploadUrl` only, the PDF as
+  `sandbox.pdf` (the portal files it under
+  `drawing-templates/items/<item>/renders/<job>/`); never `docUploadUrl`.
+  `storage_path` is that artefact PDF.
+- The worker reports `download`, `render`, `verify`, `upload` and never
+  `register`; the portal writes that step in `finishDrawingRender`.
+
+Behaviour test (stdlib, no network): `python3 tools/drawing-worker/test_worker_sandbox.py`
+(also run by `node --test tests/`).
+
+**Restart the worker before the first reference is chosen.** A worker
+started before sandbox mode claims the job, renders it and only then fails
+at upload with `unknown job mode 'sandbox'`; the item fails and the
+reference must be chosen again.
+
 ## Writes
 
 | where | what |
 |---|---|
 | `tools/drawing-worker/worker.log` | every poll error, claim, step, finish; drawset's stdout/stderr at DEBUG (gitignored) |
 | `$TMPDIR/drawing-worker-*/` | the STEP, the temp spec (with `patch:` when the job carries one), `out/` with the PDF, `.sources.json`, `<set>_dimensions.json` and `<set>_entities.json`, `png/` with one PNG per sheet, `drawset.stdout.txt` / `drawset.stderr.txt`. Removed when the job is done; kept when it fails (the log names the folder) |
-| the portal | mode `issue`: the PDF under the documents bucket (`docUploadUrl`) and the issue on the drawing (`finishDrawingRender`); every mode: the PDF, the sheet PNGs, `dimensions.json` and `entities.json` under `drawings/<drawing_id>/renders/<job_id>/` (`drawingRenderUploadUrl`); the spec catalogue with bodies (`registerDrawingSpecs`) |
+| the portal | mode `issue`: the PDF under the documents bucket (`docUploadUrl`) and the issue on the drawing (`finishDrawingRender`); every mode: the PDF, the sheet PNGs, `dimensions.json` and `entities.json` under `drawings/<drawing_id>/renders/<job_id>/` (`drawingRenderUploadUrl`) (mode `sandbox`: `drawing-templates/items/<item>/renders/<job_id>/`, no drawing); the spec catalogue with bodies (`registerDrawingSpecs`) |
 
 Nothing is written into the drawset folder.
 

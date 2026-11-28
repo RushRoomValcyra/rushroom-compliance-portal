@@ -191,3 +191,70 @@ export function lastSeen(specs) {
   }
   return best == null ? null : new Date(best).toISOString();
 }
+
+// ---------------------------------------------------------------------------
+// Template items — the queue of portal-born renders that write no drawing
+// (docs/DRAWING_TEMPLATES.md §5.2). The poll is the pump: it takes an item only
+// when no real job is requested, so real renders always go first.
+// ---------------------------------------------------------------------------
+/** The pump's order across purposes: lower index first. */
+export const ITEM_PUMP_ORDER = ["features", "catch", "preview", "rebase", "reference", "try"];
+
+/** The next queued item to hand out, or null. Within a purpose the oldest
+ *  created_at goes first, then the lower id (a stable tie-break). Items in any
+ *  other status, or with a purpose outside the order, are never picked. */
+export function pickNextItem(items) {
+  const rank = (p) => ITEM_PUMP_ORDER.indexOf(p);
+  const queued = (Array.isArray(items) ? items : []).filter((it) => it && it.status === "queued" && rank(it.purpose) >= 0);
+  if (!queued.length) return null;
+  const time = (it) => { const t = Date.parse(it.created_at); return Number.isFinite(t) ? t : Infinity; };
+  queued.sort((a, b) =>
+    rank(a.purpose) - rank(b.purpose)
+    || time(a) - time(b)
+    || String(a.id ?? "").localeCompare(String(b.id ?? "")));
+  return queued[0];
+}
+
+/** The title block of a sandbox render: build_temp_spec requires a drawing
+ *  number and an issue, and a fixed value makes a stray sheet recognisable. */
+export function sandboxTitleBlock(partName, cadRevision) {
+  const tb = { drawing_number: "SANDBOX", issue: "S", title: partName || "Reference" };
+  // The sheet's change line reads "From CAD Rev <letter>" (worker build_temp_spec).
+  if (cadRevision) tb.cad_revision = String(cadRevision);
+  return tb;
+}
+
+/** An item claimed by the pump that still has no job after this long was
+ *  orphaned (the function died between claim and insert): the pump fails it. */
+export const ITEM_CLAIM_STALE_MS = 120_000;
+
+/** setComponentPartType's rule for one part (DRAWING_TEMPLATES §4.6):
+ *  `comp` the part row or null, `targetId` the type asked for (null = clear),
+ *  `refType` the part type whose reference this part is, or null.
+ *  → { kind: "refused", reason } | { kind: "unchanged" } | { kind: "change", from }. */
+export function partTypeChange(comp, targetId, refType) {
+  if (!comp) return { kind: "refused", reason: "Part not found" };
+  const from = comp.part_type_id ?? null;
+  const to = targetId ?? null;
+  if (from === to) return { kind: "unchanged" };
+  if (refType && refType.id !== to) return { kind: "refused", reason: `Reference of part type ${refType.name}` };
+  return { kind: "change", from };
+}
+
+/** The checks a finished sandbox job must pass before its item is done:
+ *  the STEP it drew is the item's, the template body is the pinned version's,
+ *  and a PDF plus at least one sheet were uploaded. A failed verify is a
+ *  result, not a failure (verify_ok false).
+ *  → { error } | { source, verify_ok, verify }. */
+export function sandboxFinishCheck({ result, bodySourceSha, itemCadSha, versionSha, sheets }) {
+  const res = result && typeof result === "object" && !Array.isArray(result) ? result : {};
+  const hex = (v) => /^[0-9a-f]{64}$/i.test(String(v ?? "")) ? String(v).toLowerCase() : null;
+  const source = hex(res.source_sha256) ?? hex(bodySourceSha);
+  if (!source || source !== String(itemCadSha ?? "").toLowerCase()) return { error: "STEP changed while drawing" };
+  const specSha = hex(res.spec_sha256) ?? hex(res.spec_body_sha256);
+  if (!versionSha || !specSha || specSha !== String(versionSha).toLowerCase()) return { error: "Template changed while drawing" };
+  if (!sheets || !sheets.pdf || !Array.isArray(sheets.pngs) || !sheets.pngs.length) return { error: "No sheets uploaded" };
+  const verify = res.verify && typeof res.verify === "object" && !Array.isArray(res.verify) ? res.verify : null;
+  const verify_ok = res.verify_ok !== false && !(verify && String(verify.regression ?? "OK").toUpperCase() === "FAIL");
+  return { source, verify_ok, verify };
+}

@@ -73,6 +73,9 @@ export const TENANT_TABLES = new Set([
   // Supplier portal (migration 0065, docs/SUPPLIER_PORTAL.md): the supplier
   // company, its per-part access, and the audit of every file URL it was given.
   "suppliers", "supplier_components", "supplier_file_events",
+  // Drawing Templates phase 1 (migration 0070, docs/DRAWING_TEMPLATES.md §10.1):
+  // the part types and the queue of portal-born renders that write no drawing.
+  "part_types", "drawing_template_items",
 ]);
 export function makeTdb(orgId: string) {
   const stamp = (rows: any) => Array.isArray(rows)

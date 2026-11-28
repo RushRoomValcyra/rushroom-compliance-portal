@@ -975,6 +975,28 @@ details.phase { scroll-margin-top: calc(var(--header-h, 64px) + 3.5rem); } /* cl
 /* Phase 6: amber facts on the rail and in the release modal (never blocks). */
 .drawing-rail-h.is-warn, .drawing-meta .is-warn { color: var(--amber); }
 .dr-dim.is-selected td { background: rgba(94, 224, 143, 0.1); }
+/* Drawing Templates, phase 1 (DRAWINGS_TAB_UX §14): the register's chips copy
+   the category chips (bomChip), the pages copy the drawing surface. */
+.dtpl-chips, .dtpl-type-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.dtpl-type-chips { margin-top: 0.4rem; }
+.dtpl-row { cursor: pointer; }
+.dtpl-badge {
+  font-size: var(--fs-2xs); padding: 1px 6px; border-radius: 4px; white-space: nowrap; flex-shrink: 0;
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+}
+.dtpl-pick { flex-shrink: 0; margin: 0; }
+.dtpl-line { font-size: var(--fs-sm); margin: 0.3rem 0; }
+.dtpl-line.is-warn { color: var(--amber); }
+.dtpl-form-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.dtpl-label { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
+.dtpl-file .dtpl-tabs { position: static; }
+.dtpl-ref { padding: 0.6rem 0.8rem 0; }
+.dtpl-ref:empty { display: none; }
+.dtpl-pane { padding: 0.6rem 0.8rem 0.8rem; }
+.dtpl-lines { gap: 0.45rem 1rem; }
+.dtpl-compare { margin-top: 0.6rem; }
+.dtpl-diff { margin: 0.3rem 0 0; padding-left: 0; list-style: none; font-size: var(--fs-sm); }
+.dtpl-diff li { padding: 0.15rem 0; }
 
 @media (max-width: 900px) {
   /* The rail below the drawing, not beside it — a 300px column next to a

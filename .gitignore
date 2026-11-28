@@ -32,3 +32,4 @@ fusion-addin/RushroomPIM/import_progress.json
 # Drawing worker runtime state (tools/drawing-worker): portal URL/paths and the log are per machine.
 tools/drawing-worker/config.json
 tools/drawing-worker/worker.log
+tools/drawing-worker/*.log

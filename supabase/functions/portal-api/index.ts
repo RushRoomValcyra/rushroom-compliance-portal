@@ -48,10 +48,11 @@ import {
   failPatch as renderFailPatch, lastSeen as specsLastSeen, newSteps as newRenderSteps,
   normaliseSpec, normaliseSteps as normaliseRenderSteps, setStep as setRenderStep,
   skipRemaining as skipRemainingRenderSteps, timeoutPatch as renderTimeoutPatch, titleBlock,
+  pickNextItem, sandboxTitleBlock, ITEM_PUMP_ORDER, ITEM_CLAIM_STALE_MS, partTypeChange, sandboxFinishCheck,
 } from "../_shared/render-job-core.mjs";
 import {
   applySpecOps, canonicalJson, canonicalSha, diffDimensionLists, emptyPatch, touchedEntities, validateOps,
-  promoteTemplate, stripPromoted, TEMPLATE_KEYS,
+  promoteTemplate, stripPromoted, TEMPLATE_KEYS, describeTemplateBody, diffTemplateBodies,
 } from "../_shared/drawing-spec-core.mjs";
 import { bomChildRule, bomRuleError, wrapInPrepared } from "./handlers/bom-structure.ts";
 import { COST_ACTIONS, handleCostAction } from "./handlers/costs.ts";
@@ -1411,8 +1412,13 @@ const SPEC_VERSION_FIELDS = "id, name, version, kind, body, body_sha256, registe
 const SPEC_PATCH_ORIGINS = ["click", "dialogue", "carry", "hand"];
 const RENDER_ARTIFACT_KEYS = ["pdf", "dimensions", "entities"];
 
-/** Where a job's render artefacts live in DOC_BUCKET (every artefact kind). */
-const renderArtifactPrefix = (job: { drawing_id: string; id: string }) => `drawings/${job.drawing_id}/renders/${job.id}/`;
+/** Where a job's render artefacts live in DOC_BUCKET (every artefact kind).
+ *  A sandbox job has no drawing: its folder keys on the template item
+ *  (DRAWING_TEMPLATES phase 1). */
+const renderArtifactPrefix = (job: { drawing_id: string | null; id: string; mode?: string | null; template_item_id?: string | null }) =>
+  job.mode === "sandbox" && job.template_item_id
+    ? `drawing-templates/items/${job.template_item_id}/renders/${job.id}/`
+    : `drawings/${job.drawing_id}/renders/${job.id}/`;
 
 /** The patch chain of one drawing, seq ascending. */
 async function loadSpecPatches(tdb: any, drawingId: string): Promise<any[]> {
@@ -1546,7 +1552,9 @@ async function listSpecsWithVersions(tdb: any): Promise<any[]> {
  *  specs/<name>.yaml (DRAWING_DIALOGUE §5): name, version, body sha, origin. */
 async function templateList(tdb: any): Promise<{ name: string; version: number | null; body_sha256: string | null; origin: string | null }[]> {
   const rows = await listSpecsWithVersions(tdb);
-  return rows.filter((r) => r.template && r.current_version_id)
+  // The Base alone (DRAWING_TEMPLATES §5.3): the Mac mirror writes a file for
+  // every template listed, and must never write a type body to specs/.
+  return rows.filter((r) => r.level === "base" && r.template && r.current_version_id)
     .map((r) => ({ name: r.name, version: r.version, body_sha256: r.body_sha256, origin: r.origin }));
 }
 
@@ -1603,7 +1611,7 @@ async function currentIssueRenderJob(tdb: any, drawing: any): Promise<any | null
 
 const RENDER_JOB_LIST_FIELDS =
   "id, component_id, cad_model_revision_id, cad_file_id, drawing_id, created_drawing, spec, issue, status, "
-  + "mode, spec_version_id, spec_patch_id, replaces_revision_id, "
+  + "mode, spec_version_id, spec_patch_id, replaces_revision_id, template_item_id, "
   + "requested_by, requested_at, claimed_at, claimed_by, finished_at, steps, result, error, created_at";
 
 /** A patch row this job was rendering, closed with the job: `candidate` when
@@ -1636,7 +1644,7 @@ async function removeEmptyRenderDrawing(tdb: any, session: any, job: any): Promi
  *  job that expires cleans up the drawing it created, as a failure does. */
 async function expireDrawingRenderJobs(tdb: any, session: any): Promise<any[]> {
   const { data: open } = await tdb("drawing_render_jobs")
-    .select("id, status, requested_at, claimed_at, steps, drawing_id, created_drawing, component_id, mode, spec_patch_id")
+    .select("id, status, requested_at, claimed_at, steps, drawing_id, created_drawing, component_id, mode, spec_patch_id, template_item_id")
     .in("status", ["requested", "running"]).order("requested_at", { ascending: true });
   const now = Date.now();
   const still: any[] = [];
@@ -1648,6 +1656,11 @@ async function expireDrawingRenderJobs(tdb: any, session: any): Promise<any[]> {
       await removeEmptyRenderDrawing(tdb, session, job);
       // The patch the job was rendering did not become a candidate.
       await closeJobPatch(tdb, job, "failed");
+      // A reference render that timed out fails its item with the same words.
+      if (job.template_item_id) {
+        await tdb("drawing_template_items").update({ status: "failed", error: patch.error, finished_at: patch.finished_at })
+          .eq("id", job.template_item_id).in("status", ["queued", "running"]);
+      }
     }
   }
   // The jobs still open, oldest first — the poll and the one-per-drawing check
@@ -1688,6 +1701,253 @@ async function withRenderJobContext(tdb: any, jobs: any[]): Promise<any[]> {
       cad_revision: v.revision ?? null,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Drawing Templates phase 1 (docs/DRAWING_TEMPLATES.md §4, §5.2, §10): part
+// types, the reference render and the Base in words. The pure rules (pump
+// order, sandbox title block, a body in words) live in _shared/; this section
+// only loads rows and writes them.
+// ---------------------------------------------------------------------------
+
+/** Who did it, as the page shows it (DRAWING_TEMPLATES §11): the user's email;
+ *  "shared login" for the shared Rushroom password (a session with no uid);
+ *  "support · <operator email>" for a support session inside a tenant. */
+function actorLabel(session: any): string {
+  if (session?.imp === true) return `support · ${session.actor ?? "operator"}`;
+  if (!session?.uid) return "shared login";
+  return String(session.email || session.uid);
+}
+
+const PART_TYPE_FIELDS =
+  "id, key, name, sheet_family, sort_order, reference_component_id, reference_cad_model_revision_id, "
+  + "reference_cad_file_id, reference_sha256, reference_set_at, reference_set_by, retired_at, retired_by, created_at";
+const TEMPLATE_ITEM_FIELDS =
+  "id, purpose, part_type_id, spec_version_id, component_id, cad_model_revision_id, cad_file_id, cad_sha256, "
+  + "status, job_id, summary, error, requested_by_label, created_at, taken_at, finished_at";
+/** The component types a panel template applies to: only these are "untyped". */
+const PANEL_COMPONENT_TYPES = ["part", "raw_material"];
+
+/** id → email for the given user ids (users is an account table, not tenant-scoped). */
+async function userEmails(ids: (string | null | undefined)[]): Promise<Record<string, string>> {
+  const want = [...new Set(ids.filter(Boolean))] as string[];
+  const out: Record<string, string> = {};
+  if (!want.length) return out;
+  const { data } = await db.from("users").select("id, email").in("id", want);
+  for (const u of (data || []) as any[]) if (u.email) out[u.id] = u.email;
+  return out;
+}
+
+/** A spec version's "By": the author's email, the portal registrar, or null for a Mac body. */
+function versionByLabel(v: any, emails: Record<string, string>): string | null {
+  if (!v || v.origin !== "portal") return null;
+  if (v.author_user_id && emails[v.author_user_id]) return emails[v.author_user_id];
+  const reg = v.registered_by ? String(v.registered_by) : "";
+  return reg && reg !== "portal" ? reg : "shared login";
+}
+
+/** Every part type of the org in the PartType shape (DRAWING_TEMPLATES phase 1
+ *  contract §3.1), with the counts, the reference and the newest reference
+ *  item, plus the facts the pages reuse (the parts, their drawings). */
+async function loadPartTypeView(tdb: any, opts: { includeRetired?: boolean; ids?: string[] } = {}): Promise<{
+  part_types: any[]; untyped_count: number; comps: any[]; drawingsOfComp: Map<string, Set<string>>;
+}> {
+  let tq = tdb("part_types").select(PART_TYPE_FIELDS);
+  if (opts.ids) tq = tq.in("id", opts.ids.length ? opts.ids : ["00000000-0000-0000-0000-000000000000"]);
+  if (!opts.includeRetired) tq = tq.is("retired_at", null);
+  const [{ data: typeRows }, { data: compRows }, { data: drawingRows }, { data: linkRows }] = await Promise.all([
+    tq,
+    tdb("bom_components").select("id, part_number, name, type, part_type_id"),
+    tdb("drawings").select("id, owner_component_id"),
+    tdb("drawing_components").select("drawing_id, component_id").eq("role", "depicts"),
+  ]);
+  const types = (typeRows || []) as any[];
+  const comps = (compRows || []) as any[];
+  const compById = new Map(comps.map((c) => [c.id, c]));
+  const drawingsOfComp = new Map<string, Set<string>>();
+  const addDrawing = (cid: string | null, did: string) => {
+    if (!cid) return;
+    if (!drawingsOfComp.has(cid)) drawingsOfComp.set(cid, new Set());
+    drawingsOfComp.get(cid)!.add(did);
+  };
+  for (const d of (drawingRows || []) as any[]) addDrawing(d.owner_component_id, d.id);
+  for (const l of (linkRows || []) as any[]) addDrawing(l.component_id, l.drawing_id);
+  const typeIds = types.map((t) => t.id);
+  const refRevIds = types.map((t) => t.reference_cad_model_revision_id).filter(Boolean);
+  const [{ data: itemRows }, { data: revRows }] = await Promise.all([
+    typeIds.length
+      ? tdb("drawing_template_items").select(TEMPLATE_ITEM_FIELDS).eq("purpose", "reference").in("part_type_id", typeIds)
+          .order("created_at", { ascending: false }).limit(500)
+      : { data: [] },
+    refRevIds.length ? tdb("cad_model_revisions").select("id, revision").in("id", refRevIds) : { data: [] },
+  ]);
+  const lastItem = new Map<string, any>();
+  for (const it of (itemRows || []) as any[]) if (!lastItem.has(it.part_type_id)) lastItem.set(it.part_type_id, it);
+  const revById = new Map(((revRows || []) as any[]).map((r) => [r.id, r]));
+  const emails = await userEmails(types.map((t) => t.reference_set_by));
+  const part_types = types.map((t) => {
+    const parts = comps.filter((c) => c.part_type_id === t.id);
+    const drawings = new Set<string>();
+    for (const p of parts) for (const d of drawingsOfComp.get(p.id) || []) drawings.add(d);
+    const refComp = t.reference_component_id ? compById.get(t.reference_component_id) : null;
+    const item = lastItem.get(t.id) || null;
+    return {
+      id: t.id, key: t.key, name: t.name, sheet_family: t.sheet_family, sort_order: t.sort_order,
+      retired_at: t.retired_at ?? null, parts: parts.length, drawings: drawings.size,
+      reference: t.reference_component_id ? {
+        component_id: t.reference_component_id,
+        part_number: refComp?.part_number ?? null, name: refComp?.name ?? null,
+        cad_model_revision_id: t.reference_cad_model_revision_id,
+        revision: revById.get(t.reference_cad_model_revision_id)?.revision ?? null,
+        cad_file_id: t.reference_cad_file_id, sha256: t.reference_sha256,
+        set_at: t.reference_set_at ?? null,
+        set_by_label: (t.reference_set_by && emails[t.reference_set_by]) || item?.requested_by_label || null,
+      } : null,
+      version: null,
+      last_item: item,
+    };
+  }).sort((a, b) => (a.sort_order - b.sort_order) || String(a.name).localeCompare(String(b.name)));
+  const untyped_count = comps.filter((c) => !c.part_type_id && PANEL_COMPONENT_TYPES.includes(c.type)).length;
+  return { part_types, untyped_count, comps, drawingsOfComp };
+}
+
+/** The Base: the catalogue row with level 'base' and its current version, in
+ *  the BaseRow shape; null when the org has none. */
+async function loadBaseRow(tdb: any): Promise<{ row: any; spec: any; version: any } | null> {
+  const { data: spec } = await tdb("drawing_render_specs").select("name, title, current_version_id, level").eq("level", "base").maybeSingle();
+  if (!spec) return null;
+  const version = await loadSpecVersion(tdb, spec.current_version_id);
+  const [{ count }, emails] = await Promise.all([
+    tdb("drawings").select("id", { count: "exact", head: true }).eq("render_spec", spec.name),
+    userEmails([version?.author_user_id]),
+  ]);
+  return {
+    spec, version,
+    row: {
+      name: spec.name, title: spec.title ?? null,
+      version_id: version?.id ?? null, version: version?.version ?? null, origin: version?.origin ?? null,
+      saved_at: version?.created_at ?? null, saved_by_label: versionByLabel(version, emails),
+      drawings: count ?? 0,
+    },
+  };
+}
+
+/** drawing_revisions.id → "Base v<N>" | "<spec title or name> v<N>" for every
+ *  issue pinned to a template version. Three reads for the whole register,
+ *  none per row. */
+async function templateLabelsByRevision(tdb: any): Promise<Map<string, string>> {
+  const [{ data: revs }, { data: versions }, { data: specs }] = await Promise.all([
+    tdb("drawing_revisions").select("id, spec_version_id").not("spec_version_id", "is", null),
+    tdb("drawing_spec_versions").select("id, name, version"),
+    tdb("drawing_render_specs").select("name, title, level"),
+  ]);
+  const vById = new Map(((versions || []) as any[]).map((v) => [v.id, v]));
+  const sByName = new Map(((specs || []) as any[]).map((s) => [s.name, s]));
+  const out = new Map<string, string>();
+  for (const r of (revs || []) as any[]) {
+    const v = vById.get(r.spec_version_id);
+    if (!v) continue;
+    const s = sByName.get(v.name);
+    out.set(r.id, s?.level === "base" ? `Base v${v.version}` : `${s?.title || v.name} v${v.version}`);
+  }
+  return out;
+}
+
+/** A free key for a new part type: the name in lower snake case, letters
+ *  first, at most 60 characters, suffixed _2, _3 … when taken. */
+function partTypeKey(name: string, taken: Set<string>): string {
+  let base = name.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!/^[a-z]/.test(base)) base = base ? `type_${base}` : "type";
+  base = base.slice(0, 56).replace(/_+$/, "") || "type";
+  let key = base, n = 2;
+  while (taken.has(key)) key = `${base}_${n++}`;
+  return key;
+}
+
+/** The pump (DRAWING_TEMPLATES §5.2): called by the poll only when no real job
+ *  is requested, so real work always goes first. Takes the next queued item
+ *  with a guarded claim, inserts its job already running for this worker, and
+ *  answers the job in the poll's shape — or null for "no job". */
+async function pumpTemplateItem(tdb: any, agent: string): Promise<any | null> {
+  const at = new Date().toISOString();
+  // An item claimed but never given a job (the function died between the claim
+  // and the insert) would read "Waiting for the worker" forever: close it.
+  await tdb("drawing_template_items")
+    .update({ status: "failed", error: "worker stopped reporting", finished_at: at })
+    .eq("status", "running").is("job_id", null).lt("taken_at", new Date(Date.now() - ITEM_CLAIM_STALE_MS).toISOString());
+  // The oldest 50 hold every queued item in the common case; a full window may
+  // hide a higher purpose behind older lower ones, so then each purpose's
+  // oldest is read on its own and pickNextItem orders those.
+  let { data: queued } = await tdb("drawing_template_items").select("*").eq("status", "queued")
+    .order("created_at", { ascending: true }).limit(50);
+  if ((queued || []).length >= 50) {
+    const heads = await Promise.all(ITEM_PUMP_ORDER.map((purpose) =>
+      tdb("drawing_template_items").select("*").eq("status", "queued").eq("purpose", purpose)
+        .order("created_at", { ascending: true }).limit(1)));
+    queued = heads.flatMap((h: any) => h.data || []);
+  }
+  const next = pickNextItem(queued || []);
+  if (!next) return null;
+  const { data: taken } = await tdb("drawing_template_items").update({ status: "running", taken_at: at })
+    .eq("id", next.id).eq("status", "queued").select("*");
+  if (!taken?.length) return null;
+  const item = taken[0];
+  const failItem = async (reason: string) => {
+    await tdb("drawing_template_items").update({ status: "failed", error: reason.slice(0, 2000), finished_at: at })
+      .eq("id", item.id).eq("status", "running");
+  };
+  // Phase 1 renders reference items only; any other purpose is not built yet.
+  if (item.purpose !== "reference") { await failItem(`Purpose ${item.purpose} is not built yet`); return null; }
+  const version = await loadSpecVersion(tdb, item.spec_version_id);
+  if (!version) { await failItem("the template version no longer exists"); return null; }
+  const { data: job, error } = await tdb("drawing_render_jobs").insert({
+    mode: "sandbox", template_item_id: item.id,
+    component_id: item.component_id, cad_model_revision_id: item.cad_model_revision_id, cad_file_id: item.cad_file_id,
+    spec_version_id: item.spec_version_id, spec: version.name, issue: null,
+    drawing_id: null, created_drawing: false,
+    status: "running", claimed_at: at, claimed_by: agent,
+    requested_by: item.requested_by ?? null,
+    steps: setRenderStep(newRenderSteps(), "claim", "passed", agent, at),
+  }).select("*").maybeSingle();
+  if (error || !job) {
+    // Once back to the queue (a blip); a second failure fails the item with
+    // the insert error instead of flapping queued ↔ running on every poll.
+    const reason = `the render job could not be created: ${error?.message || "no row"}`;
+    if (item.error) { await failItem(reason); return null; }
+    await tdb("drawing_template_items").update({ status: "queued", taken_at: null, error: reason.slice(0, 2000) })
+      .eq("id", item.id).eq("status", "running");
+    return null;
+  }
+  await tdb("drawing_template_items").update({ job_id: job.id, error: null }).eq("id", item.id);
+  const closeAs = async (reason: string) => {
+    await tdb("drawing_render_jobs").update(renderFailPatch(job.steps, reason, at)).eq("id", job.id).eq("status", "running");
+    await failItem(reason);
+    return null;
+  };
+  const [{ data: component }, { data: stepFile }] = await Promise.all([
+    tdb("bom_components").select("id, part_number, name").eq("id", item.component_id).maybeSingle(),
+    tdb("cad_model_files").select("id, file_name, sha256, storage_path").eq("id", item.cad_file_id).maybeSingle(),
+  ]);
+  if (!stepFile) return await closeAs("the STEP file no longer exists");
+  const { data: signed, error: signErr } = await db.storage.from(DOC_BUCKET).createSignedUrl(stepFile.storage_path, 3600);
+  if (signErr || !signed?.signedUrl) return await closeAs(`STEP could not be signed: ${signErr?.message || "no url"}`);
+  const spec_body = canonicalJson(version.body);
+  const spec_body_sha256 = await canonicalSha(spec_body);
+  if (version.body_sha256 && spec_body_sha256 !== version.body_sha256) {
+    return await closeAs(`spec body ${version.name} v${version.version} does not hash to its stored sha`);
+  }
+  const [out] = await withRenderJobContext(tdb, [job]);
+  return {
+    ...out,
+    mode: "sandbox", template_item_id: item.id,
+    component_id: item.component_id, cad_model_revision_id: item.cad_model_revision_id, cad_file_id: item.cad_file_id,
+    spec: version.name, spec_body, spec_body_sha256, spec_patch: null, patch_sha256: null,
+    title_block: sandboxTitleBlock(component?.name ?? null, out?.cad_revision ?? null),
+    step_url: signed.signedUrl, step_file_name: stepFile.file_name,
+    step_sha256: item.cad_sha256, cad_sha256: item.cad_sha256,
+    drawing_id: null, issue: null, png: true,
+  };
 }
 
 /**
@@ -4763,7 +5023,7 @@ Deno.serve(async (req) => {
     (parentRows || []).forEach((r: any) => { if (r.is_reference) boxCount[r.parent_id] = (boxCount[r.parent_id] || 0) + 1; });
     const search = body.search ? String(body.search).trim() : null;
     let q = tdb("bom_components")
-      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id, description")
+      .select("id, part_number, oem_number, name, type, make_or_buy, lifecycle_status, replacement_note, flag_reason, source_family_id, source_config_id, category_id, part_type_id, description")
       .order("name");
     if (search) q = (q as any).or(`name.ilike.*${search}*,part_number.ilike.*${search}*`);
     const [{ data: comps, error: ce }, { data: metaRows }, { data: cadRows }] = await Promise.all([
@@ -5249,6 +5509,7 @@ Deno.serve(async (req) => {
       "document_revised",
       "drawing_linked", "drawing_revised", "drawing_released", "drawing_adopted",
       "drawing_deleted", "cad_deleted",   // §5.5: a retraction is an event in the part's life
+      "part_type_changed",                // DRAWING_TEMPLATES §4.6: written by setComponentPartType
     ];
     const [histRes, verRes, docRes] = await Promise.all([
       tdb("bom_component_history")
@@ -5493,7 +5754,7 @@ Deno.serve(async (req) => {
     // Supplier role gets a reduced field set: no internal notes or sourcing strategy.
     const nodeFields = role === "supplier"
       ? "id, part_number, name, type, category_id, unit_of_measure, lifecycle_status, description"
-      : "id, part_number, name, type, make_or_buy, category_id, unit_of_measure, lifecycle_status, notes, description";
+      : "id, part_number, name, type, make_or_buy, category_id, unit_of_measure, lifecycle_status, notes, description, part_type_id";
     while (queue.length > 0) {
       const batch = queue.splice(0, queue.length);
       const ids = batch.map((n) => n.id).filter((id) => !visited.has(id));
@@ -5875,6 +6136,9 @@ Deno.serve(async (req) => {
     if (!component_id) return json({ error: "component_id required" }, 400);
     const { data: comp } = await tdb("bom_components").select("id").eq("id", component_id).maybeSingle();
     if (!comp) return json({ error: "Component not found" }, 404);
+    // A part type's reference cannot go (DRAWING_TEMPLATES §4.7), checked before any write.
+    const { data: refTypes } = await tdb("part_types").select("name").eq("reference_component_id", component_id).limit(1);
+    if ((refTypes || []).length) return json({ error: `Reference of part type ${refTypes![0].name}` }, 409);
 
     // Null out any product_passport root references (nullable FK)
     await tdb("product_passports").update({ root_component_id: null }).eq("root_component_id", component_id);
@@ -6389,6 +6653,9 @@ Deno.serve(async (req) => {
     // A supplier builds from the released issue only (docs/STATUS_MODEL.md §6):
     // no released issue, no drawing; and the released issue is the one shown.
     if (role === "supplier") drawings = drawings.filter((d: any) => derivedOf(d).released);
+    // The Template column (DRAWING_TEMPLATES §5.8), Rushroom only: which
+    // template version the current issue is pinned to.
+    const labelOf = role === "rushroom" ? await templateLabelsByRevision(tdb) : null;
     const result = drawings.map((d: any) => {
       const derived = derivedOf(d);
       const shown = role === "supplier" ? derived.released : derived.current;
@@ -6410,6 +6677,7 @@ Deno.serve(async (req) => {
       // What a supplier may build from: the released issue, and only when the
       // drawing is shown to suppliers at all (docs/DRAWINGS_TAB_UX.md §10).
       supplier_sees: d.is_supplier_visible && derived.released ? derived.released.revision : null,
+      ...(labelOf ? { template_label: (derived.current && labelOf.get(derived.current.id)) || null } : {}),
       };
     }).sort((a: any, b: any) => a.drawing_number.localeCompare(b.drawing_number, undefined, { numeric: true, sensitivity: "base" }));
 
@@ -7191,6 +7459,11 @@ Deno.serve(async (req) => {
       const going = kind === "cad_model" ? all : all.filter((r: any) => r.id === id);
       if (kind === "cad_revision" && !going.length) return null;
       const staying = all.filter((r: any) => !going.some((g: any) => g.id === r.id));
+      // A part type's reference revision cannot go (DRAWING_TEMPLATES §4.7).
+      if (going.length) {
+        const { data: refTypes } = await tdb("part_types").select("name").in("reference_cad_model_revision_id", going.map((r: any) => r.id)).limit(1);
+        if ((refTypes || []).length) out.blocked = `Reference of part type ${(refTypes as any[])[0].name}`;
+      }
       out.object = {
         cad_model_id: m.id, fusion_document_name: m.fusion_document_name || "",
         label: kind === "cad_model" ? (m.fusion_document_name || "CAD model") : `${m.fusion_document_name || "CAD"} Rev ${going[0].revision}`,
@@ -7213,7 +7486,7 @@ Deno.serve(async (req) => {
           const num = new Map(((dws || []) as any[]).map((x) => [x.id, x.drawing_number]));
           out.made_from = madeRows.map((x) => ({ drawing_number: num.get(x.drawing_id) || "", revision: x.revision, status: x.status }));
         }
-        const { data: jobs } = await tdb("drawing_render_jobs").select("id").in("cad_file_id", fileIds);
+        const { data: jobs } = await tdb("drawing_render_jobs").select("id").in("cad_file_id", fileIds).is("template_item_id", null);
         out.render_jobs = (jobs || []).length;
       }
     } else {
@@ -7282,10 +7555,22 @@ Deno.serve(async (req) => {
     // 1. The storage objects first: a row without its file is worse than a
     //    file without its row (the audit below names every path either way).
     let files_removed = 0;
+    // A part type's earlier reference renders made from these files go with
+    // them (the FK cascade drops item and job rows; their sheets would stay).
+    if (kind === "cad_model" || kind === "cad_revision") {
+      const fileIds = facts.revisions.flatMap((r: any) => r.files.map((f: any) => f.id)).filter(Boolean);
+      if (fileIds.length) {
+        const { data: sandboxJobs } = await tdb("drawing_render_jobs").select("id, drawing_id, mode, template_item_id, result")
+          .in("cad_file_id", fileIds).not("template_item_id", "is", null);
+        for (const j of (sandboxJobs || []) as any[]) {
+          try { files_removed += await removeRenderArtifacts(j); } catch { /* best effort: the rows still go */ }
+        }
+      }
+    }
     if (facts.storage_paths.length) {
       const { error: rmErr } = await db.storage.from(DOC_BUCKET).remove(facts.storage_paths);
       if (rmErr) return json({ error: `Could not remove the files: ${rmErr.message}` }, 500);
-      files_removed = facts.storage_paths.length;
+      files_removed += facts.storage_paths.length;
     }
     // 2. The rows. A revision that is current hands the pointer to the one
     //    that remains (the same rule syncCadModel applies), then goes.
@@ -8122,7 +8407,8 @@ Deno.serve(async (req) => {
     if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
     const limit = Math.min(Math.max(Number(body.limit) || 10, 1), 100);
     await expireDrawingRenderJobs(tdb, session);
-    let q = tdb("drawing_render_jobs").select(RENDER_JOB_LIST_FIELDS);
+    // Template item jobs (reference renders) never reach a person's list.
+    let q = tdb("drawing_render_jobs").select(RENDER_JOB_LIST_FIELDS).is("template_item_id", null);
     if (body.drawing_id) q = q.eq("drawing_id", String(body.drawing_id));
     if (body.component_id) q = q.eq("component_id", String(body.component_id));
     const { data: jobs, error } = await q.order("requested_at", { ascending: false }).limit(limit);
@@ -8138,6 +8424,7 @@ Deno.serve(async (req) => {
     await expireDrawingRenderJobs(tdb, session);
     const { data: job } = await tdb("drawing_render_jobs").select("*").eq("id", job_id).maybeSingle();
     if (!job) return json({ error: "Render job not found" }, 404);
+    if (job.mode === "sandbox") return json({ error: "Reference renders cannot be cancelled" }, 409);
     if (job.status !== "requested") return json({ error: `Job is ${job.status}; only a requested job can be cancelled` }, 409);
     const at = new Date().toISOString();
     const { data: upd, error } = await tdb("drawing_render_jobs")
@@ -8172,7 +8459,13 @@ Deno.serve(async (req) => {
     // The worker mirrors specs/<name>.yaml from the current template version
     // (DRAWING_DIALOGUE §5): the idle answer carries the list so a promotion
     // reaches the Mac on the next poll.
-    if (!target) return json({ job: null, templates: await templateList(tdb) });
+    // No real job waiting: the poll is the pump (DRAWING_TEMPLATES §5.2) and
+    // hands out the next template item, so real work always goes first.
+    if (!target) {
+      const pumped = await pumpTemplateItem(tdb, agent);
+      if (!pumped) return json({ job: null, templates: await templateList(tdb) });
+      return json({ job: pumped, templates: await templateList(tdb) });
+    }
     const at = new Date().toISOString();
     // The claim is one UPDATE guarded by status = 'requested': of two workers
     // polling at once only one touches the row; the other gets no row back
@@ -8288,10 +8581,11 @@ Deno.serve(async (req) => {
     const file_name = safeName(String(body.file_name ?? "").trim());
     if (!job_id || !body.file_name) return json({ error: "job_id and file_name required" }, 400);
     await expireDrawingRenderJobs(tdb, session);
-    const { data: job } = await tdb("drawing_render_jobs").select("id, status, drawing_id").eq("id", job_id).maybeSingle();
+    const { data: job } = await tdb("drawing_render_jobs").select("id, status, drawing_id, mode, template_item_id").eq("id", job_id).maybeSingle();
     if (!job) return json({ error: "Render job not found" }, 404);
     if (job.status !== "running") return json({ error: `Job is ${job.status}, not running` }, 409);
-    if (!job.drawing_id) return json({ error: "the drawing no longer exists" }, 409);
+    // A sandbox job has no drawing by design; its folder keys on its item.
+    if (job.mode !== "sandbox" && !job.drawing_id) return json({ error: "the drawing no longer exists" }, 409);
     const path = `${renderArtifactPrefix(job)}${file_name}`;
     const { data, error } = await db.storage.from(DOC_BUCKET).createSignedUploadUrl(path);
     if (error) return json({ error: error.message }, 500);
@@ -8353,11 +8647,55 @@ Deno.serve(async (req) => {
       if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
       const removed = await removeEmptyRenderDrawing(tdb, session, upd[0]);
       await closeJobPatch(tdb, job, "failed");
+      // A reference render's item fails with the job, with the same words.
+      if (job.template_item_id) {
+        await tdb("drawing_template_items").update({ status: "failed", error: patch.error, finished_at: at })
+          .eq("id", job.template_item_id).in("status", ["queued", "running"]);
+      }
       const [out] = await withRenderJobContext(tdb, [{ ...upd[0], drawing_id: removed ? null : upd[0].drawing_id }]);
       return json({ job: removed ? { ...out, drawing_number: removed } : out });
     };
 
     if (body.error != null && body.error !== "") return await fail(String(body.error));
+
+    // mode=sandbox (DRAWING_TEMPLATES phase 1, the reference render): no
+    // drawing, revision, document, history or supplier row is touched. Checked
+    // BEFORE the verification guard below: a failed verify is a result here —
+    // the reference shows the engine's output on today's Base, failures too.
+    if (job.mode === "sandbox") {
+      const res = body.result && typeof body.result === "object" && !Array.isArray(body.result) ? body.result : {};
+      const hex = (v: unknown) => /^[0-9a-f]{64}$/i.test(String(v ?? "")) ? String(v).toLowerCase() : null;
+      const { data: item } = await tdb("drawing_template_items").select("*").eq("id", job.template_item_id).maybeSingle();
+      if (!item) return await fail("the template item no longer exists");
+      const version = await loadSpecVersion(tdb, job.spec_version_id);
+      const sheets = normaliseRenderArtifacts(job, res.artifacts);
+      // The three checks (STEP, template, sheets) and verify_ok: _shared/render-job-core.mjs.
+      const check = sandboxFinishCheck({
+        result: res, bodySourceSha: body.source_sha256, itemCadSha: item.cad_sha256,
+        versionSha: version?.body_sha256 ?? null, sheets,
+      });
+      if ("error" in check) return await fail(check.error);
+      const { source, verify_ok, verify: verifyFacts } = check;
+      const summary = {
+        pages: res.pages ?? null, verify_ok, verify: verifyFacts,
+        drawset_version: res.drawset_version ?? null,
+        dimension_list_sha256: hex(res.dimension_list_sha256), artifacts: sheets,
+      };
+      const steps = setRenderStep(job.steps, "register", "passed", "Reference drawn · no drawing written", at);
+      const { data: upd, error } = await tdb("drawing_render_jobs").update({
+        status: "done", finished_at: at, error: null, steps,
+        result: {
+          ...res, mode: "sandbox", verify_ok, verify: verifyFacts, artifacts: sheets, source_sha256: source,
+          storage_path: sheets.pdf, file_name: String(body.file_name ?? "").trim() || null,
+          sha256: String(body.sha256 ?? "").trim().toLowerCase() || null,
+        },
+      }).eq("id", job_id).eq("status", "running").select("id");
+      if (error) return json({ error: error.message }, 400);
+      if (!upd?.length) return json({ error: "Job is no longer running" }, 409);
+      await tdb("drawing_template_items").update({ status: "done", finished_at: at, error: null, summary })
+        .eq("id", item.id).in("status", ["queued", "running"]);
+      return json({ ok: true });
+    }
 
     const result = body.result && typeof body.result === "object" && !Array.isArray(body.result) ? body.result : {};
     const artifacts = normaliseRenderArtifacts(job, result.artifacts);
@@ -8493,12 +8831,18 @@ Deno.serve(async (req) => {
     // The sha of the body each file carried, so the worker knows whether its
     // file already matches the current version (DRAWING_DIALOGUE §5).
     const sent: Record<string, string> = {};
+    // Rows the portal owns (a type's rule set, phase 6) are never written or
+    // deleted by a worker's registration (DRAWING_TEMPLATES §10.2).
+    const { data: ownedRows } = await tdb("drawing_render_specs").select("name").eq("portal_owned", true);
+    const owned = new Set(((ownedRows || []) as any[]).map((r) => r.name));
     for (const s of body.specs) {
       const n = normaliseSpec(s);
       if (!n || seen.has(n.name)) continue;
       seen.add(n.name);
+      if (owned.has(n.name)) continue;
       const { body: specBody, template, ...row } = n as any;
-      const out: any = { ...row, agent, updated_at: at };
+      // flat_panel is the Base; every other Mac spec is a legacy per-part spec.
+      const out: any = { ...row, agent, updated_at: at, level: n.name === "flat_panel" ? "base" : "legacy" };
       if (template !== undefined) out.template = template === true;
       if (specBody) {
         const kind = template === true ? "template" : "part_spec";
@@ -8539,7 +8883,7 @@ Deno.serve(async (req) => {
       if (error) return json({ error: error.message }, 400);
     }
     // Specs no longer in the worker's list are gone for this org.
-    let dq = tdb("drawing_render_specs").delete();
+    let dq = tdb("drawing_render_specs").delete().eq("portal_owned", false);
     if (rows.length) dq = dq.not("name", "in", `(${rows.map((r) => `"${r.name.replace(/"/g, "")}"`).join(",")})`);
     const { data: removed, error: dErr } = await dq.select("name");
     if (dErr) return json({ error: dErr.message }, 400);
@@ -8939,6 +9283,386 @@ Deno.serve(async (req) => {
     if (!job) return json({ error: "Render job not found" }, 404);
     const signed = await signRenderArtifacts(job.result);
     return json({ job_id: job.id, status: job.status, mode: job.mode, issue: job.issue, ...signed, paths: job.result?.artifacts ?? null });
+  }
+
+  // ==========================================================================
+  // Drawing Templates phase 1 (docs/DRAWING_TEMPLATES.md §4, §6, §10.2).
+  // Rushroom only, every action; none is a supplier action. Part types, the
+  // part type on parts, the reference pin and its render item, the register
+  // and the pages in words. The shapes are the phase 1 contract's §3.1.
+  // ==========================================================================
+
+  // --- the part types, with counts, reference and newest reference item -----
+  if (action === "listPartTypes") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const view = await loadPartTypeView(tdb, { includeRetired: body.include_retired === true });
+    return json({ part_types: view.part_types, untyped_count: view.untyped_count });
+  }
+
+  // --- a new part type: a name in, a key made from it -----------------------
+  if (action === "createPartType") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const name = String(body.name ?? "").trim().replace(/\s+/g, " ");
+    if (!name) return json({ error: "Name required" }, 400);
+    if (name.length > 80) return json({ error: "Name too long" }, 400);
+    const { data: all } = await tdb("part_types").select("id, key, name, sort_order");
+    const rows = (all || []) as any[];
+    if (rows.some((t) => String(t.name).toLowerCase() === name.toLowerCase())) {
+      return json({ error: "A part type with that name exists" }, 409);
+    }
+    const key = partTypeKey(name, new Set(rows.map((t) => t.key)));
+    const sort_order = (rows.length ? Math.max(...rows.map((t) => Number(t.sort_order) || 0)) : 0) + 10;
+    const { data: ins, error } = await tdb("part_types").insert({
+      key, name, sort_order, created_by: session.uid ?? null,
+    }).select("id").maybeSingle();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) return json({ error: "A part type with that name exists" }, 409);
+      return json({ error: error.message }, 400);
+    }
+    try {
+      await db.from("platform_audit").insert({
+        actor_user_id: session.uid ?? null, actor_email: session.email ?? null, action: "part_type_created",
+        target_organization_id: organizationId, detail: { id: ins.id, key, name },
+      });
+    } catch { /* the row itself is the record */ }
+    const view = await loadPartTypeView(tdb, { includeRetired: true, ids: [ins.id] });
+    return json({ part_type: view.part_types[0] ?? null });
+  }
+
+  // --- rename: the key never changes ----------------------------------------
+  if (action === "renamePartType") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const id = String(body.id ?? "").trim();
+    const name = String(body.name ?? "").trim().replace(/\s+/g, " ");
+    const { data: cur } = id ? await tdb("part_types").select("id, name").eq("id", id).maybeSingle() : { data: null };
+    if (!cur) return json({ error: "Part type not found" }, 404);
+    if (!name) return json({ error: "Name required" }, 400);
+    if (name.length > 80) return json({ error: "Name too long" }, 400);
+    const { data: all } = await tdb("part_types").select("id, name");
+    if (((all || []) as any[]).some((t) => t.id !== id && String(t.name).toLowerCase() === name.toLowerCase())) {
+      return json({ error: "A part type with that name exists" }, 409);
+    }
+    if (name !== cur.name) {
+      const { error } = await tdb("part_types").update({ name }).eq("id", id);
+      if (error) {
+        if (/duplicate key|unique/i.test(error.message)) return json({ error: "A part type with that name exists" }, 409);
+        return json({ error: error.message }, 400);
+      }
+      try {
+        await db.from("platform_audit").insert({
+          actor_user_id: session.uid ?? null, actor_email: session.email ?? null, action: "part_type_renamed",
+          target_organization_id: organizationId, detail: { id, from: cur.name, to: name },
+        });
+      } catch { /* the row itself is the record */ }
+    }
+    const view = await loadPartTypeView(tdb, { includeRetired: true, ids: [id] });
+    return json({ part_type: view.part_types[0] ?? null });
+  }
+
+  // --- retire / restore: a type with parts cannot be retired ----------------
+  if (action === "retirePartType") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const id = String(body.id ?? "").trim();
+    const retired = body.retired === true;
+    const { data: cur } = id ? await tdb("part_types").select("id, name, retired_at").eq("id", id).maybeSingle() : { data: null };
+    if (!cur) return json({ error: "Part type not found" }, 404);
+    if (retired) {
+      const { count } = await tdb("bom_components").select("id", { count: "exact", head: true }).eq("part_type_id", id);
+      if ((count ?? 0) > 0) return json({ error: "Part type has parts" }, 409);
+    }
+    const patch = retired
+      ? { retired_at: cur.retired_at ?? new Date().toISOString(), retired_by: session.uid ?? null }
+      : { retired_at: null, retired_by: null };
+    const { error } = await tdb("part_types").update(patch).eq("id", id);
+    if (error) return json({ error: error.message }, 400);
+    try {
+      await db.from("platform_audit").insert({
+        actor_user_id: session.uid ?? null, actor_email: session.email ?? null, action: "part_type_retired",
+        target_organization_id: organizationId, detail: { id, name: cur.name, retired },
+      });
+    } catch { /* the row itself is the record */ }
+    const view = await loadPartTypeView(tdb, { includeRetired: true, ids: [id] });
+    return json({ part_type: view.part_types[0] ?? null });
+  }
+
+  // --- the part type of one part or many; one history row per changed part --
+  if (action === "setComponentPartType") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const raw = Array.isArray(body.component_ids) ? body.component_ids : (body.component_id != null ? [body.component_id] : []);
+    const ids = [...new Set(raw.map((v: unknown) => String(v ?? "").trim()).filter(Boolean))] as string[];
+    if (!ids.length) return json({ error: "No parts" }, 400);
+    if (ids.length > 200) return json({ error: "Too many parts" }, 400);
+    const targetId = body.part_type_id == null || body.part_type_id === "" ? null : String(body.part_type_id).trim();
+    const { data: typeRows } = await tdb("part_types").select("id, name, retired_at, reference_component_id");
+    const types = (typeRows || []) as any[];
+    const typeById = new Map(types.map((t) => [t.id, t]));
+    if (targetId) {
+      const t = typeById.get(targetId);
+      if (!t) return json({ error: "Part type not found" }, 404);
+      if (t.retired_at) return json({ error: "Part type is retired" }, 409);
+    }
+    const { data: compRows } = await tdb("bom_components")
+      .select("id, part_number, oem_number, name, description, type, lifecycle_status, part_type_id").in("id", ids);
+    const compById = new Map(((compRows || []) as any[]).map((c) => [c.id, c]));
+    const refOf = new Map<string, any>();
+    for (const t of types) if (t.reference_component_id) refOf.set(t.reference_component_id, t);
+    let changed = 0, unchanged = 0;
+    const refused: { component_id: string; reason: string }[] = [];
+    const nameOf = (tid: string | null) => (tid && typeById.get(tid)?.name) || "none";
+    for (const cid of ids) {
+      const comp = compById.get(cid);
+      const decision = partTypeChange(comp ?? null, targetId, refOf.get(cid) ?? null);
+      if (decision.kind === "refused") { refused.push({ component_id: cid, reason: decision.reason }); continue; }
+      if (decision.kind === "unchanged") { unchanged++; continue; }
+      const from = decision.from;
+      const { error: uErr } = await tdb("bom_components").update({ part_type_id: targetId }).eq("id", cid);
+      if (uErr) { refused.push({ component_id: cid, reason: uErr.message }); continue; }
+      // Written here, not through writeBomHistory (which swallows errors), and
+      // checked: the 0009 trigger does not fire on part_type_id, so this row is
+      // the only record of the change.
+      const { error: hErr } = await tdb("bom_component_history").insert({
+        organization_id: organizationId, component_id: cid,
+        changed_at: new Date().toISOString(), changed_by: session.uid ?? null,
+        change_type: "part_type_changed",
+        part_number: comp.part_number, oem_number: comp.oem_number, name: comp.name, description: comp.description,
+        type: comp.type, lifecycle_status: comp.lifecycle_status,
+        notes: `Part type: ${nameOf(from)} → ${nameOf(targetId)}`,
+      });
+      if (hErr) {
+        await tdb("bom_components").update({ part_type_id: from }).eq("id", cid);
+        refused.push({ component_id: cid, reason: "History not written" });
+        continue;
+      }
+      changed++;
+    }
+    return json({ changed, unchanged, refused });
+  }
+
+  // --- what may be a type's reference: released CAD revisions with a STEP ---
+  if (action === "listPartTypeReferenceCandidates") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const part_type_id = String(body.part_type_id ?? "").trim();
+    const { data: pt } = part_type_id ? await tdb("part_types").select("id").eq("id", part_type_id).maybeSingle() : { data: null };
+    if (!pt) return json({ error: "Part type not found" }, 404);
+    const compQ = tdb("bom_components").select("id, part_number, name, type, part_type_id");
+    const modelQ = tdb("cad_models").select("id, component_id").not("component_id", "is", null);
+    const revQ = tdb("cad_model_revisions").select("id, cad_model_id, revision, status, released_at").eq("status", "released");
+    const [{ data: compRows }, { data: modelRows }, { data: revRows }] = await Promise.all([compQ, modelQ, revQ]);
+    // A part of this type, or an untyped panel (the pin types it, §3.3 step 6).
+    const eligible = new Map(((compRows || []) as any[])
+      .filter((c) => c.part_type_id === part_type_id || (!c.part_type_id && PANEL_COMPONENT_TYPES.includes(c.type)))
+      .map((c) => [c.id, c]));
+    const modelComp = new Map(((modelRows || []) as any[]).filter((m) => eligible.has(m.component_id)).map((m) => [m.id, m.component_id]));
+    const revs = ((revRows || []) as any[]).filter((r) => modelComp.has(r.cad_model_id));
+    const { data: fileRows } = revs.length
+      ? await tdb("cad_model_files").select("id, cad_model_revision_id, file_name, sha256").eq("format", "step").in("cad_model_revision_id", revs.map((r) => r.id))
+      : { data: [] };
+    const stepOf = new Map<string, any>();
+    for (const f of (fileRows || []) as any[]) if (f.sha256 && !stepOf.has(f.cad_model_revision_id)) stepOf.set(f.cad_model_revision_id, f);
+    const candidates = revs.filter((r) => stepOf.has(r.id)).map((r) => {
+      const c = eligible.get(modelComp.get(r.cad_model_id));
+      const f = stepOf.get(r.id);
+      return {
+        component_id: c.id, part_number: c.part_number, name: c.name, part_type_id: c.part_type_id ?? null,
+        cad_model_revision_id: r.id, revision: r.revision, cad_file_id: f.id, file_name: f.file_name,
+        sha256: f.sha256, released_at: r.released_at ?? null,
+      };
+    }).sort((a, b) => String(a.part_number).localeCompare(String(b.part_number), undefined, { numeric: true })
+      || compareRevision(a.revision, b.revision));
+    return json({ candidates });
+  }
+
+  // --- pin a type's reference and queue its render on the Base --------------
+  if (action === "setPartTypeReference") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const part_type_id = String(body.part_type_id ?? "").trim();
+    const cad_model_revision_id = String(body.cad_model_revision_id ?? "").trim();
+    // 1. The type.
+    const { data: pt } = part_type_id ? await tdb("part_types").select(PART_TYPE_FIELDS).eq("id", part_type_id).maybeSingle() : { data: null };
+    if (!pt) return json({ error: "Part type not found" }, 404);
+    if (pt.retired_at) return json({ error: "Part type is retired" }, 409);
+    // 2. A released revision of this org.
+    const { data: rev } = cad_model_revision_id
+      ? await tdb("cad_model_revisions").select("id, cad_model_id, revision, status").eq("id", cad_model_revision_id).maybeSingle()
+      : { data: null };
+    if (!rev || rev.status !== "released") return json({ error: "Choose a released revision" }, 409);
+    // 3. Its STEP, as requestDrawingRender finds it, with its bytes' sha.
+    const { data: stepFiles } = await tdb("cad_model_files").select("id, file_name, sha256, storage_path")
+      .eq("cad_model_revision_id", rev.id).eq("format", "step");
+    const stepFile = (stepFiles || [])[0];
+    if (!stepFile || !stepFile.sha256) return json({ error: "Revision has no STEP file" }, 409);
+    // 4. The part is untyped or of this type.
+    const { data: model } = await tdb("cad_models").select("id, component_id").eq("id", rev.cad_model_id).maybeSingle();
+    const { data: comp } = model?.component_id
+      ? await tdb("bom_components").select("id, part_number, oem_number, name, description, type, lifecycle_status, part_type_id").eq("id", model.component_id).maybeSingle()
+      : { data: null };
+    if (!comp) return json({ error: "Choose a released revision" }, 409);
+    if (comp.part_type_id && comp.part_type_id !== pt.id) {
+      const { data: other } = await tdb("part_types").select("name").eq("id", comp.part_type_id).maybeSingle();
+      return json({ error: `Part is of part type ${other?.name ?? "another type"}` }, 409);
+    }
+    // 5. A Base with a current version to render on.
+    const base = await loadBaseRow(tdb);
+    if (!base || !base.spec.current_version_id || !base.version) return json({ error: "No Base template" }, 409);
+    const at = new Date().toISOString();
+    // 6. An untyped part becomes this type, with its history row.
+    if (!comp.part_type_id) {
+      const { error: uErr } = await tdb("bom_components").update({ part_type_id: pt.id }).eq("id", comp.id);
+      if (uErr) return json({ error: uErr.message }, 400);
+      const { error: hErr } = await tdb("bom_component_history").insert({
+        organization_id: organizationId, component_id: comp.id, changed_at: at, changed_by: session.uid ?? null,
+        change_type: "part_type_changed",
+        part_number: comp.part_number, oem_number: comp.oem_number, name: comp.name, description: comp.description,
+        type: comp.type, lifecycle_status: comp.lifecycle_status,
+        notes: `Part type: none → ${pt.name}`,
+      });
+      if (hErr) {
+        await tdb("bom_components").update({ part_type_id: null }).eq("id", comp.id);
+        return json({ error: "History not written" }, 500);
+      }
+    }
+    // 7. The pin.
+    const { error: pErr } = await tdb("part_types").update({
+      reference_component_id: comp.id, reference_cad_model_revision_id: rev.id,
+      reference_cad_file_id: stepFile.id, reference_sha256: stepFile.sha256,
+      reference_set_at: at, reference_set_by: session.uid ?? null,
+    }).eq("id", pt.id);
+    if (pErr) return json({ error: pErr.message }, 400);
+    // 8. A queued reference item of this type is replaced; a running one finishes.
+    await tdb("drawing_template_items").update({ status: "cancelled", finished_at: at })
+      .eq("part_type_id", pt.id).eq("purpose", "reference").eq("status", "queued");
+    // 9. The item, on the Base's current version.
+    const { data: item, error: iErr } = await tdb("drawing_template_items").insert({
+      purpose: "reference", part_type_id: pt.id, spec_version_id: base.spec.current_version_id,
+      component_id: comp.id, cad_model_revision_id: rev.id, cad_file_id: stepFile.id, cad_sha256: stepFile.sha256,
+      status: "queued", requested_by: session.uid ?? null, requested_by_label: actorLabel(session),
+    }).select(TEMPLATE_ITEM_FIELDS).maybeSingle();
+    if (iErr) return json({ error: iErr.message }, 400);
+    // 10. The audit.
+    try {
+      await db.from("platform_audit").insert({
+        actor_user_id: session.uid ?? null, actor_email: session.email ?? null, action: "part_type_reference_set",
+        target_organization_id: organizationId,
+        detail: { id: pt.id, name: pt.name, component_id: comp.id, cad_model_revision_id: rev.id, sha256: stepFile.sha256 },
+      });
+    } catch { /* the pin and the item are the record */ }
+    const view = await loadPartTypeView(tdb, { includeRetired: true, ids: [pt.id] });
+    return json({ part_type: view.part_types[0] ?? null, item });
+  }
+
+  // --- the register: the Base, every type, the legacy per-part specs --------
+  if (action === "listDrawingTemplates") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const [base, view, { data: specRows }, { data: drawingRows }] = await Promise.all([
+      loadBaseRow(tdb),
+      loadPartTypeView(tdb, { includeRetired: true }),
+      tdb("drawing_render_specs").select("name, title, level").eq("level", "legacy").order("name"),
+      tdb("drawings").select("id, render_spec").not("render_spec", "is", null),
+    ]);
+    const perSpec: Record<string, number> = {};
+    for (const d of (drawingRows || []) as any[]) perSpec[d.render_spec] = (perSpec[d.render_spec] || 0) + 1;
+    return json({
+      base: base?.row ?? null,
+      part_types: view.part_types,
+      untyped_count: view.untyped_count,
+      legacy: ((specRows || []) as any[]).map((s) => ({ name: s.name, title: s.title ?? null, drawings: perSpec[s.name] || 0 })),
+    });
+  }
+
+  // --- one page: the Base, or a type (which renders on the Base) ------------
+  if (action === "getDrawingTemplate") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const isBase = body.base === true;
+    const part_type_id = String(body.part_type_id ?? "").trim();
+    if (!isBase && !part_type_id) return json({ error: "Base or part type required" }, 400);
+    const base = await loadBaseRow(tdb);
+    let view: any = null;
+    let part_type: any = null;
+    if (!isBase) {
+      view = await loadPartTypeView(tdb, { includeRetired: true, ids: [part_type_id] });
+      part_type = view.part_types[0] ?? null;
+      if (!part_type) return json({ error: "Part type not found" }, 404);
+    }
+    if (!base) return json({ error: "No Base template" }, 404);
+    const describe = describeTemplateBody(base.version?.body ?? {});
+    const lines = { title_block: describe.title_block, tolerances: describe.tolerances, sheets: describe.sheets, edges: describe.edges, rules: describe.rules };
+    // History: the Base's versions, newest first; a type has none in phase 1.
+    let history: any[] = [];
+    if (isBase) {
+      const { data: versions } = await tdb("drawing_spec_versions")
+        .select("id, version, origin, author_user_id, registered_by, created_at, note")
+        .eq("name", base.spec.name).order("version", { ascending: false });
+      const vs = (versions || []) as any[];
+      const emails = await userEmails(vs.map((v) => v.author_user_id));
+      history = vs.map((v) => ({
+        version_id: v.id, version: v.version, base_version: null, origin: v.origin || "mac",
+        by_label: versionByLabel(v, emails), saved_at: v.created_at, request: v.note ?? null, proof: null,
+      }));
+    }
+    // The drawings: on the Base by render_spec; on a type, those of its parts.
+    let parts: any[] = [];
+    let drawingIds: string[] = [];
+    if (isBase) {
+      const { data: rows } = await tdb("drawings").select("id").eq("render_spec", base.spec.name);
+      drawingIds = ((rows || []) as any[]).map((d) => d.id);
+    } else {
+      const typed = (view.comps as any[]).filter((c) => c.part_type_id === part_type.id);
+      const ids = new Set<string>();
+      parts = typed.map((c) => {
+        const ds = view.drawingsOfComp.get(c.id) || new Set();
+        for (const d of ds) ids.add(d);
+        return { component_id: c.id, part_number: c.part_number, name: c.name, has_drawing: ds.size > 0 };
+      }).sort((a, b) => String(a.part_number).localeCompare(String(b.part_number), undefined, { numeric: true }));
+      drawingIds = [...ids];
+    }
+    let drawings: any[] = [];
+    if (drawingIds.length) {
+      const [{ data: drawingRows }, revsByDrawing, labels] = await Promise.all([
+        tdb("drawings").select("id, drawing_number, title").in("id", drawingIds),
+        loadDrawingRevisions(tdb, drawingIds),
+        templateLabelsByRevision(tdb),
+      ]);
+      drawings = ((drawingRows || []) as any[]).map((d) => {
+        const cur = deriveObject(revsByDrawing[d.id] || []).current;
+        return {
+          drawing_id: d.id, drawing_number: d.drawing_number, title: d.title,
+          issue: cur?.revision ?? null, status: cur?.status ?? null,
+          template_label: (cur && labels.get(cur.id)) || null,
+        };
+      }).sort((a, b) => String(a.drawing_number).localeCompare(String(b.drawing_number), undefined, { numeric: true }));
+    }
+    return json({ level: isBase ? "base" : "type", base: base.row, part_type, lines, history, parts, drawings });
+  }
+
+  // --- one template item and its job (the page polls this every 3 s) --------
+  if (action === "getDrawingTemplateItem") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const id = String(body.id ?? "").trim();
+    if (!id) return json({ error: "Item not found" }, 404);
+    await expireDrawingRenderJobs(tdb, session);
+    const { data: item } = await tdb("drawing_template_items").select(TEMPLATE_ITEM_FIELDS).eq("id", id).maybeSingle();
+    if (!item) return json({ error: "Item not found" }, 404);
+    let job: any = null;
+    if (item.job_id) {
+      const { data: row } = await tdb("drawing_render_jobs").select(RENDER_JOB_LIST_FIELDS).eq("id", item.job_id).maybeSingle();
+      if (row) [job] = await withRenderJobContext(tdb, [row]);
+    }
+    return json({ item, job: job ?? null });
+  }
+
+  // --- two versions of one template, compared in words ----------------------
+  if (action === "compareDrawingTemplateVersions") {
+    if (role !== "rushroom") return json({ error: "Rushroom only" }, 403);
+    const [from, to] = await Promise.all([
+      loadSpecVersion(tdb, String(body.from_version_id ?? "").trim() || null),
+      loadSpecVersion(tdb, String(body.to_version_id ?? "").trim() || null),
+    ]);
+    if (!from || !to) return json({ error: "Version not found" }, 404);
+    if (from.name !== to.name) return json({ error: "Versions of different templates" }, 400);
+    return json({
+      from: { id: from.id, version: from.version }, to: { id: to.id, version: to.version },
+      lines: diffTemplateBodies(from.body, to.body),
+    });
   }
 
   // ==========================================================================

@@ -675,3 +675,31 @@ that lives in the template body lists without Drop — a button whose click coul
 never succeed is not offered; changing the template's pairs goes through Ask at
 Template scope.
 
+
+## 14 Drawing Templates, phase 1 — the sub-tab, the register, the pages, part type on parts (contract, 2026-11-28, v476)
+
+Design: `docs/DRAWING_TEMPLATES.md` §4, §6, §12 row 1. Phase 1 builds the part
+types, the page and the reference render; rules, sandboxes, Save and Restore
+come later (§12). Everything here is Rushroom only: the sub-tab is only in
+the Rushroom sub-tab bar, no `dtpl*` function is reachable from
+`supplier.html`, and every new action answers 403 to a supplier. In code,
+nothing new is named `template…` or `tpl…` (the Surgery Templates register
+owns those names): sub-tab id `drawing_templates`, prefix `dtpl` / `dtpl-`.
+
+| Element | Contract |
+|---|---|
+| **Sub-tab** | CAD Models · Drawings · **Drawing Templates** · Surgery Templates. Loaded on first visit (`listDrawingTemplates` + `listPartTypes { include_retired }`) under `drLoading`; a return to the window after 30 s reloads the register when it is the view in front (a type or Base page is left alone) |
+| **Register** | the Drawings register's look: count, `+ Part type`, Refresh, Search, chips, sortable heads. Columns **Name · Reference · Parts · Drawings · Version**. First row **Base** (Reference —, Parts —, its drawings, `v3`) → the Base page; one row per type by sort order then name (Reference `<part number> Rev <rev>` or —, Version — in phase 1) → the type page; last row **No part type** with the untyped count (parts and raw materials only) → the in-place list. Chips copy the category chips: **All (n)** · **Per-part specs (n)** (the legacy per-part specs, Name · Title · Drawings, read only) · **Retired (n)** only when a type is retired |
+| **+ Part type** | one row in a modal: `Name [ ] [Create]`; Create under `drBusy`; a 409 ("A part type with that name exists") shows under the row and the modal stays open |
+| **No part type** | in place, with `← Drawing Templates`: the untyped parts, ticked, `<n> selected · Part type [—▾] [Assign] [Clear]` (the `.cs-bulk` bar); Assign posts `setComponentPartType { component_ids }` under `drBusy`, the list reloads, a refused part reads one amber line `<part number>: <reason>` |
+| **Type page** | the drawing surface: `.drawing-head` (`← Drawing Templates`, the name, **Rename**, **Retire** / **Restore**; a refusal — "Part type has parts" — reads as an amber line under the head). Left: the reference above the tabs **Parts (n) · Drawings (n) · History (n)** — Parts: Part number · Name · Drawing (yes / —); Drawings: Number · Title · Issue · Status · Template, a row opens the drawing; History: §6 (no rows for a type in phase 1). Rail: **Version** `On Base v3` · **Reference** `<part number> <name> · Rev <rev>` + **Choose** (**Change** when set; none on a retired type) · **Parts** count · **History** `No versions` |
+| **The reference** | Choose opens the picker: Search, then **Part number · Name · Revision · Released** from `listPartTypeReferenceCandidates`; one click posts `setPartTypeReference` under `drBusy` (the bar above the table; a 409 shows above it and the modal stays). The page reopens with the item queued: `drProgress` polled through `getDrawingTemplateItem` every 3 s, "Waiting for the worker" until the pump has given it a job, then the job's stages (`drJobStage`; the last step of a sandbox job reads **Finishing**). Done → the sheets through `PortalViewer.renderSheets` from `getDrawingRenderArtifacts`; `verify_ok false` → amber **Verification failed** above the sheets, which still show; failed → the error in amber. The poll stops on done / failed / cancelled and when the page is left |
+| **Base page** | the same surface without a reference. Tabs **Lines · History (n)**. Lines: Title block · Tolerances · Sheets · Edges · Rules (n) with the server's lines verbatim and "No rules." for none. Rail: **Version** `v3 · portal` · Saved · By (or —) · **Drawings** count. Never YAML, never a key name (`flat_panel`, `face_order`, `bottom_up`) |
+| **History** | **From · To** radios, then **Version · Base · Origin · By · Saved · Request · Proof · Restore** (Base —, Proof —, Restore empty in phase 1). Previous → newest is compared on open; any two radios post `compareDrawingTemplateVersions` and print its lines under the table (`Compare v1 → v3`, then `+ Face sheets bottom band first`, unstyled) with the bar while it runs |
+| **Part type on parts** | Properties panel: **Part type** under Category, `—` plus the types that are not retired; Save (now under `drBusy`) adds `setComponentPartType` only when the value changed, and a refusal ("Reference of part type Side panel") shows in the Save error and keeps the old value. Parts list (Parts tab): the type as a badge after the category badge; a chip row under the category chips **All · <type> (n) · No part type**; a tick box per row and the bulk bar `<n> selected · Part type [—▾] [Assign] [Clear]` (Assign with — clears the type). Change Log: `part_type_changed` reads **part type changed**, coloured as an edit, the note "Part type: none → Side panel" |
+| **Template column** | Drawings register, Rushroom only, after Issue: `template_label` ("Base v3", "<spec> v2") or —; sortable |
+
+Vocabulary added: **Drawing Templates · Base · Part type · No part type ·
+Per-part specs · Retired · Reference · Choose / Change · On Base vN ·
+Waiting for the worker · Finishing · Verification failed · Lines · Compare ·
+Template**.

@@ -4076,6 +4076,11 @@
   // PROP-038 — part categories, module-scoped for the same reason as
   // parentCountMap: the create modals are sibling functions, not nested ones.
   let partCategories = [];
+  // Drawing Templates phase 1: what kind of panel a part is (part_types).
+  // Module-scoped for the same reason; Rushroom only (listPartTypes is never
+  // called for a supplier).
+  let partTypes = [];
+  const partTypeNameOf = (id) => (partTypes.find((t) => t.id === id) || {}).name || null;
   // component_id → signed thumbnail URL. Module-scoped for the same reason
   // again: bomTreeView fills it, and the add-child picker reads it so a part
   // can be recognised by its picture rather than by an eight-character code.
@@ -4322,6 +4327,19 @@
     const tabBarEl = el("div", { style: "display:flex;gap:0;margin-top:0.75rem;border-bottom:2px solid var(--border,#e2e8f0)" });
     // Second level, Parts only: click a category instead of typing in search.
     const catBarEl = el("div", { style: "display:none;flex-wrap:wrap;gap:0.35rem;margin-top:0.6rem" });
+    // Drawing Templates phase 1 (DRAWING_TEMPLATES §4.6): part type chips under
+    // the category chips, a tick box on each part row and the bulk bar. Parts
+    // tab, Rushroom only.
+    const dtplTypeBarEl = el("div", { class: "dtpl-type-chips", style: "display:none" });
+    const dtplBulkEl = el("div", {});
+    const dtplWarnEl = el("div", {});
+    let dtplTypeFilter = "all";   // "all" | "none" | <part type id>
+    const dtplPicked = new Set();
+    // The bulk bar's chosen type survives repaints (a tick, a chip, a sort);
+    // null = nothing chosen yet, so Assign waits for a deliberate choice and
+    // "—" clears only when someone picked it.
+    let dtplBulkType = null;
+    const dtplOn = () => role === "rushroom" && activeTab === "components";
     // The list is cards, not a table, so there is no column header to click.
     // This bar plays that role: one control per sortable field.
     const sortBarEl = el("div", { style: "display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;margin-top:0.6rem" });
@@ -4456,6 +4474,9 @@
       tabBarEl,
       summaryEl,
       catBarEl,
+      dtplTypeBarEl,
+      dtplBulkEl,
+      dtplWarnEl,
       sortBarEl,
       treeArea,
     );
@@ -4479,6 +4500,67 @@
       });
       const label = expanded ? "Showing, including expanded sub-assemblies:" : "Showing:";
       summaryEl.replaceChildren(lifecycleSummary(nodes, { label }).el);
+    }
+
+    // Part type chips: counts from the Parts tab's unfiltered group, as the
+    // category chips count theirs.
+    function dtplPaintTypeChips(grouped) {
+      if (!dtplOn() || !partTypes.length) { dtplTypeBarEl.style.display = "none"; dtplTypeBarEl.replaceChildren(); return; }
+      if (dtplTypeFilter !== "all" && dtplTypeFilter !== "none" && !partTypes.some((t) => t.id === dtplTypeFilter)) dtplTypeFilter = "all";
+      const tabGroup = grouped[activeTab] || [];
+      const countFor = (id) => id === "all" ? tabGroup.length
+        : id === "none" ? tabGroup.filter((c) => !c.part_type_id).length
+        : tabGroup.filter((c) => c.part_type_id === id).length;
+      const chip = (id, label) => {
+        const n = countFor(id);
+        return bomChip(`${label} (${n})`, {
+          active: dtplTypeFilter === id, dim: !n,
+          onClick: () => { dtplTypeFilter = id; tabPageShown[activeTab] = PAGE_SIZE; renderAll(); },
+        });
+      };
+      dtplTypeBarEl.style.display = "flex";
+      dtplTypeBarEl.replaceChildren(
+        chip("all", "All"),
+        ...partTypes.filter((t) => !t.retired_at).map((t) => chip(t.id, t.name)),
+        chip("none", "No part type"),
+      );
+    }
+    // The bulk bar: "<n> selected · Part type [select] [Assign] [Clear]".
+    // A refused part keeps its type and reads one amber line.
+    function dtplPaintBulk() {
+      const known = new Set(allComponents.map((c) => c.id));
+      for (const id of [...dtplPicked]) if (!known.has(id)) dtplPicked.delete(id);
+      if (!dtplOn() || !dtplPicked.size) { dtplBulkEl.replaceChildren(); dtplBulkType = null; return; }
+      const sel = partTypeSelect(dtplBulkType || "");
+      const assign = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Assign");
+      assign.disabled = dtplBulkType === null;
+      sel.onchange = () => { dtplBulkType = sel.value; assign.disabled = false; };
+      assign.onclick = async () => {
+        if (dtplBulkType === null) { sel.focus(); return; }
+        const ids = [...dtplPicked];
+        const typeId = sel.value || null;
+        dtplWarnEl.replaceChildren();
+        const res = await drBusy(assign, async () => {
+          try { return await API.post(token, "setComponentPartType", { component_ids: ids, part_type_id: typeId }); }
+          catch (ex) { dtplWarnEl.replaceChildren(el("div", { class: "dtpl-line is-warn" }, ex.message)); return false; }
+        });
+        assign.disabled = false;
+        if (!res) return;
+        const refused = new Map((res.refused || []).map((r) => [r.component_id, r.reason]));
+        for (const c of allComponents) if (dtplPicked.has(c.id) && !refused.has(c.id)) c.part_type_id = typeId;
+        dtplWarnEl.replaceChildren(...[...refused].map(([id, reason]) => {
+          const c = allComponents.find((x) => x.id === id);
+          return el("div", { class: "dtpl-line is-warn" }, `${(c && c.part_number) || id}: ${reason}`);
+        }));
+        dtplPicked.clear(); dtplBulkType = null;
+        renderAll();
+      };
+      dtplBulkEl.replaceChildren(el("div", { class: "cs-bulk" }, [
+        el("strong", {}, `${dtplPicked.size} selected`),
+        el("span", { class: "muted" }, "Part type"),
+        sel, assign,
+        el("button", { class: "btn btn-sm", type: "button", onclick: () => { dtplPicked.clear(); dtplBulkType = null; dtplWarnEl.replaceChildren(); renderAll(); } }, "Clear"),
+      ]));
     }
 
     function groupFiltered() {
@@ -4569,6 +4651,11 @@
       }
       if (boxOnlyByTab[activeTab]) items = items.filter((c) => (c.box_count || 0) > 0);
       if (noCadByTab[activeTab])   items = items.filter((c) => !c.has_cad);
+      dtplPaintTypeChips(grouped);
+      if (dtplOn() && dtplTypeFilter !== "all") {
+        items = items.filter((c) => dtplTypeFilter === "none" ? !c.part_type_id : c.part_type_id === dtplTypeFilter);
+      }
+      dtplPaintBulk();
 
       // Sort the filtered set, not the whole list, so the order you see is the
       // order of what is actually shown. Copy first — `items` may be the array
@@ -4792,6 +4879,11 @@
           openComponentDetail(comp.id, token, detailPanel, comp, role);
         },
       }, [
+        dtplOn() ? el("input", {
+          type: "checkbox", class: "dtpl-pick", "aria-label": "Select", checked: dtplPicked.has(comp.id),
+          onclick: (ev) => ev.stopPropagation(),
+          onchange: (ev) => { if (ev.currentTarget.checked) dtplPicked.add(comp.id); else dtplPicked.delete(comp.id); dtplPaintBulk(); },
+        }) : null,
         expandBtn,
         thumbEl,
         el("div", { style: "flex:1;min-width:0;overflow:hidden" }, [
@@ -4805,6 +4897,7 @@
         el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${tfg}18;color:${tfg};white-space:nowrap;flex-shrink:0` }, typeDisplay(comp.type)),
         comp.box_count ? boxBadge(`▢ In the box · ${comp.box_count}`, "What comes with this order line — shown underneath, never ordered or picked on its own") : null,
         comp.category_id ? el("span", { style: "font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:var(--border,#e2e8f0)66;color:var(--muted,#8b93a1);white-space:nowrap;flex-shrink:0" }, categoryNameOf(comp.category_id) || "") : null,
+        role === "rushroom" && comp.part_type_id && partTypeNameOf(comp.part_type_id) ? el("span", { class: "dtpl-badge" }, partTypeNameOf(comp.part_type_id)) : null,
         (() => { const MOB_COLOR = { purchased:"#4a9eed", manufactured:"#f59e0b", assembled:"#a855f7", subcontracted:"#8b93a1" }; const mob = comp.make_or_buy || "purchased"; const mc = MOB_COLOR[mob] || "#8b93a1"; return el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${mc}18;color:${mc};white-space:nowrap;flex-shrink:0` }, mob); })(),
         comp.lifecycle_status ? el("span", { style: `font-size:0.6875rem;padding:1px 6px;border-radius:4px;background:${sfg}18;color:${sfg};white-space:nowrap;flex-shrink:0` }, comp.lifecycle_status) : null,
         role === "rushroom" && allowAddChild && comp.type !== "finished_good" ? el("button", {
@@ -4895,13 +4988,17 @@
       treeArea.replaceChildren(el("div", { class: "loading" }, "Loading BOM…"));
       try {
         const expandedIds = Object.keys(expandedTrees).filter((id) => expandedTrees[id] !== "loading" && expandedTrees[id] !== "error");
-        const [{ components }, thumbRes, pcRes, catRes] = await Promise.all([
+        const [{ components }, thumbRes, pcRes, catRes, ptRes] = await Promise.all([
           API.post(token, "listComponents", {}),
           API.post(token, "listComponentThumbnails", {}).catch(() => ({ thumbnails: [] })),
           API.post(token, "listParentCounts", {}).catch(() => ({ parentCounts: [] })),
           API.post(token, "listPartCategories", {}).catch(() => ({ categories: [] })),
+          role === "rushroom"
+            ? API.post(token, "listPartTypes", {}).catch(() => ({ part_types: [] }))
+            : Promise.resolve({ part_types: [] }),
         ]);
         partCategories = catRes.categories || [];
+        if (role === "rushroom") partTypes = (ptRes && ptRes.part_types) || [];
         mark(`4 list API calls done (${(components || []).length} components)`);
         thumbMap = Object.fromEntries((thumbRes.thumbnails || []).map((t) => [t.component_id, t.url]));
         parentCountMap = Object.fromEntries((pcRes.parentCounts || []).map((p) => [p.component_id, p.parent_count]));
@@ -5777,6 +5874,22 @@
     });
     return sel;
   }
+  // The part type picker: "—" plus the types that are not retired (the part's
+  // own type stays listed even when retired, so Save never changes it unasked).
+  function partTypeSelect(value) {
+    const types = partTypes.filter((t) => !t.retired_at || t.id === value);
+    // A value the list does not hold (the list failed to load, or the type was
+    // made in another tab) keeps its own option, so the select never drops to
+    // "—" on its own and a Save never clears a type nobody touched.
+    const missing = value && !types.some((t) => t.id === value);
+    const sel = el("select", { class: "up-text", "aria-label": "Part type" }, [
+      el("option", { value: "" }, "—"),
+      ...types.map((t) => el("option", { value: t.id }, t.name)),
+      missing ? el("option", { value }, partTypeNameOf(value) || "…") : null,
+    ]);
+    sel.value = value || "";
+    return sel;
+  }
   const categoryRequiredFor = (type) => !ASSEMBLY_TYPES.includes(type) && type !== "product_family";
 
   function openCategoryManager(token, onRefresh) {
@@ -6417,7 +6530,7 @@
         // Open the copy straight away: the point of copying is to change
         // something, and without this you have to find it first.
         openComponentDetail(r.id, token, detailPanel, {
-          ...comp, id: r.id, name: r.name, part_number: r.part_number, lifecycle_status: "inactive",
+          ...comp, id: r.id, name: r.name, part_number: r.part_number, lifecycle_status: "inactive", part_type_id: null,
         }, role);
       } catch (ex) {
         err.textContent = ex.message;
@@ -7663,6 +7776,11 @@
         API.post(token, "listComponentFamilies", { component_id: componentId }),
         API.post(token, "listProductFamilies", {}),
         API.post(token, "listCustomSpecFields", {}).catch(() => ({ fields: [], usage: [] })),
+        // Drawing Templates phase 1: the Part type row needs the types; opened
+        // from somewhere other than the BOM list they may not be loaded yet.
+        role === "rushroom" && !partTypes.length
+          ? API.post(token, "listPartTypes", {}).then((r) => { partTypes = (r && r.part_types) || []; }).catch(() => null)
+          : null,
       ]);
       const history = hist.history || [];
       const current = history.find((v) => v.is_current) || history[0];
@@ -8291,9 +8409,11 @@
           // §5.5 — a deletion is the one red event: a release retracted.
           drawing_deleted:  ["#e0545420", "#e05454"],
           cad_deleted:      ["#e0545420", "#e05454"],
+          // Drawing Templates phase 1: a change of part type, coloured as an edit.
+          part_type_changed: ["#4a9eed20", "#4a9eed"],
         };
         const [bg, fg] = BADGE_COLORS[entry.change_type] || ["#8b93a120", "#8b93a1"];
-        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document", document_revised: "doc revision", drawing_linked: "drawing", drawing_revised: "drawing rev", drawing_released: "drawing released", drawing_adopted: "drawing adopted", drawing_deleted: "drawing deleted", cad_deleted: "CAD deleted" }[entry.change_type] || entry.change_type;
+        const badgeLabel = { created: "created", updated: "updated", version_bumped: "revision", document_linked: "document", document_revised: "doc revision", drawing_linked: "drawing", drawing_revised: "drawing rev", drawing_released: "drawing released", drawing_adopted: "drawing adopted", drawing_deleted: "drawing deleted", cad_deleted: "CAD deleted", part_type_changed: "part type changed" }[entry.change_type] || entry.change_type;
 
         let changeCell;
         if (diffs.length) {
@@ -8722,6 +8842,15 @@
         // none and can only be tagged from here.
         const catSel = categorySelect(nodeData?.category_id || null, { placeholder: "— none —" });
         catSel.style.cssText = "width:100%;padding:0.3rem 0.5rem;font-size:0.8125rem;border-radius:4px;border:1px solid var(--border,#e2e8f0)";
+        // Drawing Templates phase 1 (§4.6): the part type, under Category. Saved
+        // through setComponentPartType only when it changed (the server writes
+        // the part's history row).
+        const ptInitial = nodeData?.part_type_id || "";
+        const ptSel = partTypeSelect(ptInitial);
+        ptSel.style.cssText = catSel.style.cssText;
+        // Sent only after someone changed the select, never from a value compare.
+        let ptTouched = false;
+        ptSel.addEventListener("change", () => { ptTouched = true; });
 
         propSaveErr = el("span", { style: "font-size:0.75rem;color:#e05454;flex:1" }, "");
         propSaveBtn = el("button", { class: "btn btn-sm btn-primary", type: "button", style: "white-space:nowrap" }, "Save");
@@ -8734,7 +8863,13 @@
           }
           propSaveBtn.disabled = true; propSaveBtn.textContent = "Saving…"; propSaveErr.textContent = "";
           try {
-            await Promise.all([
+            const ptChanged = ptTouched && ptSel.value !== ptInitial;
+            // Under drBusy: the bar beside Save while the five calls run. A
+            // refused part type turns the bar red (run returns false), the
+            // results stay in `saved`.
+            let saved = null;
+            await drBusy(propSaveBtn, async () => {
+              saved = await Promise.all([
               API.post(token, "setComponentCategory", {
                 component_id: componentId,
                 category_id: catSel.value || null,
@@ -8758,7 +8893,23 @@
                 replacement_note: statusSel.value === "replaced" ? replNoteArea.value.trim() || null : null,
                 flag_reason:      statusSel.value === "flagged"  ? flagReasonArea.value.trim() || null : null,
               }),
-            ]);
+              ptChanged
+                ? API.post(token, "setComponentPartType", { component_id: componentId, part_type_id: ptSel.value || null })
+                : null,
+              ]);
+              const r = saved[4];
+              return r && Array.isArray(r.refused) && r.refused.length ? false : saved;
+            });
+            const ptRes = saved ? saved[4] : null;
+            const ptRefused = ptRes && Array.isArray(ptRes.refused) && ptRes.refused[0];
+            if (ptRefused) {
+              ptSel.value = ptInitial; ptTouched = false;
+              propSaveErr.textContent = ptRefused.reason || "Part type not changed";
+              propSaveBtn.disabled = false; propSaveBtn.textContent = "Save";
+              try { refreshBomList && refreshBomList(); } catch { /* list not mounted */ }
+              return;
+            }
+            if (ptChanged && nodeData) nodeData.part_type_id = ptSel.value || null;
             propSaveBtn.textContent = "Saved ✓";
             // Every field in this card shows on the list row, and category also
             // drives the chip counts — so the list behind the panel must reload.
@@ -8775,6 +8926,7 @@
         const lbl = (text) => el("span", { style: "font-size:0.75rem;font-weight:600;color:var(--muted,#8b93a1);display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em" }, text);
         const statusColWrapper = el("div", {}, [lbl("Lifecycle status"), statusSel, replNoteArea, flagReasonArea]);
         const categoryColWrapper = el("div", {}, [lbl("Category"), catSel]);
+        const partTypeColWrapper = el("div", {}, [lbl("Part type"), ptSel]);
 
         // PROP-067: the Parts tab has no +child (PROP-062), so wrapping a bought
         // part from where it lives starts here.
@@ -8798,6 +8950,7 @@
             statusColWrapper,
             categoryColWrapper,
             el("div", {}, [lbl("Sourcing"), mobSel]),
+            partTypeColWrapper,
             el("div", { style: "grid-column:1/3" }, [lbl("Description"), descInp]),
           ]),
         ]);
@@ -12532,7 +12685,7 @@
   async function renderDrawings(role, mount) {
     const token = API.getToken(role);
 
-    // ---- One sub-tab bar: CAD Models · Drawings · Surgery Templates ----------
+    // ---- One sub-tab bar: CAD Models · Drawings · Drawing Templates · Surgery Templates
     // (docs/DRAWINGS_TAB_UX.md §10.A). The registers stay mounted and toggle
     // display, so the test-agent panel inside CAD Models keeps polling while
     // another register is in view. A supplier gets the drawings register alone:
@@ -12542,10 +12695,12 @@
     const cadModelsContentEl = el("div", {}, [testAgentEl, cadRegisterEl]);
     const drawingsContentEl  = el("div", {});
     const templatesContentEl = el("div", {});
+    const drawingTemplatesContentEl = el("div", {});
     const SUB_TABS = role === "rushroom"
       ? [
           { id: "cad_models",        label: "CAD Models",        content: cadModelsContentEl, load: () => loadCadModels() },
           { id: "drawings",          label: "Drawings",          content: drawingsContentEl,  load: () => { if (!_dwgLoadedAt) load(); } },
+          { id: "drawing_templates", label: "Drawing Templates", content: drawingTemplatesContentEl, load: () => { if (!_dtplLoadedAt) dtplRender(drawingTemplatesContentEl); } },
           { id: "surgery_templates", label: "Surgery Templates", content: templatesContentEl, load: () => loadAndDrawTemplates() },
         ]
       : [{ id: "drawings", label: "Drawings", content: drawingsContentEl, load: () => { if (!_dwgLoadedAt) load(); } }];
@@ -12583,7 +12738,7 @@
     // removed first, so re-rendering the tab never stacks them. A register
     // loaded more than 30 s ago is reloaded when the page becomes visible
     // again, so a send from Fusion shows up without Refresh.
-    let _cadLoadedAt = 0, _dwgLoadedAt = 0, _tplLoadedAt = 0;
+    let _cadLoadedAt = 0, _dwgLoadedAt = 0, _tplLoadedAt = 0, _dtplLoadedAt = 0;
     const STALE_MS = 30000;
     if (_drawingsVisHandler) document.removeEventListener("visibilitychange", _drawingsVisHandler);
     _drawingsVisHandler = () => {
@@ -12593,6 +12748,11 @@
       if (_cadLoadedAt && now - _cadLoadedAt > STALE_MS) { _cadLoaded = false; loadCadModels({ silent: true }); }
       if (_dwgLoadedAt && now - _dwgLoadedAt > STALE_MS) load({ silent: true });
       if (_tplLoadedAt && now - _tplLoadedAt > STALE_MS) reloadTemplates({ silent: true });
+      // Drawing Templates: the register reloads when it is the view in front
+      // (a type or Base page is left alone; its own poll keeps it current).
+      if (_dtplLoadedAt && now - _dtplLoadedAt > STALE_MS && _subTab === "drawing_templates" && dtplState.view === "register") {
+        dtplRender(drawingTemplatesContentEl, { silent: true });
+      }
     };
     document.addEventListener("visibilitychange", _drawingsVisHandler);
 
@@ -13232,7 +13392,10 @@
         .filter(Boolean).join(" ").toLowerCase();
       const cols = [
         isRushroom ? el("th", {}, "") : null,
-        head("Number", "drawing_number"), head("Title", "title"), head("Issue", "revision"), head("Part", "owner_name"),
+        head("Number", "drawing_number"), head("Title", "title"), head("Issue", "revision"),
+        // Drawing Templates phase 1: the template version the latest issue is pinned to.
+        isRushroom ? head("Template", "template_label") : null,
+        head("Part", "owner_name"),
         isRushroom ? head("Supplier sees", "supplier_sees") : head("Supplier drawing no.", "supplier_drawing_number"),
       ].filter(Boolean);
       const COLS = cols.length;
@@ -13298,6 +13461,7 @@
           // Issue: letter + chip; "F Released · G Draft" when a newer issue is
           // in work (STATUS_MODEL §7). The word is in the header.
           el("td", {}, revisionLetterFacts(d.revision || null, d.status, d.released_revision || null)),
+          isRushroom ? el("td", {}, d.template_label || "—") : null,
           el("td", {}, partCell(d)),
           isRushroom
             ? el("td", {}, d.supplier_sees ? `Issue ${d.supplier_sees}` : dash())
@@ -14092,6 +14256,562 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
       ruleSel.focus();
     }
 
+    // ---- Drawing Templates (docs/DRAWING_TEMPLATES.md, phase 1) ---------------
+    // The register (Base · one row per part type · No part type), the Base page,
+    // a part type's page with its reference drawing, History with compare
+    // (DRAWINGS_TAB_UX §14). Rushroom only: the sub-tab is only in the Rushroom
+    // SUB_TABS, so a supplier never reaches anything below. Every name starts
+    // dtpl — the Surgery Templates register owns template* / tpl*.
+    const dtplState = { view: "register", chip: "all", q: "", sort: "", dir: 1, typeId: null };
+    let _dtplData = null;      // listDrawingTemplates + every type (retired included)
+    let _dtplTimer = null;     // the reference item's poll
+    let _dtplSheets = null;    // the reference sheets' viewer (disposed on leave)
+    let _dtplSeq = 0;          // radio group names in History
+    function dtplStop() {
+      if (_dtplTimer) { clearTimeout(_dtplTimer); _dtplTimer = null; }
+      if (_dtplSheets) { try { _dtplSheets.dispose(); } catch { /* already gone */ } _dtplSheets = null; }
+    }
+    const dtplDash = () => el("span", { class: "muted" }, "—");
+    const dtplWhen = (iso) => iso ? new Date(iso).toLocaleString("sv", { dateStyle: "short", timeStyle: "short" }) : "—";
+    const dtplDay = (iso) => iso ? new Date(iso).toLocaleDateString("sv") : "—";
+    const dtplWarn = (txt) => el("div", { class: "dtpl-line is-warn" }, txt);
+    const dtplEmpty = (cols, txt) => el("tr", {}, el("td", { colspan: cols, class: "muted", style: "padding:1rem" }, txt));
+    const dtplTable = (headers, rows) => el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
+      el("thead", {}, el("tr", {}, headers.map((h) => (typeof h === "string" ? el("th", {}, h) : h)))),
+      el("tbody", {}, rows),
+    ]));
+    // Back to the register, in the drawing surface's head.
+    function dtplHead(titleKids, actions) {
+      return el("div", { class: "drawing-head" }, [
+        el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplRender(dtplHost()) }, "← Drawing Templates"),
+        el("div", { class: "drawing-title" }, titleKids),
+        el("span", { style: "flex:1" }),
+        ...(actions || []),
+      ]);
+    }
+    const dtplHost = () => drawingTemplatesContentEl;
+    // Tabs in the sheet bar's look; `build(pane)` fills the pane.
+    function dtplTabs(tabs, pane, initial) {
+      const bar = el("div", { class: "sheet-tabs dtpl-tabs", role: "tablist" });
+      const btns = {};
+      const show = (id) => {
+        for (const t of tabs) {
+          btns[t.id].classList.toggle("active", t.id === id);
+          btns[t.id].setAttribute("aria-selected", t.id === id ? "true" : "false");
+        }
+        pane.replaceChildren();
+        (tabs.find((t) => t.id === id) || tabs[0]).build(pane);
+      };
+      for (const t of tabs) {
+        btns[t.id] = el("button", { class: "sheet-tab", type: "button", role: "tab", onclick: () => show(t.id) }, t.label);
+        bar.append(btns[t.id]);
+      }
+      show(initial || tabs[0].id);
+      return bar;
+    }
+    // Every type, retired ones included (the register's Retired chip, and the
+    // part type pickers on the Parts list read the same list).
+    async function dtplRefreshTypes() {
+      try {
+        const r = await API.post(token, "listPartTypes", { include_retired: true });
+        partTypes = (r && r.part_types) || [];
+      } catch { /* keep what is there */ }
+      return partTypes;
+    }
+
+    // ---- The register --------------------------------------------------------
+    async function dtplRender(container, opts) {
+      const host = container || dtplHost();
+      dtplStop();
+      dtplState.view = "register";
+      if (!(opts && opts.silent) || !_dtplData) host.replaceChildren(drLoading("Loading drawing templates…"));
+      let data;
+      try {
+        const [d] = await Promise.all([API.post(token, "listDrawingTemplates", {}), dtplRefreshTypes()]);
+        data = d || {};
+      } catch (ex) {
+        if (dtplState.view === "register") host.replaceChildren(el("div", { class: "error" }, `Couldn't load drawing templates: ${ex.message}`));
+        return;
+      }
+      _dtplLoadedAt = Date.now();
+      // listDrawingTemplates carries the counts; a retired type it leaves out
+      // comes from listPartTypes so it can still be restored.
+      const listed = new Set((data.part_types || []).map((t) => t.id));
+      data.part_types = [...(data.part_types || []), ...partTypes.filter((t) => t.retired_at && !listed.has(t.id))];
+      _dtplData = data;
+      if (dtplState.view === "register") dtplRegister(host);
+    }
+
+    function dtplRegister(container) {
+      const host = container || dtplHost();
+      const data = _dtplData || {};
+      const base = data.base || null;
+      const all = (data.part_types || []).slice()
+        .sort((a, b) => ((a.sort_order ?? 100) - (b.sort_order ?? 100)) || String(a.name || "").localeCompare(String(b.name || "")));
+      const live = all.filter((t) => !t.retired_at);
+      const retired = all.filter((t) => t.retired_at);
+      const legacy = data.legacy || [];
+      if (dtplState.chip === "retired" && !retired.length) dtplState.chip = "all";
+      const refText = (t) => (t.reference ? `${t.reference.part_number || "—"} Rev ${t.reference.revision || "—"}` : "");
+
+      const search = el("input", {
+        class: "up-text", type: "search", placeholder: "Search…", "aria-label": "Search",
+        value: dtplState.q, style: "min-width:220px",
+        oninput: (e) => { dtplState.q = e.target.value; repaint(); },
+      });
+      const chipsEl = el("div", { class: "dtpl-chips" });
+      const thead = el("thead", {});
+      const tbody = el("tbody", {});
+      const head = (label, key) => el("th", {
+        style: key ? "cursor:pointer;user-select:none" : "",
+        onclick: key ? () => { dtplState.dir = dtplState.sort === key ? -dtplState.dir : 1; dtplState.sort = key; repaint(); } : null,
+      }, key && dtplState.sort === key ? `${label} ${dtplState.dir > 0 ? "▲" : "▼"}` : label);
+      const typeKey = { name: (t) => t.name, reference: refText, parts: (t) => t.parts ?? 0, drawings: (t) => t.drawings ?? 0, version: () => "" };
+
+      function paintChips() {
+        const chip = (id, label) => bomChip(label, { active: dtplState.chip === id, onClick: () => { dtplState.chip = id; repaint(); } });
+        chipsEl.replaceChildren(...[
+          chip("all", `All (${live.length})`),
+          chip("legacy", `Per-part specs (${legacy.length})`),
+          retired.length ? chip("retired", `Retired (${retired.length})`) : null,
+        ].filter(Boolean));
+      }
+
+      function repaint() {
+        paintChips();
+        const q = dtplState.q.trim().toLowerCase();
+        const hit = (...xs) => !q || xs.filter(Boolean).join(" ").toLowerCase().includes(q);
+        if (dtplState.chip === "legacy") {
+          thead.replaceChildren(el("tr", {}, [head("Name", "name"), head("Title", "title"), head("Drawings", "drawings")]));
+          const rows = legacy.filter((l) => hit(l.name, l.title));
+          if (dtplState.sort) rows.sort((a, b) => sortValue(a[dtplState.sort], b[dtplState.sort], dtplState.sort) * dtplState.dir);
+          tbody.replaceChildren(...(rows.length
+            ? rows.map((l) => el("tr", {}, [el("td", {}, el("strong", {}, l.name)), el("td", {}, l.title || "—"), el("td", {}, String(l.drawings ?? 0))]))
+            : [dtplEmpty(3, "No per-part specs.")]));
+          return;
+        }
+        thead.replaceChildren(el("tr", {}, [
+          head("Name", "name"), head("Reference", "reference"), head("Parts", "parts"), head("Drawings", "drawings"), head("Version", "version"),
+        ]));
+        const list = (dtplState.chip === "retired" ? retired : live).filter((t) => hit(t.name, refText(t)));
+        const k = typeKey[dtplState.sort];
+        if (k) list.sort((a, b) => sortValue(k(a), k(b), dtplState.sort) * dtplState.dir);
+        const rows = [];
+        if (dtplState.chip === "all" && base && hit("Base")) {
+          rows.push(el("tr", { class: "dtpl-row", onclick: () => dtplOpenBase() }, [
+            el("td", {}, el("strong", {}, "Base")), el("td", {}, dtplDash()), el("td", {}, dtplDash()),
+            el("td", {}, String(base.drawings ?? 0)), el("td", {}, base.version != null ? `v${base.version}` : "—"),
+          ]));
+        }
+        for (const t of list) {
+          rows.push(el("tr", { class: "dtpl-row", onclick: () => dtplOpenType(t.id) }, [
+            el("td", {}, el("strong", {}, t.name)),
+            el("td", {}, t.reference ? refText(t) : dtplDash()),
+            el("td", {}, String(t.parts ?? 0)), el("td", {}, String(t.drawings ?? 0)), el("td", {}, dtplDash()),
+          ]));
+        }
+        if (dtplState.chip === "all" && hit("No part type")) {
+          rows.push(el("tr", { class: "dtpl-row", onclick: () => dtplUntypedList() }, [
+            el("td", {}, el("span", { class: "muted" }, "No part type")), el("td", {}),
+            el("td", {}, String(data.untyped_count ?? 0)), el("td", {}), el("td", {}),
+          ]));
+        }
+        tbody.replaceChildren(...(rows.length ? rows : [dtplEmpty(5, "No part types.")]));
+      }
+
+      host.replaceChildren(el("div", { class: "card" }, [
+        el("div", { style: "display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem" }, [
+          el("span", { class: "muted", style: "font-size:0.8125rem" }, `${live.length} part type${live.length === 1 ? "" : "s"}`),
+          el("span", { class: "spacer", style: "flex:1" }),
+          el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => dtplNameModal(null) }, "+ Part type"),
+          actionBtn("Refresh", "refresh", { onClick: () => dtplRender(host) }),
+        ]),
+        el("div", { style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem" }, [search, chipsEl]),
+        el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [thead, tbody])),
+      ]));
+      repaint();
+    }
+
+    // One row: `Name [      ] [Create]` (or [Save] for a rename). A 409 shows in the modal.
+    function dtplNameModal(type) {
+      const input = el("input", { class: "up-text", type: "text", "aria-label": "Name", maxlength: "80", value: type ? type.name : "", style: "flex:1;min-width:240px" });
+      const btn = el("button", { class: "btn btn-sm btn-primary", type: "button" }, type ? "Save" : "Create");
+      const err = el("div", { class: "dr-error", style: "display:none;margin-top:0.4rem" });
+      const close = openModal(type ? "Rename part type" : "New part type", el("div", {}, [
+        el("div", { class: "dtpl-form-row" }, [el("label", { class: "dtpl-label" }, "Name"), input, btn]),
+        err,
+      ]));
+      const go = async () => {
+        const name = input.value.trim();
+        if (!name) { input.focus(); return; }
+        err.style.display = "none";
+        const res = await drBusy(btn, async () => {
+          try {
+            return type
+              ? await API.post(token, "renamePartType", { id: type.id, name })
+              : await API.post(token, "createPartType", { name });
+          } catch (ex) { err.textContent = ex.message; err.style.display = ""; return false; }
+        });
+        btn.disabled = false;
+        if (!res) return;
+        close();
+        await dtplRefreshTypes();
+        if (type) dtplOpenType(type.id);
+        else dtplRender(dtplHost(), { silent: true });
+      };
+      btn.onclick = go;
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+      input.focus();
+    }
+
+    // "No part type": the untyped parts and panels, ticked, assigned in bulk.
+    async function dtplUntypedList(notes) {
+      const host = dtplHost();
+      dtplStop();
+      dtplState.view = "untyped";
+      const head = dtplHead([el("strong", {}, "No part type")]);
+      host.replaceChildren(head, drLoading("Loading parts…"));
+      let comps;
+      try {
+        const [r] = await Promise.all([API.post(token, "listComponents", {}), partTypes.length ? null : dtplRefreshTypes()]);
+        comps = (r && r.components) || [];
+      } catch (ex) {
+        if (dtplState.view === "untyped") host.replaceChildren(head, el("div", { class: "error" }, `Couldn't load parts: ${ex.message}`));
+        return;
+      }
+      if (dtplState.view !== "untyped") return;
+      const list = comps.filter((c) => !c.part_type_id && ["part", "raw_material"].includes(c.type))
+        .sort((a, b) => sortValue(a.part_number, b.part_number, "part_number"));
+      const picked = new Set();
+      const bulkEl = el("div", {});
+      const warnEl = el("div", {}, (notes || []).map(dtplWarn));
+      let bulkType = "";
+      function paintBulk() {
+        if (!picked.size) { bulkEl.replaceChildren(); return; }
+        const sel = partTypeSelect(bulkType);
+        sel.onchange = () => { bulkType = sel.value; };
+        const assign = el("button", { class: "btn btn-sm btn-primary", type: "button" }, "Assign");
+        assign.onclick = async () => {
+          if (!sel.value) { sel.focus(); return; }
+          warnEl.replaceChildren();
+          const res = await drBusy(assign, async () => {
+            try { return await API.post(token, "setComponentPartType", { component_ids: [...picked], part_type_id: sel.value }); }
+            catch (ex) { warnEl.replaceChildren(dtplWarn(ex.message)); return false; }
+          });
+          assign.disabled = false;
+          if (!res) return;
+          const byId = new Map(list.map((c) => [c.id, c]));
+          dtplUntypedList((res.refused || []).map((r) => `${(byId.get(r.component_id) || {}).part_number || r.component_id}: ${r.reason}`));
+        };
+        bulkEl.replaceChildren(el("div", { class: "cs-bulk" }, [
+          el("strong", {}, `${picked.size} selected`),
+          el("span", { class: "muted" }, "Part type"),
+          sel, assign,
+          el("button", { class: "btn btn-sm", type: "button", onclick: () => { picked.clear(); for (const cb of host.querySelectorAll(".dtpl-pick")) cb.checked = false; paintBulk(); } }, "Clear"),
+        ]));
+      }
+      const rows = list.map((c) => el("tr", {}, [
+        el("td", { style: "width:1.5rem" }, el("input", {
+          type: "checkbox", class: "dtpl-pick", "aria-label": "Select",
+          onchange: (e) => { if (e.currentTarget.checked) picked.add(c.id); else picked.delete(c.id); paintBulk(); },
+        })),
+        el("td", {}, el("span", { style: "font-family:monospace;font-size:0.8125rem" }, c.part_number || "—")),
+        el("td", {}, c.name || "—"),
+      ]));
+      host.replaceChildren(head, el("div", { class: "card" }, [
+        warnEl, bulkEl,
+        dtplTable(["", "Part number", "Name"], rows.length ? rows : [dtplEmpty(3, "No parts.")]),
+      ]));
+    }
+
+    // ---- A part type's page ----------------------------------------------------
+    async function dtplOpenType(id) {
+      const host = dtplHost();
+      dtplStop();
+      dtplState.view = "type"; dtplState.typeId = id;
+      const here = () => dtplState.view === "type" && dtplState.typeId === id;
+      host.replaceChildren(drLoading("Loading part type…"));
+      let page;
+      try { page = await API.post(token, "getDrawingTemplate", { part_type_id: id }); }
+      catch (ex) {
+        if (here()) host.replaceChildren(dtplHead([el("strong", {}, "Part type")]), el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
+        return;
+      }
+      if (!here()) return;
+      const t = page.part_type || {};
+      const base = page.base || {};
+      const ref = t.reference || null;
+      const parts = page.parts || [];
+      const drawings = page.drawings || [];
+      const history = page.history || [];
+      const warnEl = el("div", {});
+
+      const renameBtn = el("button", { class: "btn btn-xs", type: "button", onclick: () => dtplNameModal(t) }, "Rename");
+      const retireBtn = el("button", { class: "btn btn-xs", type: "button" }, t.retired_at ? "Restore" : "Retire");
+      retireBtn.onclick = async () => {
+        warnEl.replaceChildren();
+        const ok = await drBusy(retireBtn, async () => {
+          try { await API.post(token, "retirePartType", { id: t.id, retired: !t.retired_at }); return true; }
+          catch (ex) { warnEl.replaceChildren(dtplWarn(ex.message)); return false; }
+        });
+        retireBtn.disabled = false;
+        if (ok) { await dtplRefreshTypes(); dtplOpenType(id); }
+      };
+
+      const refSlot = el("div", { class: "dtpl-ref" });
+      const pane = el("div", { class: "dtpl-pane" });
+      const tabs = dtplTabs([
+        { id: "parts", label: `Parts (${parts.length})`, build: (p) => p.append(dtplTable(["Part number", "Name", "Drawing"],
+          parts.length ? parts.map((c) => el("tr", {}, [
+            el("td", {}, el("span", { style: "font-family:monospace;font-size:0.8125rem" }, c.part_number || "—")),
+            el("td", {}, c.name || "—"),
+            el("td", {}, c.has_drawing ? "yes" : "—"),
+          ])) : [dtplEmpty(3, "No parts.")])) },
+        { id: "drawings", label: `Drawings (${drawings.length})`, build: (p) => p.append(dtplDrawingsTable(drawings)) },
+        { id: "history", label: `History (${history.length})`, build: (p) => dtplHistory(p, page) },
+      ], pane);
+
+      const chooseBtn = t.retired_at ? null : el("button", { class: "btn btn-sm", type: "button", style: "width:100%", onclick: () => dtplPickReference(t.id) }, ref ? "Change" : "Choose");
+      const rail = el("div", { class: "drawing-rail" }, [
+        el("h4", { class: "drawing-rail-h" }, "Version"),
+        el("dl", { class: "drawing-meta" }, [el("dt", {}, "Version"), el("dd", {}, base.version != null ? `On Base v${base.version}` : "On Base")]),
+        el("h4", { class: "drawing-rail-h" }, "Reference"),
+        el("dl", { class: "drawing-meta" }, [
+          el("dt", {}, "Part"),
+          el("dd", {}, ref ? `${[ref.part_number, ref.name].filter(Boolean).join(" ")} · Rev ${ref.revision || "—"}` : dtplDash()),
+          ...(ref && ref.set_at ? [el("dt", {}, "Set"), el("dd", {}, `${dtplDay(ref.set_at)}${ref.set_by_label ? ` · ${ref.set_by_label}` : ""}`)] : []),
+        ]),
+        chooseBtn,
+        el("h4", { class: "drawing-rail-h" }, "Parts"),
+        el("dl", { class: "drawing-meta" }, [el("dt", {}, "Parts"), el("dd", {}, String(t.parts ?? parts.length))]),
+        el("h4", { class: "drawing-rail-h" }, "History"),
+        el("dl", { class: "drawing-meta" }, [el("dt", {}, "Versions"), el("dd", {}, history.length ? String(history.length) : "No versions")]),
+      ].filter(Boolean));
+
+      host.replaceChildren(
+        dtplHead([el("strong", {}, t.name || "Part type"), t.retired_at ? el("span", { class: "muted" }, "Retired") : null].filter(Boolean),
+          [renameBtn, retireBtn]),
+        warnEl,
+        el("div", { class: "drawing-surface" }, [el("div", { class: "drawing-file dtpl-file" }, [refSlot, tabs, pane]), rail]),
+      );
+      dtplShowReference(refSlot, t, () => { if (here()) dtplOpenType(id); });
+    }
+
+    function dtplDrawingsTable(drawings) {
+      return dtplTable(["Number", "Title", "Issue", "Status", "Template"],
+        drawings.length ? drawings.map((d) => el("tr", { class: "dtpl-row", onclick: () => openDrawingSurface(d.drawing_id, role) }, [
+          el("td", {}, el("strong", {}, d.drawing_number || "—")),
+          el("td", {}, d.title || "—"),
+          el("td", {}, d.issue || "—"),
+          el("td", {}, d.status ? drawingStatusChip(d.status) : dtplDash()),
+          el("td", {}, d.template_label || "—"),
+        ])) : [dtplEmpty(5, "No drawings.")]);
+    }
+
+    // The reference drawing above the tabs: the bar while its item is queued or
+    // running, the sheets when done ("Verification failed" above them when the
+    // engine's own check failed), the error when it failed.
+    async function dtplShowReference(slot, t, onFinished) {
+      const item = t.last_item || null;
+      if (!t.reference || !item) return;
+      if (item.status === "queued" || item.status === "running") { dtplWatchItem(item.id, slot, onFinished); return; }
+      if (item.status === "failed") { slot.replaceChildren(dtplWarn(item.error || "Failed")); return; }
+      if (item.status !== "done" || !item.job_id) return;
+      const target = el("div", { class: "drawing-file-target" }, drLoading("Loading the reference…"));
+      slot.replaceChildren(...[item.summary && item.summary.verify_ok === false ? dtplWarn("Verification failed") : null, target].filter(Boolean));
+      let art;
+      try { art = await API.post(token, "getDrawingRenderArtifacts", { job_id: item.job_id }); }
+      catch (ex) { target.replaceChildren(el("div", { class: "error" }, `Couldn't load the reference: ${ex.message}`)); return; }
+      const pngs = art && Array.isArray(art.pngs) ? art.pngs.filter(Boolean) : [];
+      const ents = pngs.length && art.entities ? await drFetchJson(art.entities) : null;
+      if (!target.isConnected) return;
+      if (!pngs.length) { target.replaceChildren(dtplWarn("No sheets")); return; }
+      target.replaceChildren();
+      _dtplSheets = window.PortalViewer.renderSheets(target, {
+        pngs, entities: ents && Array.isArray(ents.sheets) ? ents : { sheets: [] },
+        name: `${t.reference.part_number || t.name} Rev ${t.reference.revision || ""}`.trim(),
+      });
+    }
+
+    // Poll getDrawingTemplateItem every 3 s; stages from the job's steps, the
+    // queue reads "Waiting for the worker" until the pump has given it a job.
+    // Stops on done / failed / cancelled and when the bar leaves the page.
+    function dtplWatchItem(itemId, slot, onFinished) {
+      const p = drProgress({ label: "Reference" });
+      slot.replaceChildren(p.el);
+      p.stage(1, DR_QUEUE_TOP, 15000, "Waiting for the worker");
+      let misses = 0;
+      const tick = async () => {
+        _dtplTimer = null;
+        if (!p.el.isConnected) { p.stop(); return; }
+        // Another Drawings sub-tab in front: no calls; the poll picks up again
+        // when Drawing Templates is shown.
+        if (_subTab !== "drawing_templates") { _dtplTimer = setTimeout(tick, 3000); return; }
+        let r;
+        try { r = await API.post(token, "getDrawingTemplateItem", { id: itemId }); misses = 0; }
+        catch (ex) {
+          if (!p.el.isConnected) return;
+          // A 4xx (auth, not found) ends the poll; a network blip or a 5xx backs off and tries again.
+          const fatal = !!(ex && ex.status >= 400 && ex.status < 500);
+          if (fatal || ++misses > 5) { p.fail(ex.message); return; }
+          _dtplTimer = setTimeout(tick, 6000);
+          return;
+        }
+        if (!p.el.isConnected) { p.stop(); return; }
+        const it = (r && r.item) || {};
+        const job = (r && r.job) || null;
+        if (it.status === "done") { p.done(""); setTimeout(onFinished, 700); return; }
+        if (it.status === "failed" || it.status === "cancelled") {
+          const s = job ? drJobStage(job) : null;
+          p.fail(s && s.word ? s.word : (it.status === "cancelled" ? "Cancelled" : "Failed"));
+          setTimeout(onFinished, 700);
+          return;
+        }
+        if (job) drShowJobStage(p, job, false);
+        else p.stage(1, DR_QUEUE_TOP, 15000, "Waiting for the worker");
+        _dtplTimer = setTimeout(tick, 3000);
+      };
+      tick();
+    }
+
+    // The reference picker: parts with a released CAD revision; one click picks.
+    async function dtplPickReference(typeId) {
+      const body = el("div", {}, drLoading("Loading parts…"));
+      const close = openModal("Reference", body);
+      let cands;
+      try { cands = (await API.post(token, "listPartTypeReferenceCandidates", { part_type_id: typeId })).candidates || []; }
+      catch (ex) { body.replaceChildren(el("div", { class: "error" }, ex.message)); return; }
+      const slot = el("div", {});
+      const err = el("div", { class: "dr-error", style: "display:none;margin-bottom:0.4rem" });
+      const tbody = el("tbody", {});
+      let q = "", busy = false;
+      const search = el("input", {
+        class: "up-text", type: "search", placeholder: "Search…", "aria-label": "Search", style: "min-width:220px;margin-bottom:0.6rem",
+        oninput: (e) => { q = e.target.value.trim().toLowerCase(); paint(); },
+      });
+      const pick = async (c) => {
+        if (busy) return;
+        busy = true;
+        err.style.display = "none";
+        const res = await drBusy(null, async () => {
+          try { return await API.post(token, "setPartTypeReference", { part_type_id: typeId, cad_model_revision_id: c.cad_model_revision_id }); }
+          catch (ex) { err.textContent = ex.message; err.style.display = ""; return false; }
+        }, { slot, label: "Reference" });
+        busy = false;
+        if (!res) return;
+        close();
+        await dtplRefreshTypes();
+        dtplOpenType(typeId);
+      };
+      function paint() {
+        const rows = cands.filter((c) => !q || [c.part_number, c.name].filter(Boolean).join(" ").toLowerCase().includes(q));
+        tbody.replaceChildren(...(rows.length ? rows.map((c) => el("tr", { class: "dtpl-row", onclick: () => pick(c) }, [
+          el("td", {}, el("span", { style: "font-family:monospace;font-size:0.8125rem" }, c.part_number || "—")),
+          el("td", {}, c.name || "—"),
+          el("td", {}, c.revision ? `Rev ${c.revision}` : "—"),
+          el("td", {}, dtplDay(c.released_at)),
+        ])) : [dtplEmpty(4, "No parts with a released CAD revision.")]));
+      }
+      body.replaceChildren(search, err, slot, el("div", { class: "table-wrap" }, el("table", { style: "font-size:0.875rem" }, [
+        el("thead", {}, el("tr", {}, ["Part number", "Name", "Revision", "Released"].map((h) => el("th", {}, h)))),
+        tbody,
+      ])));
+      paint();
+      search.focus();
+    }
+
+    // ---- The Base page -----------------------------------------------------------
+    // The server's lines verbatim; never YAML, never a key name.
+    async function dtplOpenBase() {
+      const host = dtplHost();
+      dtplStop();
+      dtplState.view = "base";
+      const here = () => dtplState.view === "base";
+      host.replaceChildren(drLoading("Loading the Base…"));
+      let page;
+      try { page = await API.post(token, "getDrawingTemplate", { base: true }); }
+      catch (ex) {
+        if (here()) host.replaceChildren(dtplHead([el("strong", {}, "Base")]), el("div", { class: "error" }, `Couldn't load: ${ex.message}`));
+        return;
+      }
+      if (!here()) return;
+      const b = page.base || {};
+      const L = page.lines || {};
+      const rules = Array.isArray(L.rules) ? L.rules : [];
+      const history = page.history || [];
+      const pane = el("div", { class: "dtpl-pane" });
+      const lines = () => el("dl", { class: "drawing-meta dtpl-lines" }, [
+        el("dt", {}, "Title block"), el("dd", {}, L.title_block || "—"),
+        el("dt", {}, "Tolerances"), el("dd", {}, L.tolerances || "—"),
+        el("dt", {}, "Sheets"), el("dd", {}, L.sheets || "—"),
+        el("dt", {}, "Edges"), el("dd", {}, L.edges || "—"),
+        el("dt", {}, `Rules (${rules.length})`), el("dd", {}, rules.length ? rules.map((r) => el("div", {}, r)) : "No rules."),
+      ]);
+      const tabs = dtplTabs([
+        { id: "lines", label: "Lines", build: (p) => p.append(lines()) },
+        { id: "history", label: `History (${history.length})`, build: (p) => dtplHistory(p, page) },
+      ], pane);
+      const rail = el("div", { class: "drawing-rail" }, [
+        el("h4", { class: "drawing-rail-h" }, "Version"),
+        el("dl", { class: "drawing-meta" }, [
+          el("dt", {}, "Version"), el("dd", {}, b.version != null ? `v${b.version}${b.origin ? ` · ${b.origin}` : ""}` : "—"),
+          el("dt", {}, "Saved"), el("dd", {}, dtplWhen(b.saved_at)),
+          el("dt", {}, "By"), el("dd", {}, b.saved_by_label || "—"),
+        ]),
+        el("h4", { class: "drawing-rail-h" }, "Drawings"),
+        el("dl", { class: "drawing-meta" }, [el("dt", {}, "Drawings"), el("dd", {}, String(b.drawings ?? 0))]),
+      ]);
+      host.replaceChildren(
+        dtplHead([el("strong", {}, "Base")]),
+        el("div", { class: "drawing-surface" }, [el("div", { class: "drawing-file dtpl-file" }, [tabs, pane]), rail]),
+      );
+    }
+
+    // ---- History and compare (§6) ---------------------------------------------
+    // Version · Base · Origin · By · Saved · Request · Proof · Restore, with two
+    // radio columns; choosing both compares, previous → newest by default.
+    function dtplHistory(target, page) {
+      const rows = page.history || [];
+      const group = `dtpl-h${++_dtplSeq}`;
+      const diffEl = el("div", { class: "dtpl-compare" });
+      let from = (rows[1] || rows[0] || {}).version_id || null;
+      let to = (rows[0] || {}).version_id || null;
+      const radio = (side, r) => el("input", {
+        type: "radio", name: `${group}-${side}`, "aria-label": side === "from" ? "From" : "To",
+        checked: (side === "from" ? from : to) === r.version_id,
+        onchange: () => { if (side === "from") from = r.version_id; else to = r.version_id; dtplCompare(from, to, diffEl); },
+      });
+      target.append(dtplTable(["From", "To", "Version", "Base", "Origin", "By", "Saved", "Request", "Proof", "Restore"], rows.map((r) => el("tr", {}, [
+        el("td", {}, radio("from", r)), el("td", {}, radio("to", r)),
+        el("td", {}, el("strong", {}, `v${r.version}`)),
+        el("td", {}, r.base_version != null ? `v${r.base_version}` : "—"),
+        el("td", {}, r.origin || "—"),
+        el("td", {}, r.by_label || "—"),
+        el("td", { style: "white-space:nowrap" }, dtplWhen(r.saved_at)),
+        el("td", {}, r.request || "—"),
+        el("td", {}, "—"),
+        el("td", {}),
+      ]))), diffEl);
+      if (from && to) dtplCompare(from, to, diffEl);
+    }
+
+    async function dtplCompare(fromId, toId, target) {
+      if (!target || !fromId || !toId) return;
+      // Only the last pair asked for may write: an older answer arriving late is dropped.
+      const seq = (target.__seq = (target.__seq || 0) + 1);
+      const p = drProgress({ label: "Compare" });
+      p.run();
+      target.replaceChildren(p.el);
+      let r;
+      try { r = await API.post(token, "compareDrawingTemplateVersions", { from_version_id: fromId, to_version_id: toId }); }
+      catch (ex) { if (target.__seq !== seq) return; p.fail(); target.replaceChildren(el("div", { class: "dr-error" }, ex.message)); return; }
+      if (!target.isConnected || target.__seq !== seq) return;
+      target.replaceChildren(
+        el("h4", { class: "drawing-rail-h" }, `Compare v${(r.from || {}).version ?? "?"} → v${(r.to || {}).version ?? "?"}`),
+        el("ul", { class: "dtpl-diff" }, (r.lines || []).map((l) => el("li", {}, l))),
+      );
+    }
+
     // Land on the first register: CAD Models for Rushroom, Drawings for a supplier.
     showSubTab(SUB_TABS[0].id);
   }
@@ -14498,12 +15218,17 @@ body{font-family:system-ui,sans-serif;background:#fff;color:#111}
     const total = keys.reduce((n, k) => n + (DR_STAGE_WEIGHT[k] || 1), 0);
     let acc = DR_QUEUE_TOP;
     const bands = keys.map((key) => { const w = (DR_STAGE_WEIGHT[key] || 1) / total * (100 - DR_QUEUE_TOP); const b = { key, from: acc, to: acc + w }; acc += w; return b; });
-    const word = (k) => (k === "register" && j.mode === "iterate" ? "Candidate" : (byKey[k]?.label || DR_STEP_LABELS[k] || k));
+    // A sandbox job (a part type's reference) writes no drawing: its last step finishes.
+    const word = (k) => (k === "register" && j.mode === "iterate" ? "Candidate"
+      : k === "register" && j.mode === "sandbox" ? "Finishing"
+      : (byKey[k]?.label || DR_STEP_LABELS[k] || k));
     const st = (b) => (byKey[b.key] || {}).status || "pending";
     const over = bands.filter((b) => st(b) === "passed" || st(b) === "skipped");
     const reached = over.length ? over[over.length - 1].to : 0;
     if (!drLive(j)) {
-      const bad = bands.find((b) => st(b) === "failed") || bands.find((b) => st(b) === "running");
+      // The last failed band: a sandbox job carries on past a failed verify
+      // and can fail again later, where it really stopped.
+      const bad = bands.slice().reverse().find((b) => st(b) === "failed") || bands.find((b) => st(b) === "running");
       return { phase: "fail", at: bad ? Math.max(bad.from, reached) : Math.max(reached, 4),
         word: bad ? word(bad.key) : (j.status === "timed_out" ? "Timed out" : j.status === "cancelled" ? "Cancelled" : "Failed") };
     }

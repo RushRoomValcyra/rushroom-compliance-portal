@@ -27,6 +27,7 @@ import { batchSuggestComponents } from "./handlers/planner-batch-suggest.ts";
 import { scanBomAnomalies } from "./handlers/bom-anomaly-scan.ts";
 import { proposeDrawingSpecOps } from "./handlers/drawing-spec.ts";
 import { normaliseExtractedLines } from "../_shared/cost-math.mjs";
+import { sheetTextFromXlsxParts } from "../_shared/xlsx-text.mjs";
 import { eq } from "../_shared/auth.ts";
 import { usagePeriod, buildComplianceGraph, loadClassificationItems } from "../_shared/domain.ts";
 
@@ -71,9 +72,13 @@ async function extractDocx(bytes: Uint8Array): Promise<string> {
 }
 async function extractXlsx(bytes: Uint8Array): Promise<string> {
   const zip = await JSZip.loadAsync(bytes);
-  const shared = (await zip.file("xl/sharedStrings.xml")?.async("string")) ?? "";
-  const cells = [...shared.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((m) => xmlDecode(m[1]).trim()).filter(Boolean);
-  return cells.join(" · ");
+  const sharedStringsXml = (await zip.file("xl/sharedStrings.xml")?.async("string")) ?? "";
+  const sheetNames = Object.keys(zip.files)
+    .filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
+    .sort((a, b) => Number(a.match(/\d+/)![0]) - Number(b.match(/\d+/)![0]));
+  const sheetXmls: string[] = [];
+  for (const name of sheetNames) sheetXmls.push((await zip.file(name)?.async("string")) ?? "");
+  return sheetTextFromXlsxParts({ sharedStringsXml, sheetXmls });
 }
 function toBase64(bytes: Uint8Array): string {
   let bin = "";

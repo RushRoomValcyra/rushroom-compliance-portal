@@ -55,7 +55,10 @@ export async function importPartCosts(body: any, ctx: Ctx): Promise<Response> {
   ctx.db.storage.from(ctx.docBucket).remove([storage_path]).catch(() => {});
 
   if (source.type === "text" && /^\(could not/.test(source.text)) {
-    return json({ error: "The file could not be read." }, 400);
+    return json({ error: "The file could not be read. If this is an old binary .xls file, save it as .xlsx and try again." }, 400);
+  }
+  if (source.type === "text" && source.text === "(empty)") {
+    return json({ error: "No readable text was found in the file — the sheet appears to be empty." }, 400);
   }
 
   const system = `You are reading a supplier document — a quote, price list, order confirmation or invoice — and extracting purchase prices for parts we buy.

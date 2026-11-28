@@ -2,7 +2,8 @@
 
 **DESIGN — model changed and decided 2026-11-28. Phase 1 (types, the page, the reference render)
 is built and live (0070, v476). Phase 2 (rules he can see: sandboxes, rules by hand and by mark,
-the catch as rings and counts) is built 2026-11-28 (0071, v477); phases 3-9 are not built.** It
+the catch as rings and counts) is live (0071, v477). Phase 3 (Engine I: the resolution pass, the
+adapter, composition) is built 2026-11-28 in fusion_scripts (1b31ff9); phases 4-9 are not built.** It
 replaces the design of 2026-11-27 (one template, `flat_panel`, with one datum per panel). What
 survives from that design is carried over; what the new model ends is deleted and named in §14
 and §15. The owner answered the eight questions on 2026-11-28, all as recommended (§14). What was
@@ -20,6 +21,26 @@ commit does not empty it. (3) Only holes are selected; grooves, pockets and the 
 its callout or edge view. (5) A type has no saved version until phase 6, so the saved view shows
 no rules and the Takes column has no `old → new`. (6) Compare, Render, Decide, Bring up and Ask
 are phases 5-7.
+
+**As built in phase 3.** `drawset.py` builds one plan per hole (`resolve_plan`) and the sheets read
+it; today's forms (datums, features, pairs, CTQ, overrides) are read into the same plan, so the 32
+pinned cases keep their dimension lists and every sheet image. `--type TYPE.json` adds a type
+body; per property the order is Base default, rules in list order, the drawing's overrides. The
+selector is catch.py's, imported, and the render's catch equals `catch.py catch` (8, 9, 9, 4, 3,
+1, 2, base default 19 on Left Rev B). Side Panel Left and Right Rev F under one type body give
+the same 189 rows. Where it differs from the text below: (1) with rules and no `edges`, the
+render uses the default edge tests, as the catch does, so Shared fails by name there too; with no
+rule composed today's derivation stands. (2) A named failure before any sheet (an edge test, a
+rule the selector cannot read) exits 4 with `failure` in the summary; "at least" not met exits 3
+like any failed verification. (3) A front edge found on the model's x max is refused by name: the
+face view cannot be drawn from that edge yet (phase 4). (4) Drawn from a rule today: across front
+or rear and up bottom or top for face holes on a sheet band that holds that edge, c/c with a
+pitch ("can be") inside one band, Ø and depth tolerance, the callout name, "at least". Everything
+else is resolved and listed in `not_drawn_yet`, never dropped: thickness datum, position and c/c
+tolerance, "shall be", c/c as modelled, a pair across a sheet break, door sheet kinds. (5) Open:
+a template names x min "left edge" by the model side, so a mirrored part's pocket callout names
+the wrong side; the fix changes text on Side Panel Right's sheets, so it waits for the edge-word
+names of phase 4. (6) The worker does not pass a type body yet (phase 5).
 
 Short names used below: DD = DYNAMIC_DRAWINGS.md, DLG = DRAWING_DIALOGUE.md, UX =
 DRAWINGS_TAB_UX.md. "The engine" is drawset.py with the worker on the Mac.

@@ -1637,3 +1637,15 @@ Purchased → none (Decision 2). Manufactured → inputs we consume. Assembled �
 **Files changed:** `docs/DRAWING_DIALOGUE.md`, `docs/DYNAMIC_DRAWINGS.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`.
 
 ---
+
+## 2026-11-28 — Drawing templates: a shared Base and a rule set per part type, authored on a reference CAD and tried in a sandbox
+
+**Decision:** A drawing template is a shared Base (title block, general tolerance, sheet layout, standard hole names) plus one rule set per part type (side panel, door, shelf, plinth, back panel, bottom, top …). A rule is a group of features plus how they are measured: datum per direction, c/c "can be" or "shall be", tolerances. Rules are added, edited and deleted on a reference drawing whose CAD the user picks from any part, and tried in a sandbox before they become the type's version through the preview across the type's drawings. Precedence: drawing > type > Base; within a type, list order (the later rule wins). Size variants and mirror images are one type. The eight follow-up questions were answered as recommended: per part type; a broken "shall be" c/c fails the drawing; vertical pairs first; tolerance per rule and per c/c; datum triangles with letters; a Base change moves every type in one preview and one Save; list order wins; Side Panel Left joins the type once its dimension list is proved equal.
+
+**Why:** Tolerance chains differ per part type, and datums differ within one panel, so one rule set with one datum per panel (the 2026-11-27 design, decision 10) cannot express how a side panel or a door is measured. The owner's words: "it is not one for all, and rules for parts are different due to tolerance chain effects. it has to be dynamic."
+
+**Consequences:** About 66.5 days in nine phases, 26.5 of them renderer work. Rules can be authored and their catch seen from phase 2; the sheets are drawn from them from phase 5. The 2026-11-27 test-part sandbox (decision 5) is replaced by a working copy on real CAD; the single-datum decision (10) is superseded. Design: `docs/DRAWING_TEMPLATES.md`.
+
+**Files changed:** `docs/DRAWING_TEMPLATES.md` (new), `docs/DECISIONS.md`.
+
+---
